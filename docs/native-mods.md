@@ -135,6 +135,8 @@ passenger car with original SA scale and model axes. Physics uses a fixed
 passenger-car shape, without wheel animation or damage. Optional native handling
 values adjust each custom vehicle, as described in [vehicle dynamics](vehicle-dynamics.md). Tire slip, axle forces, handbrake grip reduction,
 four-point ground contact, suspension and body pitch/roll are simulated.
+Manifest-only `original_vehicle_handling` resources can tune installed original
+models without sharing their DFF/TXD files; see [vehicle dynamics](vehicle-dynamics.md).
 
 `mods/native-car-demo` is a simple custom blue car with no original assets.
 Set `enabled` to `true` in its `mod.json` and restart to try it. The demo is

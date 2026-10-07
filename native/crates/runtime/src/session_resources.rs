@@ -149,7 +149,7 @@ fn prepare(
         loader
             .take_custom_car()
             .map(Ok)
-            .unwrap_or_else(|| sa_scene::load_car(game))?,
+            .unwrap_or_else(|| loader.load_original_car(game, "taxi"))?,
     )];
     cars.extend(loader.take_car_catalog());
     for (name, model) in [
@@ -158,7 +158,7 @@ fn prepare(
         ("Admiral", "admiral"),
     ] {
         cancelled(cancel)?;
-        cars.push((name.into(), sa_scene::load_car_model(game, model)?));
+        cars.push((name.into(), loader.load_original_car(game, model)?));
     }
     let mut peds = vec![(
         models.1,

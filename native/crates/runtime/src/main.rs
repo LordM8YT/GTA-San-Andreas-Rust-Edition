@@ -1661,6 +1661,7 @@ struct App {
     frontend_sounds: Option<sa_audio::FrontendSounds>,
     car_scene: Option<Scene>,
     initial_models: (String, String),
+    offline_car_handling: Option<sa_scene::vehicle::Handling>,
     car_catalog: Vec<(String, Scene)>,
     ped_catalog: Vec<(String, sa_scene::ped::Ped)>,
     ped: Option<sa_scene::ped::Ped>,
@@ -1950,6 +1951,7 @@ impl ApplicationHandler for App {
                     }
                 }
                 state.driving = false;
+                self.offline_car_handling = state.car.as_ref().map(|(car, _)| car.handling);
                 let launch_args: Vec<_> = std::env::args().collect();
                 state.resource_game_dir = self.game_dir.clone();
                 state.resource_local_mods = if launch_args.iter().any(|a| a == "--no-mods") {
@@ -2277,6 +2279,13 @@ impl ApplicationHandler for App {
                                 .iter()
                                 .rposition(|n| n == if host { "Infernus" } else { "Admiral" })
                                 .unwrap();
+                            let selected = if index == state.active_car {
+                                state.car.as_ref()
+                            } else {
+                                state.car_catalog[index].as_ref()
+                            };
+                            let tuning =
+                                selected.expect("selected original car missing").0.handling;
                             state.apply_menu_action(Some(menu::Action::Car(index)));
                             assert!(
                                 state.driving,
@@ -2284,8 +2293,12 @@ impl ApplicationHandler for App {
                             );
                             assert_eq!(
                                 state.car.as_ref().unwrap().0.handling,
-                                sa_scene::vehicle::Handling::default(),
-                                "selecting an original car retained the custom car's tuning"
+                                tuning,
+                                "selecting a car discarded its catalog tuning"
+                            );
+                            eprintln!(
+                                "GPU selected vehicle tuning smoke passed: acceleration={}",
+                                tuning.acceleration
                             );
                             self.appearance_stage = 4;
                         }
@@ -2485,6 +2498,11 @@ impl ApplicationHandler for App {
                             assert_eq!(
                                 state.menu.mods, self.mod_names,
                                 "offline resource list was not restored"
+                            );
+                            assert_eq!(
+                                state.car.as_ref().map(|(car, _)| car.handling),
+                                self.offline_car_handling,
+                                "server handling leaked into the restored offline car"
                             );
                             self.network_restored = true;
                             if let Some(directory) = &self.capture_dir {
@@ -3249,12 +3267,11 @@ fn main() -> Result<()> {
         } else {
             None
         },
-        car_scene: if loader.is_some() {
-            match loader
-                .as_mut()
-                .and_then(|l| l.take_custom_car())
+        car_scene: if let Some(world_loader) = loader.as_mut() {
+            match world_loader
+                .take_custom_car()
                 .map(Ok)
-                .unwrap_or_else(|| sa_scene::load_car(&game))
+                .unwrap_or_else(|| world_loader.load_original_car(&game, "taxi"))
             {
                 Ok(scene) => Some(scene),
                 Err(error) => {
@@ -3266,18 +3283,19 @@ fn main() -> Result<()> {
             None
         },
         initial_models: loader.as_ref().map(|l| l.model_names()).unwrap_or_default(),
+        offline_car_handling: None,
         car_catalog: {
             let mut catalog = loader
                 .as_mut()
                 .map(|l| l.take_car_catalog())
                 .unwrap_or_default();
-            if loader.is_some() {
+            if let Some(world_loader) = loader.as_ref() {
                 for (name, model) in [
                     ("Taxi", "taxi"),
                     ("Infernus", "infernus"),
                     ("Admiral", "admiral"),
                 ] {
-                    match sa_scene::load_car_model(&game, model) {
+                    match world_loader.load_original_car(&game, model) {
                         Ok(scene) => catalog.push((name.into(), scene)),
                         Err(e) => eprintln!("Vehicle {model} unavailable: {e:#}"),
                     }

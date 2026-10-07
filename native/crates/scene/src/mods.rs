@@ -14,6 +14,8 @@ struct Manifest {
     #[serde(default)]
     vehicles: Vec<Vehicle>,
     #[serde(default)]
+    original_vehicle_handling: HashMap<String, crate::vehicle::Handling>,
+    #[serde(default)]
     player: Option<PlayerModel>,
     #[serde(default)]
     placements: Vec<Instance>,
@@ -21,6 +23,21 @@ struct Manifest {
     exclude_model_ids: Vec<i32>,
     #[serde(default)]
     texture_overrides: HashMap<String, String>,
+}
+impl Manifest {
+    fn validate_vehicle_tuning(&self) -> Result<()> {
+        ensure!(
+            self.original_vehicle_handling.len() <= 32,
+            "original vehicle tuning limit (32)"
+        );
+        for (model, tuning) in &self.original_vehicle_handling {
+            ensure!(!model.is_empty() && model.len() <= 32
+                && model.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
+                "original vehicle tuning requires lowercase model names (1-32 letters/digits/underscores)");
+            tuning.validate()?;
+        }
+        Ok(())
+    }
 }
 #[derive(Deserialize)]
 struct Model {
@@ -143,6 +160,7 @@ pub fn share_resources(directory: &Path) -> Result<sa_net::resources::Share> {
         if !manifest.enabled {
             continue;
         }
+        manifest.validate_vehicle_tuning()?;
         let name = if manifest.name.is_empty() {
             folder.file_name().unwrap().to_string_lossy().into_owned()
         } else {
@@ -230,6 +248,7 @@ pub fn share_resources(directory: &Path) -> Result<sa_net::resources::Share> {
 }
 #[derive(Default)]
 pub(super) struct Resources {
+    pub original_vehicle_handling: HashMap<String, crate::vehicle::Handling>,
     pub geometry: HashMap<String, Vec<Geometry>>,
     pub dictionaries: HashMap<String, Vec<u8>>,
     pub textures: HashMap<String, Texture>,
@@ -300,6 +319,14 @@ fn png_texture(data: &[u8]) -> Result<Texture> {
     })
 }
 impl WorldLoader {
+    /// Read an original model from the installation and apply native resource tuning.
+    pub fn load_original_car(&self, game: &Path, model: &str) -> Result<Scene> {
+        let mut scene = super::load_car_model(game, model)?;
+        if let Some(tuning) = self.resources.original_vehicle_handling.get(model) {
+            scene.vehicle_handling = *tuning;
+        }
+        Ok(scene)
+    }
     pub fn enable_mods(&mut self, directory: &Path) -> Result<()> {
         if !directory.exists() {
             return Ok(());
@@ -332,6 +359,17 @@ impl WorldLoader {
                 self.resources.names.push(format!("[disabled] {name}"));
                 continue;
             }
+            manifest.validate_vehicle_tuning()?;
+            self.resources.original_vehicle_handling.extend(
+                manifest
+                    .original_vehicle_handling
+                    .iter()
+                    .map(|(name, tuning)| (name.clone(), *tuning)),
+            );
+            ensure!(
+                self.resources.original_vehicle_handling.len() <= 64,
+                "total original vehicle tuning limit (64)"
+            );
             ensure!(
                 manifest.models.len() <= 256 && manifest.placements.len() <= 2000,
                 "mod model/placement budget"
@@ -583,6 +621,32 @@ impl WorldLoader {
 mod tests {
     use super::*;
     #[test]
+    fn original_handling_pack_shares_only_manifest_and_rejects_invalid_models() {
+        let root = std::env::temp_dir().join(format!("sa-handling-only-{}", std::process::id()));
+        let folder = root.join("handling");
+        fs::create_dir_all(&folder).unwrap();
+        let mut manifest = serde_json::json!({"enabled":true,"original_vehicle_handling":{"taxi":{"acceleration":7.0}}});
+        fs::write(
+            folder.join("resource.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        let shared = share_resources(&root).unwrap();
+        assert_eq!(shared.manifest.resources.len(), 1);
+        assert_eq!(shared.manifest.resources[0].files.len(), 1);
+        assert_eq!(shared.manifest.resources[0].files[0].path, "resource.json");
+        for model in ["../taxi", "Taxi", "", "taxi.dff"] {
+            manifest["original_vehicle_handling"] = serde_json::json!({model:{"acceleration":7.0}});
+            fs::write(
+                folder.join("resource.json"),
+                serde_json::to_vec(&manifest).unwrap(),
+            )
+            .unwrap();
+            assert!(share_resources(&root).is_err(), "{model}");
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn custom_room_loads_and_player_can_enter() {
         let root = std::env::temp_dir().join(format!("sa-native-room-{}", std::process::id()));
         let folder = root.join("mods/[maps]/room");
@@ -638,6 +702,8 @@ mod tests {
             include_bytes!("../../../../mods/native-clothing-demo/clothes.dff"),
         )
         .unwrap();
+        manifest["original_vehicle_handling"] =
+            serde_json::json!({"taxi":{"acceleration":7.0},"infernus":{"acceleration":10.0}});
         manifest["player"] =
             serde_json::json!({"dff":"ped.dff","ifp":"ped.ifp","clothes":[{"dff":"clothes.dff"}]});
         fs::write(
@@ -686,6 +752,14 @@ mod tests {
         assert_eq!(cars.len(), 1);
         assert_eq!(cars[0].0, "Custom sedan");
         assert_eq!(loader.resources.car_name, "Custom coupe");
+        assert_eq!(
+            loader.resources.original_vehicle_handling["taxi"].acceleration,
+            7.0
+        );
+        assert_eq!(
+            loader.resources.original_vehicle_handling["infernus"].acceleration,
+            10.0
+        );
         assert_eq!(cars[0].1.vehicle_handling.acceleration, 4.0);
         assert_eq!(
             loader

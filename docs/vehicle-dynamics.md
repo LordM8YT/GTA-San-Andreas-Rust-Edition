@@ -38,7 +38,7 @@ map surfaces around Grove Street; it is not a whole-map collision audit.
 
 Each entry in a native resource's `vehicles` array can include a `handling`
 object. Omitted fields use the values below; omitting the object retains the
-prototype's default driving setup. Original cars currently use these defaults.
+prototype's default driving setup. Original cars use these defaults unless a resource supplies an original-car profile.
 Unknown field names, nonfinite numbers and out-of-range values reject the
 resource instead of silently ignoring typos. Restart after editing a resource.
 
@@ -67,3 +67,31 @@ fingerprint; restart the host/server to publish the updated pack. This remains
 client-simulated driving, without server authority or shared collision impulses.
 The importer does not translate GTA V/FiveM `handling.meta`: its physical units
 and underlying model differ. Add the native values after asset conversion.
+
+To tune installed original models without redistributing their assets, use a
+manifest-only resource:
+
+```json
+{
+  "schema_version": 2,
+  "enabled": true,
+  "name": "My driving setup",
+  "original_vehicle_handling": {
+    "taxi": { "acceleration": 7.4, "brake_deceleration": 12.0 },
+    "infernus": { "acceleration": 9.5, "top_speed": 60.0 }
+  }
+}
+```
+
+Keys are lowercase model basenames (1–32 letters, digits or underscores), without
+paths/extensions. Each resource supports 32 profiles, with 64 distinct profiles
+across loaded resources. Later resources replace earlier profiles for the same
+model; omitted fields in the winning profile use defaults. This changes cars
+already loaded into the catalog and does not register additional original models
+or affect custom DFF cars. Current original choices are Taxi, Infernus and Admiral.
+
+The disabled [native handling demo](../mods/native-handling-demo/README.md)
+provides a starting point. Server guests receive only its resource manifest and
+load the models from their own installations. Disconnecting restores their
+local car/tuning setup. Profiles are native values; original handling.cfg and
+FiveM handling.meta are not automatically translated.

@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "enabled": false,
+  "name": "Native handling demo",
+  "original_vehicle_handling": {
+    "taxi": { "acceleration": 7.4, "brake_deceleration": 12.0 },
+    "infernus": { "acceleration": 9.5, "top_speed": 60.0, "tire_grip": 5.5 },
+    "admiral": { "acceleration": 5.6, "top_speed": 42.0 }
+  }
+}
