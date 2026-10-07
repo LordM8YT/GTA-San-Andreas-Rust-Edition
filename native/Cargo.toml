@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/assets", "crates/scene", "crates/script", "crates/runtime"]
+members = ["crates/assets", "crates/audio", "crates/scene", "crates/script", "crates/runtime"]
 resolver = "2"
 
 [workspace.package]
@@ -13,4 +13,5 @@ glam = "0.30"
 pollster = "0.4"
 wgpu = "30.0.1"
 winit = "0.30.13"
+kira = { version = "0.12.5", default-features = false, features = ["cpal", "cpal-realtime", "cpal-realtime-dbus", "ogg", "vorbis", "wav", "flac", "mp3", "pcm"] }
 

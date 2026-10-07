@@ -10,9 +10,12 @@ velger ett bestemt, ikke-null interiør-ID og bruker samme geometrilaster,
 teksturoppslag og kollisjon. Utendørsvann inkluderes ikke i rommene.
 Modellenes faktiske grenser avgjør hvilke plasseringer som tas med.
 
-Dette er foreløpig grunnlaget for romlasting. Reisemeny, dørinnganger og
-retur til utendørsområdet må kobles til runtime før rommene er tilgjengelige
-fra vanlig freeroam. GTA V MLO-filer lastes ikke direkte.
+Interiørmenyen (I) tilbyr CJ sitt hus, Sweet sitt hus og Madd Dogg sin villa.
+R eller et valg i kartmenyen laster et utendørsområde før spilleren flyttes.
+Rommet byttes først etter kontroll av inngangens ståplass. Gange holdes på
+rommets underlag ved åpne portalkanter, slik at manglende utendørsgulv ikke
+gir et fall. Vanlige dørinnganger og flere reisemål gjenstår.
+GTA V MLO-filer lastes ikke direkte.
 
 Fra `native` kan originaldata og bevegelse kontrolleres med:
 
@@ -25,6 +28,11 @@ sin villa (ID 5). Den krever en trygg ståplass ved inngangen, utfører 600
 steg med gange og et hopp i hvert rom, og avviser fall gjennom gulvet eller
 manglende landing. En vellykket kontroll beviser denne ruten; alle rom og
 alle dører er ikke kontrollert.
+
+`--smoke-interiors` kontrollerer også GPU-opplasting, 120 rendersteg med
+gange/hopp i hvert av de tre rommene, korrekt dimensjon/vann og retur til
+Grove Street. Denne ruten er bestått. Når et trangt rom presser kameraet
+helt inntil figuren, skjules figuren midlertidig for å beholde utsikten.
 
 Lokal installasjon: 44 804 utendørsplasseringer, 5 965 interiørplasseringer
 og 10 155 kollisjonsmodeller. De tre kontrollrommene hadde henholdsvis

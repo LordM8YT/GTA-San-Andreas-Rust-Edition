@@ -10,6 +10,10 @@ pub struct Settings {
     pub vsync: bool,
     pub fullscreen: bool,
     pub show_hud: bool,
+    pub show_minimap: bool,
+    pub show_speedometer: bool,
+    pub minimap_zoom: f32,
+    pub vehicle_handling: f32,
     pub fly_speed: f32,
 }
 impl Default for Settings {
@@ -21,6 +25,10 @@ impl Default for Settings {
             vsync: true,
             fullscreen: false,
             show_hud: true,
+            show_minimap: true,
+            show_speedometer: true,
+            minimap_zoom: 1.0,
+            vehicle_handling: 1.0,
             fly_speed: 12.0,
         }
     }
@@ -37,6 +45,16 @@ impl Settings {
             self.sensitivity.clamp(0.2, 3.0)
         } else {
             defaults.sensitivity
+        };
+        self.minimap_zoom = if self.minimap_zoom.is_finite() {
+            self.minimap_zoom.clamp(0.5, 2.5)
+        } else {
+            defaults.minimap_zoom
+        };
+        self.vehicle_handling = if self.vehicle_handling.is_finite() {
+            self.vehicle_handling.clamp(0.5, 1.5)
+        } else {
+            defaults.vehicle_handling
         };
         self.fly_speed = if self.fly_speed.is_finite() {
             self.fly_speed.clamp(6.0, 60.0)
@@ -76,6 +94,12 @@ mod tests {
         assert_eq!(settings.fov, 110.0);
         assert_eq!(settings.sensitivity, 0.2);
         assert!(settings.vsync);
+        settings.minimap_zoom = f32::NAN;
+        settings.sanitize();
+        assert_eq!(settings.minimap_zoom, 1.0);
+        settings.minimap_zoom = 99.0;
+        settings.sanitize();
+        assert_eq!(settings.minimap_zoom, 2.5);
         settings.fov = f32::NAN;
         settings.sanitize();
         assert_eq!(settings.fov, 70.0);

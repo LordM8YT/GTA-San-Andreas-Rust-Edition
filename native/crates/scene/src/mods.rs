@@ -157,7 +157,14 @@ impl WorldLoader {
             }
             let manifest: Manifest = serde_json::from_slice(&resource(&folder, "mod.json")?)
                 .with_context(|| format!("mod manifest {}", folder.display()))?;
+            let folder_name = entry.file_name().to_string_lossy().into_owned();
+            let name = if manifest.name.is_empty() {
+                folder_name
+            } else {
+                manifest.name.clone()
+            };
             if !manifest.enabled {
+                self.resources.names.push(format!("[disabled] {name}"));
                 continue;
             }
             ensure!(
@@ -331,13 +338,8 @@ impl WorldLoader {
                     <= 256 * 1024 * 1024,
                 "total mod memory budget (256 MiB)"
             );
-            let name = if manifest.name.is_empty() {
-                entry.file_name().to_string_lossy().into_owned()
-            } else {
-                manifest.name
-            };
             eprintln!("Enabled resource: {name}");
-            self.resources.names.push(name);
+            self.resources.names.push(format!("[enabled] {name}"));
         }
         Ok(())
     }
@@ -363,7 +365,14 @@ mod tests {
     fn custom_room_loads_and_player_can_enter() {
         let root = std::env::temp_dir().join(format!("sa-native-room-{}", std::process::id()));
         let folder = root.join("mods/room");
+        let disabled = root.join("mods/disabled-room");
         fs::create_dir_all(&folder).unwrap();
+        fs::create_dir_all(&disabled).unwrap();
+        fs::write(
+            disabled.join("mod.json"),
+            br#"{"enabled":false,"name":"Disabled sample"}"#,
+        )
+        .unwrap();
         fs::write(root.join("empty.img"), b"VER2\0\0\0\0").unwrap();
         fs::write(
             folder.join("room.dff"),
@@ -414,6 +423,14 @@ mod tests {
         )
         .unwrap();
         loader.enable_mods(&root.join("mods")).unwrap();
+        assert!(loader
+            .mod_names()
+            .iter()
+            .any(|name| name == "[disabled] Disabled sample"));
+        assert!(loader
+            .mod_names()
+            .iter()
+            .any(|name| name == "[enabled] Test room"));
         let ped = loader
             .take_custom_player(Path::new("not-an-installation"))
             .unwrap()
@@ -456,7 +473,7 @@ mod tests {
         assert!(loader.take_custom_car().is_none());
         let mut car = crate::vehicle::Car::new(glam::Vec3::new(0.0, 0.65, 0.0), 0.55);
         for _ in 0..30 {
-            car.step(&world, 1.0, 0.0, false, 1.0 / 60.0);
+            car.step(&world, 1.0, 0.0, false, 1.0, 1.0 / 60.0);
         }
         assert!(car.speed > 2.0 && car.position.z > 0.5);
         assert_eq!(
@@ -477,9 +494,11 @@ mod tests {
         fs::remove_file(folder.join("room.dff")).unwrap();
         fs::remove_file(folder.join("car.dff")).unwrap();
         fs::remove_file(folder.join("mod.json")).unwrap();
+        fs::remove_file(disabled.join("mod.json")).unwrap();
         drop(loader);
         fs::remove_file(root.join("empty.img")).unwrap();
         fs::remove_dir(folder).unwrap();
+        fs::remove_dir(disabled).unwrap();
         fs::remove_dir(root.join("mods")).unwrap();
         fs::remove_dir(root).unwrap();
     }

@@ -95,9 +95,9 @@ lastet 146 kartplasseringer pluss taxien, til sammen 40 944 trekanter i 132
 teksturbatcher. Enkeltmodellen og kartet ble
 vist og visuelt kontrollert i det faktiske native Windows-vinduet.
 `cuttest`-metadata ble lest fra originalinstallasjonen, og den animerte
-forhåndsvisningen ble åpnet i native vindu. `cargo test --workspace` og
-Python-testene brukes som separate kontroller. Disse observasjonene er ikke
-en garanti for andre GTA SA-utgaver eller maskinvare.
+forhåndsvisningen ble åpnet i native vindu. `cargo test --workspace` brukes
+som kontroll. Disse observasjonene er ikke en garanti for andre GTA SA-utgaver
+eller maskinvare.
 
 Kilder for API- og scriptformatvalg: [wgpu 30-eksempel](https://github.com/gfx-rs/wgpu/blob/trunk/examples/standalone/02_hello_window/src/main.rs),
 [winit 0.30](https://docs.rs/winit/0.30.13/winit/),

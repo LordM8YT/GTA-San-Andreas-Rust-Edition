@@ -290,6 +290,28 @@ pub struct Player {
     pub grounded: bool,
 }
 impl Player {
+    /// Interior portals have no exterior floor behind them. Keep horizontal
+    /// movement on supported room geometry until actual portal travel exists.
+    pub fn step_in_room(&mut self, world: &CollisionWorld, horizontal: Vec3, jump: bool, dt: f32) {
+        let previous = self.feet;
+        self.step(world, horizontal, jump, dt);
+        if world
+            .ground_below(self.feet, previous.y + STEP_HEIGHT)
+            .is_none_or(|floor| floor < previous.y - 3.0)
+        {
+            self.feet.x = previous.x;
+            self.feet.z = previous.z;
+            if self.vertical_speed <= 0.0 {
+                if let Some(floor) = world.ground_below(self.feet, previous.y + STEP_HEIGHT) {
+                    if self.feet.y <= floor + STEP_HEIGHT {
+                        self.feet.y = floor;
+                        self.vertical_speed = 0.0;
+                        self.grounded = true;
+                    }
+                }
+            }
+        }
+    }
     pub fn step_in_water(
         &mut self,
         world: &CollisionWorld,
@@ -456,6 +478,26 @@ mod tests {
         assert!(fast.feet.x < 0.75);
         player.step(&world, Vec3::ZERO, true, 1.0 / 60.0);
         assert!(player.feet.y > 0.0);
+    }
+    #[test]
+    fn interior_open_portal_keeps_player_on_floor_and_allows_jumping() {
+        let world = CollisionWorld::from_batches(&[batch(&[
+            [-2.0, 1000.0, -2.0],
+            [2.0, 1000.0, -2.0],
+            [2.0, 1000.0, 2.0],
+            [-2.0, 1000.0, -2.0],
+            [2.0, 1000.0, 2.0],
+            [-2.0, 1000.0, 2.0],
+        ])]);
+        let mut player = Player::spawn(&world, Vec3::new(0.0, 1001.6, 0.0));
+        let mut jumped = false;
+        for frame in 0..240 {
+            player.step_in_room(&world, Vec3::X * 9.0, frame == 50, 1.0 / 60.0);
+            assert!(player.feet.x <= 2.0 && player.feet.y >= 1000.0);
+            jumped |= player.feet.y > 1000.1;
+        }
+        assert!(jumped && player.grounded);
+        assert!(player.feet.x > 1.8);
     }
     #[test]
     fn jumping_under_a_low_ceiling_stops_the_head_and_lands() {

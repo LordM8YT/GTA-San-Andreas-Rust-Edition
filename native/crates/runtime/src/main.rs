@@ -6,6 +6,7 @@ use sa_scene::{
 };
 use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Instant};
 mod capture;
+mod controller;
 mod menu;
 mod settings;
 mod streaming;
@@ -28,6 +29,8 @@ struct GpuBatch {
     base: Vec<f32>,
 }
 struct State {
+    audio: Option<sa_audio::AudioEngine>,
+    frontend_sounds: Option<sa_audio::FrontendSounds>,
     window: Arc<Window>,
     instance: wgpu::Instance,
     surface: wgpu::Surface<'static>,
@@ -45,6 +48,7 @@ struct State {
     yaw: f32,
     pitch: f32,
     keys: HashSet<KeyCode>,
+    gamepad: controller::Input,
     captured: bool,
     last: Instant,
     animation: Option<sa_script::CutAnimation>,
@@ -67,6 +71,8 @@ struct State {
     gui_context: egui::Context,
     gui_input: egui_winit::State,
     gui_renderer: egui_wgpu::Renderer,
+    radar_tiles: Vec<menu::RadarTile>,
+    _radar_textures: Vec<egui::TextureHandle>,
     menu: menu::Menu,
     applied_settings: settings::Settings,
     quit_requested: bool,
@@ -74,11 +80,31 @@ struct State {
     driving: bool,
     ped: Option<(sa_scene::ped::Ped, Vec<GpuBatch>)>,
     third_person: bool,
+    ped_visible: bool,
     ped_seconds: f32,
     ped_clip: &'static str,
     ped_yaw: f32,
 }
 impl State {
+    fn play_menu_sound(&mut self, kind: sa_audio::MenuSound) {
+        if let (Some(audio), Some(sounds)) = (&mut self.audio, &self.frontend_sounds) {
+            if let Err(error) = audio.play_effect(sounds.sound(kind)) {
+                eprintln!("Menu sound failed: {error:#}");
+            }
+        }
+    }
+    fn menu_feedback(&mut self, before: (Option<menu::Page>, usize), back: bool) {
+        let after = self.menu.sound_position();
+        if before != after {
+            self.play_menu_sound(if back {
+                sa_audio::MenuSound::Back
+            } else if before.0 != after.0 {
+                sa_audio::MenuSound::Select
+            } else {
+                sa_audio::MenuSound::Highlight
+            });
+        }
+    }
     fn install_car(&mut self, scene: Scene) -> Result<()> {
         let clearance = -scene
             .batches
@@ -133,7 +159,12 @@ impl State {
             self.keys.clear();
         }
     }
-    async fn new(window: Arc<Window>, mut scene: Scene, first_model: bool) -> Result<Self> {
+    async fn new(
+        window: Arc<Window>,
+        mut scene: Scene,
+        first_model: bool,
+        radar_tiles: Vec<sa_scene::RadarTile>,
+    ) -> Result<Self> {
         let instance = wgpu::Instance::default();
         let surface = instance.create_surface(window.clone())?;
         let adapter = instance
@@ -270,6 +301,26 @@ impl State {
         let batches = Self::upload_scene(&device, &queue, &image_layout, &sampler, scene)?;
         let depth = Self::make_depth(&device, size);
         let gui_context = egui::Context::default();
+        let mut radar_texture_handles = Vec::with_capacity(radar_tiles.len());
+        let radar_tiles = radar_tiles
+            .into_iter()
+            .map(|tile| {
+                let texture = gui_context.load_texture(
+                    format!("original-radar-{:02}", tile.index),
+                    egui::ColorImage::from_rgba_unmultiplied(
+                        [tile.texture.width as usize, tile.texture.height as usize],
+                        &tile.texture.rgba,
+                    ),
+                    egui::TextureOptions::LINEAR,
+                );
+                let radar_tile = menu::RadarTile {
+                    index: tile.index,
+                    texture: texture.id(),
+                };
+                radar_texture_handles.push(texture);
+                radar_tile
+            })
+            .collect::<Vec<_>>();
         let mut menu = menu::Menu::new(&gui_context, Vec::new());
         if first_model || animation.is_some() {
             menu.page = None;
@@ -287,6 +338,8 @@ impl State {
         let gui_renderer =
             egui_wgpu::Renderer::new(&device, format, egui_wgpu::RendererOptions::default());
         let mut state = Self {
+            audio: None,
+            frontend_sounds: None,
             window,
             instance,
             surface,
@@ -319,6 +372,7 @@ impl State {
             yaw: 0.0,
             pitch: 0.0,
             keys: HashSet::new(),
+            gamepad: controller::Input::default(),
             captured: false,
             last: Instant::now(),
             animation,
@@ -341,6 +395,8 @@ impl State {
             gui_context,
             gui_input,
             gui_renderer,
+            radar_tiles,
+            _radar_textures: radar_texture_handles,
             menu,
             applied_settings,
             quit_requested: false,
@@ -348,6 +404,7 @@ impl State {
             driving: false,
             ped: None,
             third_person: true,
+            ped_visible: true,
             ped_seconds: 0.0,
             ped_clip: "idle_stance",
             ped_yaw: 0.0,
@@ -659,18 +716,16 @@ impl State {
         );
         let right = Vec3::new(-self.yaw.cos(), 0.0, self.yaw.sin());
         let mut motion = Vec3::ZERO;
-        for (key, axis) in [
-            (KeyCode::KeyW, forward),
-            (KeyCode::KeyS, -forward),
-            (KeyCode::KeyD, right),
-            (KeyCode::KeyA, -right),
-            (KeyCode::KeyE, Vec3::Y),
-            (KeyCode::KeyQ, -Vec3::Y),
-        ] {
-            if self.keys.contains(&key) {
-                motion += axis;
-            }
-        }
+        let forward_input = (self.gamepad.move_y + f32::from(self.keys.contains(&KeyCode::KeyW))
+            - f32::from(self.keys.contains(&KeyCode::KeyS)))
+        .clamp(-1.0, 1.0);
+        let strafe_input = (self.gamepad.move_x + f32::from(self.keys.contains(&KeyCode::KeyD))
+            - f32::from(self.keys.contains(&KeyCode::KeyA)))
+        .clamp(-1.0, 1.0);
+        motion += (forward * forward_input + right * strafe_input).clamp_length_max(1.0);
+        motion.y += f32::from(self.keys.contains(&KeyCode::KeyE))
+            - f32::from(self.keys.contains(&KeyCode::KeyQ));
+        motion = motion.clamp_length_max(1.0);
         let speed = if self.keys.contains(&KeyCode::ShiftLeft)
             || self.keys.contains(&KeyCode::ShiftRight)
         {
@@ -678,18 +733,28 @@ impl State {
         } else {
             self.menu.settings.fly_speed
         };
+        let speed = if self.gamepad.sprint {
+            speed * 4.0
+        } else {
+            speed
+        };
         if self.driving {
             if let (Some(world), Some((car, _))) = (&self.collision, &mut self.car) {
                 let previous = car.position;
-                let throttle = f32::from(self.keys.contains(&KeyCode::KeyW))
-                    - f32::from(self.keys.contains(&KeyCode::KeyS));
-                let steer = f32::from(self.keys.contains(&KeyCode::KeyA))
-                    - f32::from(self.keys.contains(&KeyCode::KeyD));
+                let throttle = (f32::from(self.keys.contains(&KeyCode::KeyW))
+                    - f32::from(self.keys.contains(&KeyCode::KeyS))
+                    + self.gamepad.throttle)
+                    .clamp(-1.0, 1.0);
+                let steer = (f32::from(self.keys.contains(&KeyCode::KeyA))
+                    - f32::from(self.keys.contains(&KeyCode::KeyD))
+                    - self.gamepad.move_x)
+                    .clamp(-1.0, 1.0);
                 car.step(
                     world,
                     throttle,
                     steer,
-                    self.keys.contains(&KeyCode::Space),
+                    self.keys.contains(&KeyCode::Space) || self.gamepad.handbrake,
+                    self.menu.settings.vehicle_handling,
                     dt,
                 );
                 let center = [ORIGIN[0] + car.position.x, ORIGIN[1] - car.position.z];
@@ -704,8 +769,9 @@ impl State {
             }
         } else if self.walking {
             if let (Some(world), Some(player)) = (&self.collision, &mut self.player) {
-                let horizontal = Vec3::new(motion.x, 0.0, motion.z).normalize_or_zero();
-                let walking_speed = if self.keys.contains(&KeyCode::ShiftLeft)
+                let horizontal = Vec3::new(motion.x, 0.0, motion.z).clamp_length_max(1.0);
+                let walking_speed = if self.gamepad.sprint
+                    || self.keys.contains(&KeyCode::ShiftLeft)
                     || self.keys.contains(&KeyCode::ShiftRight)
                 {
                     9.0
@@ -718,14 +784,21 @@ impl State {
                         water,
                         ORIGIN,
                         horizontal * walking_speed,
-                        self.keys.contains(&KeyCode::Space),
+                        self.keys.contains(&KeyCode::Space) || self.gamepad.jump,
+                        dt,
+                    );
+                } else if self.interior != 0 {
+                    player.step_in_room(
+                        world,
+                        horizontal * walking_speed,
+                        self.keys.contains(&KeyCode::Space) || self.gamepad.jump,
                         dt,
                     );
                 } else {
                     player.step(
                         world,
                         horizontal * walking_speed,
-                        self.keys.contains(&KeyCode::Space),
+                        self.keys.contains(&KeyCode::Space) || self.gamepad.jump,
                         dt,
                     );
                 }
@@ -836,6 +909,18 @@ impl State {
         if let Some((position, _, _)) = camera_time {
             self.position = position;
         }
+        if let Some(audio) = &mut self.audio {
+            let orientation = if let Some((_, target, _)) = camera_time {
+                let forward = (target - self.position).normalize_or_zero();
+                Quat::from_rotation_arc(Vec3::NEG_Z, forward)
+            } else {
+                Quat::from_rotation_y(self.yaw) * Quat::from_rotation_x(-self.pitch)
+            };
+            if let Err(error) = audio.set_listener(self.position.to_array(), orientation.to_array())
+            {
+                eprintln!("Audio listener update failed: {error:#}");
+            }
+        }
         let target = camera_time
             .map(|(_, target, _)| target)
             .or_else(|| {
@@ -884,6 +969,8 @@ impl State {
             } else {
                 (self.position, target)
             };
+        self.ped_visible =
+            view_position.distance_squared(self.position - Vec3::Y * 0.5) >= 1.5f32.powi(2);
         let view = Mat4::look_at_rh(view_position, target, Vec3::Y);
         let fov = camera_time
             .map(|(_, _, fov)| fov)
@@ -924,6 +1011,9 @@ impl State {
         }
     }
     fn apply_menu_action(&mut self, action: Option<menu::Action>) {
+        if action.is_some() {
+            self.play_menu_sound(sa_audio::MenuSound::Select);
+        }
         match action {
             Some(menu::Action::Play) => {
                 self.menu.has_played = true;
@@ -1044,8 +1134,19 @@ impl State {
         let loading = self.streamer.as_ref().is_some_and(|s| s.pending());
         let context = self.gui_context.clone();
         let mut action = None;
+        let menu_before = self.menu.sound_position();
         let mut output = context.run_ui(raw_input, |ui| {
-            action = self.menu.draw(ui.ctx(), coordinates, loading);
+            action = self.menu.draw(
+                ui.ctx(),
+                coordinates,
+                loading,
+                self.car
+                    .as_ref()
+                    .filter(|_| self.driving)
+                    .map(|(car, _)| car.speed),
+                self.yaw,
+                &self.radar_tiles,
+            );
         });
         if self.captured && self.menu.page.is_none() {
             output.platform_output.cursor_icon = egui::CursorIcon::None;
@@ -1109,7 +1210,9 @@ impl State {
                 .chain(
                     self.ped
                         .iter()
-                        .filter(|_| self.third_person && self.walking && !self.driving)
+                        .filter(|_| {
+                            self.third_person && self.walking && !self.driving && self.ped_visible
+                        })
                         .flat_map(|(_, b)| b),
                 )
             {
@@ -1149,6 +1252,9 @@ impl State {
         }
         self.window.pre_present_notify();
         self.queue.present(frame);
+        if action.is_none() {
+            self.menu_feedback(menu_before, false);
+        }
         self.apply_menu_action(action);
         self.apply_settings();
         if let (Some(texture), Some(path)) = (capture_texture, capture_path) {
@@ -1167,6 +1273,7 @@ impl State {
     }
 }
 struct App {
+    frontend_sounds: Option<sa_audio::FrontendSounds>,
     car_scene: Option<Scene>,
     ped: Option<sa_scene::ped::Ped>,
     scene: Option<Scene>,
@@ -1180,6 +1287,7 @@ struct App {
     capture_dir: Option<PathBuf>,
     failure: Option<String>,
     mod_names: Vec<String>,
+    game_dir: PathBuf,
     smoke_menus: bool,
     smoke_stream: bool,
     smoke_car: bool,
@@ -1189,6 +1297,100 @@ struct App {
     car_start: Vec3,
     smoke_returning: bool,
     smoke_center: [f32; 2],
+    gilrs: Option<gilrs::Gilrs>,
+    gamepad_id: Option<gilrs::GamepadId>,
+    previous_gamepad: controller::Input,
+    last_gamepad_poll: Instant,
+    test_tone: Option<sa_audio::SoundEffect>,
+}
+impl App {
+    fn poll_gamepad(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(gilrs) = self.gilrs.as_mut() else {
+            return;
+        };
+        while let Some(event) = gilrs.next_event() {
+            match event.event {
+                gilrs::EventType::Connected => {
+                    self.gamepad_id = Some(event.id);
+                    eprintln!("Gamepad connected: {}", gilrs.gamepad(event.id).name());
+                }
+                gilrs::EventType::Disconnected if self.gamepad_id == Some(event.id) => {
+                    self.gamepad_id = None;
+                }
+                _ => {}
+            }
+        }
+        if self.gamepad_id.is_none() {
+            self.gamepad_id = gilrs.gamepads().next().map(|(id, _)| id);
+        }
+        let input = self
+            .gamepad_id
+            .map(|id| controller::read(&gilrs.gamepad(id)))
+            .unwrap_or_default();
+        let previous = self.previous_gamepad;
+        self.previous_gamepad = input;
+        let look_dt = self.last_gamepad_poll.elapsed().as_secs_f32().min(0.05);
+        self.last_gamepad_poll = Instant::now();
+        let Some(state) = self.state.as_mut() else {
+            return;
+        };
+        state.gamepad = input;
+
+        if input.pause && !previous.pause && state.streamer.is_some() {
+            if state.menu.page.is_some() {
+                state.menu.back();
+            } else {
+                state.menu.open(menu::Page::Pause);
+            }
+            state.capture(state.menu.page.is_none());
+            state.keys.clear();
+        }
+        if input.map && !previous.map && state.streamer.is_some() {
+            state.menu.open(menu::Page::Map);
+            state.capture(false);
+            state.keys.clear();
+        }
+        if state.menu.page.is_some() {
+            let back = input.menu_back && !previous.menu_back;
+            let menu_before = state.menu.sound_position();
+            let action = state.menu.controller_input(
+                input.menu_up && !previous.menu_up,
+                input.menu_down && !previous.menu_down,
+                input.menu_left && !previous.menu_left,
+                input.menu_right && !previous.menu_right,
+                input.menu_accept && !previous.menu_accept,
+                back,
+            );
+            if action.is_none() {
+                state.menu_feedback(menu_before, back);
+            }
+            if action.is_some() {
+                state.apply_menu_action(action);
+            } else if back {
+                state.capture(state.menu.page.is_none());
+                state.keys.clear();
+            }
+        } else if input.enter_exit && !previous.enter_exit {
+            state.toggle_car();
+        }
+        let look_speed = 2.2 * state.menu.settings.sensitivity;
+        if state.captured && state.menu.page.is_none() {
+            state.yaw -= input.look_x * look_speed * look_dt;
+            state.pitch = (state.pitch
+                + input.look_y
+                    * look_speed
+                    * look_dt
+                    * if state.menu.settings.invert_y {
+                        -1.0
+                    } else {
+                        1.0
+                    })
+            .clamp(-1.5, 1.5);
+        }
+        if state.quit_requested {
+            event_loop.exit();
+        }
+    }
 }
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
@@ -1219,8 +1421,22 @@ impl ApplicationHandler for App {
                 .expect("window"),
         );
         let scene = self.scene.take().expect("loaded scene");
-        match pollster::block_on(State::new(window.clone(), scene, self.first_model)) {
+        let radar_tiles = match sa_scene::load_radar_tiles(&self.game_dir) {
+            Ok(tiles) => Some(tiles),
+            Err(error) => {
+                eprintln!("Original radar unavailable: {error:#}");
+                None
+            }
+        };
+        let radar_tiles = radar_tiles.unwrap_or_default();
+        match pollster::block_on(State::new(
+            window.clone(),
+            scene,
+            self.first_model,
+            radar_tiles,
+        )) {
             Ok(mut state) => {
+                state.frontend_sounds = self.frontend_sounds.take();
                 state.streamer = self.streamer.take();
                 state.menu.mods = self.mod_names.clone();
                 if let Some(ped) = self.ped.take() {
@@ -1258,6 +1474,15 @@ impl ApplicationHandler for App {
                     state.pitch = 0.0;
                     state.yaw = -std::f32::consts::FRAC_PI_2;
                 }
+                match sa_audio::AudioEngine::new() {
+                    Ok(audio) => {
+                        state.audio = Some(audio);
+                        eprintln!("Audio output initialized (F10 plays a test tone)");
+                    }
+                    Err(error) => {
+                        eprintln!("Audio output unavailable; continuing silently: {error:#}")
+                    }
+                }
                 if self.smoke_car {
                     state.place_car();
                     self.car_start = state.car.as_ref().expect("car mesh missing").0.position;
@@ -1268,6 +1493,16 @@ impl ApplicationHandler for App {
                         .set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
                 }
                 self.state = Some(state);
+                match gilrs::Gilrs::new() {
+                    Ok(gilrs) => {
+                        self.gamepad_id = gilrs.gamepads().next().map(|(id, gamepad)| {
+                            eprintln!("Gamepad connected: {}", gamepad.name());
+                            id
+                        });
+                        self.gilrs = Some(gilrs);
+                    }
+                    Err(error) => eprintln!("Xbox/gamepad input unavailable: {error}"),
+                }
             }
             Err(error) => {
                 eprintln!("GPU startup failed: {error:#}");
@@ -1288,6 +1523,7 @@ impl ApplicationHandler for App {
                 if event.physical_key == PhysicalKey::Code(KeyCode::Escape)
                     && state.streamer.is_some()
                 {
+                    state.play_menu_sound(sa_audio::MenuSound::Back);
                     if state.menu.page.is_some() {
                         state.menu.back();
                     } else {
@@ -1661,6 +1897,15 @@ impl ApplicationHandler for App {
                             KeyCode::F9 if !event.repeat => {
                                 state.place_car();
                             }
+                            KeyCode::F10 if !event.repeat => {
+                                if let (Some(audio), Some(tone)) =
+                                    (&mut state.audio, &self.test_tone)
+                                {
+                                    if let Err(error) = audio.play_effect(tone) {
+                                        eprintln!("Audio test tone failed: {error:#}");
+                                    }
+                                }
+                            }
                             KeyCode::F6 if !event.repeat => {
                                 state.menu.open(menu::Page::Wardrobe);
                                 state.keys.clear();
@@ -1759,6 +2004,7 @@ impl ApplicationHandler for App {
         }
     }
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.poll_gamepad(event_loop);
         if self.smoke {
             if let Some(state) = &self.state {
                 let id = state.window.id();
@@ -1796,6 +2042,24 @@ fn main() -> Result<()> {
         .find(|w| w[0] == "--game-dir")
         .map(|w| PathBuf::from(&w[1]))
         .unwrap_or_else(|| PathBuf::from(r"E:\GTA San Andreas\Grand Theft Auto San Andreas"));
+    if args.iter().any(|arg| arg == "--probe-audio") {
+        let archive = sa_audio::archive::SfxArchive::open(&game)?;
+        let mut count = 0;
+        let mut samples = 0usize;
+        for bank in 0..archive.bank_count().min(144) {
+            let sounds = archive
+                .read_bank(bank)
+                .with_context(|| format!("SFX bank {bank}"))?;
+            count += sounds.len();
+            samples += sounds
+                .iter()
+                .map(|sound| sound.samples.len())
+                .sum::<usize>();
+        }
+        sa_audio::FrontendSounds::load(&game)?;
+        println!("Original SFX probe passed: {} indexed banks; {count} sounds / {samples} PCM samples checked in banks 0..143; three stereo menu cues loaded", archive.bank_count());
+        return Ok(());
+    }
     if let Some(pair) = args.windows(2).find(|w| w[0] == "--inspect-cutscene") {
         println!("{:#?}", sa_script::inspect_cutscene(&game, &pair[1])?);
         return Ok(());
@@ -1837,7 +2101,7 @@ fn main() -> Result<()> {
                     2 => -Vec3::X,
                     _ => -Vec3::Z,
                 };
-                player.step(world, direction * 4.5, frame == 100, 1.0 / 60.0);
+                player.step_in_room(world, direction * 4.5, frame == 100, 1.0 / 60.0);
                 anyhow::ensure!(
                     player.feet.is_finite() && player.feet.y > start.y - 2.0,
                     "{name} movement fell through the floor"
@@ -2019,6 +2283,16 @@ fn main() -> Result<()> {
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = App {
+        frontend_sounds: match sa_audio::FrontendSounds::load(&game) {
+            Ok(sounds) => {
+                eprintln!("Original San Andreas frontend sounds loaded");
+                Some(sounds)
+            }
+            Err(error) => {
+                eprintln!("Original frontend sounds unavailable: {error:#}");
+                None
+            }
+        },
         ped: if let Some(world_loader) = loader.as_mut() {
             match world_loader
                 .take_custom_player(&game)
@@ -2073,6 +2347,8 @@ fn main() -> Result<()> {
             .map(|w| PathBuf::from(&w[1])),
         failure: None,
         mod_names,
+        game_dir: game,
+        test_tone: sa_audio::SoundEffect::tone(660.0, 0.18, 48_000).ok(),
         smoke_menus: args.iter().any(|a| a == "--smoke-menus"),
         smoke_stream: args.iter().any(|a| a == "--smoke-stream"),
         smoke_car: args.iter().any(|a| a == "--smoke-car"),
@@ -2084,6 +2360,10 @@ fn main() -> Result<()> {
         car_start: Vec3::ZERO,
         smoke_returning: false,
         smoke_center: ORIGIN,
+        gilrs: None,
+        gamepad_id: None,
+        previous_gamepad: controller::Input::default(),
+        last_gamepad_poll: Instant::now(),
     };
     event_loop.run_app(&mut app)?;
     if let Some(error) = app.failure {

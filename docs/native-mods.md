@@ -1,15 +1,35 @@
-# Native mod-ressurser
+# Native mod resources
 
-Native freeroam leser `mods/<ressurs>/mod.json`, alfabetisk etter mappenavn.
-Start runtime på nytt etter endringer. `--no-mods` slår dem av og
-`--mods-dir PATH` velger en annen rotmappe. En senere ressurs med samme
-modell-ID erstatter definisjonen.
+The Rust free-roam runtime loads `mods/<resource>/mod.json` in alphabetical
+folder order. The local-resources menu lists detected enabled and disabled
+resources. Set `enabled` to `true` or `false` in the manifest and restart to
+change a resource's state. The launcher starts from the project root so the
+project's `mods/` folder is found. Use `--no-mods` to disable mods and
+`--mods-dir PATH` to select another root folder. A later resource replaces an
+earlier definition with the same model ID.
+
+## Formats and compatibility
+
+This runtime supports its documented `mod.json` resource schema and the asset
+formats described below: PC RenderWare DFF models, TXD textures (and PNG
+texture overrides), COL collision files, placements, and the documented
+vehicle, player, and clothing resources. It does not load arbitrary original
+San Andreas mods directly. Binary plugins, ASI/DLL mods, CLEO scripts, original
+game-code or plugin APIs, and unconverted archives/workflows such as IMG/IPL
+are not drop-in compatible. Convert assets into a supported resource or add
+explicit format support; scripts and DLLs are not executed. FiveM resources
+and the FiveM script API are also incompatible.
+
+Original game assets are read from the user's installation. Do not redistribute
+Rockstar assets or converted/upscaled copies in project releases. Share your
+own assets and manifests instead.
+
 
 ```json
 {
   "schema_version": 2,
   "enabled": true,
-  "name": "Mitt bygg",
+  "name": "My building",
   "models": [
     { "id": 30000, "dff": "building.dff", "txd": "building.txd", "col": "building.col" }
   ],
@@ -21,82 +41,81 @@ modell-ID erstatter definisjonen.
 }
 ```
 
-Posisjoner er originale GTA XYZ. Quaternion bruker IPL-konvensjonen.
-Velg en ubrukt ID, for eksempel fra 30000. En eksisterende ID erstatter
-originalmodellen på dens eksisterende kartplasseringer. Modellfilene må være
-lokale til ressursmappen. DFF uten teksturer trenger ikke `txd`.
+Positions use the original GTA XYZ coordinates. Quaternions use the IPL convention.
+Choose an unused ID, such as one starting at 30000. An existing ID replaces the
+original model at its existing map placements. Model files must be local to the
+resource folder. DFF files without textures do not need `txd`.
 
-Rigid PC RenderWare-DFF støttes for kartmodeller. Skinnet PC DFF støttes
-for `player` som beskrevet nedenfor. Native-/multimorph-geometri støttes
-ikke. TXD bruker D3D9-dekoderne. PNG kan være opptil
-4096 × 4096. COL må ha nøyaktig én modell. Uten COL brukes synlige opake
-trekanter som kollisjonsreserve. Med COL brukes modellens egen fysikk.
-Dette lar deg lage custom bygg/rom du kan gå i, men er ikke GTA V MLO-import.
+Rigid PC RenderWare DFFs are supported for map models. Skinned PC DFFs are
+supported for `player`, as described below. Native and multimorph geometry are
+not supported. TXD files use the D3D9 decoders. PNG images can be up to
+4096 × 4096. A COL file must contain exactly one model. Without a COL file,
+visible opaque triangles are used as a collision fallback. With a COL file,
+its collision geometry is used. This supports custom buildings and enterable
+rooms, but is not GTA V MLO import.
 
-`placements` kan bruke en original model-ID uten en `models`-oppføring.
-`texture_overrides` og `exclude_model_ids` bruker samme nøkkelstil som den
-eldre WebGL-testen. Feltet `settings` i de eldre demonstrasjonene påvirker
-foreløpig bare WebGL-runtime.
+`placements` can reference an original model ID without a `models` entry.
+Texture overrides use the `dictionary:texture` key format. Legacy manifest
+settings are not part of the native schema.
 
-`mods/native-room-demo` inneholder et eget generert DFF-rom med dør, gulv,
-tak, vegger og benk. Sett `enabled` til `true` for å plassere det på Grove
-Street. Det er deaktivert som standard så du kan velge plasseringen selv.
-`tools/generate_native_room.py` gjenskaper filen fra egen geometri.
+`mods/native-room-demo` contains a custom DFF room with a door, floor, ceiling,
+walls, and bench. Set `enabled` to `true` to place it on Grove Street. It is
+disabled by default so you can choose its placement.
 
-Dette er data-ressurser; DLL-er eller scripts kjøres ikke. ID-er for peds og
-biler gir ikke automatisk AI, skjelettanimasjon, klær eller kjørefysikk.
-FiveM-filer og FiveM-script-API er ikke kompatible med dette formatet.
+These are data resources; DLLs and scripts are not executed. Ped and vehicle IDs
+do not automatically provide AI, skeletal animation, clothing, or vehicle
+physics. FiveM files and the FiveM script API are not compatible with this
+format.
 
-Kjørbare custom biler registreres separat:
+Runnable custom vehicles are registered separately:
 
 ```json
 {
   "schema_version": 2,
   "enabled": true,
-  "name": "Min bil",
+  "name": "My car",
   "vehicles": [{ "dff": "car.dff", "txd": "car.txd" }]
 }
 ```
 
-Foreløpig støttes én aktiv custom bil totalt. Den erstatter taxien på F9
-og bruker de samme kjørekontrollene. `txd` kan utelates for en uteksturert
-DFF. Alle teksturer må finnes i ressursens TXD; automatisk søk i originale
-vehicle.txd er foreløpig bare tilgjengelig for standardtaxien. Bruk en
-vanlig personbil med original SA-størrelse og modellakse. Fysikken bruker
-en fast personbilform, uten egen handling, hjulanimasjon eller skader.
+Only one custom vehicle can be active at a time. It replaces the F9 taxi and
+uses the same driving controls. `txd` can be omitted for an untextured DFF.
+All textures must be included in the resource TXD; automatic lookup in the
+original `vehicle.txd` is available only for the standard taxi. Use a typical
+passenger car with original SA scale and model axes. Physics uses a fixed
+passenger-car shape, without custom handling, wheel animation, or damage.
 
-`mods/native-car-demo` er en egen enkel blå bil uten originale assets.
-Aktiver `enabled` i dens `mod.json` og start på nytt for å prøve den.
-`tools/generate_native_car.py` gjenskaper geometrien. Demoen er deaktivert
-som standard slik at normal oppstart fortsatt bruker taxien.
+`mods/native-car-demo` is a simple custom blue car with no original assets.
+Set `enabled` to `true` in its `mod.json` and restart to try it. The demo is
+disabled by default so normal startup continues to use the taxi.
 
-Custom spillerfigur registreres med `player`:
+A custom player character is registered with `player`:
 
 ```json
 {
   "schema_version": 2,
   "enabled": true,
-  "name": "Min spillerfigur",
+  "name": "My player character",
   "player": { "dff": "ped.dff", "txd": "ped.txd", "ifp": "ped.ifp" }
 }
 ```
 
-Én aktiv spillerressurs støttes. Modellen må ha PC Skin/HAnim-data med
-bein-ID-er og vekter. `txd` kan utelates for uteksturert geometri. `ifp`
-kan utelates når skjelettet passer til original `anim/ped.ifp`; ellers
-må egne ANP3-klipp hete `idle_stance`, `walk_player` og `run_player`.
-Alle bein med vertexvekter må ha et spor i hvert av disse klippene.
-Spor bindes foreløpig etter bein-ID, ikke navn. ID -1 med bare navnebinding
-støttes derfor ikke for spillerens vektede bein. Modellen må være oppreist
-og mellom 1 og 2,5 meter høy i tomgang. Fysikken bruker fortsatt den faste
-spillerkroppen; skjelettstørrelsen endrer ikke kollisjonsformen.
+Only one player resource can be active. The model must have PC Skin/HAnim
+data with bone IDs and weights. `txd` can be omitted for untextured geometry.
+`ifp` can be omitted when the skeleton matches the original `anim/ped.ifp`;
+otherwise, provide custom ANP3 clips named `idle_stance`, `walk_player`, and
+`run_player`. Every bone with vertex weights must have a track in each clip.
+Tracks are currently matched by bone ID, not name, so weighted player bones
+using ID -1 with name-only binding are not supported. The model must be upright
+and between 1 and 2.5 meters tall in its idle pose. Physics still uses a fixed
+player body; skeleton size does not change the collision shape.
 
-`mods/native-ped-demo` inneholder en egen skinnet figur og egne klipp,
-generert av `tools/generate_native_ped.py`. Aktiver `enabled` og start
-på nytt for å prøve den. Demoen er deaktivert som standard.
-Dette erstatter hele spillerfiguren. Figuren skjules foreløpig under bilkjøring.
+`mods/native-ped-demo` contains a custom skinned character and custom clips.
+Set `enabled` to `true` and restart to try it. The demo is disabled by default.
+This replaces the entire player character. The character is currently hidden
+while driving.
 
-Separate skinnede plagg kan legges til spillerressursen:
+Separate skinned clothing items can be added to the player resource:
 
 ```json
 "player": {
@@ -106,21 +125,21 @@ Separate skinnede plagg kan legges til spillerressursen:
 }
 ```
 
-Inntil 16 plagg støttes. Hvert plagg må ha Skin/HAnim-data og samme bein-ID-er,
-modellkoordinater og bind-pose som spilleren. Bein rekkefølgen i paletten
-kan variere; lasteren kobler dem etter ID. Bind-matrisene må passe innen
-0,01. Plagg følger spillerens tomgang, gange og løp og kan bruke egen TXD.
-Uteksturerte plagg trenger ikke TXD. Kroppsgeometrien beholdes under klærne,
-så plagget må tilpasses for å unngå gjennomstikk; kroppsdelmasker gjenstår.
-F6 åpner garderoben. Plagg kan slås av og på med mus eller piltaster og
-Enter mens spillet kjører. `name` er valgfritt visningsnavn, og `enabled`
-velger starttilstanden (standard: true). Antrekket lagres foreløpig ikke
-mellom spilløkter. CJ sin
-opprinnelige komponentmontering og FiveM-klær lastes ikke direkte.
+Up to 16 clothing items are supported. Each item must have Skin/HAnim data
+and the same bone IDs, model coordinates, and bind pose as the player. Palette
+bone order may vary; the loader matches bones by ID. Bind matrices must match
+within 0.01. Clothing follows the player's idle, walk, and run animations and
+can use its own TXD. Untextured clothing does not need a TXD. Body geometry
+remains under clothing, so items must be fitted to avoid clipping; body-part
+masks are not yet supported. Press F6 to open the wardrobe. Items can be
+toggled during gameplay with the mouse or arrow keys and Enter. `name` is an
+optional display name, and `enabled` selects the initial state (default: true).
+Outfits are not yet saved between sessions. Original CJ component assembly and
+FiveM clothing are not loaded directly.
 
-`mods/native-clothing-demo` viser en separat rød jakke og gul hatt på vår
-egen demofigur. Den er deaktivert som standard. Aktiver bare én av
-spiller-demoene om gangen. `tools/generate_native_clothes.py` gjenskaper den.
+`mods/native-clothing-demo` shows a separate red jacket and yellow hat on our
+custom demo character. It is disabled by default. Enable only one of the player
+demos at a time.
 
 Filer begrenses til 16 MiB hver, totalt 512 modeller, 512 teksturoverstyringer
 og 256 MiB mod-ressurser. Ressurser kan ikke referere til filer utenfor egen

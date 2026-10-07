@@ -93,19 +93,23 @@ impl Car {
         throttle: f32,
         steer: f32,
         brake: bool,
+        handling: f32,
         dt: f32,
     ) {
         let dt = dt.clamp(0.0, 0.05);
         if dt == 0.0 {
             return;
         }
-        self.speed = (self.speed + throttle.clamp(-1.0, 1.0) * 8.0 * dt).clamp(-10.0, 35.0);
+        let handling = handling.clamp(0.5, 1.5);
+        self.speed = (self.speed + throttle.clamp(-1.0, 1.0) * 8.0 * handling * dt)
+            .clamp(-10.0 * handling, 35.0 * handling);
         let deceleration = if brake { 24.0 } else { 1.2 };
         self.speed = self.speed.signum() * (self.speed.abs() - deceleration * dt).max(0.0);
         let old_yaw = self.yaw;
         self.yaw += steer.clamp(-1.0, 1.0)
             * self.speed.signum()
             * (self.speed.abs() / 8.0).min(1.0)
+            * handling
             * 1.2
             * dt;
         if !self.body_clear(world, self.position) {
@@ -196,7 +200,7 @@ mod tests {
         let world = CollisionWorld::from_batches(&[floor(-20.0, 20.0, 0.0), wall]);
         let mut car = Car::new(Vec3::Y * 0.6, 0.6);
         car.speed = 8.0;
-        car.step(&world, 0.0, 1.0, false, 0.05);
+        car.step(&world, 0.0, 1.0, false, 1.0, 0.05);
         assert_eq!(car.yaw, 0.0);
         assert!(car.position.z > 0.0 && car.body_clear(&world, car.position));
     }
@@ -229,7 +233,7 @@ mod tests {
         let world = CollisionWorld::from_batches(&[geometry]);
         let mut car = Car::new(Vec3::Y * 0.6, 0.6);
         for _ in 0..240 {
-            car.step(&world, 1.0, 0.0, false, 1.0 / 60.0);
+            car.step(&world, 1.0, 0.0, false, 1.0, 1.0 / 60.0);
         }
         assert!(car.position.z > 1.0 && car.position.z < 7.11);
         assert!(car.position.y > 0.5);
@@ -237,7 +241,7 @@ mod tests {
         car.position.z = 0.0;
         car.speed = 15.0;
         for _ in 0..30 {
-            car.step(&world, 0.0, 0.0, true, 1.0 / 60.0);
+            car.step(&world, 0.0, 0.0, true, 1.0, 1.0 / 60.0);
         }
         assert!(car.speed < 4.0);
     }

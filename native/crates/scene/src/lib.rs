@@ -49,6 +49,27 @@ pub struct Scene {
     pub collision: Option<collision::CollisionWorld>,
 }
 
+pub struct RadarTile {
+    pub index: usize,
+    pub texture: Texture,
+}
+
+/// Decode the original 12x12 radar texture grid from the game installation.
+pub fn load_radar_tiles(game: &Path) -> Result<Vec<RadarTile>> {
+    let mut archive = Img::open(&game.join("models/gta3.img"))?;
+    (0..144)
+        .map(|index| {
+            let name = format!("radar{index:02}");
+            let dictionary = archive.read(&format!("{name}.txd"))?;
+            Ok(RadarTile {
+                index,
+                texture: decode_txd(&dictionary, &name)
+                    .with_context(|| format!("decoding original radar tile {name}"))?,
+            })
+        })
+        .collect()
+}
+
 fn lines(path: &Path) -> Result<Vec<String>> {
     let data = fs::read(path)?;
     ensure!(

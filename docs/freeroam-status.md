@@ -5,13 +5,19 @@ ikke prioritert. Originalinstallasjonen leses; gta_sa.exe kjøres ikke.
 
 ## Start og kontroller
 
-Dobbeltklikk `start-freeroam.cmd` eller `start-native.cmd`. Ferdig Windows-exe
-ligger i `native/target/release/sa-runtime.exe`.
+Dobbeltklikk `start-freeroam.cmd` (eller `start-native.cmd`). Skriptet starter
+den ferdige Windows-exe-en, eller bygger den med Rust/Cargo dersom den mangler.
+Exe-en ligger i `native/target/release/sa-runtime.exe`.
 
 - WASD: gå. Shift: løp. Space: hopp. Klikk i vinduet for musestyring.
+- Xbox-kontroller (standardmapping): venstre stikke går/styrer, høyre stikke ser rundt;
+  A hopper/bekrefter, X løper, Y går inn/ut av bil, RT gasser, LT rygger,
+  LB håndbrems. Start åpner pause, View/Back åpner kart, D-pad navigerer og B går tilbake.
+  Kontrolleren kan kobles til mens runtime kjører; tastatur/mus virker fortsatt samtidig.
+  Ingen vibrasjon eller bindingstilpasning ennå.
 - I dypt vann: WASD beveger i overflaten, Space gir et løft.
 - P: gåmodus/flykamera. Q/E: ned/opp i flykamera. Esc: pausemeny.
-- M: kartmeny. Mus eller piltaster/Enter brukes i hovedmenyen.
+- M: kartmeny. Mus, piltaster/Enter eller Xbox D-pad/A brukes i menyene.
 - F9: hent taxi foran deg og sett deg inn. F: gå ut / inn nær bilen.
 - I bil: W/S gass og rygging, A/D styring, Space brems.
 - R: last Grove Street og gå tilbake dit.
@@ -30,9 +36,16 @@ feilmelding vises i menyen.
 ## Implementert
 
 - Hovedmeny inspirert av San Andreas, tilpasset freeroam, med verden som bakgrunn.
-- Pause, kart med ni reisemål, innstillinger, kontroller og lokal mod-oversikt.
-- Innstillinger for synsfelt, mus, fullskjerm, VSync, HUD og flyfart lagres i
+- Pause, kart med ni reisemål, innstillinger, kontroller og lokal mod-oversikt
+  med synlig status for aktive og deaktiverte ressurser.
+- Innstillinger for synsfelt, mus, fullskjerm, VSync, HUD, radar/minikart,
+  speedometer, kjøreegenskaper og flyfart lagres i
   `%LOCALAPPDATA%/SAFreeroam/settings.json`. Menyer stopper spillerbevegelsen.
+- Radar/minikartet bruker de originale radarflisene fra installasjonens
+  `models/radar.txd`, plassert etter San Andreas-verdenskoordinater. Det roterer
+  med spillerens retning, har justerbar zoom og viser reisemålsmarkører. Hvis
+  originalfilen mangler, vises ikke et oppdiktet kart. Speedometeret
+  vises når spilleren kjører bil. Begge kan slås av hver for seg i innstillingene.
 - Tap av vindusfokus åpner pausemenyen. Kartmenyen støtter også tallene 1–9.
 - `--smoke-menus` rendrer alle sju menysidene og kan lagre renderbilder.
 
@@ -131,7 +144,7 @@ FiveM/GTA V-ressurser lastes ikke direkte. Custom DFF-rom kan plasseres med
 kollisjon, men dette er ikke en ferdig GTA V MLO-/portal-/interiørmotor.
 Originalinteriørarkivet leses nå også. Separat romlasting og 600 steg med
 gange/hopp er kontrollert i CJ sitt hus, Sweet sitt hus og Madd Dogg sin
-villa. Tilgang fra freeroam-menyen og dørinnganger gjenstår; se
+villa. Interiørmenyen (I) og retur via R/kart er GPU-kontrollert. Dørinnganger gjenstår; se
 `native-interiors.md` for kontrollen og begrensningene.
 
 Kartet har detaljstreaming med foreløpig fjern-LOD. Bølger, dykking, tidsstyrte objekter,
