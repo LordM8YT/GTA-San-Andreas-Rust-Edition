@@ -42,8 +42,11 @@ fn bounded_file(path: &Path, max: usize) -> Result<Vec<u8>> {
 }
 impl SfxArchive {
     pub fn open(game: &Path) -> Result<Self> {
-        let root = game.join("audio").canonicalize()?;
-        let pak = bounded_file(&root.join("CONFIG/PakFiles.dat"), 52 * 64)?;
+        let root = sa_assets::game_path::resolve(game, "audio")?.canonicalize()?;
+        let pak = bounded_file(
+            &sa_assets::game_path::resolve(&root, "CONFIG/PakFiles.dat")?,
+            52 * 64,
+        )?;
         ensure!(
             !pak.is_empty() && pak.len().is_multiple_of(52),
             "invalid SFX package directory"
@@ -60,7 +63,10 @@ impl SfxArchive {
             );
             packages.push(std::str::from_utf8(raw)?.to_owned());
         }
-        let lookup = bounded_file(&root.join("CONFIG/BankLkup.dat"), 12 * 4096)?;
+        let lookup = bounded_file(
+            &sa_assets::game_path::resolve(&root, "CONFIG/BankLkup.dat")?,
+            12 * 4096,
+        )?;
         ensure!(
             !lookup.is_empty() && lookup.len().is_multiple_of(12),
             "invalid SFX bank directory"
@@ -93,11 +99,11 @@ impl SfxArchive {
             bank.bytes <= LIMIT,
             "requested SFX bank exceeds 16 MiB limit"
         );
-        let path = self
-            .root
-            .join("SFX")
-            .join(&self.packages[bank.package])
-            .canonicalize()?;
+        let path = sa_assets::game_path::resolve(
+            &self.root,
+            &format!("SFX/{}", self.packages[bank.package]),
+        )?
+        .canonicalize()?;
         ensure!(
             path.starts_with(&self.root),
             "SFX package escapes audio directory"

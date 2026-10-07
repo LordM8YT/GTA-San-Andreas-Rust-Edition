@@ -56,7 +56,7 @@ pub struct RadarTile {
 
 /// Decode the original 12x12 radar texture grid from the game installation.
 pub fn load_radar_tiles(game: &Path) -> Result<Vec<RadarTile>> {
-    let mut archive = Img::open(&game.join("models/gta3.img"))?;
+    let mut archive = Img::open(&sa_assets::game_path::resolve(game, "models/gta3.img")?)?;
     (0..144)
         .map(|index| {
             let name = format!("radar{index:02}");
@@ -85,7 +85,7 @@ fn lines(path: &Path) -> Result<Vec<String>> {
 fn registered(root: &Path, kind: &str, extension: &str) -> Result<Vec<PathBuf>> {
     let mut out = Vec::new();
     for manifest in ["default.dat", "gta.dat"] {
-        let path = root.join("data").join(manifest);
+        let path = sa_assets::game_path::resolve(root, &format!("data/{manifest}"))?;
         ensure!(!path.is_symlink(), "symlink manifest rejected");
         for line in lines(&path)? {
             let mut parts = line.split_whitespace();
@@ -97,7 +97,7 @@ fn registered(root: &Path, kind: &str, extension: &str) -> Result<Vec<PathBuf>> 
                 continue;
             }
             let relative = relative.replace('\\', "/");
-            let path = root.join(relative);
+            let path = sa_assets::game_path::resolve(root, &relative)?;
             let resolved = path
                 .canonicalize()
                 .with_context(|| format!("registered {kind} absent: {}", path.display()))?;
@@ -369,10 +369,13 @@ pub struct WorldLoader {
 pub const DISTANT_RADIUS: f32 = 2500.0;
 /// Standalone taxi mesh; no script or cutscene timeline is loaded.
 pub fn load_car(game: &Path) -> Result<Scene> {
-    let mut main = Img::open(&game.join("models/gta3.img"))?;
+    let mut main = Img::open(&sa_assets::game_path::resolve(game, "models/gta3.img")?)?;
     let geometry = sa_assets::decode_vehicle_dff(&main.read("taxi.dff")?)?;
     let taxi = main.read("taxi.txd")?;
-    let common = fs::read(game.join("models/generic/vehicle.txd"))?;
+    let common = fs::read(sa_assets::game_path::resolve(
+        game,
+        "models/generic/vehicle.txd",
+    )?)?;
     car_scene(&geometry, |name| {
         decode_txd(&taxi, name).or_else(|_| decode_txd(&common, name))
     })
@@ -458,9 +461,9 @@ fn visible_region(distance_squared: f32, is_lod: bool, radius: f32) -> bool {
 impl WorldLoader {
     pub fn open(game: &Path) -> Result<Self> {
         let game = game.canonicalize()?;
-        let archive = game.join("models/gta3.img");
+        let archive = sa_assets::game_path::resolve(&game, "models/gta3.img")?;
         ensure!(!archive.is_symlink(), "symlink archive rejected");
-        let interior = game.join("models/gta_int.img");
+        let interior = sa_assets::game_path::resolve(&game, "models/gta_int.img")?;
         ensure!(!interior.is_symlink(), "symlink interior archive rejected");
         let mut img = WorldArchive {
             exterior: Img::open(&archive)?,
@@ -471,7 +474,7 @@ impl WorldLoader {
             },
         };
         let defs = definitions(&game)?;
-        let water_file = game.join("data/water.dat");
+        let water_file = sa_assets::game_path::resolve(&game, "data/water.dat")?;
         let water = std::sync::Arc::new(if water_file.exists() {
             water::WaterMap::parse(lines(&water_file)?)?
         } else {
@@ -479,7 +482,7 @@ impl WorldLoader {
         });
         let water_texture = if water_file.exists() {
             Some(decode_txd(
-                &fs::read(game.join("models/particle.txd"))?,
+                &fs::read(sa_assets::game_path::resolve(&game, "models/particle.txd")?)?,
                 "waterclear256",
             )?)
         } else {
@@ -792,7 +795,7 @@ pub fn load_world_at(game: &Path, center: [f32; 2], radius: f32) -> Result<Scene
 }
 pub fn load_first_model(game: &Path) -> Result<Scene> {
     let game = game.canonicalize()?;
-    let mut img = Img::open(&game.join("models/gta3.img"))?;
+    let mut img = Img::open(&sa_assets::game_path::resolve(&game, "models/gta3.img")?)?;
     let geometry = decode_dff(&img.read("cj_wastebin.dff")?)?;
     let r = Placement {
         id: 0,
@@ -828,7 +831,10 @@ pub fn load_first_model(game: &Path) -> Result<Scene> {
 pub fn load_cuttest(game: &Path) -> Result<Scene> {
     let game = game.canonicalize()?;
     let animation = sa_script::load_cuttest_animation(&game)?;
-    let mut img = Img::open(&game.join("models/cutscene.img"))?;
+    let mut img = Img::open(&sa_assets::game_path::resolve(
+        &game,
+        "models/cutscene.img",
+    )?)?;
     let geometry = decode_dff(&img.read("csgoldrec.dff")?)?;
     let r = Placement {
         id: 0,
@@ -879,10 +885,16 @@ pub fn load_prologue(game: &Path) -> Result<Scene> {
         })
         .unwrap_or(10.0);
     animation.height_offset = ground - taxi_start[2] + 0.69;
-    let mut img = Img::open(&game.join("models/cutscene.img"))?;
-    let mut gta3 = Img::open(&game.join("models/gta3.img"))?;
+    let mut img = Img::open(&sa_assets::game_path::resolve(
+        &game,
+        "models/cutscene.img",
+    )?)?;
+    let mut gta3 = Img::open(&sa_assets::game_path::resolve(&game, "models/gta3.img")?)?;
     let taxi_txd = gta3.read("taxi.txd")?;
-    let vehicle_txd = fs::read(game.join("models/generic/vehicle.txd"))?;
+    let vehicle_txd = fs::read(sa_assets::game_path::resolve(
+        &game,
+        "models/generic/vehicle.txd",
+    )?)?;
     let geometry = decode_dff(&img.read("cstaxi92.dff")?)?;
     let placement = Placement {
         id: 0,

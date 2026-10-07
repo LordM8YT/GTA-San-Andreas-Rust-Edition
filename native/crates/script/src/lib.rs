@@ -191,7 +191,7 @@ pub fn inspect_cutscene(game: &Path, name: &str) -> Result<Cutscene> {
         "invalid cutscene name"
     );
     let game = game.canonicalize()?;
-    let mut cuts = Img::open(&game.join("anim/cuts.img"))?;
+    let mut cuts = Img::open(&sa_assets::game_path::resolve(&game, "anim/cuts.img")?)?;
     let cut = cuts.read(&format!("{name}.cut"))?;
     let dat = cuts.read(&format!("{name}.dat"))?;
     let ifp = cuts.read(&format!("{name}.ifp"))?;
@@ -203,7 +203,10 @@ pub fn inspect_cutscene(game: &Path, name: &str) -> Result<Cutscene> {
     ensure!(declared <= ifp.len() - 8, "invalid IFP length");
     let (offset, models, subtitles) = parse_cut(name, &cut)?;
     let camera_tracks = camera_tracks(&dat)?;
-    let assets = Img::open(&game.join("models/cutscene.img"))?;
+    let assets = Img::open(&sa_assets::game_path::resolve(
+        &game,
+        "models/cutscene.img",
+    )?)?;
     let present = models
         .iter()
         .filter(|m| assets.has(&format!("{m}.dff")))
@@ -216,7 +219,8 @@ pub fn inspect_cutscene(game: &Path, name: &str) -> Result<Cutscene> {
         animation_bytes: declared,
         camera_tracks,
         model_assets_present: present,
-        audio_archive_present: game.join("audio/streams/CUTSCENE").is_file(),
+        audio_archive_present: sa_assets::game_path::resolve(&game, "audio/streams/CUTSCENE")?
+            .is_file(),
     })
 }
 
@@ -271,7 +275,7 @@ fn camera_row(line: &str) -> Result<Vec<f32>> {
 /// The original `cuttest` is small enough to validate its root animation and camera tracks.
 /// This is an asset preview, not general SA cutscene playback.
 pub fn load_cuttest_animation(game: &Path) -> Result<CutAnimation> {
-    let mut cuts = Img::open(&game.join("anim/cuts.img"))?;
+    let mut cuts = Img::open(&sa_assets::game_path::resolve(game, "anim/cuts.img")?)?;
     let dat = cuts.read("cuttest.dat")?;
     let ifp = cuts.read("cuttest.ifp")?;
     let text = cut_text(&dat)?;
@@ -370,7 +374,7 @@ pub fn load_cuttest_animation(game: &Path) -> Result<CutAnimation> {
 /// A bounded preview of the opening scene's original taxi root and camera tracks.
 /// Character skinning, audio and SCM events are outside this preview.
 pub fn load_prologue_animation(game: &Path) -> Result<CutAnimation> {
-    let mut cuts = Img::open(&game.join("anim/cuts.img"))?;
+    let mut cuts = Img::open(&sa_assets::game_path::resolve(game, "anim/cuts.img")?)?;
     let dat = cuts.read("prolog1.dat")?;
     let ifp = cuts.read("prolog1.ifp")?;
     let tracks: Vec<Vec<Vec<f32>>> = cut_text(&dat)?

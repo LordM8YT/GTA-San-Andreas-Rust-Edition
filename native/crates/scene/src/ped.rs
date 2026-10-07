@@ -150,7 +150,7 @@ pub struct Ped {
 }
 impl Ped {
     pub fn load(game: &Path) -> Result<Self> {
-        let mut archive = Img::open(&game.join("models/gta3.img"))?;
+        let mut archive = Img::open(&sa_assets::game_path::resolve(game, "models/gta3.img")?)?;
         Self::from_source(
             Source::decode(
                 &archive.read("fam1.dff")?,
@@ -163,7 +163,10 @@ impl Ped {
     pub(super) fn from_source(source: Source, game: &Path) -> Result<Self> {
         let clips = match source.clips {
             Some(clips) => clips,
-            None => sa_assets::ifp::decode(&fs::read(game.join("anim/ped.ifp"))?)?,
+            None => sa_assets::ifp::decode(&fs::read(sa_assets::game_path::resolve(
+                game,
+                "anim/ped.ifp",
+            )?)?)?,
         };
         let mut ped = Self {
             model: source.model,

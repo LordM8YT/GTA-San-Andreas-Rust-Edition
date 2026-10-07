@@ -2193,6 +2193,7 @@ dependencies = [
  "anyhow",
  "glam 0.33.12",
  "kira",
+ "sa-assets",
 ]
 
 [[package]]

@@ -1,5 +1,6 @@
 //! Bounded, read-only decoders for the classic PC SA archive and rigid RenderWare assets.
 pub mod col;
+pub mod game_path;
 pub mod ifp;
 pub mod skin;
 use anyhow::{bail, ensure, Context, Result};

@@ -12,8 +12,8 @@ bash start-freeroam.sh --game-dir "/path/to/Grand Theft Auto San Andreas"
 ```
 
 Alternatively set `GTA_SA_DIR` to the original installation directory.
-File names must retain the casing expected by the original archives and data
-files. Use a Vulkan-capable GPU driver. Settings are stored in
+Original installation paths are resolved case-insensitively, including Windows
+path separators in GTA manifests. Use a Vulkan-capable GPU driver. Settings are stored in
 `$XDG_CONFIG_HOME/sa-freeroam/settings.json`, or
 `~/.config/sa-freeroam/settings.json` if XDG_CONFIG_HOME is unset.
 The menu title uses the bundled OFL font; missing Windows fonts fall back to
