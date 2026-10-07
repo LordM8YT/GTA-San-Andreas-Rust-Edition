@@ -33,6 +33,8 @@ struct Model {
 }
 #[derive(Deserialize)]
 struct Vehicle {
+    #[serde(default)]
+    handling: crate::vehicle::Handling,
     dff: String,
     #[serde(default)]
     txd: Option<String>,
@@ -138,6 +140,7 @@ pub fn share_resources(directory: &Path) -> Result<sa_net::resources::Share> {
             references.extend(model.col.iter().cloned());
         }
         for vehicle in &manifest.vehicles {
+            vehicle.handling.validate()?;
             references.insert(vehicle.dff.clone());
             references.extend(vehicle.txd.iter().cloned());
         }
@@ -326,6 +329,7 @@ impl WorldLoader {
                 "custom vehicle limit (32)"
             );
             for vehicle in manifest.vehicles {
+                vehicle.handling.validate()?;
                 let geometry = sa_assets::decode_vehicle_dff(&resource(&folder, &vehicle.dff)?)
                     .with_context(|| format!("custom vehicle {}", vehicle.dff))?;
                 let dictionary = vehicle
@@ -333,7 +337,7 @@ impl WorldLoader {
                     .as_deref()
                     .map(|path| resource(&folder, path))
                     .transpose()?;
-                let scene = car_scene(&geometry, |name| {
+                let mut scene = car_scene(&geometry, |name| {
                     decode_txd(
                         dictionary
                             .as_deref()
@@ -341,6 +345,7 @@ impl WorldLoader {
                         name,
                     )
                 })?;
+                scene.vehicle_handling = vehicle.handling;
                 ensure!(scene.triangles > 0, "empty custom vehicle");
                 if self.resources.vehicle.is_none() {
                     self.resources.car_name = name.clone();
@@ -618,7 +623,7 @@ mod tests {
             serde_json::to_vec(&manifest).unwrap(),
         )
         .unwrap();
-        manifest["vehicles"] = serde_json::json!([{"dff":"car.dff"},{"dff":"car.dff"}]);
+        manifest["vehicles"] = serde_json::json!([{"dff":"car.dff","handling":{"acceleration":9.0}},{"dff":"car.dff","handling":{"acceleration":4.0}}]);
         fs::write(
             folder.join("mod.json"),
             serde_json::to_vec(&manifest).unwrap(),
@@ -655,7 +660,34 @@ mod tests {
             .iter()
             .any(|r| r.name == "Test room"));
         fs::remove_file(extra.join("private.txt")).unwrap();
-        assert_eq!(loader.take_car_catalog().len(), 1);
+        let cars = loader.take_car_catalog();
+        assert_eq!(cars.len(), 1);
+        assert_eq!(cars[0].1.vehicle_handling.acceleration, 4.0);
+        assert_eq!(
+            loader
+                .resources
+                .vehicle
+                .as_ref()
+                .unwrap()
+                .vehicle_handling
+                .acceleration,
+            9.0
+        );
+        manifest["vehicles"][0]["handling"]["acceleration"] = serde_json::json!(-1.0);
+        fs::write(
+            folder.join("mod.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        assert!(share_resources(&root.join("mods")).is_err());
+        manifest["vehicles"][0]["handling"]["acceleration"] = serde_json::json!(8.0);
+        fs::write(
+            folder.join("mod.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        let changed = share_resources(&root.join("mods")).unwrap();
+        assert_ne!(shared.manifest, changed.manifest);
         assert_eq!(
             loader
                 .take_ped_catalog(Path::new("not-an-installation"))

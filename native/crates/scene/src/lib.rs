@@ -44,6 +44,7 @@ pub struct Batch {
     pub uv_animation: Option<std::sync::Arc<sa_assets::uvanim::UvAnimation>>,
 }
 pub struct Scene {
+    pub vehicle_handling: vehicle::Handling,
     pub water: Option<std::sync::Arc<water::WaterMap>>,
     pub batches: Vec<Batch>,
     pub textures: HashMap<String, Texture>,
@@ -474,6 +475,7 @@ fn car_scene(
     }
     batches.sort_by_key(|b| b.alpha);
     Ok(Scene {
+        vehicle_handling: crate::vehicle::Handling::default(),
         water: None,
         batches,
         textures,
@@ -857,6 +859,7 @@ impl WorldLoader {
             batches.push(water_batch);
         }
         Ok(Scene {
+            vehicle_handling: crate::vehicle::Handling::default(),
             water: (interior == 0).then(|| self.water.clone()),
             batches,
             textures,
@@ -896,6 +899,7 @@ pub fn load_first_model(game: &Path) -> Result<Scene> {
         batch.alpha |= textures[&batch.key].needs_blending();
     }
     Ok(Scene {
+        vehicle_handling: crate::vehicle::Handling::default(),
         water: None,
         batches,
         textures,
@@ -935,6 +939,7 @@ pub fn load_cuttest(game: &Path) -> Result<Scene> {
         batch.animated = true;
     }
     Ok(Scene {
+        vehicle_handling: crate::vehicle::Handling::default(),
         water: None,
         batches,
         textures,

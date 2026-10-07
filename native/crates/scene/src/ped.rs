@@ -336,6 +336,7 @@ impl Ped {
         }
         let triangles = batches.iter().map(|b| b.vertices.len() / 3).sum();
         Ok(Scene {
+            vehicle_handling: crate::vehicle::Handling::default(),
             water: None,
             batches,
             textures: self.textures.clone(),

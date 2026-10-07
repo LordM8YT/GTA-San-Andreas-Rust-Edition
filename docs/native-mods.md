@@ -23,7 +23,9 @@ are not drop-in compatible. Convert assets into a supported resource or add
 explicit format support; scripts and DLLs are not executed. FiveM resources
 and the FiveM script API are also incompatible. The resource folder workflow
 can be similar, but the engine still uses SA asset formats and its own JSON
-manifest. `fxmanifest.lua`, GTA V `.meta` files and executable scripts are not parsed.
+manifest. The runtime does not parse `fxmanifest.lua`, GTA V `.meta` files or executable scripts.
+The offline importer inspects resource manifests as text and converts supported assets;
+see [GTA V / FiveM conversion](gta5-conversion.md).
 
 ## Create a resource
 
@@ -112,7 +114,11 @@ Runnable custom vehicles are registered separately:
   "schema_version": 2,
   "enabled": true,
   "name": "My car",
-  "vehicles": [{ "dff": "car.dff", "txd": "car.txd" }]
+  "vehicles": [{
+    "dff": "car.dff",
+    "txd": "car.txd",
+    "handling": { "acceleration": 8.5, "brake_deceleration": 12.0, "tire_grip": 5.0 }
+  }]
 }
 ```
 
@@ -121,7 +127,8 @@ Use `/cars` or F7 to select and spawn; F9 respawns the selected vehicle. `txd` c
 All textures must be included in the resource TXD; automatic lookup in the
 original `vehicle.txd` is available only for the standard taxi. Use a typical
 passenger car with original SA scale and model axes. Physics uses a fixed
-passenger-car shape, without custom handling, wheel animation, or damage. Tire slip, axle forces, handbrake grip reduction,
+passenger-car shape, without wheel animation or damage. Optional native handling
+values adjust each custom vehicle, as described in [vehicle dynamics](vehicle-dynamics.md). Tire slip, axle forces, handbrake grip reduction,
 four-point ground contact, suspension and body pitch/roll are simulated.
 
 `mods/native-car-demo` is a simple custom blue car with no original assets.

@@ -25,7 +25,7 @@ def main():
         parser.error(f"Resource already exists: {folder}; existing files will not be overwritten.")
     manifest = {"schema_version": 2, "enabled": False, "name": args.name}
     if args.type == "vehicle":
-        manifest["vehicles"] = [{"dff": "stream/car.dff"}]
+        manifest["vehicles"] = [{"dff": "stream/car.dff", "handling": {}}]
         assets = ["car.dff"]
     elif args.type == "map":
         manifest["models"] = [{"id": 30000, "dff": "stream/building.dff"}]

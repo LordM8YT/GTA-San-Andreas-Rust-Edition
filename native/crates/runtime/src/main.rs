@@ -142,6 +142,7 @@ impl State {
         }
     }
     fn install_car(&mut self, scene: Scene) -> Result<()> {
+        let handling = scene.vehicle_handling;
         let clearance = -scene
             .batches
             .iter()
@@ -155,7 +156,10 @@ impl State {
             &self.sampler,
             scene,
         )?;
-        self.car = Some((sa_scene::vehicle::Car::new(Vec3::ZERO, clearance), batches));
+        self.car = Some((
+            sa_scene::vehicle::Car::new(Vec3::ZERO, clearance).with_handling(handling),
+            batches,
+        ));
         self.place_car();
         self.driving = false;
         Ok(())
@@ -173,7 +177,7 @@ impl State {
             if let Some(placed) =
                 sa_scene::vehicle::Car::spawn_near(world, origin, self.yaw, car.clearance)
             {
-                *car = placed;
+                *car = placed.with_handling(car.handling);
                 self.driving = true;
                 self.network_car_spawned = true;
                 self.keys.clear();
@@ -1326,6 +1330,7 @@ impl State {
                     let placed = selected.and_then(|(c, _)| {
                         self.collision.as_ref().and_then(|world| {
                             sa_scene::vehicle::Car::spawn_near(world, origin, self.yaw, c.clearance)
+                                .map(|car| car.with_handling(c.handling))
                         })
                     });
                     let Some(placed) = placed else {
@@ -2277,6 +2282,11 @@ impl ApplicationHandler for App {
                                 state.driving,
                                 "appearance smoke could not place the selected car"
                             );
+                            assert_eq!(
+                                state.car.as_ref().unwrap().0.handling,
+                                sa_scene::vehicle::Handling::default(),
+                                "selecting an original car retained the custom car's tuning"
+                            );
                             self.appearance_stage = 4;
                         }
                     }
@@ -2389,7 +2399,18 @@ impl ApplicationHandler for App {
                         }
                         if (7.0..11.0).contains(&seconds) && !state.driving && self.network_saw_ped
                         {
+                            let tuning =
+                                state.car.as_ref().expect("network car missing").0.handling;
                             state.place_car();
+                            if state.driving {
+                                assert_eq!(
+                                    state.car.as_ref().unwrap().0.handling,
+                                    tuning,
+                                    "respawning discarded server vehicle handling"
+                                );
+                                eprintln!("GPU vehicle tuning smoke passed: acceleration={} brakes={} grip={}",
+                                    tuning.acceleration, tuning.brake_deceleration, tuning.tire_grip);
+                            }
                         }
                         if seconds > 11.0 && !self.network_exited && state.driving {
                             state.toggle_car();

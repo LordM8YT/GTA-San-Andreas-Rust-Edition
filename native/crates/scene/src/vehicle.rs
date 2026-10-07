@@ -2,7 +2,64 @@
 //! Position is the model origin; speed and slip are in metres per second.
 use crate::collision::CollisionWorld;
 use glam::Vec3;
+/// Native tuning values; omitted JSON fields retain the original prototype defaults.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Handling {
+    pub acceleration: f32,
+    pub reverse_acceleration: f32,
+    pub brake_deceleration: f32,
+    pub top_speed: f32,
+    pub reverse_speed: f32,
+    pub tire_grip: f32,
+    pub steering_lock: f32,
+    pub steering_rate: f32,
+    pub suspension_spring: f32,
+    pub suspension_damping: f32,
+    pub aerodynamic_drag: f32,
+}
+impl Default for Handling {
+    fn default() -> Self {
+        Self {
+            acceleration: 6.2,
+            reverse_acceleration: 3.8,
+            brake_deceleration: 10.5,
+            top_speed: 48.0,
+            reverse_speed: 10.0,
+            tire_grip: 4.6,
+            steering_lock: 0.55,
+            steering_rate: 1.7,
+            suspension_spring: 140.0,
+            suspension_damping: 22.0,
+            aerodynamic_drag: 0.0035,
+        }
+    }
+}
+impl Handling {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        for (name, value, low, high) in [
+            ("acceleration", self.acceleration, 0.5, 20.0),
+            ("reverse_acceleration", self.reverse_acceleration, 0.5, 10.0),
+            ("brake_deceleration", self.brake_deceleration, 1.0, 25.0),
+            ("top_speed", self.top_speed, 5.0, 90.0),
+            ("reverse_speed", self.reverse_speed, 1.0, 25.0),
+            ("tire_grip", self.tire_grip, 1.0, 12.0),
+            ("steering_lock", self.steering_lock, 0.1, 0.9),
+            ("steering_rate", self.steering_rate, 0.3, 4.0),
+            ("suspension_spring", self.suspension_spring, 40.0, 250.0),
+            ("suspension_damping", self.suspension_damping, 8.0, 40.0),
+            ("aerodynamic_drag", self.aerodynamic_drag, 0.0, 0.02),
+        ] {
+            anyhow::ensure!(
+                value.is_finite() && (low..=high).contains(&value),
+                "vehicle handling {name} must be finite and between {low} and {high}"
+            );
+        }
+        Ok(())
+    }
+}
 pub struct Car {
+    pub handling: Handling,
     pub position: Vec3,
     pub yaw: f32,
     pub speed: f32,
@@ -17,6 +74,7 @@ pub struct Car {
 impl Car {
     pub fn new(position: Vec3, clearance: f32) -> Self {
         Self {
+            handling: Handling::default(),
             position,
             yaw: 0.0,
             speed: 0.0,
@@ -28,6 +86,10 @@ impl Car {
             steering_angle: 0.0,
             yaw_rate: 0.0,
         }
+    }
+    pub fn with_handling(mut self, handling: Handling) -> Self {
+        self.handling = handling;
+        self
     }
     pub fn forward(&self) -> Vec3 {
         Vec3::new(self.yaw.sin(), 0.0, self.yaw.cos())
@@ -139,6 +201,7 @@ impl Car {
         dt: f32,
     ) {
         let handling = handling.clamp(0.5, 1.5);
+        let tuning = self.handling;
         let throttle = throttle.clamp(-1.0, 1.0);
         let side = Vec3::new(self.yaw.cos(), 0.0, -self.yaw.sin());
         let mut velocity = self.forward() * self.speed + side * self.lateral_speed;
@@ -175,32 +238,39 @@ impl Car {
             0.0
         };
         // Steering lock falls with speed; wheel input and body rotation both have inertia.
-        let lock = 0.55 / (1.0 + (self.speed.abs() / 16.0).powi(2));
+        let lock = tuning.steering_lock / (1.0 + (self.speed.abs() / 16.0).powi(2));
         let target_steering = steer.clamp(-1.0, 1.0) * lock;
-        self.steering_angle += (target_steering - self.steering_angle).clamp(-1.7 * dt, 1.7 * dt);
+        self.steering_angle += (target_steering - self.steering_angle)
+            .clamp(-tuning.steering_rate * dt, tuning.steering_rate * dt);
         let braking = throttle * self.speed < -0.15;
         let acceleration = if braking {
-            -self.speed.signum() * 10.5 * throttle.abs()
+            -self.speed.signum() * tuning.brake_deceleration * throttle.abs()
         } else if throttle >= 0.0 {
-            throttle * 6.2 * (1.0 - (self.speed.max(0.0) / 48.0).powi(2)).max(0.0)
+            throttle
+                * tuning.acceleration
+                * (1.0 - (self.speed.max(0.0) / tuning.top_speed).powi(2)).max(0.0)
         } else {
-            throttle * 3.8 * (1.0 - (-self.speed / 10.0).powi(2)).max(0.0)
+            throttle
+                * tuning.reverse_acceleration
+                * (1.0 - (-self.speed / tuning.reverse_speed).powi(2)).max(0.0)
         };
         let old_speed = self.speed;
         self.speed += acceleration * grip * dt;
         if braking && self.speed.signum() != old_speed.signum() {
             self.speed = 0.0;
         }
-        let resistance =
-            (0.28 + 0.0035 * self.speed * self.speed + if handbrake { 7.0 * grip } else { 0.0 })
-                * dt;
+        let resistance = (0.28
+            + tuning.aerodynamic_drag * self.speed * self.speed
+            + if handbrake { 7.0 * grip } else { 0.0 })
+            * dt;
         self.speed = self.speed.signum() * (self.speed.abs() - resistance).max(0.0);
         velocity += self.forward() * (self.speed - old_speed);
         // Axle slip generates both lateral force and yaw torque. Forces are bounded
         // by a friction circle so braking and cornering share the available grip.
-        let tire_budget = (4.6 * handling).powi(2) - (acceleration * grip * 0.5).powi(2);
+        let tire_budget =
+            (tuning.tire_grip * handling).powi(2) - (acceleration * grip * 0.5).powi(2);
         let front_limit = tire_budget.max(0.5).sqrt() * grip;
-        let rear_limit = 4.6 * handling * grip * if handbrake { 0.12 } else { 1.0 };
+        let rear_limit = tuning.tire_grip * handling * grip * if handbrake { 0.12 } else { 1.0 };
         let front_slip =
             self.lateral_speed + 1.35 * self.yaw_rate - self.speed * self.steering_angle.tan();
         let rear_slip = self.lateral_speed - 1.35 * self.yaw_rate;
@@ -252,7 +322,6 @@ impl Car {
             }
             self.position = desired;
         }
-        self.vertical_speed -= 9.81 * dt;
         if grounded {
             let ground = supports.iter().sum::<f32>() / supports.len() as f32;
             let moved = self.position - before_motion;
@@ -264,8 +333,10 @@ impl Car {
                 * (1.0 + slope_pitch.tan().powi(2) + slope_roll.tan().powi(2)).sqrt();
             let target = ground + normal_offset;
             // A damped suspension settles instead of snapping to one centre ray.
-            self.vertical_speed += (9.81 + (target - self.position.y) * 140.0
-                - (self.vertical_speed - ground_velocity) * 22.0)
+            // Ground support cancels gravity before damping. Damping a velocity
+            // already reduced by gravity creates a frame-rate-dependent height offset.
+            self.vertical_speed += ((target - self.position.y) * tuning.suspension_spring
+                - (self.vertical_speed - ground_velocity) * tuning.suspension_damping)
                 * dt;
             self.position.y += self.vertical_speed * dt;
             if self.position.y < target {
@@ -273,6 +344,7 @@ impl Car {
                 self.vertical_speed = self.vertical_speed.max(ground_velocity);
             }
         } else {
+            self.vertical_speed -= 9.81 * dt;
             self.position.y += self.vertical_speed * dt;
         }
     }
@@ -281,6 +353,63 @@ impl Car {
 mod tests {
     use super::*;
     use crate::{Batch, Vertex};
+    #[test]
+    fn handling_rejects_unknown_nonfinite_and_out_of_range_values() {
+        let partial: Handling = serde_json::from_str(r#"{"acceleration":9.0}"#).unwrap();
+        assert_eq!(partial.top_speed, Handling::default().top_speed);
+        partial.validate().unwrap();
+        assert!(serde_json::from_str::<Handling>(r#"{"accelleration":9}"#).is_err());
+        let mut invalid = partial;
+        invalid.tire_grip = f32::NAN;
+        assert!(invalid.validate().is_err());
+        let original = serde_json::to_value(Handling::default()).unwrap();
+        for key in original.as_object().unwrap().keys() {
+            let mut invalid = original.clone();
+            invalid[key] = serde_json::json!(-1.0);
+            assert!(
+                serde_json::from_value::<Handling>(invalid)
+                    .unwrap()
+                    .validate()
+                    .is_err(),
+                "{key}"
+            );
+        }
+    }
+    #[test]
+    fn tuning_changes_acceleration_and_braking_without_losing_support() {
+        let world = CollisionWorld::from_batches(&[floor(-1000.0, 1000.0, 0.0)]);
+        let tuning = Handling {
+            acceleration: 12.0,
+            brake_deceleration: 20.0,
+            ..Handling::default()
+        };
+        let mut original = Car::new(Vec3::Y * 0.6, 0.6);
+        let mut custom = Car::new(Vec3::Y * 0.6, 0.6).with_handling(tuning);
+        for _ in 0..120 {
+            original.step(&world, 1.0, 0.0, false, 1.0, 1.0 / 120.0);
+            custom.step(&world, 1.0, 0.0, false, 1.0, 1.0 / 120.0);
+        }
+        assert!(custom.speed > original.speed * 1.5);
+        original.speed = 15.0;
+        custom.speed = 15.0;
+        for _ in 0..60 {
+            original.step(&world, -1.0, 0.0, false, 1.0, 1.0 / 120.0);
+            custom.step(&world, -1.0, 0.0, false, 1.0, 1.0 / 120.0);
+        }
+        assert!(custom.speed < original.speed - 3.0);
+        for _ in 0..120 {
+            custom.step(&world, 0.0, 0.0, false, 1.0, 1.0 / 120.0);
+        }
+        assert!(
+            (custom.position.y - 0.6).abs() < 0.01,
+            "position {:?}, pitch {}, speed {}, vertical {}",
+            custom.position,
+            custom.pitch,
+            custom.speed,
+            custom.vertical_speed
+        );
+        assert_eq!(custom.handling, tuning);
+    }
     fn mesh(points: &[[f32; 3]]) -> Batch {
         Batch {
             key: "test".into(),

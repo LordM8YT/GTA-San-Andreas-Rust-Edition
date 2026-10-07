@@ -190,7 +190,7 @@ fn prepare(
 }
 
 enum Model {
-    Car(String, f32),
+    Car(String, f32, sa_scene::vehicle::Handling),
     Ped(String, sa_scene::ped::Ped),
 }
 type CarMesh = (sa_scene::vehicle::Car, Vec<GpuBatch>);
@@ -249,7 +249,10 @@ impl Installing {
                     .map(|v| v.position[1])
                     .fold(f32::INFINITY, f32::min);
                 anyhow::ensure!(clearance.is_finite(), "Server vehicle has no geometry");
-                self.current = Some((Model::Car(name, clearance), upload::Upload::new(scene)));
+                self.current = Some((
+                    Model::Car(name, clearance, scene.vehicle_handling),
+                    upload::Upload::new(scene),
+                ));
             } else if let Some((name, ped)) = self.peds.pop_front() {
                 let scene = ped.scene()?;
                 self.current = Some((Model::Ped(name, ped), upload::Upload::new(scene)));
@@ -266,9 +269,13 @@ impl Installing {
             )? {
                 let (batches, _) = upload.finish();
                 match model {
-                    Model::Car(name, clearance) => self.car_meshes.push((
+                    Model::Car(name, clearance, handling) => self.car_meshes.push((
                         name,
-                        (sa_scene::vehicle::Car::new(Vec3::ZERO, clearance), batches),
+                        (
+                            sa_scene::vehicle::Car::new(Vec3::ZERO, clearance)
+                                .with_handling(handling),
+                            batches,
+                        ),
                     )),
                     Model::Ped(name, ped) => self.ped_meshes.push((name, (ped, batches))),
                 }

@@ -3,6 +3,10 @@
 Målet er freeroam på originalkartet med lokale custom ressurser. Missions er
 ikke prioritert. Originalinstallasjonen leses; gta_sa.exe kjøres ikke.
 
+Custom vehicle resources can supply bounded native handling values for engine,
+brakes, grip, steering and suspension. Server packs include this tuning and
+respawning preserves it; see [vehicle dynamics](vehicle-dynamics.md).
+
 ## Multiplayer-prototype
 
 En spiller hoster, og opptil 19 andre kobler til med IP og port. Åpne Multiplayer
