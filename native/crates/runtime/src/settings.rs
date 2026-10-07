@@ -53,6 +53,7 @@ pub struct Settings {
     pub master_volume: f32,
     pub music_volume: f32,
     pub effects_volume: f32,
+    pub auto_mod_downloads: bool,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -82,6 +83,7 @@ impl Default for Settings {
             master_volume: 1.0,
             music_volume: 0.5,
             effects_volume: 1.0,
+            auto_mod_downloads: true,
         }
     }
 }

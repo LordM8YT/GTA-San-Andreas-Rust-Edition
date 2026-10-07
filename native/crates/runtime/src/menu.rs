@@ -197,6 +197,7 @@ pub struct Menu {
     pub network_status: String,
     pub network_players: Vec<String>,
     pub network_active: bool,
+    pub network_ready: bool,
     pub has_played: bool,
     selected: usize,
     pub message: String,
@@ -469,7 +470,16 @@ impl Menu {
         ctx.set_theme(egui::Theme::Dark);
         Self {
             page: Some(Page::Main),
-            settings: Settings::load(),
+            settings: {
+                #[cfg(test)]
+                {
+                    Settings::default()
+                }
+                #[cfg(not(test))]
+                {
+                    Settings::load()
+                }
+            },
             mods,
             clothes: Vec::new(),
             cars: Vec::new(),
@@ -489,6 +499,7 @@ impl Menu {
             network_status: "Offline".into(),
             network_players: Vec::new(),
             network_active: false,
+            network_ready: false,
             has_played: false,
             selected: 0,
             message: String::new(),
@@ -948,7 +959,7 @@ impl Menu {
                         },
                         Page::Network=>{
                             ui.label(RichText::new("Play together").size(24.0).color(GOLD));
-                            ui.label("One player hosts. Up to 20 players, including the host.");
+                            ui.label("Host from the game or join a dedicated server. Up to 20 players.");
                             ui.label(RichText::new(&self.network_status).color(GOLD));
                             ui.add_space(12.0);
                             ui.columns(2, |columns| {
@@ -956,7 +967,8 @@ impl Menu {
                             ui.label("Your name");
                             ui.add(egui::TextEdit::singleline(&mut self.player_name).char_limit(24));
                             ui.add_enabled_ui(!self.network_active, |ui| {
-                                if ui.checkbox(&mut self.relay_mode, "Player hosting via relay / join code").changed() {
+                                ui.checkbox(&mut self.settings.auto_mod_downloads, "Automatically download required server mods");
+                                if ui.checkbox(&mut self.relay_mode, "Use relay / join code").changed() {
                                     self.server_list.clear();
                                     self.browser_status.clear();
                                 }
@@ -983,7 +995,7 @@ impl Menu {
                             }
                             ui.horizontal_wrapped(|ui| {
                             for (index,label,event) in [(0,"Host session",Action::Host),(1,"Join session",Action::Join),(2,"Disconnect",Action::Disconnect),(3,"Enter free roam",Action::Play)] {
-                                let enabled=if index>=2{self.network_active}else{!self.network_active};
+                                let enabled=if index==3{self.network_ready}else if index>=2{self.network_active}else{!self.network_active};
                                 if ui.add_enabled(enabled,egui::Button::new(label).selected(self.selected==index)).clicked()
                                     || (enabled && self.selected==index && !ctx.egui_wants_keyboard_input() && ctx.input(|i|i.key_pressed(egui::Key::Enter))) {
                                     action=Some(event);
@@ -1016,7 +1028,7 @@ impl Menu {
                             for name in &self.network_players{ui.label(name);}
                             ui.add_space(12.0);
                             ui.label(if self.relay_mode {"Both players connect out to the relay. The game host needs no port forwarding. A reachable relay service is required; no public relay is configured by default. Prototype: use a trusted network."} else {"For LAN, join the host's local IP. Over the internet, direct hosting requires TCP port forwarding."});
-                            ui.label("Prototype: other players use the Grove Street ped and Taxi. Custom assets, spawned NPCs and shared vehicle collisions are not synchronized yet.");
+                            ui.label("Prototype: other players use the Grove Street ped and Taxi. Custom appearance, spawned NPCs and shared vehicle collisions are not synchronized yet.");
                             });
                         }
                         Page::Commands=>{

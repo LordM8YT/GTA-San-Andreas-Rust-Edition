@@ -1,6 +1,6 @@
 use super::{GpuBatch, State};
 use glam::{Quat, Vec3};
-use sa_net::{Peer, Pose, Session};
+use sa_net::{Peer, Pose};
 use std::time::{Duration, Instant};
 use wgpu::util::DeviceExt;
 
@@ -60,72 +60,12 @@ fn interpolate(current: &mut Pose, target: Pose, dt: f32) {
 }
 impl State {
     pub(super) fn network_action(&mut self, host: bool) {
-        if self.network_session.is_some() {
-            self.menu.message = "Disconnect from the current session first.".into();
-            return;
-        }
-        if self.menu.peds.iter().all(|n| n != "Grove Street")
-            || self.menu.cars.iter().all(|n| n != "Taxi")
-        {
-            self.menu.message =
-                "Multiplayer requires the original Taxi and Grove Street models.".into();
-            return;
-        }
-        let address = if host {
-            &self.menu.host_address
-        } else {
-            &self.menu.join_address
-        };
-        let result = if self.menu.relay_mode {
-            self.menu
-                .relay_address
-                .trim()
-                .parse()
-                .map_err(|_| "Use a relay IP and port, for example 127.0.0.1:7778.".to_string())
-                .and_then(|relay| {
-                    if host {
-                        Session::host_relay(relay, &self.menu.player_name, self.menu.public_session)
-                            .map(|(session, publication)| {
-                                self.network_publication = Some(publication);
-                                session
-                            })
-                    } else {
-                        Session::join_relay(relay, &self.menu.join_code, &self.menu.player_name)
-                    }
-                    .map_err(|e| e.to_string())
-                })
-        } else {
-            address
-                .trim()
-                .parse()
-                .map_err(|_| {
-                    "Use an IP address and port, for example 192.168.1.10:7777.".to_string()
-                })
-                .and_then(|address| {
-                    if host {
-                        Session::host(address, &self.menu.player_name)
-                    } else {
-                        Session::join(address, &self.menu.player_name)
-                    }
-                    .map_err(|e| e.to_string())
-                })
-        };
-        match result {
-            Ok(session) => {
-                eprintln!(
-                    "Multiplayer {}: {}",
-                    if host { "host listening" } else { "joining" },
-                    session.address
-                );
-                self.network_session = Some(session);
-                self.network_revision = 0;
-                self.menu.message.clear();
-                // Keep the session page open until the handshake succeeds.
-            }
-            Err(error) => self.menu.message = error,
+        if let Err(error) = self.prepare_network(host) {
+            self.menu.message = format!("Could not prepare multiplayer: {error:#}");
         }
     }
     pub(super) fn disconnect_network(&mut self) {
+        self.clear_session_resources();
         self.network_publication = None;
         self.network_session = None;
         self.remote_actors.clear();
@@ -210,6 +150,7 @@ impl State {
         })
     }
     pub(super) fn update_network(&mut self) {
+        self.update_session_resources();
         if let Some(request) = &self.network_browser {
             match request.receiver.try_recv() {
                 Ok(result) => {
@@ -256,6 +197,18 @@ impl State {
             return;
         };
         if let Some(report) = session.update(self.local_pose()) {
+            let ready = report.connected && report.peers.iter().any(|p| p.id == report.local_id);
+            if ready && !self.menu.network_ready && report.local_id != 0 {
+                self.spread_network_spawn(&report);
+            }
+            self.menu.network_ready = ready;
+            if !report.connected && report.revision > 0 {
+                let status = report.status.clone();
+                self.disconnect_network();
+                self.menu.message = status;
+                self.menu.open(crate::menu::Page::Network);
+                return;
+            }
             self.menu.network_status = report.status.clone();
             if let Some(publication) = &self.network_publication {
                 let published = publication.report();
@@ -361,6 +314,29 @@ impl State {
                             .write_buffer(&batch.buffer, 0, bytemuck::cast_slice(&raw));
                     }
                 }
+            }
+        }
+    }
+    fn spread_network_spawn(&mut self, report: &sa_net::Report) {
+        let (Some(world), Some(player)) = (&self.collision, &self.player) else {
+            return;
+        };
+        let base = player.feet;
+        for attempt in 0..24 {
+            let angle = (report.local_id as f32 + attempt as f32) * 2.399_963;
+            let radius = 4.0 + (attempt / 8) as f32 * 2.0;
+            let point = base + Vec3::new(angle.cos() * radius, 0.0, angle.sin() * radius);
+            if report.peers.iter().any(|p| {
+                p.id != report.local_id && Vec3::from_array(p.pose.position).distance(point) < 3.5
+            }) {
+                continue;
+            }
+            if let Some(player) = world.standing_at(point, base.y + 1.5) {
+                self.position = player.eye();
+                self.player = Some(player);
+                self.place_car();
+                self.driving = false;
+                return;
             }
         }
     }

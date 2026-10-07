@@ -2,6 +2,7 @@
 //! Host assigns identities and relays poses; movement is client-authoritative.
 use serde::{Deserialize, Serialize};
 pub mod relay;
+pub mod resources;
 use std::{
     io::{self, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
@@ -62,11 +63,31 @@ pub struct Report {
 }
 #[derive(Serialize, Deserialize)]
 enum Message {
-    Hello { version: u32, name: String },
-    Welcome { id: u32 },
+    Hello {
+        version: u32,
+        name: String,
+        #[serde(default)]
+        resources: Option<String>,
+    },
+    Welcome {
+        id: u32,
+    },
     Pose(Pose),
     Snapshot(Vec<Peer>),
     Reject(String),
+    ResourceQuery {
+        version: u32,
+    },
+    ResourceManifest(resources::Manifest),
+    ResourceFile {
+        sha256: String,
+    },
+    ResourceChunk {
+        sha256: String,
+        offset: usize,
+        data: Vec<u8>,
+        done: bool,
+    },
 }
 fn safe_name(name: &str) -> String {
     let name: String = name.chars().filter(|c| !c.is_control()).take(24).collect();
@@ -174,6 +195,30 @@ pub struct Session {
 }
 impl Session {
     pub fn host(address: SocketAddr, name: &str) -> io::Result<Self> {
+        Self::host_resources(address, name, resources::Share::default())
+    }
+    pub fn host_resources(
+        address: SocketAddr,
+        name: &str,
+        share: resources::Share,
+    ) -> io::Result<Self> {
+        Self::host_resources_kind(address, name, share, true)
+    }
+    /// Headless membership host: all twenty slots belong to actual clients.
+    pub fn dedicated_resources(
+        address: SocketAddr,
+        name: &str,
+        share: resources::Share,
+    ) -> io::Result<Self> {
+        Self::host_resources_kind(address, name, share, false)
+    }
+    fn host_resources_kind(
+        address: SocketAddr,
+        name: &str,
+        share: resources::Share,
+        host_player: bool,
+    ) -> io::Result<Self> {
+        share.manifest.validate()?;
         let listener = TcpListener::bind(address)?;
         listener.set_nonblocking(true)?;
         let session = Self::new(listener.local_addr()?, "Starting host");
@@ -182,18 +227,28 @@ impl Session {
         thread::Builder::new()
             .name("multiplayer-host".into())
             .spawn(move || {
-                host_worker(listener, name, stop, local, report);
+                host_worker(listener, name, stop, local, report, share, host_player);
             })?;
         Ok(session)
     }
     pub fn join(address: SocketAddr, name: &str) -> io::Result<Self> {
+        Self::join_resources(address, name, None)
+    }
+    pub fn join_resources(
+        address: SocketAddr,
+        name: &str,
+        fingerprint: Option<String>,
+    ) -> io::Result<Self> {
         let session = Self::new(address, "Connecting...");
         let (stop, local, report) = session.shared();
         let name = safe_name(name);
         thread::Builder::new()
             .name("multiplayer-client".into())
             .spawn(move || {
-                let result = client_worker(address, name, &stop, &local, &report);
+                let result = (|| {
+                    let stream = TcpStream::connect_timeout(&address, Duration::from_secs(3))?;
+                    client_stream(stream, address, name, &stop, &local, &report, fingerprint)
+                })();
                 let status = match result {
                     Ok(()) => "Disconnected".into(),
                     Err(e)
@@ -255,6 +310,8 @@ struct Guest {
     peer: Peer,
     ready: bool,
     hello: bool,
+    assets: bool,
+    transfer: Option<(String, Arc<[u8]>, usize)>,
 }
 fn host_worker(
     listener: TcpListener,
@@ -262,7 +319,13 @@ fn host_worker(
     stop: Arc<AtomicBool>,
     local: Arc<Mutex<Pose>>,
     report: Arc<Mutex<Report>>,
+    share: resources::Share,
+    host_player: bool,
 ) {
+    let fingerprint = share
+        .manifest
+        .fingerprint()
+        .expect("validated host inventory");
     let mut guests: Vec<Guest> = Vec::new();
     let mut next_id = 1_u32;
     let mut next_tick = Instant::now();
@@ -289,6 +352,8 @@ fn host_worker(
                 },
                 ready: false,
                 hello: false,
+                assets: false,
+                transfer: None,
             });
             next_id = next_id.wrapping_add(1).max(1);
         }
@@ -302,7 +367,21 @@ fn host_worker(
             };
             for message in messages {
                 match message {
-                    Message::Hello { version, name } if !guest.hello => {
+                    Message::ResourceQuery { version } if !guest.hello && !guest.assets && version == VERSION => {
+                        guest.assets = true;
+                        if guest.wire.queue(&Message::ResourceManifest(share.manifest.clone())).is_err() { return false; }
+                    }
+                    Message::ResourceFile { sha256 } if guest.assets && guest.transfer.is_none() => {
+                        let Some(data) = share.blob(&sha256) else { return false; };
+                        guest.transfer = Some((sha256, data, 0));
+                    }
+                    Message::Hello { version, name, resources } if !guest.hello && !guest.assets => {
+                        if resources.as_ref().is_some_and(|value| value != &fingerprint)
+                            || (!share.manifest.resources.is_empty() && resources.as_ref() != Some(&fingerprint)) {
+                            let _ = guest.wire.queue(&Message::Reject("Server resource versions do not match. Prepare server mods before joining.".into()));
+                            let _ = guest.wire.flush();
+                            return false;
+                        }
                         if version != VERSION {
                             let _ = guest
                                 .wire
@@ -310,7 +389,7 @@ fn host_worker(
                             let _ = guest.wire.flush();
                             return false;
                         }
-                        if admitted >= MAX_PLAYERS - 1 {
+                        if admitted >= MAX_PLAYERS - usize::from(host_player) {
                             let _ = guest
                                 .wire
                                 .queue(&Message::Reject("Session full (20 players)".into()));
@@ -335,15 +414,29 @@ fn host_worker(
                     _ => return false,
                 }
             }
+            if let Some((sha256, data, offset)) = &mut guest.transfer {
+                // One bounded chunk per iteration, alongside ordinary gameplay.
+                if guest.wire.outgoing.len() - guest.wire.sent < MAX_FRAME {
+                    let end = (*offset + 2048).min(data.len());
+                    let done = end == data.len();
+                    if guest.wire.queue(&Message::ResourceChunk { sha256: sha256.clone(), offset: *offset, data: data[*offset..end].to_vec(), done }).is_err() { return false; }
+                    *offset = end;
+                    guest.wire.last = Instant::now();
+                    if done { guest.transfer = None; }
+                }
+            }
             guest.wire.flush().is_ok()
         });
         if Instant::now() >= next_tick {
             next_tick = Instant::now() + TICK;
-            let mut peers = vec![Peer {
-                id: 0,
-                name: name.clone(),
-                pose: *local.lock().unwrap(),
-            }];
+            let mut peers = Vec::new();
+            if host_player {
+                peers.push(Peer {
+                    id: 0,
+                    name: name.clone(),
+                    pose: *local.lock().unwrap(),
+                });
+            }
             peers.extend(guests.iter().filter(|g| g.ready).map(|g| g.peer.clone()));
             publish(&report, &status, true, 0, peers.clone());
             let snapshot = Message::Snapshot(peers);
@@ -355,16 +448,6 @@ fn host_worker(
     }
     publish(&report, "Disconnected", false, 0, Vec::new());
 }
-fn client_worker(
-    address: SocketAddr,
-    name: String,
-    stop: &AtomicBool,
-    local: &Mutex<Pose>,
-    report: &Mutex<Report>,
-) -> io::Result<()> {
-    let stream = TcpStream::connect_timeout(&address, Duration::from_secs(3))?;
-    client_stream(stream, address, name, stop, local, report)
-}
 fn client_stream(
     stream: TcpStream,
     address: SocketAddr,
@@ -372,11 +455,13 @@ fn client_stream(
     stop: &AtomicBool,
     local: &Mutex<Pose>,
     report: &Mutex<Report>,
+    fingerprint: Option<String>,
 ) -> io::Result<()> {
     let mut wire = Wire::new(stream)?;
     wire.queue(&Message::Hello {
         version: VERSION,
         name,
+        resources: fingerprint,
     })?;
     let mut id = None;
     let mut next_tick = Instant::now();
@@ -441,7 +526,8 @@ mod tests {
         }
     }
     fn report(s: &Session) -> Report {
-        s.update(Pose::default()).unwrap()
+        s.update(Pose::default());
+        s.report.lock().unwrap().clone()
     }
     fn pair() -> (TcpStream, Wire) {
         let listener = TcpListener::bind(address()).unwrap();
@@ -520,7 +606,7 @@ mod tests {
             for client in &clients {
                 client.update(pose);
             }
-            let r = host.update(Pose::default()).unwrap();
+            let r = report(&host);
             r.peers.len() == MAX_PLAYERS
                 && r.peers.iter().skip(1).all(|p| p.pose == pose)
                 && clients
@@ -545,6 +631,7 @@ mod tests {
             .queue(&Message::Hello {
                 version: VERSION + 1,
                 name: "Bad".into(),
+                resources: None,
             })
             .unwrap();
         intruder.flush().unwrap();
@@ -563,5 +650,31 @@ mod tests {
         wait(|| intruder.read().is_err());
         assert!(report(&host).connected);
         assert!(report(&client).connected);
+    }
+    #[test]
+    fn dedicated_server_has_twenty_real_slots_and_no_phantom_host() {
+        let server =
+            Session::dedicated_resources(address(), "Server", resources::Share::default()).unwrap();
+        wait(|| report(&server).connected);
+        assert!(report(&server).peers.is_empty());
+        let mut clients: Vec<_> = (0..MAX_PLAYERS)
+            .map(|i| Session::join(server.address, &format!("Client{i}")).unwrap())
+            .collect();
+        wait(|| {
+            report(&server).peers.len() == MAX_PLAYERS
+                && clients.iter().all(|c| report(c).peers.len() == MAX_PLAYERS)
+        });
+        assert!(report(&server)
+            .peers
+            .iter()
+            .all(|p| p.id != 0 && p.name != "Server"));
+        let overflow = Session::join(server.address, "Overflow").unwrap();
+        wait(|| report(&overflow).status.contains("Session full"));
+        drop(clients.pop());
+        wait(|| report(&server).peers.len() == MAX_PLAYERS - 1);
+        let replacement = Session::join(server.address, "Replacement").unwrap();
+        wait(|| report(&replacement).connected && report(&server).peers.len() == MAX_PLAYERS);
+        drop(server);
+        wait(|| !report(&replacement).connected);
     }
 }

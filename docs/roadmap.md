@@ -29,7 +29,7 @@ En første relay-versjon med serverbrowser og offentlige/private rom finnes nå;
 se [oppsettet](multiplayer.md). `sa-relay` registrerer navn, spillerantall og
 runtime-versjon. Private rom utelates fra listen og bruker en tilfeldig joincode
 som invitasjon. Begge parter kobler ut, og all trafikk går via relayen.
-Ressurslister og automatisk nedlasting er ennå ikke koblet inn.
+Ressurslister, versjonssjekk og automatisk nedlasting/cache er nå koblet inn.
 
 Direkte P2P uten manuell portåpning trenger NAT-traversering og en relay-reserve
 når direkte forbindelse ikke virker, blant annet bak CGNAT. Direkte P2P er
@@ -47,7 +47,7 @@ Direkte IP beholdes som et alternativ for lokal testing.
 
 ## Automatisk modnedlasting og cache
 
-Planlagt join-flyt:
+Implementert første join-flyt:
 
 1. Hent vertens ordnede ressursliste: ressurs-ID, formatversjon, filnavn,
    størrelse og SHA-256 for hver fil. Kontroller runtime-kompatibilitet.
@@ -65,7 +65,7 @@ ny hash, mens uendrede filer kan brukes ved neste join. En hash oppdager
 endrede/skadede filer; den gjør ikke verten eller filinnholdet pålitelig.
 Nedlastingen skal tillate støttede dataressurser, med avvisning av absolutte
 stier, `..`, lenker ut av cacheområdet og kjørbare plugins/scripts.
-Cacheoversikten skal vise diskbruk og tilby sletting av ubrukte ressurser.
+En cacheoversikt med diskbruk og sletting av ubrukte ressurser gjenstår.
 
 Første omfang er native manifest, DFF/TXD/PNG/COL/IFP og støttede biler, peds,
 klær og plasseringer. GTA V/FiveM-modeller må konverteres på vertssiden før de
@@ -74,7 +74,19 @@ ikke kompatibilitet av automatisk nedlasting. Originale San Andreas-filer
 skal fortsatt leses fra hver spillers egen installasjon. Verten må bare dele
 mods som de har rett til å distribuere.
 
-Dette krever også endring av dagens loader, som leser lokale ressurser ved
-oppstart. Nedlasting alene gir verken korrekt ressursbytte eller synkronisert
-utseende. Testene må dekke cachetreff, endret versjon, feil hash, avbrutt
-nedlasting, ugyldige stier og gjenoppretting av lokale ressurser etter session.
+Loaderen forbereder nå et eget ressurssett på en bakgrunnstråd og laster
+GPU-data gradvis før et samlet bytte. Offline-verdenen beholdes og gjenopprettes
+ved frakobling. Tester dekker cachetreff, versjonsendring, feil hash, avbrudd,
+ugyldige stier og ressursbytte/gjenoppretting i to Vulkan-instanser. Synkronisert
+valg av bil, ped og antrekk gjenstår fortsatt.
+
+## Servermodell inspirert av ReSkate
+
+Vennehosting beholdes i spillet, og `sa-server` kan nå kjøre uten spillvindu
+eller originalinstallasjon. Se [serveroppsettet](server-hosting.md). Begge kan registreres i
+samme browser og bruke joincode og native ressurscache. Første transport
+er fortsatt prosjektets egen relay. Steam-lobbyer og Valves relay krever
+eget integrasjonsarbeid og avklart Steamworks-oppsett.
+
+Referanse: [ReSkates serveroppsett](https://github.com/Dingo-Shenanigans/ReSkate/blob/main/Server/README.txt),
+sjekket 7. oktober 2026. Deres Steam-integrasjon er ikke lagt inn i prosjektet.

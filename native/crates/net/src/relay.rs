@@ -159,7 +159,33 @@ impl Session {
         name: &str,
         public: bool,
     ) -> io::Result<(Self, Publication)> {
-        let session = Self::host("127.0.0.1:0".parse().unwrap(), name)?;
+        Self::host_relay_resources(address, name, public, resources::Share::default())
+    }
+    pub fn host_relay_resources(
+        address: SocketAddr,
+        name: &str,
+        public: bool,
+        share: resources::Share,
+    ) -> io::Result<(Self, Publication)> {
+        Self::host_relay_resources_kind(address, name, public, share, true)
+    }
+    pub fn dedicated_relay_resources(
+        address: SocketAddr,
+        name: &str,
+        public: bool,
+        share: resources::Share,
+    ) -> io::Result<(Self, Publication)> {
+        Self::host_relay_resources_kind(address, name, public, share, false)
+    }
+    fn host_relay_resources_kind(
+        address: SocketAddr,
+        name: &str,
+        public: bool,
+        share: resources::Share,
+        host_player: bool,
+    ) -> io::Result<(Self, Publication)> {
+        let session =
+            Self::host_resources_kind("127.0.0.1:0".parse().unwrap(), name, share, host_player)?;
         let publication = Publication {
             stop: session.stop.clone(),
             report: Arc::new(Mutex::new(HostReport {
@@ -196,6 +222,14 @@ impl Session {
         Ok((session, publication))
     }
     pub fn join_relay(address: SocketAddr, join_code: &str, name: &str) -> io::Result<Self> {
+        Self::join_relay_resources(address, join_code, name, None)
+    }
+    pub fn join_relay_resources(
+        address: SocketAddr,
+        join_code: &str,
+        name: &str,
+        fingerprint: Option<String>,
+    ) -> io::Result<Self> {
         let join_code = code(join_code)?;
         let session = Self::new(address, "Joining player-hosted session...");
         let (stop, local, report) = session.shared();
@@ -204,18 +238,8 @@ impl Session {
             .name("relay-guest".into())
             .spawn(move || {
                 let result = (|| {
-                    let mut stream = connect(address)?;
-                    send(
-                        &mut stream,
-                        &Control::Join {
-                            version: VERSION,
-                            code: join_code,
-                        },
-                    )?;
-                    if !matches!(receive(&mut stream)?, Control::Ready) {
-                        return Err(invalid());
-                    }
-                    client_stream(stream, address, name, &stop, &local, &report)
+                    let stream = open_tunnel(address, &join_code)?;
+                    client_stream(stream, address, name, &stop, &local, &report, fingerprint)
                 })();
                 let status = match result {
                     Ok(()) => "Disconnected".into(),
@@ -225,6 +249,20 @@ impl Session {
             })?;
         Ok(session)
     }
+}
+pub fn open_tunnel(address: SocketAddr, join_code: &str) -> io::Result<TcpStream> {
+    let mut stream = connect(address)?;
+    send(
+        &mut stream,
+        &Control::Join {
+            version: VERSION,
+            code: code(join_code)?,
+        },
+    )?;
+    if !matches!(receive(&mut stream)?, Control::Ready) {
+        return Err(invalid());
+    }
+    Ok(stream)
 }
 fn publish_room(
     relay: SocketAddr,
@@ -257,7 +295,7 @@ fn publish_room(
     };
     let tunnels = Arc::new(AtomicUsize::new(0));
     while !stop.load(Ordering::Relaxed) {
-        let players = session_report.lock().unwrap().peers.len().max(1);
+        let players = session_report.lock().unwrap().peers.len();
         send(&mut control, &Control::Heartbeat { players })?;
         let Control::Tickets(tickets) = receive(&mut control)? else {
             return Err(invalid());
@@ -269,7 +307,7 @@ fn publish_room(
             if ticket.len() != 64 {
                 return Err(invalid());
             }
-            if tunnels.load(Ordering::Relaxed) >= MAX_PLAYERS - 1 {
+            if tunnels.load(Ordering::Relaxed) >= MAX_PLAYERS {
                 continue;
             }
             tunnels.fetch_add(1, Ordering::Relaxed);
@@ -399,7 +437,7 @@ fn serve(mut stream: TcpStream, rooms: &Rooms, service_stop: &AtomicBool) -> io:
                         listing: Listing {
                             code: room_code.clone(),
                             name: safe_name(&name),
-                            players: 1,
+                            players: 0,
                             capacity: MAX_PLAYERS,
                             version,
                         },
@@ -423,7 +461,7 @@ fn serve(mut stream: TcpStream, rooms: &Rooms, service_stop: &AtomicBool) -> io:
                     let Control::Heartbeat { players } = receive(&mut stream)? else {
                         return Err(invalid());
                     };
-                    if !(1..=MAX_PLAYERS).contains(&players) {
+                    if players > MAX_PLAYERS {
                         return Err(invalid());
                     }
                     let tickets = {
@@ -475,7 +513,7 @@ fn serve(mut stream: TcpStream, rooms: &Rooms, service_stop: &AtomicBool) -> io:
             let Some(room) = rooms.get_mut(&value) else {
                 return reject(&mut stream, "Session not found");
             };
-            if room.active + room.pending.len() >= MAX_PLAYERS - 1 {
+            if room.active + room.pending.len() >= MAX_PLAYERS {
                 return reject(&mut stream, "Session full (20 players)");
             }
             room.pending
@@ -585,7 +623,8 @@ mod tests {
         (host, publication, code)
     }
     fn report(session: &Session) -> Report {
-        session.update(Pose::default()).unwrap()
+        session.update(Pose::default());
+        session.report.lock().unwrap().clone()
     }
 
     #[test]
@@ -698,6 +737,40 @@ mod tests {
             .unwrap();
         assert!(receive(&mut stream).is_err());
         assert!(browse(relay.address).unwrap().is_empty());
+    }
+    #[test]
+    fn dedicated_relay_browser_lists_twenty_clients_without_a_fake_host() {
+        let relay = relay();
+        let (server, publication) = Session::dedicated_relay_resources(
+            relay.address,
+            "Dedicated",
+            true,
+            resources::Share::default(),
+        )
+        .unwrap();
+        wait(|| !publication.report().code.is_empty());
+        let code = publication.report().code;
+        wait(|| browse(relay.address).is_ok_and(|r| r.len() == 1 && r[0].players == 0));
+        let mut clients = Vec::new();
+        for i in 0..MAX_PLAYERS {
+            let client = Session::join_relay(relay.address, &code, &format!("Client{i}")).unwrap();
+            wait(|| report(&client).connected);
+            clients.push(client);
+        }
+        wait(|| {
+            report(&server).peers.len() == MAX_PLAYERS
+                && browse(relay.address).unwrap()[0].players == MAX_PLAYERS
+        });
+        assert!(report(&server).peers.iter().all(|p| p.id > 0));
+        let overflow = Session::join_relay(relay.address, &code, "Overflow").unwrap();
+        wait(|| report(&overflow).status.contains("Session full"));
+        clients.pop();
+        wait(|| report(&server).peers.len() == MAX_PLAYERS - 1);
+        let replacement = Session::join_relay(relay.address, &code, "Replacement").unwrap();
+        wait(|| report(&replacement).connected);
+        drop(publication);
+        drop(server);
+        wait(|| !report(&replacement).connected && browse(relay.address).unwrap().is_empty());
     }
 
     #[test]

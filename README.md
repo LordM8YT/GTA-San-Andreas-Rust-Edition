@@ -25,13 +25,17 @@ connections from host and guests. Run `start-relay.cmd` on a reachable trusted
 LAN/VPN machine, then configure its address in Multiplayer. The game host
 needs no port forwarding in relay mode. No public relay or Steam integration
 is configured; the prototype relay uses unencrypted TCP.
-Custom assets, NPCs, shared vehicle collisions and passengers are not yet
-replicated. See [multiplayer setup and limits](docs/multiplayer.md).
+For a server that stays running without a player's game, run **start-server.cmd**.
+The headless server supports 20 clients, direct IP or relay/browser hosting,
+and native mod distribution. See [server setup](docs/server-hosting.md).
+Required native mods download and cache before joining; disconnect restores
+your offline world and local mods. Selected custom appearances, NPCs, shared
+vehicle collisions and passengers are not yet replicated. See [multiplayer setup and limits](docs/multiplayer.md).
 
 The next milestone is driving together with friends in shared vehicles.
 See the [roadmap](docs/roadmap.md) for priorities, direct P2P plans
-and automatic resource caching. Shared vehicles and resource downloads remain
-planned features.
+and hosting plans. Shared vehicles remain planned; native resource download,
+version checks and caching are implemented.
 
 ## Menus, HUD, and settings
 

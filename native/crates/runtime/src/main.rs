@@ -10,6 +10,7 @@ mod controller;
 mod menu;
 mod multiplayer;
 mod postprocess;
+mod session_resources;
 mod settings;
 mod streaming;
 mod upload;
@@ -99,6 +100,12 @@ struct State {
     network_session: Option<sa_net::Session>,
     network_publication: Option<sa_net::relay::Publication>,
     network_browser: Option<multiplayer::BrowserRequest>,
+    resource_game_dir: PathBuf,
+    resource_local_mods: Option<PathBuf>,
+    resource_cache_dir: PathBuf,
+    resource_job: Option<session_resources::Job>,
+    resource_installing: Option<session_resources::Installing>,
+    offline_world: Option<session_resources::World>,
     remote_actors: Vec<multiplayer::RemoteActor>,
     network_revision: u64,
     network_last: Instant,
@@ -462,6 +469,12 @@ impl State {
             network_session: None,
             network_publication: None,
             network_browser: None,
+            resource_game_dir: PathBuf::new(),
+            resource_local_mods: None,
+            resource_cache_dir: session_resources::cache_directory(),
+            resource_job: None,
+            resource_installing: None,
+            offline_world: None,
             remote_actors: Vec::new(),
             network_revision: 0,
             network_last: Instant::now(),
@@ -1240,6 +1253,11 @@ impl State {
             Some(menu::Action::Browse) => self.browse_network(),
             Some(menu::Action::Disconnect) => self.disconnect_network(),
             Some(menu::Action::Play) => {
+                if self.menu.network_active && !self.menu.network_ready {
+                    self.menu.message =
+                        "Wait until the session and its resources are ready.".into();
+                    return;
+                }
                 self.menu.has_played = true;
                 self.menu.page = None;
                 self.keys.clear();
@@ -1650,6 +1668,7 @@ struct App {
     network_saw_car_motion: bool,
     network_saw_car: bool,
     network_captured: bool,
+    network_restored: bool,
     network_players_seen: usize,
     smoke_ped: bool,
     smoke_wardrobe: bool,
@@ -1900,6 +1919,21 @@ impl ApplicationHandler for App {
                 }
                 state.driving = false;
                 let launch_args: Vec<_> = std::env::args().collect();
+                state.resource_game_dir = self.game_dir.clone();
+                state.resource_local_mods = if launch_args.iter().any(|a| a == "--no-mods") {
+                    None
+                } else {
+                    Some(
+                        launch_args
+                            .windows(2)
+                            .find(|a| a[0] == "--mods-dir")
+                            .map(|a| PathBuf::from(&a[1]))
+                            .unwrap_or_else(|| PathBuf::from("mods")),
+                    )
+                };
+                if let Some(pair) = launch_args.windows(2).find(|a| a[0] == "--cache-dir") {
+                    state.resource_cache_dir = PathBuf::from(&pair[1]);
+                }
                 if let Some(pair) = launch_args.windows(2).find(|a| a[0] == "--name") {
                     state.menu.player_name = pair[1].clone();
                 }
@@ -2226,8 +2260,13 @@ impl ApplicationHandler for App {
                     event_loop.exit();
                 }
                 if self.smoke_network {
+                    if self.network_restored && rendered {
+                        println!("GPU multiplayer smoke passed: remote walking ped and moving car rendered, {} players seen; offline resources restored and rendered", self.network_players_seen);
+                        event_loop.exit();
+                        return;
+                    }
                     assert!(
-                        self.smoke_started.elapsed().as_secs() < 45,
+                        self.smoke_started.elapsed().as_secs() < 90,
                         "multiplayer smoke timed out: {}",
                         state.menu.network_status
                     );
@@ -2270,9 +2309,19 @@ impl ApplicationHandler for App {
                             && self.network_saw_walk
                             && self.network_saw_car_motion
                         {
-                            println!("GPU multiplayer smoke passed: remote walking ped and moving car rendered, {} players seen; {}",self.network_players_seen,state.menu.network_status);
-                            event_loop.exit();
-                            return;
+                            state.disconnect_network();
+                            assert!(
+                                state.offline_world.is_none()
+                                    && state.resource_installing.is_none()
+                            );
+                            assert_eq!(
+                                state.menu.mods, self.mod_names,
+                                "offline resource list was not restored"
+                            );
+                            self.network_restored = true;
+                            if let Some(directory) = &self.capture_dir {
+                                state.capture_next = Some(directory.join("offline-restored.png"));
+                            }
                         }
                     }
                     state.window.request_redraw();
@@ -3132,6 +3181,7 @@ fn main() -> Result<()> {
         network_saw_car_motion: false,
         network_saw_car: false,
         network_captured: false,
+        network_restored: false,
         network_players_seen: 0,
         smoke_ped: args
             .iter()

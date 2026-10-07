@@ -102,6 +102,114 @@ struct Instance {
 fn identity() -> [f32; 4] {
     [0.0, 0.0, 0.0, 1.0]
 }
+/// Share only files referenced by enabled native manifests. Category folders,
+/// disabled demos, original IMG archives and arbitrary adjacent files stay local.
+pub fn share_resources(directory: &Path) -> Result<sa_net::resources::Share> {
+    use sa_net::resources::{Input, Share, MAX_FILES, MAX_PACK_BYTES};
+    use std::collections::BTreeSet;
+    if !directory.exists() {
+        return Ok(Share::default());
+    }
+    let root = directory.canonicalize()?;
+    let mut inputs = Vec::new();
+    let (mut total_bytes, mut total_files) = (0_usize, 0_usize);
+    for folder in resource_folders(&root)? {
+        let filename = if folder.join("mod.json").is_file() {
+            "mod.json"
+        } else if folder.join("resource.json").is_file() {
+            "resource.json"
+        } else {
+            continue;
+        };
+        let raw = resource(&folder, filename)?;
+        let manifest: Manifest = serde_json::from_slice(&raw)?;
+        if !manifest.enabled {
+            continue;
+        }
+        let name = if manifest.name.is_empty() {
+            folder.file_name().unwrap().to_string_lossy().into_owned()
+        } else {
+            manifest.name.clone()
+        };
+        let mut references = BTreeSet::new();
+        for model in &manifest.models {
+            references.insert(model.dff.clone());
+            references.extend(model.txd.iter().cloned());
+            references.extend(model.col.iter().cloned());
+        }
+        for vehicle in &manifest.vehicles {
+            references.insert(vehicle.dff.clone());
+            references.extend(vehicle.txd.iter().cloned());
+        }
+        if let Some(player) = &manifest.player {
+            references.insert(player.dff.clone());
+            references.extend(player.txd.iter().cloned());
+            references.extend(player.ifp.iter().cloned());
+            for clothing in &player.clothes {
+                references.insert(clothing.dff.clone());
+                references.extend(clothing.txd.iter().cloned());
+            }
+        }
+        references.extend(manifest.texture_overrides.values().cloned());
+        total_files += references.len() + 1;
+        ensure!(
+            total_files <= MAX_FILES,
+            "server resource sharing supports at most {MAX_FILES} files"
+        );
+        let mut exported: serde_json::Value = serde_json::from_slice(&raw)?;
+        exported["name"] = serde_json::Value::String(name.clone());
+        fn normalize(value: &mut serde_json::Value) {
+            match value {
+                serde_json::Value::Object(fields) => {
+                    for (key, value) in fields {
+                        if ["dff", "txd", "col", "ifp"].contains(&key.as_str()) {
+                            if let Some(path) = value.as_str() {
+                                *value = serde_json::Value::String(path.replace('\\', "/"));
+                            }
+                        } else if key == "texture_overrides" {
+                            if let Some(textures) = value.as_object_mut() {
+                                for value in textures.values_mut() {
+                                    if let Some(path) = value.as_str() {
+                                        *value = serde_json::Value::String(path.replace('\\', "/"));
+                                    }
+                                }
+                            }
+                        } else {
+                            normalize(value);
+                        }
+                    }
+                }
+                serde_json::Value::Array(values) => {
+                    for value in values {
+                        normalize(value);
+                    }
+                }
+                _ => {}
+            }
+        }
+        normalize(&mut exported);
+        let data = serde_json::to_vec(&exported)?;
+        total_bytes += data.len();
+        let mut files = vec![(filename.into(), data)];
+        for relative in references {
+            let normalized = relative.replace('\\', "/");
+            sa_net::resources::validate_path(&normalized)?;
+            let bytes = resource(&folder, &relative)?;
+            total_bytes += bytes.len();
+            ensure!(
+                total_bytes <= MAX_PACK_BYTES,
+                "server resource pack exceeds 128 MiB"
+            );
+            files.push((normalized, bytes));
+        }
+        inputs.push(Input { name, files });
+        ensure!(
+            inputs.len() <= 16,
+            "server sharing supports at most 16 enabled resources"
+        );
+    }
+    Ok(Share::build(inputs)?)
+}
 #[derive(Default)]
 pub(super) struct Resources {
     pub geometry: HashMap<String, Vec<Geometry>>,
@@ -534,6 +642,19 @@ mod tests {
         )
         .unwrap();
         loader.enable_mods(&root.join("mods")).unwrap();
+        fs::write(extra.join("private.txt"), b"Do not share adjacent files").unwrap();
+        let shared = share_resources(&root.join("mods")).unwrap();
+        assert_eq!(shared.manifest.resources.len(), 2);
+        assert!(shared.manifest.resources.iter().all(|r| {
+            r.files.iter().all(|f| f.path != "private.txt")
+                && r.files.iter().any(|f| f.path.ends_with(".json"))
+        }));
+        assert!(shared
+            .manifest
+            .resources
+            .iter()
+            .any(|r| r.name == "Test room"));
+        fs::remove_file(extra.join("private.txt")).unwrap();
         assert_eq!(loader.take_car_catalog().len(), 1);
         assert_eq!(
             loader

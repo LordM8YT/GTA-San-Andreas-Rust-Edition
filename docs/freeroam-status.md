@@ -14,8 +14,8 @@ videresendt TCP-port (standard 7777); automatisk NAT-traversering er ikke lagt i
 Relay-modus har serverbrowser, offentlige/private rom og joincode. Begge parter
 kobler ut til en tilgjengelig relay, uten portåpning på spillverten. Start relayen
 med `start-relay.cmd`; ingen offentlig tjeneste er satt opp. Prototypen bruker
-ukryptert TCP og bør testes på betrodd LAN/VPN. Automatisk modnedlasting er
-fortsatt planlagt. Se [veikartet](roadmap.md) for neste milepæl og cache.
+ukryptert TCP og bør testes på betrodd LAN/VPN. Native servermods lastes ned og caches før tilkobling, med versjonssjekk
+og gjenoppretting av lokale ressurser etter frakobling. Se [veikartet](roadmap.md) for neste milepæl og cache.
 
 ## Start og kontroller
 

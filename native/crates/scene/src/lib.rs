@@ -1,6 +1,7 @@
 //! Manifest-ordered SA world placement and small bounded scene assembly.
 pub mod collision;
 mod mods;
+pub use mods::share_resources;
 pub mod ped;
 mod roadsign;
 mod texture;

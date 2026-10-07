@@ -187,3 +187,16 @@ Filer begrenses til 16 MiB hver, totalt 512 modeller, 512 teksturoverstyringer
 og 256 MiB mod-ressurser. Ressurser kan ikke referere til filer utenfor egen
 mappe. Del egne assets; originaldata leses fra brukerens installasjon.
 Dekodede spillerteksturer har en egen grense på 128 MiB.
+
+## Multiplayer resource sharing
+
+Hosting takes an immutable snapshot of enabled native resources and their
+referenced files. Guests prepare the same ordered resource set before joining,
+downloading missing content into a SHA-256 cache. Their local mods and original
+installation remain separate; disconnect restores the offline world. The
+automatic-download choice is saved with settings.
+
+See [resource limits and cache behavior](multiplayer.md#native-server-resource-preparation)
+and [dedicated hosting](server-hosting.md). Appearance selection replication
+still remains separate work; downloaded custom models can be selected locally,
+while other players currently appear as Grove Street/Taxi.

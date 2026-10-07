@@ -13,7 +13,7 @@ forwarded to their computer. CGNAT can prevent direct hosting; a shared VPN
 network is another option. There is no automatic NAT traversal, lobby service,
 UPnP or automatic matchmaking in direct mode.
 Relay mode provides a server browser and join codes; see the setup below.
-Automatic mod download/cache is still planned in the [roadmap](roadmap.md).
+Native server resources now download into an isolated, verified cache before joining.
 
 ## Player hosting via relay and server browser
 
@@ -58,7 +58,7 @@ The relay is trusted and can see traffic. Steam lobby/relay integration is
 not included; the project currently has no Steamworks App ID.
 
 The service bounds rooms (32), worker connections (256), guest tunnels
-(19 per room), control frame size (8 KiB), handshake time and tunnel buffers.
+(20 per room), control frame size (8 KiB), handshake time and tunnel buffers.
 These limits are resource bounds, not evidence of production-scale capacity.
 
 Enter free roam after connecting. The session page shows the connection status
@@ -69,8 +69,49 @@ quits, guests return to an offline world and can reconnect through Multiplayer.
 There is no host migration.
 
 Each player needs their own original San Andreas installation and this runtime.
-The host does not distribute game files or mods. Use compatible local map/mod
-sets for testing; there is no asset comparison/download handshake yet.
+Original game archives are not distributed. Enabled native mods are shared as
+an immutable inventory; see the resource preparation below.
+
+## Native server resource preparation
+
+Hosting exports only files referenced by enabled `mod.json` / `resource.json`
+resources. Guests query this ordered inventory before gameplay. Keep
+**Automatically download required server mods** enabled to fetch missing files;
+with it disabled, joining still works when every required file is already cached.
+This preference is saved with other settings.
+The prepared inventory fingerprint is checked again during login, so a restarted
+host with different resources cannot silently admit an outdated client.
+
+The cache is `%LOCALAPPDATA%/SAFreeroam/server-cache` on Windows, or
+`$XDG_CACHE_HOME/sa-freeroam/server-cache` / `$HOME/.cache/sa-freeroam/server-cache`
+on Linux. `--cache-dir <directory>` overrides it for isolated tests. SHA-256
+content blobs are reused across sessions and changed versions; completed packs
+retain the resource order. Every reused file is checked again before loading.
+
+Bounds: 16 resources, 64 files, 16 MiB per file, 128 MiB per inventory, 12 KiB
+inventory metadata and 512 MiB total cache. Only native DFF/TXD/PNG/COL/IFP and
+resource manifests are accepted. Traversal, Windows device paths, scripts,
+executables, cache links/junctions and unexpected pack files are rejected.
+Downloads use temporary files, verified size/hash and a final completion marker.
+The cache currently has no eviction UI; stop the game before removing old packs
+or clearing this dedicated cache folder. Do not remove local mods or game files.
+
+Preparation runs off the render thread; GPU uploads are split across frames.
+The session uses its own resource loader and catalogs. Existing local mods are
+kept separately in memory and restored on disconnect, including after a failed
+login. Joining an unmodified host temporarily uses the original resource set.
+Keeping the offline world for restoration increases memory use during a session.
+
+GTA V/FiveM resources must first be converted to supported native assets.
+Automatic download does not run Lua, DLL or FiveM scripts. Hosts should share
+only resources they may redistribute; each player reads original assets locally.
+Hashes detect changed data, not trustworthiness of the host. Custom model
+**selection** is still not synchronized: remote avatars remain Grove/Taxi.
+
+Verified with real direct/relay sockets, corrupt/interrupted cache tests, and
+two Vulkan runtime instances using different local resources and separate
+caches. First join transfers the tiny test pack; rejoin reuses it. Disconnect
+restores and renders the offline world. Separate-PC/internet tests remain pending.
 
 ## Current synchronization
 
@@ -86,7 +127,7 @@ sets for testing; there is no asset comparison/download handshake yet.
 Vehicles are currently personal: other players see your car while you drive.
 Parked cars, passenger seats, exchanging vehicles, vehicle/player collisions,
 damage, weapons, NPCs spawned through `/peds`, clothing, time/weather and custom
-resource replication are **not synchronized**. Each client simulates their own
+appearance replication are **not synchronized**. Each client simulates their own
 movement and collisions. Remote actors have no physical collision. This is a
 freeroam connection/replication prototype, not a complete shared simulation.
 
@@ -94,11 +135,11 @@ freeroam connection/replication prototype, not a complete shared simulation.
 
 One player's running game owns membership and relays the latest poses to all
 guests. This is a player-hosted star topology, not a full mesh between every
-pair of players. Separate dedicated server files are not required or supplied.
-The independent `sa-net` crate can be reused when dedicated hosting is added.
+pair of players. Alternatively, `sa-server` hosts 20 actual clients without a
+running game; see [dedicated server setup](server-hosting.md).
 
 An optional independent `sa-relay` process supplies discovery and outbound
-tunnels. It is separate from a future dedicated game server.
+tunnels. It is separate from the dedicated game server.
 
 The first transport uses TCP with `TCP_NODELAY` and 20 Hz pose/snapshot updates.
 Packet loss can delay subsequent TCP snapshots; UDP sequencing/interpolation
@@ -133,8 +174,8 @@ logs/captures under `native/target/mp-smoke-<timestamp>`.
 For a GPU integration check, launch two runtime instances with `--smoke-network`
 and complementary `--host 127.0.0.1:17777` / `--join 127.0.0.1:17777` arguments.
 Start the host first. The test observes a remote walking ped and a moving car,
-then exits; `--capture-dir <directory>` saves a world screenshot. The second
-instance starts six metres away so the two actors can be distinguished.
+then exits; `--capture-dir <directory>` saves a world screenshot. New guests seek an unoccupied standing position near the Grove Street road
+spawn, rather than spawning at the streaming center on a garage/roof.
 
 The network capacity test does not establish engine performance with twenty
 fully rendered game clients, nor verify internet/router connectivity. Those

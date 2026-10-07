@@ -1,6 +1,7 @@
 native/target/
 native/**/*.exe
 settings.json
+server.json
 private-assets/
 *.log
 tools/gta5-extract/bin/
