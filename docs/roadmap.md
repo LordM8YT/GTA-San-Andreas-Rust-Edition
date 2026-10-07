@@ -1,0 +1,80 @@
+# Veikart for native freeroam
+
+Neste milepæl: **kjør sammen med venner i egne biler**, med opptil 20 spillere
+inkludert verten. Missions er ikke prioritert. Dette dokumentet beskriver
+planlagt arbeid; [multiplayer-status](multiplayer.md) og
+[freeroam-status](freeroam-status.md) beskriver det som faktisk finnes.
+
+## Prioriteringer
+
+| Prioritet | Arbeid | Kriterium for milepælen |
+| --- | --- | --- |
+| 1 | Multiplayer på forskjellige PC-er og nettverk | To faktiske PC-er kan koble til, kjøre mellom streamede områder, koble fra og koble til igjen. Test både LAN og internett; samme-PC-testen dekker ikke dette. |
+| 2 | Felles biler og passasjerer | En bil beholder identitet og posisjon etter utstigning, og to spillere kan kjøre sammen med én fører. Verten avgjør hvem som eier førersetet. |
+| 3 | Bil, ped, antrekk og ressursversjoner | Andre ser valgte modeller/plagg. Ressurslisten kontrolleres før verden lastes, med tydelig beskjed ved manglende eller inkompatible filer. |
+| 4 | Motorlyd, fottrinn og kollisjonslyd | Lydene følger faktiske hendelser, plassering og fart. Originale menylyder og en lydmotor finnes allerede. |
+| 5 | Trafikk og gående NPC-er | Start i ett nabolag med et begrenset antall aktører; mål ytelse og definer hvem som simulerer dem i multiplayer. |
+| 6 | Lagring av posisjon, bilvalg og antrekk | En ny spilløkt gjenoppretter gyldige valg med reservevalg hvis ressurser er fjernet. Innstillinger lagres allerede. |
+| 7 | Døgnsyklus, vær og Classic/Enhanced-profiler | Sammenhengende lys/vær og valgbare uttrykk, med samme tid/vær for deltakere i en session. Dagens grafikkprofiler er ikke en ferdig døgn-/værsimulering. |
+
+Streaming, ytelse og bilfysikk må fortsatt tunes. Fjæring, pitch/roll og
+akselbaserte dekkrefter finnes; bevegelige hjul, skade og en full fysisk
+kollisjonsrespons gjenstår. En kapasitetstest med 20 nettverksklienter er ikke
+dokumentasjon på ytelse med 20 fullt renderende spillere.
+
+## Spillerhosting med serverbrowser og joincode
+
+Dagens vert simulerer sin lokale verden og videresender spillerposeringer.
+Dette kan videreføres til spillerhosting med en serverbrowser. En egen
+katalogtjeneste må registrere aktive sesjoner, navn, spillerantall,
+kompatibel runtime-versjon og hvilke ressurser de krever. Offentlige sesjoner
+vises i listen; private sesjoner kan finnes via en joincode. En joincode må
+kobles til adgangskontroll for å fungere som privat invitasjon.
+
+En liste eller kode åpner ikke porter i seg selv. Tilkobling uten manuell
+portåpning trenger NAT-traversering og en relay-reserve når direkte forbindelse
+ikke virker, blant annet bak CGNAT. Verten er fortsatt en spillers PC når
+trafikken går via relay; et dedikert spillserverprogram er ikke nødvendig.
+Katalog og relay trenger derimot en tilgjengelig tjeneste med drift og
+konfigurasjon. Ingen slik offentlig tjeneste er satt opp for prosjektet nå.
+
+Mulige tjenestebaserte løsninger er
+[Epic Online Services P2P/lobby](https://dev.epicgames.com/docs/epic-online-services/multiplayer/nat-p2p-interface/eosp-2-p-sample)
+eller [Steam Networking](https://partner.steamgames.com/doc/features/multiplayer/networking).
+Valg og prosjektoppsett må avklares før integrasjon; dokumentasjonen betyr
+ikke at prosjektet allerede har tilgang til deres produksjonstjenester.
+Direkte IP beholdes som et alternativ for lokal testing.
+
+## Automatisk modnedlasting og cache
+
+Planlagt join-flyt:
+
+1. Hent vertens ordnede ressursliste: ressurs-ID, formatversjon, filnavn,
+   størrelse og SHA-256 for hver fil. Kontroller runtime-kompatibilitet.
+2. Vis nødvendige ressurser, nedlastingsstørrelse og fremdrift. Brukerens valg
+   om automatisk nedlasting styrer om nye filer hentes uten et ekstra spørsmål.
+3. Gjenbruk filer i en separat cache når innholdshashen stemmer. Hent bare
+   manglende eller endrede filer, med grenser for filstørrelse og total lagring.
+4. Last ned til midlertidige filer og kontroller faktisk størrelse og hash før
+   de tas i bruk. Avbrutte/ugyldige filer aktiveres aldri som ferdige ressurser.
+5. Last et eget ressurssett for sesjonen i avtalt rekkefølge. Lokale mods
+   overskrives ikke. Gjenopprett det lokale ressurssettet ved frakobling.
+
+Cachen skal identifisere innhold, ikke bare servernavn. En endret ressurs får
+ny hash, mens uendrede filer kan brukes ved neste join. En hash oppdager
+endrede/skadede filer; den gjør ikke verten eller filinnholdet pålitelig.
+Nedlastingen skal tillate støttede dataressurser, med avvisning av absolutte
+stier, `..`, lenker ut av cacheområdet og kjørbare plugins/scripts.
+Cacheoversikten skal vise diskbruk og tilby sletting av ubrukte ressurser.
+
+Første omfang er native manifest, DFF/TXD/PNG/COL/IFP og støttede biler, peds,
+klær og plasseringer. GTA V/FiveM-modeller må konverteres på vertssiden før de
+kan deles som native ressurser; Lua-scripts og vilkårlige FiveM-pakker får
+ikke kompatibilitet av automatisk nedlasting. Originale San Andreas-filer
+skal fortsatt leses fra hver spillers egen installasjon. Verten må bare dele
+mods som de har rett til å distribuere.
+
+Dette krever også endring av dagens loader, som leser lokale ressurser ved
+oppstart. Nedlasting alene gir verken korrekt ressursbytte eller synkronisert
+utseende. Testene må dekke cachetreff, endret versjon, feil hash, avbrutt
+nedlasting, ugyldige stier og gjenoppretting av lokale ressurser etter session.

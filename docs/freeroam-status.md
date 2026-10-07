@@ -8,9 +8,11 @@ ikke prioritert. Originalinstallasjonen leses; gta_sa.exe kjøres ikke.
 En spiller hoster, og opptil 19 andre kobler til med IP og port. Åpne Multiplayer
 fra hoved-/pausemenyen, F5 eller /mp. Spillerposisjoner og bilbevegelse deles;
 andre spillere vises foreløpig med Grove Street-ped og Taxi. Custom modeller,
-NPC-er, passasjerer og felles bilkollisjoner er ikke synkronisert.
+NPC-er, parkerte biler, passasjerer og felles bilkollisjoner er ikke synkronisert.
 Se [oppsett og begrensninger](multiplayer.md). Internett-hosting krever åpen og
 videresendt TCP-port (standard 7777); automatisk NAT-traversering er ikke lagt inn.
+Serverbrowser, joincode og automatisk modnedlasting er planlagt, ikke implementert.
+Se [veikartet](roadmap.md) for neste milepæl og planlagt cache.
 
 ## Start og kontroller
 
@@ -77,7 +79,7 @@ feilmelding vises i menyen.
   originalfilen mangler, vises ikke et oppdiktet kart. Speedometeret
   vises når spilleren kjører bil. Begge kan slås av hver for seg i innstillingene.
 - Tap av vindusfokus åpner pausemenyen. Kartmenyen støtter også tallene 1–9.
-- `--smoke-menus` rendrer alle sju menysidene og kan lagre renderbilder.
+- `--smoke-menus` rendrer menysidene og kan lagre renderbilder.
 
 - Indeksering av 44 771 utendørsplasseringer på denne installasjonen.
 - Rettet IPL-feil: bare de nederste åtte bitene er interiør-ID. Flaggene over
@@ -105,12 +107,13 @@ feilmelding vises i menyen.
 - Førstepersons gåmodus starter automatisk. Gjenoppretting ved fall langt
   under kartet. P beholder flymodus for utforskning og feilsøking.
 - Native mods: DFF, TXD, PNG, valgfri COL, plasseringer og modell-erstatning.
-- DFF med innledende UV-animasjonsordbok leses som statisk geometri.
+- DFF med innledende UV-animasjonsordbok leses med støttet UV-animasjon.
   Ugyldige UV-koordinater får reserveverdi; romlige data avvises ved feil.
   Metadata-audit dekodet 12 955 av 12 955 DFF-er fra lokal `gta3.img`.
-  Dette beviser geometrilesing, ikke animasjon eller alle materialeffekter.
-- GPU-opplasting beholder ikke CPU-kopier av statisk geometri.
-- Én kjørbar taxi med følgekamerа, terrengkontakt, veggkollisjon og inn/ut.
+  Denne metadata-auditen beviser geometrilesing, ikke alle materialeffekter.
+- GPU-opplasting beholder ikke CPU-kopier av statisk, ikke-animert geometri.
+- Én aktiv kjørbar bil, valgt fra bilmenyens originale og custom modeller,
+  med følgekamera, terrengkontakt, veggkollisjon og inn/ut.
   `--smoke-car` kontrollerer kjøring, bremsing, utstigning og ny innstigning.
   Bilens dynamiske geometri beholdes når nabolag byttes.
 - Bakkekontakt måles fra hvert hjuls forventede høyde på den skrå bilen.
@@ -164,7 +167,8 @@ COL/visuelle reservegeometri som øvrig kollisjon, med et begrenset antall prøv
 Spilleren har nå en synlig `fam1`-figur med tomgang, gange og løp i
 tredjeperson. V bytter mellom første- og tredjeperson. Kameraet har
 kollisjon mot kartet. AI for andre peds, riktig hoppe-/svømme-/bilsete-
-animasjon og overgangsblending gjenstår. Multiplayer gjenstår.
+animasjon og overgangsblending gjenstår. Multiplayer finnes som prototype;
+felles kjøretøy, passasjerer og synkronisert custom utseende gjenstår.
 Asset-laget har nå en separat Skin/HAnim-laster og CPU-skinning med
 beinvekter og inverse bind-matriser. Bind-posen er kontrollert mot 265
 originale peds i det lokale arkivet. Dette brukes nå av spiller-renderingen,
@@ -178,7 +182,9 @@ klipp i lokal `ped.ifp` er lest og kontrollert med fem gyldige prøveposer
 per klipp. Gange, tomgang, løp og sprint matcher alle 32 spor til skjelettet.
 Live tomgang og løp er visuelt kontrollert i GPU-bilder. `--smoke-ped`
 tester 20 meter gange/løp, stopp og kamerabytte med kontrollert tidssteg.
-FiveM/GTA V-ressurser lastes ikke direkte. Custom DFF-rom kan plasseres med
+FiveM/GTA V-ressurser lastes ikke direkte. En eksperimentell
+[konverterer](gta5-conversion.md) kan klargjøre støttede Legacy-modeller som
+native ressurser. Custom DFF-rom kan plasseres med
 kollisjon, men dette er ikke en ferdig GTA V MLO-/portal-/interiørmotor.
 Originalinteriørarkivet leses nå også. Separat romlasting og 600 steg med
 gange/hopp er kontrollert i CJ sitt hus, Sweet sitt hus og Madd Dogg sin
@@ -191,8 +197,9 @@ korrekt fysikk gjenstår. Modeller kan hoppes over med forklaring i konsollen,
 og noen materialer får reservefarge. COL-kuler bruker trekanttilnærming og
 kroppskollisjon bruker et begrenset antall prøver fremfor en full kapselsweep.
 
-Neste prioritering: robust løpende streaming/bevegelsestest, ytelse og LOD,
-deretter synlig spiller/peds, kjørbare biler og utvidet ressurs-API.
+Neste milepæl er å kjøre sammen med venner i egne biler. Se
+[prioriteringer og kriterier](roadmap.md). Streaming, ytelse og videre tuning
+av bilfysikken følger arbeidet som løpende kvalitetskrav.
 
 Formatkilder: [COL](https://gtamods.com/wiki/Collision_File),
 [IPL-flagg](https://gtaundergroundmod.com/pages/ug-mp/documentation/dl/map-dl/ipl/inst).
@@ -204,7 +211,13 @@ Grafikkmenyen har egne kategorier, kvalitetsprofiler og fungerende FSR 1.
 Se [grafikkstatus](graphics.md) og [Linux/Vulkan](linux.md). DLSS og temporal
 FSR er fortsatt ikke integrert.
 
-Vehicle handling uses axle tire forces, combined braking/cornering grip,
-four ground contacts and damped suspension/body lean. Keyboard/controller
-steering direction is corrected. This remains a simplified passenger-car
-simulation without damage, wheel articulation or full rigid-body collisions.
+Bilfysikken bruker akselbaserte dekkrefter, delt grep for bremsing/svinging,
+fire bakkekontakter og dempet fjæring/karosseribevegelse. Styreretningen med
+tastatur og kontroller er rettet. Skade, bevegelige hjul og full
+rigid-body-kollisjon er fortsatt ikke simulert.
+
+En lokal prøvepakke med 32 oppskalerte teksturer ved 2x er laget og prøvd i
+Vulkan. Dette er ikke en oppskalering av hele kartet eller en FPS-måling.
+[Verktøyet for teksturoppskalering](texture-upscaling.md) lager PNG-overrides
+som en separat native mod; originalfilene endres ikke. De genererte
+spillteksturene er lokale og følger ikke Git-repoet.

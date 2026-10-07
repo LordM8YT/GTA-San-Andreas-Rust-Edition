@@ -11,6 +11,8 @@ public address, a firewall rule allowing the application, and TCP port 7777
 forwarded to their computer. CGNAT can prevent direct hosting; a shared VPN
 network is another option. There is no automatic NAT traversal, lobby service,
 UPnP, matchmaking or relay service in this version.
+There is no server browser, join code or automatic mod download/cache yet.
+See the [roadmap](roadmap.md) for the planned discovery and resource workflow.
 
 Enter free roam after connecting. The session page shows the connection status
 and player list; gameplay shows the player count. Opening a menu pauses your

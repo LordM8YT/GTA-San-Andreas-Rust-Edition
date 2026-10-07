@@ -1,5 +1,9 @@
 # Arbeidslogg: freeroam, natt til 7. oktober 2026
 
+Dette er en kronologisk arbeidslogg. Tidlige beskrivelser av manglende funksjoner
+er historiske; se [dagens status](freeroam-status.md) og [veikartet](roadmap.md)
+for nåværende funksjoner og neste prioriteringer.
+
 Brukerens prioritet: mest mulig spillbart kart uten missions, og et grunnlag
 for mods med klær, peds, biler og eventuelt custom interiører. Arbeidet kan
 fortsette til omtrent kl. 10 den 7. oktober, Europe/Oslo.

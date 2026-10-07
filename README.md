@@ -23,6 +23,10 @@ connections are supported; internet hosting requires TCP port forwarding.
 Custom assets, NPCs, shared vehicle collisions and passengers are not yet
 replicated. See [multiplayer setup and limits](docs/multiplayer.md).
 
+The next milestone is driving together with friends in shared vehicles.
+See the [roadmap](docs/roadmap.md) for priorities, server-browser/P2P plans
+and automatic resource caching. These planned features are not available yet.
+
 ## Menus, HUD, and settings
 
 The main and pause menus provide destination selection, controls, wardrobe,
@@ -62,3 +66,7 @@ quality presets, renderer selection and frame limits. See [graphics](docs/graphi
 Vulkan is available on Windows; Linux startup and CI build checks are included,
 with Linux gameplay validation still pending: [Linux](docs/linux.md).
 DLSS and temporal FSR are not integrated yet.
+
+An offline [texture-upscaling tool](docs/texture-upscaling.md) produces optional
+native PNG overrides. Generated textures stay local; original game files are
+not modified or included in this repository.
