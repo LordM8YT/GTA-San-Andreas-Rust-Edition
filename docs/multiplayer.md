@@ -95,6 +95,10 @@ executables, cache links/junctions and unexpected pack files are rejected.
 Downloads use temporary files, verified size/hash and a final completion marker.
 The cache currently has no eviction UI; stop the game before removing old packs
 or clearing this dedicated cache folder. Do not remove local mods or game files.
+After a crash, the next preparation removes only recognized random-hash staging
+files beside targets in the current inventory while holding the cache writer
+lock. Verified blobs can repair interrupted pack files without redownloading.
+Unexpected files and links remain errors; they are not silently deleted.
 
 Preparation runs off the render thread; GPU uploads are split across frames.
 The session uses its own resource loader and catalogs. Existing local mods are

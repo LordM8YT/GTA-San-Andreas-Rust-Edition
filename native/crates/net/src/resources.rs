@@ -307,6 +307,43 @@ fn write_checked(path: &Path, data: &[u8], usage: &mut u64) -> io::Result<()> {
     *usage = usage.saturating_sub(old).saturating_add(data.len() as u64);
     Ok(())
 }
+/// Only remove our random-hash staging files beside a known inventory target.
+/// The caller owns the OS writer lock and validated the bounded cache tree.
+fn recover_staging(path: &Path, root: &Path, usage: &mut u64) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| error("Cache target has no parent"))?;
+    if !parent.canonicalize()?.starts_with(root) {
+        return Err(error("Cache staging directory escapes root"));
+    }
+    let prefix = format!(
+        "{}.",
+        path.file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| error("Invalid cache staging target"))?
+    );
+    for entry in fs::read_dir(parent)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(random_hash) = name
+            .to_str()
+            .and_then(|name| name.strip_prefix(&prefix))
+            .and_then(|name| name.strip_suffix(".part"))
+        else {
+            continue;
+        };
+        if !valid_hash(random_hash) {
+            continue;
+        }
+        let metadata = reject_link(&entry.path())?;
+        if !metadata.is_file() {
+            return Err(error("Cache staging entry is not a regular file"));
+        }
+        fs::remove_file(entry.path())?;
+        *usage = usage.saturating_sub(metadata.len());
+    }
+    Ok(())
+}
 #[derive(Debug)]
 pub struct Cached {
     pub mods: PathBuf,
@@ -459,12 +496,14 @@ pub fn cache(
         &PathBuf::from("packs").join(&fingerprint).join("resources"),
     )?;
     let inventory = pack.join("inventory.json");
+    recover_staging(&inventory, &root, &mut usage)?;
     if inventory.exists() {
         let metadata = reject_link(&inventory)?;
         if !metadata.is_file() {
             return Err(error("Invalid cache inventory marker"));
         }
         fs::remove_file(&inventory)?;
+        usage = usage.saturating_sub(metadata.len());
         usage = usage.saturating_sub(metadata.len());
     }
     let (mut downloaded_bytes, mut reused_files, mut processed) = (0, 0, 0);
@@ -478,10 +517,12 @@ pub fn cache(
             let path = resource_root.join(&file.path);
             let parent = Path::new(&file.path).parent().unwrap();
             directory(&root, &relative.join(parent))?;
+            recover_staging(&path, &root, &mut usage)?;
+            let blob = blobs.join(&file.sha256);
+            recover_staging(&blob, &root, &mut usage)?;
             if verified(&path, file)?.is_some() {
                 reused_files += 1;
             } else {
-                let blob = blobs.join(&file.sha256);
                 let data = if let Some(bytes) = verified(&blob, file)? {
                     reused_files += 1;
                     bytes
@@ -685,6 +726,56 @@ mod tests {
             fs::read(repaired.mods.join("000-resource-000/car.dff")).unwrap(),
             b"model"
         );
+    }
+    #[test]
+    fn crash_staging_files_are_recovered_without_redownloading_verified_assets() {
+        let temp = Temp::new();
+        let source = share(b"model");
+        let first = cache(
+            &temp.0,
+            &source.manifest,
+            |f| Ok(source.blob(&f.sha256).unwrap().to_vec()),
+            |_, _| {},
+        )
+        .unwrap();
+        let model = first.mods.join("000-resource-000/car.dff");
+        let model_hash = hash(b"model");
+        let random_hash = hash(b"interrupted-writer");
+        let targets = [
+            model.clone(),
+            temp.0.join("blobs").join(model_hash),
+            first.mods.parent().unwrap().join("inventory.json"),
+        ];
+        let orphans: Vec<_> = targets
+            .iter()
+            .map(|path| path.with_extension(format!("{random_hash}.part")))
+            .collect();
+        for orphan in &orphans {
+            fs::write(orphan, b"partial write").unwrap();
+        }
+        // The verified blob repairs the missing pack file without a network call.
+        fs::remove_file(&model).unwrap();
+        let repaired = cache(
+            &temp.0,
+            &source.manifest,
+            |_| panic!("must reuse verified blobs after a crash"),
+            |_, _| {},
+        )
+        .unwrap();
+        assert_eq!(repaired.downloaded_bytes, 0);
+        assert_eq!(fs::read(&model).unwrap(), b"model");
+        assert!(orphans.iter().all(|path| !path.exists()));
+        assert!(repaired
+            .mods
+            .parent()
+            .unwrap()
+            .join("inventory.json")
+            .is_file());
+        // An unrelated extra file must still be rejected, never silently deleted.
+        let unrelated = model.with_extension("unrecognized.part");
+        fs::write(&unrelated, b"not our staging format").unwrap();
+        assert!(cache(&temp.0, &source.manifest, |_| unreachable!(), |_, _| {}).is_err());
+        assert!(unrelated.exists());
     }
     #[test]
     fn concurrent_cache_writer_is_rejected_and_released_lock_is_reusable() {
