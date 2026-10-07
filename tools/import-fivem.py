@@ -98,7 +98,7 @@ def inspect_resource(root):
     if re.search(r'\b(ui_page|loadscreen)\b', text):
         notices.append('NUI/HUD web pages and loading screens are not imported.')
     if any(asset_name(p)[1] in ('.ymap', '.ytyp', '.ybn') for p in assets):
-        notices.append('YMAP placements, YTYP/MLO rooms/portals and YBN collision need separate conversion; not imported here.')
+        notices.append('YMAP placements, static YTYP aliases require map conversion; MLO rooms/portals and YBN collision remain unsupported.')
     if any(asset_name(p)[1] == '.ydd' for p in assets):
         notices.append('YDD peds/clothes need explicit target rig and bone mapping through convert-gta5.py.')
     metadata = [relative(p) for p in files if p.suffix.lower() == '.meta']
@@ -130,7 +130,7 @@ def select_models(root, files, kind, requested=()):
 
 
 def import_resource(root, output, kind, requested=(), position=None, model_id=30000, enable=False,
-                    ymap=None, offset=(0., 0., 0.)):
+                    ymap=None, offset=(0., 0., 0.), ytyp=()):
     root = root.absolute()
     output = output.absolute()
     require(not output.exists(), 'Output already exists; choose a new directory')
@@ -143,6 +143,11 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
     if ymap is not None:
         require(kind == 'map', '--ymap requires --kind map')
         require(any(p.relative_to(root).as_posix() == ymap for p in files), 'YMAP must be an exact relative path inside the resource')
+    require(not ytyp or kind == 'map', '--ytyp requires --kind map')
+    require(len(ytyp) <= 16 and len(set(ytyp)) == len(ytyp), 'Select at most 16 distinct YTYP files')
+    for path in ytyp:
+        require(any(p.relative_to(root).as_posix() == path and asset_name(p)[1] == '.ytyp' for p in files),
+                'YTYP must be an exact relative .ytyp or .ytyp.xml path inside the resource')
     chosen = select_models(root, files, kind, requested)
     output.parent.mkdir(parents=True, exist_ok=True)
     # Snapshot only data into an isolated tree. XML texture discovery cannot
@@ -153,7 +158,7 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
         fingerprints = {}
         snapshot_bytes = 0
         for path in files:
-            if asset_name(path)[1] in ('.yft', '.ydr', '.ytd', '.ymap') or path.suffix.lower() == '.dds':
+            if asset_name(path)[1] in ('.yft', '.ydr', '.ytd', '.ymap', '.ytyp') or path.suffix.lower() == '.dds':
                 require(not path.is_symlink() and path.resolve().is_relative_to(root.resolve()), 'Source changed during import')
                 data = converter.read(path, 128 * 1024 * 1024)
                 snapshot_bytes += len(data)
@@ -171,12 +176,21 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
             manifest['placements'] = []
         report['converted'] = []
         report['source_sha256'] = fingerprints
+        aliases, dictionaries = {}, {}
+        if ytyp:
+            type_sources = [converter.extract(source / path, work / f'ytyp-{index:03}') for index, path in enumerate(ytyp)]
+            aliases, dictionaries = map_converter.static_archetypes(
+                type_sources, [p.relative_to(root) for p in chosen], model_id, converter.parse_xml)
         for index, original in enumerate(chosen):
             model = source / original.relative_to(root)
             stem = asset_name(model)[0]
             texture_stem = stem[:-3] if stem.endswith('_hi') else stem
             textures = [p for p in source.rglob('*') if p.is_file() and
-                        asset_name(p) == (texture_stem, '.ytd')]
+                        asset_name(p)[1] == '.ytd' and
+                        (asset_name(p)[0].isascii() and map_converter.jenkins(asset_name(p)[0]) == dictionaries[model_id + index]
+                         if model_id + index in dictionaries else asset_name(p)[0] == texture_stem)]
+            require(model_id + index not in dictionaries or textures,
+                    f'Missing YTD dictionary declared by YTYP for {original.name}')
             local = [p for p in textures if p.parent == model.parent]
             textures = local or textures
             # Prefer raw YTD over its adjacent XML export; ambiguity is an error.
@@ -210,8 +224,9 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
         if kind == 'map':
             map_source = converter.extract(source / ymap, work / 'ymap-xml')
             manifest['placements'], skipped = map_converter.placements(
-                map_source, [p.relative_to(root) for p in chosen], model_id, offset, converter.parse_xml)
-            report['map'] = dict(source=ymap, offset=list(offset), placements=len(manifest['placements']), skipped_lods=skipped)
+                map_source, [p.relative_to(root) for p in chosen], model_id, offset, converter.parse_xml, aliases)
+            require(len(manifest['placements']) <= 2000, 'Map exceeds native 2000 placement resource budget')
+            report['map'] = dict(source=ymap, offset=list(offset), placements=len(manifest['placements']), skipped_lods=skipped, ytyp=list(ytyp), archetype_aliases=len(aliases))
             report['warnings'] = [warning for warning in report['warnings'] if not warning.startswith('YMAP placements,')]
             report['warnings'].append('Only HD static CEntityDef placements imported; MLO/portal/collision metadata remains unsupported.')
         require(sum(p.stat().st_size for p in package.rglob('*') if p.is_file()) <= 128 * 1024 * 1024,
@@ -232,6 +247,7 @@ def main():
     parser.add_argument('--out', type=Path, help='New native resource directory; omit to inspect only')
     parser.add_argument('--kind', choices=('vehicles', 'props', 'map'), default='vehicles')
     parser.add_argument('--ymap', help='Exact relative Legacy .ymap or CodeWalker .ymap.xml path for static map placements')
+    parser.add_argument('--ytyp', action='append', default=[], help='Exact relative static Legacy .ytyp or .ytyp.xml path; repeat for aliases/dictionaries')
     parser.add_argument('--offset', type=float, nargs=3, default=[0., 0., 0.], help='Translate imported map in SA world coordinates')
     parser.add_argument('--model', action='append', default=[], help='Exact relative model path; repeat to select assets')
     parser.add_argument('--position', type=float, nargs=3, help='Prop preview origin; models placed 3 m apart')
@@ -240,7 +256,7 @@ def main():
     args = parser.parse_args()
     try:
         if args.out:
-            report = import_resource(args.input, args.out, args.kind, args.model, args.position, args.model_id, args.enable, args.ymap, args.offset)
+            report = import_resource(args.input, args.out, args.kind, args.model, args.position, args.model_id, args.enable, args.ymap, args.offset, args.ytyp)
         else:
             _, report = inspect_resource(args.input)
         print(json.dumps(report, indent=2))

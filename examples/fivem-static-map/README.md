@@ -19,3 +19,14 @@ Legacy binary `.ymap` is also supported through the .NET extractor; select its
 relative path with `--ymap`. The fixture stays XML so it can be inspected easily.
 
 See [conversion limits](../../docs/gta5-conversion.md#static-map-extensions-from-ymap-or-xml).
+
+The alias variant exercises static YTYP definitions: its map refers to
+`demo_block_alias`, while the drawable is named `demo_block.ydr.xml`.
+Use a separate output directory:
+
+```powershell
+python tools/import-fivem.py examples/fivem-static-map --kind map --ymap stream/demo-alias.ymap.xml --ytyp stream/demo.ytyp.xml --model-id 31200 --out "mods/[maps]/static-alias-demo" --enable
+```
+
+Enable one variant at a time to avoid duplicate placements/model IDs. The YTYP
+contains only static asset names; no MLO rooms, portals or behavior is included.

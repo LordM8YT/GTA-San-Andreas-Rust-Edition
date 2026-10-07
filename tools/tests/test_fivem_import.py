@@ -46,6 +46,102 @@ def map_xml(path, archetype='prop', rotation='0 0 0 1', scale='1', kind='CEntity
 
 
 class FiveMImportTests(unittest.TestCase):
+    def test_static_ytyp_alias_names_and_hashes_resolve_to_the_selected_drawable(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp); root = resource(temp / 'input')
+            mesh(root / 'stream/prop.ydr.xml')
+            types = root / 'stream/types.ytyp.xml'
+            types.write_text('''<CMapTypes><archetypes><Item type="CBaseArchetypeDef">
+                <name>fixture_alias</name><assetName>prop</assetName>
+                <assetType>ASSET_TYPE_DRAWABLE</assetType><extensions/>
+                </Item></archetypes><extensions/><compositeEntityTypes/></CMapTypes>''')
+            for index, alias in enumerate(('fixture_alias', f'hash_{f.map_converter.jenkins("fixture_alias"):08X}')):
+                map_xml(root / 'stream/map.ymap.xml', archetype=alias)
+                output = temp / f'native-{index}'
+                report = f.import_resource(root, output, 'map', ymap='stream/map.ymap.xml', ytyp=['stream/types.ytyp.xml'])
+                self.assertEqual(report['map']['archetype_aliases'], 1)
+                self.assertEqual(json.loads((output / 'resource.json').read_text())['placements'][0]['model_id'], 30000)
+
+    @unittest.skipUnless((ROOT / 'tools/tests/map-fixture/bin/Release/net9.0/MapFixture.dll').exists(), 'Build MapFixture')
+    def test_owned_binary_ytyp_alias_preserves_asset_mapping(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp); root = resource(temp / 'input')
+            mesh(root / 'stream/prop.ydr.xml')
+            map_xml(root / 'stream/map.ymap.xml', archetype='fixture_alias')
+            types = root / 'stream/types.ytyp.xml'
+            types.write_text('<CMapTypes><archetypes><Item type="CBaseArchetypeDef"><name>fixture_alias</name><assetName>prop</assetName><assetType>ASSET_TYPE_DRAWABLE</assetType></Item></archetypes></CMapTypes>')
+            helper = ROOT / 'tools/tests/map-fixture/bin/Release/net9.0/MapFixture.dll'
+            binary = root / 'stream/types.ytyp'
+            result = subprocess.run(['dotnet', str(helper), str(types), str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(binary.read_bytes()[:4], b'RSC7')
+            report = f.import_resource(root, temp / 'binary', 'map', ymap='stream/map.ymap.xml', ytyp=['stream/types.ytyp'])
+            self.assertEqual(report['map']['archetype_aliases'], 1)
+
+    def test_ytyp_texture_dictionary_with_a_different_basename_is_used(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp); root = resource(temp / 'input')
+            model = mesh(root / 'stream/prop.ydr.xml')
+            tree = f.converter.parse_xml(model)
+            parameters = f.converter.ET.SubElement(tree.find('ShaderGroup/Shaders/Item'), 'Parameters')
+            parameter = f.converter.ET.SubElement(parameters, 'Item', name='DiffuseSampler')
+            f.converter.ET.SubElement(parameter, 'Name').text = 'fixture'
+            f.converter.ET.ElementTree(tree).write(model)
+            (root / 'textures').mkdir()
+            (root / 'textures/shared.ytd.xml').write_text('<TextureDictionary/>')
+            header = bytearray(128); header[:4] = b'DDS '
+            f.converter.S.pack_into('<II', header, 12, 1, 1)
+            f.converter.S.pack_into('<7I', header, 80, 0x41, 0, 32, 0xff, 0xff00, 0xff0000, 0xff000000)
+            (root / 'textures/fixture.dds').write_bytes(header + bytes([12, 34, 56, 255]))
+            types = root / 'stream/types.ytyp.xml'
+            types.write_text('<CMapTypes><archetypes><Item type="CBaseArchetypeDef"><name>alias</name><assetName>prop</assetName><assetType>ASSET_TYPE_DRAWABLE</assetType><textureDictionary>shared</textureDictionary></Item></archetypes></CMapTypes>')
+            map_xml(root / 'stream/map.ymap.xml', archetype='alias')
+            report = f.import_resource(root, temp / 'native', 'map', ymap='stream/map.ymap.xml', ytyp=['stream/types.ytyp.xml'])
+            self.assertEqual(report['converted'][0]['textures'], 1)
+            manifest = json.loads((temp / 'native/resource.json').read_text())
+            dictionary = (temp / 'native' / manifest['models'][0]['txd']).read_bytes()
+            self.assertIn(bytes([56, 34, 12, 255]), dictionary)
+
+    def test_ytyp_unsupported_semantics_duplicates_missing_assets_and_dictionary_fail_atomically(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp); root = resource(temp / 'input')
+            mesh(root / 'stream/prop.ydr.xml')
+            mesh(root / 'stream/other.ydr.xml')
+            map_xml(root / 'stream/map.ymap.xml', archetype='alias')
+            types = root / 'stream/types.ytyp.xml'
+            base = '<Item type="CBaseArchetypeDef"><name>alias</name><assetName>prop</assetName><assetType>ASSET_TYPE_DRAWABLE</assetType></Item>'
+            for index, (entry, error) in enumerate([
+                (base.replace('CBaseArchetypeDef', 'CMloArchetypeDef'), 'MLO/time'),
+                (base.replace('CBaseArchetypeDef', 'CTimeArchetypeDef'), 'MLO/time'),
+                (base.replace('ASSET_TYPE_DRAWABLE', 'ASSET_TYPE_DRAWABLEDICTIONARY'), 'individual DRAWABLE'),
+                (base.replace('<assetName>prop', '<assetName>missing'), 'Missing selected YDR'),
+                (base + base, 'Duplicate YTYP'),
+                (base.replace('<name>alias', '<name>prop').replace('<assetName>prop', '<assetName>other'), 'conflicts'),
+                (base.replace('</Item>', '<extensions><Item type="CExtensionDefDoor"/></extensions></Item>'), 'extensions'),
+                (base.replace('</Item>', '<textureDictionary>missing_texture</textureDictionary></Item>'), 'Missing YTD'),
+            ]):
+                types.write_text('<CMapTypes><archetypes>' + entry + '</archetypes></CMapTypes>')
+                output = temp / f'bad-{index}'
+                with self.assertRaisesRegex(ValueError, error):
+                    f.import_resource(root, output, 'map', ymap='stream/map.ymap.xml', ytyp=['stream/types.ytyp.xml'])
+                self.assertFalse(output.exists())
+            with self.assertRaisesRegex(ValueError, 'exact relative'):
+                f.import_resource(root, temp / 'outside', 'map', ymap='stream/map.ymap.xml', ytyp=['../escape.ytyp.xml'])
+
+    def test_emitted_map_uses_the_native_placement_budget(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp); root = resource(temp / 'input')
+            mesh(root / 'stream/prop.ydr.xml')
+            path = map_xml(root / 'stream/map.ymap.xml')
+            tree = f.converter.parse_xml(path)
+            entities = tree.find('entities')
+            template = f.converter.ET.tostring(entities[0])
+            for _ in range(2000):
+                entities.append(f.converter.ET.fromstring(template))
+            f.converter.ET.ElementTree(tree).write(path)
+            with self.assertRaisesRegex(ValueError, 'native 2000 placement'):
+                f.import_resource(root, temp / 'native', 'map', ymap='stream/map.ymap.xml')
+            self.assertFalse((temp / 'native').exists())
     @unittest.skipUnless((ROOT / 'tools/tests/map-fixture/bin/Release/net9.0/MapFixture.dll').exists(),
                          'Build MapFixture to exercise owned binary YMAP round-trip')
     def test_owned_binary_ymap_preserves_placements_through_legacy_decoder(self):

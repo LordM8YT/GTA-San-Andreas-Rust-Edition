@@ -1,4 +1,4 @@
-// Generate a binary YMAP from our owned XML fixture for extractor round-trip tests.
+// Generate binary YMAP/YTYP resources from our owned XML fixture for extractor round-trip tests.
 using CodeWalker.GameFiles;
 using System.Xml;
 
@@ -12,7 +12,7 @@ try {
     using var reader = XmlReader.Create(input, settings);
     var document = new XmlDocument { XmlResolver = null };
     document.Load(reader);
-    if (document.DocumentElement?.Name != "CMapData") throw new InvalidDataException("Expected CMapData fixture.");
+    if (document.DocumentElement?.Name is not ("CMapData" or "CMapTypes")) throw new InvalidDataException("Expected CMapData/CMapTypes fixture.");
     byte[] data = XmlMeta.GetRSCData(document);
     if (data == null || data.Length < 16) throw new InvalidDataException("Fixture did not encode.");
     using var file = new FileStream(output, FileMode.CreateNew);

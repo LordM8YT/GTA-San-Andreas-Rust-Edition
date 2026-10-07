@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CMapData>
+  <entities>
+    <Item type="CEntityDef">
+      <archetypeName>demo_block_alias</archetypeName>
+      <position x="2490" y="-1670" z="13.3"/>
+      <rotation x="0" y="0" z="0" w="1"/>
+      <scaleXY value="1"/><scaleZ value="1"/>
+      <lodLevel>LODTYPES_DEPTH_HD</lodLevel>
+    </Item>
+    <Item type="CEntityDef">
+      <archetypeName>demo_block_alias</archetypeName>
+      <position x="2500" y="-1670" z="13.3"/>
+      <rotation x="0" y="0" z="0.70710678" w="0.70710678"/>
+      <scaleXY value="1"/><scaleZ value="1"/>
+      <lodLevel>LODTYPES_DEPTH_ORPHANHD</lodLevel>
+    </Item>
+  </entities>
+</CMapData>

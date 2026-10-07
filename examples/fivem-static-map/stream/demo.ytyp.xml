@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CMapTypes>
+  <archetypes>
+    <Item type="CBaseArchetypeDef">
+      <name>demo_block_alias</name>
+      <assetName>demo_block</assetName>
+      <assetType>ASSET_TYPE_DRAWABLE</assetType>
+      <textureDictionary/>
+      <extensions/>
+    </Item>
+  </archetypes>
+  <extensions/>
+  <compositeEntityTypes/>
+</CMapTypes>

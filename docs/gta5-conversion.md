@@ -80,12 +80,36 @@ entities are omitted and listed in the report to avoid duplicate geometry.
 Only unit-scale static `CEntityDef` HD/orphan-HD entities are supported. Missing
 models, ambiguous names/hashes, invalid rotations, non-unit scales and MLO
 instances stop the whole import with a clear error. Include the custom models;
-references to GTA V base-game props and YTYP archetype aliases are not resolved.
+references to GTA V base-game props are not resolved. Optional static YTYP
+aliases are supported as described below.
 Only unencrypted Legacy RSC7 maps are accepted; Gen9/Enhanced, RPF and escrow
 remain unsupported. Bake scale into the mesh before import. Rooms, portals,
 entity sets, light/audio metadata, navigation,
 doors, YBN collision and LOD streaming relationships are not recreated.
 The existing native loader derives static collision from the converted mesh.
+
+Add `--ytyp stream/types.ytyp` or `--ytyp stream/types.ytyp.xml` when
+archetype names differ from their drawable filenames. Repeat the option for
+up to 16 files. Only `CBaseArchetypeDef` with `ASSET_TYPE_DRAWABLE` is supported:
+`name`/name hashes resolve through `assetName` to the selected YDR model.
+A declared `textureDictionary` selects the matching YTD by name/hash even when
+its basename differs from the YDR. Include that dictionary in the resource;
+missing or ambiguous dictionaries fail the import. Without a declaration the
+existing basename/embedded-texture workflow applies.
+
+Every archetype in the selected YTYP files must reference a selected custom YDR.
+Duplicate/conflicting aliases, time/MLO archetypes, drawable dictionaries,
+extensions and composite entities are rejected. Bounds, flags and
+`physicsDictionary` are not translated; converted mesh collision remains the
+fallback. YTYP alias support does not reproduce MLO rooms, portals, doors,
+lights or animation. See the alias variant in the [owned map example](../examples/fivem-static-map/README.md).
+The parser limits metadata to 4096 archetypes/entities; each emitted native
+resource is limited to 2000 placements. Binary YTYP uses the same bounded Legacy
+extractor; XML-only imports need no .NET runtime.
+
+Static archetype format reference: [CodeWalker YtypFile](https://github.com/dexyfex/CodeWalker/blob/master/CodeWalker.Core/GameFiles/FileTypes/YtypFile.cs).
+Owned tests cover XML/name hashes, binary YTYP round trips, a YTD with a different
+basename, and atomic rejection of unsupported definitions/missing dictionaries.
 
 Rotation convention reference: [CodeWalker YmapEntityDef](https://github.com/dexyfex/CodeWalker/blob/master/CodeWalker.Core/GameFiles/FileTypes/YmapFile.cs).
 Tests cover translated positions, rotated placements, hash lookup, skipped LODs
@@ -190,7 +214,9 @@ clothing. Body masking, cloth simulation and automatic body fitting are pending.
 
 `--type map --model-id 30000 --position 2500 -1670 12.35` converts drawable
 geometry and places it in the SA world. YMAP placements, YBN collision, YTYP
-archetypes, MLO rooms/portals and interior streaming are not imported. Our native
+archetypes, MLO rooms/portals and interior streaming are not imported by this
+single-model converter. Use the folder importer above for static YMAP/YTYP
+placement and alias conversion. Our native
 opaque-triangle collision fallback applies. A complete MLO therefore needs
 manual assembly and separate support for its metadata.
 
