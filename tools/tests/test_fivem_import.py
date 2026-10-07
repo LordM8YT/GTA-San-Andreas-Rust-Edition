@@ -251,6 +251,7 @@ class FiveMImportTests(unittest.TestCase):
             report = f.import_resource(root, output, 'vehicles', enable=True)
             manifest = json.loads((output / 'resource.json').read_text())
             self.assertEqual(len(manifest['vehicles']), 2)
+            self.assertEqual([v['name'] for v in manifest['vehicles']], ['first', 'second'])
             self.assertTrue(manifest['enabled'])
             self.assertEqual([item['source'] for item in report['converted']],
                              ['stream/first.yft.xml', 'stream/second.yft.xml'])

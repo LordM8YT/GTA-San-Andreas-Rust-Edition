@@ -414,7 +414,10 @@ def convert(args):
         manifest = {'schema_version':2,'enabled':args.enable,'name':args.out.name}
         entry = {'dff':'stream/converted.dff'}
         if txd: entry['txd'] = 'stream/converted.txd'
-        if args.type == 'vehicle': manifest['vehicles'] = [entry]
+        if args.type == 'vehicle':
+            filename = args.input.name[:-4] if args.input.name.lower().endswith('.xml') else args.input.name
+            entry['name'] = ''.join(ch for ch in Path(filename).stem if ch.isprintable())[:48].strip() or 'Custom car'
+            manifest['vehicles'] = [entry]
         elif args.type == 'map':
             entry['id'] = args.model_id; manifest['models'] = [entry]
             manifest['placements'] = [{'model_id':args.model_id,'position':args.position}]

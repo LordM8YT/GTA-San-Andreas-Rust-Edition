@@ -115,12 +115,17 @@ Runnable custom vehicles are registered separately:
   "enabled": true,
   "name": "My car",
   "vehicles": [{
+    "name": "My coupe",
     "dff": "car.dff",
     "txd": "car.txd",
     "handling": { "acceleration": 8.5, "brake_deceleration": 12.0, "tire_grip": 5.0 }
   }]
 }
 ```
+
+The optional vehicle `name` supplies its label in `/cars` (1–48 printable
+characters). Omit it to keep the existing resource-name/path labels. Conversion
+tools preserve source model names as labels.
 
 Up to 32 custom vehicles can be registered. One vehicle is active at a time.
 Use `/cars` or F7 to select and spawn; F9 respawns the selected vehicle. `txd` can be omitted for an untextured DFF.

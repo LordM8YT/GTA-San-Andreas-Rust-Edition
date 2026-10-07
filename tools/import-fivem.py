@@ -214,6 +214,7 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
             if (package / folder / 'converted.txd').exists():
                 entry['txd'] = f'{folder}/converted.txd'
             if kind == 'vehicles':
+                entry['name'] = ''.join(ch for ch in stem if ch.isprintable())[:48].strip() or 'Custom car'
                 manifest['vehicles'].append(entry)
             else:
                 entry['id'] = model_id + index

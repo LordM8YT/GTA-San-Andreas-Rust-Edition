@@ -34,10 +34,25 @@ struct Model {
 #[derive(Deserialize)]
 struct Vehicle {
     #[serde(default)]
+    name: String,
+    #[serde(default)]
     handling: crate::vehicle::Handling,
     dff: String,
     #[serde(default)]
     txd: Option<String>,
+}
+impl Vehicle {
+    fn validate(&self) -> Result<()> {
+        self.handling.validate()?;
+        ensure!(
+            self.name.is_empty()
+                || (!self.name.trim().is_empty()
+                    && self.name.chars().count() <= 48
+                    && self.name.chars().all(|ch| !ch.is_control())),
+            "vehicle name must contain 1-48 printable characters"
+        );
+        Ok(())
+    }
 }
 #[derive(Deserialize)]
 struct PlayerModel {
@@ -140,7 +155,7 @@ pub fn share_resources(directory: &Path) -> Result<sa_net::resources::Share> {
             references.extend(model.col.iter().cloned());
         }
         for vehicle in &manifest.vehicles {
-            vehicle.handling.validate()?;
+            vehicle.validate()?;
             references.insert(vehicle.dff.clone());
             references.extend(vehicle.txd.iter().cloned());
         }
@@ -329,7 +344,7 @@ impl WorldLoader {
                 "custom vehicle limit (32)"
             );
             for vehicle in manifest.vehicles {
-                vehicle.handling.validate()?;
+                vehicle.validate()?;
                 let geometry = sa_assets::decode_vehicle_dff(&resource(&folder, &vehicle.dff)?)
                     .with_context(|| format!("custom vehicle {}", vehicle.dff))?;
                 let dictionary = vehicle
@@ -347,13 +362,20 @@ impl WorldLoader {
                 })?;
                 scene.vehicle_handling = vehicle.handling;
                 ensure!(scene.triangles > 0, "empty custom vehicle");
+                let car_name = if vehicle.name.is_empty() {
+                    if self.resources.vehicle.is_none() {
+                        name.clone()
+                    } else {
+                        format!("{name} / {}", vehicle.dff)
+                    }
+                } else {
+                    vehicle.name.trim().to_owned()
+                };
                 if self.resources.vehicle.is_none() {
-                    self.resources.car_name = name.clone();
+                    self.resources.car_name = car_name;
                     self.resources.vehicle = Some(scene);
                 } else {
-                    self.resources
-                        .vehicles
-                        .push((format!("{name} / {}", vehicle.dff), scene));
+                    self.resources.vehicles.push((car_name, scene));
                 }
             }
             if let Some(player) = manifest.player {
@@ -623,7 +645,7 @@ mod tests {
             serde_json::to_vec(&manifest).unwrap(),
         )
         .unwrap();
-        manifest["vehicles"] = serde_json::json!([{"dff":"car.dff","handling":{"acceleration":9.0}},{"dff":"car.dff","handling":{"acceleration":4.0}}]);
+        manifest["vehicles"] = serde_json::json!([{"name":"Custom coupe","dff":"car.dff","handling":{"acceleration":9.0}},{"name":"Custom sedan","dff":"car.dff","handling":{"acceleration":4.0}}]);
         fs::write(
             folder.join("mod.json"),
             serde_json::to_vec(&manifest).unwrap(),
@@ -662,6 +684,8 @@ mod tests {
         fs::remove_file(extra.join("private.txt")).unwrap();
         let cars = loader.take_car_catalog();
         assert_eq!(cars.len(), 1);
+        assert_eq!(cars[0].0, "Custom sedan");
+        assert_eq!(loader.resources.car_name, "Custom coupe");
         assert_eq!(cars[0].1.vehicle_handling.acceleration, 4.0);
         assert_eq!(
             loader
