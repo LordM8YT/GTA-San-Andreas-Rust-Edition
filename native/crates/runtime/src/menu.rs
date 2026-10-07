@@ -120,6 +120,7 @@ pub enum Page {
     Cars,
     Peds,
     Commands,
+    Network,
     Quit,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -134,6 +135,9 @@ pub enum Action {
     Ped(usize),
     SpawnPed(usize),
     ClearPeds,
+    Host,
+    Join,
+    Disconnect,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 enum SettingsTab {
@@ -179,6 +183,12 @@ pub struct Menu {
     pub cars: Vec<String>,
     pub peds: Vec<String>,
     pub command: String,
+    pub player_name: String,
+    pub host_address: String,
+    pub join_address: String,
+    pub network_status: String,
+    pub network_players: Vec<String>,
+    pub network_active: bool,
     pub has_played: bool,
     selected: usize,
     pub message: String,
@@ -457,6 +467,12 @@ impl Menu {
             cars: Vec::new(),
             peds: Vec::new(),
             command: String::new(),
+            player_name: "Player".into(),
+            host_address: "0.0.0.0:7777".into(),
+            join_address: "127.0.0.1:7777".into(),
+            network_status: "Offline".into(),
+            network_players: Vec::new(),
+            network_active: false,
             has_played: false,
             selected: 0,
             message: String::new(),
@@ -474,7 +490,8 @@ impl Menu {
         match self.command.trim().to_ascii_lowercase().as_str() {
             "/cars" => self.open(Page::Cars),
             "/peds" => self.open(Page::Peds),
-            _ => self.message = "Unknown command. Use /cars or /peds.".into(),
+            "/mp" => self.open(Page::Network),
+            _ => self.message = "Unknown command. Use /cars, /peds or /mp.".into(),
         }
     }
     pub fn open(&mut self, page: Page) {
@@ -492,7 +509,8 @@ impl Menu {
         back: bool,
     ) -> Option<Action> {
         let item_count = match self.page {
-            Some(Page::Main | Page::Pause) => 10,
+            Some(Page::Main | Page::Pause) => 11,
+            Some(Page::Network) => 4,
             Some(Page::Cars) => self.cars.len().max(1),
             Some(Page::Peds) => self.peds.len().max(1),
             Some(Page::Map) => DESTINATIONS.len(),
@@ -555,8 +573,9 @@ impl Menu {
                         6 => self.open(Page::Interiors),
                         7 => self.open(Page::Cars),
                         8 => self.open(Page::Peds),
-                        _ if self.page == Some(Page::Main) => self.open(Page::Quit),
-                        _ => return Some(Action::Main),
+                        9 if self.page == Some(Page::Main) => self.open(Page::Quit),
+                        9 => return Some(Action::Main),
+                        _ => self.open(Page::Network),
                     }
                 }
                 Some(Page::Map) if self.selected < DESTINATIONS.len() => {
@@ -570,6 +589,14 @@ impl Menu {
                 }
                 Some(Page::Peds) if self.selected < self.peds.len() => {
                     return Some(Action::Ped(self.selected))
+                }
+                Some(Page::Network) => {
+                    return Some(match self.selected {
+                        0 => Action::Host,
+                        1 => Action::Join,
+                        2 => Action::Disconnect,
+                        _ => Action::Play,
+                    })
                 }
                 Some(Page::Quit) => return Some(Action::Quit),
                 _ => {}
@@ -629,6 +656,26 @@ impl Menu {
         let screen = ctx.content_rect();
         let scale = (screen.height() / 900.0).clamp(0.65, 1.5);
         if self.page.is_none() {
+            if self.network_active {
+                egui::Area::new("multiplayer-status".into())
+                    .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-22.0, 22.0))
+                    .interactable(false)
+                    .show(ctx, |ui| {
+                        egui::Frame::new()
+                            .fill(Color32::from_black_alpha(190))
+                            .inner_margin(8)
+                            .show(ui, |ui| {
+                                ui.label(
+                                    RichText::new(format!(
+                                        "{} / 20 players  |  F5 Multiplayer",
+                                        self.network_players.len()
+                                    ))
+                                    .color(GOLD),
+                                );
+                                ui.label(RichText::new(&self.network_status).color(WHITE));
+                            });
+                    });
+            }
             if self.settings.show_hud {
                 egui::Area::new("freeroam-hud".into())
                     .fixed_pos(Pos2::new(28.0, screen.bottom() - 76.0))
@@ -783,22 +830,26 @@ impl Menu {
             let top=screen.top()+screen.height()*0.12;
             painter.text(Pos2::new(left,top),egui::Align2::LEFT_TOP,"San Andreas",FontId::new(80.0*scale,FontFamily::Name("street".into())),WHITE);
             painter.text(Pos2::new(left+3.0,top+91.0*scale),egui::Align2::LEFT_TOP,"Freeroam",FontId::new(27.0*scale,FontFamily::Name("menu".into())),GOLD);
-            let heading=match page{Page::Main=>"The whole state. Your way.",Page::Pause=>"Take a breath",Page::Map=>"Choose a destination",Page::Settings=>"Settings",Page::Controls=>"Controls",Page::Wardrobe=>"Wardrobe",Page::Interiors=>"Interiors",Page::Mods=>"Local resources",Page::Cars=>"Spawn a vehicle",Page::Peds=>"Choose your player",Page::Commands=>"Commands",Page::Quit=>"Leave free roam?"};
+            let heading=match page{Page::Main=>"The whole state. Your way.",Page::Pause=>"Take a breath",Page::Map=>"Choose a destination",Page::Settings=>"Settings",Page::Controls=>"Controls",Page::Wardrobe=>"Wardrobe",Page::Interiors=>"Interiors",Page::Mods=>"Local resources",Page::Cars=>"Spawn a vehicle",Page::Peds=>"Choose your player",Page::Commands=>"Commands",Page::Network=>"Multiplayer",Page::Quit=>"Leave free roam?"};
             painter.text(Pos2::new(left,top+150.0*scale),egui::Align2::LEFT_TOP,heading,FontId::proportional(18.0*scale),MUTED);
             let footer=screen.bottom()-48.0*scale;
             painter.text(Pos2::new(left,footer),egui::Align2::LEFT_CENTER,"D-pad / arrows  Move     A / Enter  Select     B / Esc  Back",FontId::proportional(14.0*scale),MUTED);
             painter.text(Pos2::new(screen.right()-40.0*scale,footer),egui::Align2::RIGHT_CENTER,"SA Runtime  •  Free Roam",FontId::proportional(14.0*scale),MUTED);
             if matches!(page,Page::Main|Page::Pause) {
-                let labels=if page==Page::Main{["Explore San Andreas","Map & destinations","Settings","Controls","Mods","Wardrobe","Interiors","Cars","Peds","Quit"]}else{["Resume","Map & destinations","Settings","Controls","Mods","Wardrobe","Interiors","Cars","Peds","Main menu"]};
+                let labels=if page==Page::Main{["Explore San Andreas","Map & destinations","Settings","Controls","Mods","Wardrobe","Interiors","Cars","Peds","Quit","Multiplayer"]}else{["Resume","Map & destinations","Settings","Controls","Mods","Wardrobe","Interiors","Cars","Peds","Main menu","Multiplayer"]};
                 if ctx.input(|i|i.key_pressed(egui::Key::ArrowDown)){self.selected=(self.selected+1)%labels.len();}
                 if ctx.input(|i|i.key_pressed(egui::Key::ArrowUp)){self.selected=(self.selected+labels.len()-1)%labels.len();}
                 for (index,label) in labels.iter().enumerate() {
-                    let rect=Rect::from_min_size(Pos2::new(left,top+(217.0+index as f32*45.0)*scale),Vec2::new(360.0*scale,39.0*scale));
+                    let rect=Rect::from_min_size(
+                        if index==10 {Pos2::new(screen.right()-screen.width()*0.28,top+217.0*scale)}
+                        else {Pos2::new(left,top+(217.0+index as f32*45.0)*scale)},
+                        Vec2::new(if index==10{screen.width()*0.22}else{360.0*scale},39.0*scale));
                     if Self::nav(ui,rect,label,self.selected==index,index,scale)||(self.selected==index&&ctx.input(|i|i.key_pressed(egui::Key::Enter))) {
                         match index {
                             0=>action=Some(Action::Play),1=>self.open(Page::Map),2=>self.open(Page::Settings),
                             3=>self.open(Page::Controls),4=>self.open(Page::Mods),5=>self.open(Page::Wardrobe),6=>self.open(Page::Interiors),7=>self.open(Page::Cars),8=>self.open(Page::Peds),
-                            _=>if page==Page::Main{self.open(Page::Quit)}else{action=Some(Action::Main)},
+                            9=>if page==Page::Main{self.open(Page::Quit)}else{action=Some(Action::Main)},
+                            _=>self.open(Page::Network),
                         }
                     }
                 }
@@ -872,8 +923,38 @@ impl Menu {
                                 }
                             }
                         },
+                        Page::Network=>{
+                            ui.label(RichText::new("Play together").size(24.0).color(GOLD));
+                            ui.label("One player hosts. Up to 20 players, including the host.");
+                            ui.label(RichText::new(&self.network_status).color(GOLD));
+                            ui.add_space(12.0);
+                            ui.label("Your name");
+                            ui.add(egui::TextEdit::singleline(&mut self.player_name).char_limit(24));
+                            ui.label("Host address (listen on all interfaces with 0.0.0.0:7777)");
+                            ui.text_edit_singleline(&mut self.host_address);
+                            ui.label("Join address (the host's IP and port)");
+                            ui.text_edit_singleline(&mut self.join_address);
+                            ui.add_space(10.0);
+                            if !ctx.egui_wants_keyboard_input() {
+                                if ctx.input(|i|i.key_pressed(egui::Key::ArrowDown)){self.selected=(self.selected+1)%4;}
+                                if ctx.input(|i|i.key_pressed(egui::Key::ArrowUp)){self.selected=(self.selected+3)%4;}
+                            }
+                            for (index,label,event) in [(0,"Host session",Action::Host),(1,"Join session",Action::Join),(2,"Disconnect",Action::Disconnect),(3,"Enter free roam",Action::Play)] {
+                                let enabled=if index>=2{self.network_active}else{!self.network_active};
+                                if ui.add_enabled(enabled,egui::Button::new(label).selected(self.selected==index)).clicked()
+                                    || (enabled && self.selected==index && !ctx.egui_wants_keyboard_input() && ctx.input(|i|i.key_pressed(egui::Key::Enter))) {
+                                    action=Some(event);
+                                }
+                            }
+                            ui.add_space(12.0);
+                            ui.label(format!("Players: {} / 20",self.network_players.len()));
+                            for name in &self.network_players{ui.label(name);}
+                            ui.add_space(12.0);
+                            ui.label("For LAN, join the host's local IP. Over the internet, the host must allow TCP port 7777 and forward it in their router.");
+                            ui.label("Prototype: other players use the Grove Street ped and Taxi. Custom assets, spawned NPCs and shared vehicle collisions are not synchronized yet.");
+                        }
                         Page::Commands=>{
-                            ui.label("/cars - spawn a vehicle    /peds - change your player");
+                            ui.label("/cars - vehicles    /peds - player models    /mp - multiplayer");
                             let enter=ctx.input(|i|i.key_pressed(egui::Key::Enter));
                             let response=ui.text_edit_singleline(&mut self.command);
                             if !ctx.memory(|m|m.has_focus(response.id)) {response.request_focus();}
@@ -928,6 +1009,30 @@ impl Menu {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn multiplayer_menu_opens_and_controller_can_host_join_disconnect() {
+        let ctx = egui::Context::default();
+        let mut menu = Menu::new(&ctx, Vec::new());
+        menu.controller_input(true, false, false, false, false, false);
+        menu.controller_input(false, false, false, false, true, false);
+        assert_eq!(menu.page, Some(Page::Network));
+        assert_eq!(
+            menu.controller_input(false, false, false, false, true, false),
+            Some(Action::Host)
+        );
+        assert_eq!(
+            menu.controller_input(false, true, false, false, true, false),
+            Some(Action::Join)
+        );
+        assert_eq!(
+            menu.controller_input(false, true, false, false, true, false),
+            Some(Action::Disconnect)
+        );
+        menu.command = "/mp".into();
+        menu.submit_command();
+        assert_eq!(menu.page, Some(Page::Network));
+    }
 
     #[test]
     fn radar_coordinates_follow_heading_with_north_up() {
@@ -1078,7 +1183,7 @@ mod tests {
         let mut menu = Menu::new(&ctx, Vec::new());
         assert_eq!(menu.selected, 0);
         menu.controller_input(true, false, false, false, false, false);
-        assert_eq!(menu.selected, 9);
+        assert_eq!(menu.selected, 10);
         menu.controller_input(false, true, false, false, false, false);
         assert_eq!(menu.selected, 0);
         assert_eq!(

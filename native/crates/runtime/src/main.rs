@@ -8,6 +8,7 @@ use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Instant};
 mod capture;
 mod controller;
 mod menu;
+mod multiplayer;
 mod postprocess;
 mod settings;
 mod streaming;
@@ -94,6 +95,11 @@ struct State {
     ped_catalog: Vec<Option<(sa_scene::ped::Ped, Vec<GpuBatch>)>>,
     spawned_peds: Vec<SpawnedPed>,
     npc_seconds: f32,
+    network_session: Option<sa_net::Session>,
+    remote_actors: Vec<multiplayer::RemoteActor>,
+    network_revision: u64,
+    network_last: Instant,
+    network_pose_last: Instant,
     active_car: usize,
     active_ped: usize,
     ped: Option<(sa_scene::ped::Ped, Vec<GpuBatch>)>,
@@ -450,6 +456,11 @@ impl State {
             ped_catalog: vec![None],
             spawned_peds: Vec::new(),
             npc_seconds: 0.0,
+            network_session: None,
+            remote_actors: Vec::new(),
+            network_revision: 0,
+            network_last: Instant::now(),
+            network_pose_last: Instant::now(),
             active_car: 0,
             active_ped: 0,
             ped: None,
@@ -985,6 +996,7 @@ impl State {
                 self.title_updated = now;
             }
         }
+        self.update_network();
         let camera_time = self.animation.as_ref().and_then(|cut| {
             let keys = cut.camera_keys.as_ref()?;
             let duration = keys.last().unwrap().seconds.max(0.01);
@@ -1201,6 +1213,9 @@ impl State {
             self.play_menu_sound(sa_audio::MenuSound::Select);
         }
         match action {
+            Some(menu::Action::Host) => self.network_action(true),
+            Some(menu::Action::Join) => self.network_action(false),
+            Some(menu::Action::Disconnect) => self.disconnect_network(),
             Some(menu::Action::Play) => {
                 self.menu.has_played = true;
                 self.menu.page = None;
@@ -1318,6 +1333,7 @@ impl State {
                 }
             }
             Some(menu::Action::Main) => {
+                self.disconnect_network();
                 self.menu.open(menu::Page::Main);
                 self.capture(false);
                 self.keys.clear();
@@ -1502,6 +1518,12 @@ impl State {
                 .chain(self.car.iter().flat_map(|(_, b)| b))
                 .chain(self.spawned_peds.iter().flat_map(|p| &p.batches))
                 .chain(
+                    self.remote_actors
+                        .iter()
+                        .filter(|a| a.visible)
+                        .flat_map(|a| if a.current.driving { &a.car } else { &a.ped }),
+                )
+                .chain(
                     self.ped
                         .iter()
                         .filter(|_| {
@@ -1597,6 +1619,13 @@ struct App {
     smoke_graphics: bool,
     smoke_stream: bool,
     smoke_car: bool,
+    smoke_network: bool,
+    network_saw_ped: bool,
+    network_saw_walk: bool,
+    network_saw_car_motion: bool,
+    network_saw_car: bool,
+    network_captured: bool,
+    network_players_seen: usize,
     smoke_ped: bool,
     smoke_wardrobe: bool,
     smoke_interiors: bool,
@@ -1806,9 +1835,28 @@ impl ApplicationHandler for App {
                     }
                 }
                 state.driving = false;
+                let launch_args: Vec<_> = std::env::args().collect();
+                if let Some(pair) = launch_args.windows(2).find(|a| a[0] == "--name") {
+                    state.menu.player_name = pair[1].clone();
+                }
+                if let Some(pair) = launch_args.windows(2).find(|a| a[0] == "--host") {
+                    state.menu.host_address = pair[1].clone();
+                    state.menu.open(menu::Page::Network);
+                    state.network_action(true);
+                } else if let Some(pair) = launch_args.windows(2).find(|a| a[0] == "--join") {
+                    state.menu.join_address = pair[1].clone();
+                    state.menu.open(menu::Page::Network);
+                    state.network_action(false);
+                }
                 if self.smoke && !self.smoke_menus && !self.smoke_graphics {
                     state.menu.page = None;
                     state.menu.has_played = true;
+                }
+                if self.smoke_network && launch_args.iter().any(|a| a == "--join") {
+                    state.position.x += 6.0;
+                    if let Some(player) = &mut state.player {
+                        player.feet.x += 6.0;
+                    }
                 }
                 if self.smoke_interiors {
                     state.apply_menu_action(Some(menu::Action::Interior(0)));
@@ -1892,6 +1940,7 @@ impl ApplicationHandler for App {
                     return;
                 }
                 if event.physical_key == PhysicalKey::Code(KeyCode::KeyI)
+                    && state.menu.page.is_none()
                     && state.streamer.is_some()
                 {
                     state.menu.open(menu::Page::Interiors);
@@ -1900,6 +1949,7 @@ impl ApplicationHandler for App {
                     return;
                 }
                 if event.physical_key == PhysicalKey::Code(KeyCode::KeyM)
+                    && state.menu.page.is_none()
                     && state.streamer.is_some()
                 {
                     state.menu.open(menu::Page::Map);
@@ -2019,6 +2069,7 @@ impl ApplicationHandler for App {
                     && !self.smoke_stream
                     && !self.smoke_car
                     && !self.smoke_ped
+                    && !self.smoke_network
                     && self.smoke_frames == 3
                     && state.destination.is_none()
                     && !state.loading()
@@ -2031,10 +2082,65 @@ impl ApplicationHandler for App {
                         )));
                     }
                 }
+                if self.smoke_network {
+                    state.keys.clear();
+                    let seconds = self.smoke_started.elapsed().as_secs_f32();
+                    if (3.0..4.0).contains(&seconds) || (8.0..9.0).contains(&seconds) {
+                        state.keys.insert(KeyCode::KeyW);
+                    }
+                }
                 let previous_position = state.position;
                 let rendered = state.render();
                 if state.quit_requested {
                     event_loop.exit();
+                }
+                if self.smoke_network {
+                    assert!(
+                        self.smoke_started.elapsed().as_secs() < 45,
+                        "multiplayer smoke timed out: {}",
+                        state.menu.network_status
+                    );
+                    if rendered {
+                        self.smoke_frames += 1;
+                        self.network_players_seen = self
+                            .network_players_seen
+                            .max(state.menu.network_players.len());
+                        for actor in state.remote_actors.iter().filter(|a| a.visible) {
+                            if actor.current.driving {
+                                self.network_saw_car = true;
+                                self.network_saw_car_motion |= actor.current.speed.abs() > 0.1;
+                            } else {
+                                self.network_saw_ped = true;
+                                self.network_saw_walk |= actor.current.moving;
+                            }
+                        }
+                        let seconds = self.smoke_started.elapsed().as_secs_f32();
+                        if seconds > 7.0 && !state.driving && self.network_saw_ped {
+                            state.place_car();
+                        }
+                        if seconds > 10.0
+                            && self.network_saw_car
+                            && self.network_saw_ped
+                            && !self.network_captured
+                        {
+                            if let Some(directory) = &self.capture_dir {
+                                state.capture_next = Some(directory.join("multiplayer-world.png"));
+                                self.network_captured = true;
+                            }
+                        }
+                        if seconds > 13.0
+                            && self.network_saw_car
+                            && self.network_saw_ped
+                            && self.network_saw_walk
+                            && self.network_saw_car_motion
+                        {
+                            println!("GPU multiplayer smoke passed: remote walking ped and moving car rendered, {} players seen; {}",self.network_players_seen,state.menu.network_status);
+                            event_loop.exit();
+                            return;
+                        }
+                    }
+                    state.window.request_redraw();
+                    return;
                 }
                 if self.smoke_ped && rendered {
                     assert!(state.ped.is_some(), "ped mesh missing");
@@ -2278,10 +2384,11 @@ impl ApplicationHandler for App {
                             menu::Page::Cars,
                             menu::Page::Peds,
                             menu::Page::Commands,
+                            menu::Page::Network,
                             menu::Page::Quit,
                         ];
                         if self.smoke_region >= pages.len() {
-                            println!("GPU menu smoke passed: 12 menus");
+                            println!("GPU menu smoke passed: 13 menus");
                             event_loop.exit();
                         } else {
                             state.menu.open(pages[self.smoke_region]);
@@ -2340,6 +2447,11 @@ impl ApplicationHandler for App {
                             KeyCode::Escape => state.capture(false),
                             KeyCode::F9 if !event.repeat => {
                                 state.place_car();
+                            }
+                            KeyCode::F5 if !event.repeat => {
+                                state.menu.open(menu::Page::Network);
+                                state.keys.clear();
+                                state.capture(false);
                             }
                             KeyCode::F10 if !event.repeat => {
                                 if let (Some(audio), Some(tone)) =
@@ -2843,6 +2955,7 @@ fn main() -> Result<()> {
                 || a == "--smoke-graphics"
                 || a == "--smoke-stream"
                 || a == "--smoke-car"
+                || a == "--smoke-network"
                 || a == "--smoke-ped"
                 || a == "--smoke-wardrobe"
                 || a == "--smoke-interiors"
@@ -2865,6 +2978,13 @@ fn main() -> Result<()> {
         smoke_graphics: args.iter().any(|a| a == "--smoke-graphics"),
         smoke_stream: args.iter().any(|a| a == "--smoke-stream"),
         smoke_car: args.iter().any(|a| a == "--smoke-car"),
+        smoke_network: args.iter().any(|a| a == "--smoke-network"),
+        network_saw_ped: false,
+        network_saw_walk: false,
+        network_saw_car_motion: false,
+        network_saw_car: false,
+        network_captured: false,
+        network_players_seen: 0,
         smoke_ped: args
             .iter()
             .any(|a| a == "--smoke-ped" || a == "--smoke-wardrobe"),

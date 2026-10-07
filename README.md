@@ -1,6 +1,6 @@
 # SA Runtime — Grove Street Test
 
-## Latest free-roam build — October 6, 2026
+## Latest free-roam build — October 7, 2026
 
 Run **start-freeroam.cmd** to launch the native version. It starts in walk mode
 and streams nearby neighborhoods as you move. Use **1–9** to travel to Grove
@@ -13,6 +13,15 @@ with custom DFF models, TXD/PNG textures, COL collision, map placements, and
 selected vehicle and player resources. See [free-roam status](docs/freeroam-status.md)
 and [native mod documentation](docs/native-mods.md) for current controls,
 capabilities, and compatibility details.
+
+## Player-hosted multiplayer
+
+Open **Multiplayer**, press **F5**, or use **/mp** to host/join a session with
+up to **20 players including the host**. Player and driving poses synchronize;
+remote players currently use Grove Street and Taxi models. Direct IP/LAN
+connections are supported; internet hosting requires TCP port forwarding.
+Custom assets, NPCs, shared vehicle collisions and passengers are not yet
+replicated. See [multiplayer setup and limits](docs/multiplayer.md).
 
 ## Menus, HUD, and settings
 

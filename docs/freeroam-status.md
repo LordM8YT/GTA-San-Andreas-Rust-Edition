@@ -1,12 +1,21 @@
-# Native freeroam – arbeidsstatus 6. oktober 2026
+# Native freeroam – arbeidsstatus 7. oktober 2026
 
 Målet er freeroam på originalkartet med lokale custom ressurser. Missions er
 ikke prioritert. Originalinstallasjonen leses; gta_sa.exe kjøres ikke.
 
+## Multiplayer-prototype
+
+En spiller hoster, og opptil 19 andre kobler til med IP og port. Åpne Multiplayer
+fra hoved-/pausemenyen, F5 eller /mp. Spillerposisjoner og bilbevegelse deles;
+andre spillere vises foreløpig med Grove Street-ped og Taxi. Custom modeller,
+NPC-er, passasjerer og felles bilkollisjoner er ikke synkronisert.
+Se [oppsett og begrensninger](multiplayer.md). Internett-hosting krever åpen og
+videresendt TCP-port (standard 7777); automatisk NAT-traversering er ikke lagt inn.
+
 ## Start og kontroller
 
 Dobbeltklikk `start-freeroam.cmd` (eller `start-native.cmd`). Skriptet starter
-den ferdige Windows-exe-en, eller bygger den med Rust/Cargo dersom den mangler.
+en ny Windows-exe med Rust/Cargo når Cargo er installert, ellers brukes eksisterende exe.
 Exe-en ligger i `native/target/release/sa-runtime.exe`.
 
 - WASD: gå. Shift: løp. Space: hopp. Klikk i vinduet for musestyring.

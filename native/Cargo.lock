@@ -2197,6 +2197,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sa-net"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "sa-runtime"
 version = "0.1.0"
 dependencies = [
@@ -2211,6 +2219,7 @@ dependencies = [
  "pollster",
  "sa-assets",
  "sa-audio",
+ "sa-net",
  "sa-scene",
  "sa-script",
  "serde",
