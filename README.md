@@ -46,3 +46,9 @@ or dedicated support. Read [native mod documentation](docs/native-mods.md)
 before preparing a resource.
 
 
+
+Graphics settings now include FSR 1 EASU/RCAS, FXAA, render scale, image controls,
+quality presets, renderer selection and frame limits. See [graphics](docs/graphics.md).
+Vulkan is available on Windows; Linux startup and CI build checks are included,
+with Linux gameplay validation still pending: [Linux](docs/linux.md).
+DLSS and temporal FSR are not integrated yet.

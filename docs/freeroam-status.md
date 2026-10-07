@@ -161,3 +161,7 @@ Formatkilder: [COL](https://gtamods.com/wiki/Collision_File),
 
 Kjørefysikken bruker nå treghet, gradvis styring og sideveis dekkgrep.
 Se [vehicle dynamics](vehicle-dynamics.md) for detaljer og begrensninger.
+
+Grafikkmenyen har egne kategorier, kvalitetsprofiler og fungerende FSR 1.
+Se [grafikkstatus](graphics.md) og [Linux/Vulkan](linux.md). DLSS og temporal
+FSR er fortsatt ikke integrert.

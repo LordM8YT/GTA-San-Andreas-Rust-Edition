@@ -128,6 +128,42 @@ pub enum Action {
     Main,
     Clothing(usize, bool),
 }
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+enum SettingsTab {
+    #[default]
+    Display,
+    Graphics,
+    Gameplay,
+    Interface,
+    Audio,
+}
+impl SettingsTab {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Display => "Display",
+            Self::Graphics => "Graphics",
+            Self::Gameplay => "Gameplay",
+            Self::Interface => "Interface",
+            Self::Audio => "Audio",
+        }
+    }
+    fn index(self) -> usize {
+        match self {
+            Self::Display => 0,
+            Self::Graphics => 1,
+            Self::Gameplay => 2,
+            Self::Interface => 3,
+            Self::Audio => 4,
+        }
+    }
+}
+const SETTINGS_TABS: [SettingsTab; 5] = [
+    SettingsTab::Display,
+    SettingsTab::Graphics,
+    SettingsTab::Gameplay,
+    SettingsTab::Interface,
+    SettingsTab::Audio,
+];
 pub struct Menu {
     pub page: Option<Page>,
     pub settings: Settings,
@@ -136,9 +172,208 @@ pub struct Menu {
     pub has_played: bool,
     selected: usize,
     pub message: String,
+    settings_tab: SettingsTab,
+    pub graphics_device: String,
+    pub graphics_resolution: String,
 }
 
 impl Menu {
+    fn setting_rows(&self) -> Vec<(&'static str, String, &'static str)> {
+        let on = |value: bool| {
+            if value {
+                "On".to_string()
+            } else {
+                "Off".to_string()
+            }
+        };
+        let s = &self.settings;
+        let mut rows = vec![(
+            "Category",
+            self.settings_tab.name().into(),
+            "Choose a settings category with left / right.",
+        )];
+        rows.extend(match self.settings_tab {
+            SettingsTab::Display => vec![
+                ("Field of view", format!("{:.0} degrees", s.fov), "Wider views show more of the world. Applies to the gameplay camera."),
+                ("Window mode", if s.fullscreen { "Borderless fullscreen".into() } else { "Windowed".into() }, "Borderless fullscreen uses your desktop resolution."),
+                ("VSync", on(s.vsync), "Synchronize presentation with your display to reduce tearing. No frame generation is used."),
+                ("Renderer", s.renderer.name().into(), "Vulkan works on Windows and Linux. DirectX 12 is Windows-only. Requires restart. OpenGL is not supported in this build."),
+                ("Frame rate limit", if s.fps_limit == 0 { "Unlimited".into() } else { format!("{} FPS", s.fps_limit) }, "Caps rendered frames to reduce power usage. VSync can impose a lower limit. Frame generation is not used."),
+            ],
+            SettingsTab::Graphics => vec![
+                ("Quality preset", s.preset().into(), "Performance: 67% resolution. Balanced: 83%. Quality: 100%. Ultra: 150% supersampling. Controls are preserved."),
+                ("Upscaler", if s.fsr1 { "AMD FSR 1".into() } else { "Linear".into() }, "AMD FSR 1 uses edge-adaptive EASU scaling and RCAS sharpening. At native resolution only RCAS is applied. This is spatial FSR, without frame generation."),
+                ("Render resolution", format!("{}%", s.render_scale), "Below 100% uses the selected upscaler. Above 100% supersamples for a cleaner image. HUD and menus stay at display resolution."),
+                ("Anti-aliasing", if s.fxaa { "FXAA".into() } else { "Off".into() }, "Smooths high-contrast edges in the current frame. Does not use temporal reconstruction."),
+                ("Sharpness", format!("{:.0}%", s.sharpness * 100.0), "Restores fine detail after scaling. Local color bounds reduce bright halos."),
+                ("Bloom", format!("{:.0}%", s.bloom * 100.0), "Soft glow around bright areas. Lower values preserve the original lighting."),
+                ("Exposure", format!("{:.2}", s.exposure), "Adjusts scene brightness before filmic color mapping. Menus are unaffected."),
+                ("Color saturation", format!("{:.0}%", s.saturation * 100.0), "Adjusts world color intensity. 100% preserves the source saturation."),
+                ("Vignette", format!("{:.0}%", s.vignette * 100.0), "Subtle shading at the edges of the image. Set to zero for a uniform frame."),
+                ("Atmospheric haze", on(s.atmospheric_fog), "Distant outdoor scenery fades into the horizon. Interiors stay clear."),
+            ],
+            SettingsTab::Gameplay => vec![
+                ("Look sensitivity", format!("{:.1}", s.sensitivity), "Adjusts mouse and right-stick camera movement."),
+                ("Invert vertical look", on(s.invert_y), "Reverses the vertical camera direction."),
+                ("Free-fly speed", format!("{:.0} m/s", s.fly_speed), "Base movement speed for the free-fly camera."),
+                ("Tire grip", format!("{:.1}", s.vehicle_handling), "Higher values give stronger cornering grip. Engine power stays the same."),
+            ],
+            SettingsTab::Interface => vec![
+                ("HUD", on(s.show_hud), "Shows gameplay information over the world."),
+                ("Radar / minimap", on(s.show_minimap), "Shows the original San Andreas radar tiles. Requires HUD to be enabled."),
+                ("Speedometer", on(s.show_speedometer), "Shows vehicle speed in km/h while driving. Requires HUD to be enabled."),
+                ("Radar zoom", format!("{:.1}x", s.minimap_zoom), "Adjusts the area visible around the player."),
+            ],
+            SettingsTab::Audio => vec![
+                ("Master volume", format!("{:.0}%", s.master_volume * 100.0), "Overall output level. Zero mutes all audio."),
+                ("Music volume", format!("{:.0}%", s.music_volume * 100.0), "Level for the music bus. Original radio playback is not yet integrated."),
+                ("Effects volume", format!("{:.0}%", s.effects_volume * 100.0), "Level for effects and original frontend menu sounds."),
+            ],
+        });
+        rows.push((
+            "Restore defaults",
+            "Select".into(),
+            "Resets all display, graphics, gameplay and interface preferences.",
+        ));
+        rows
+    }
+    fn adjust_setting(&mut self, left: bool) {
+        let delta = if left { -1.0 } else { 1.0 };
+        if self.selected == 0 {
+            self.settings_tab = SETTINGS_TABS[(self.settings_tab.index()
+                + if left { SETTINGS_TABS.len() - 1 } else { 1 })
+                % SETTINGS_TABS.len()];
+            return;
+        }
+        if self.selected == self.setting_rows().len() - 1 {
+            self.settings = Settings::default();
+            return;
+        }
+        let s = &mut self.settings;
+        match (self.settings_tab, self.selected) {
+            (SettingsTab::Display, 1) => s.fov += delta,
+            (SettingsTab::Display, 2) => s.fullscreen = !s.fullscreen,
+            (SettingsTab::Display, 3) => s.vsync = !s.vsync,
+            (SettingsTab::Display, 4) => {
+                let renderers = if cfg!(target_os = "windows") {
+                    vec![
+                        crate::settings::Renderer::Auto,
+                        crate::settings::Renderer::Vulkan,
+                        crate::settings::Renderer::DirectX12,
+                    ]
+                } else {
+                    vec![
+                        crate::settings::Renderer::Auto,
+                        crate::settings::Renderer::Vulkan,
+                    ]
+                };
+                let index = renderers.iter().position(|r| *r == s.renderer).unwrap_or(0);
+                s.renderer = renderers
+                    [(index + if left { renderers.len() - 1 } else { 1 }) % renderers.len()];
+            }
+            (SettingsTab::Graphics, 1) => {
+                let index = match s.preset() {
+                    "Performance" => 0,
+                    "Balanced" => 1,
+                    "Quality" => 2,
+                    "Ultra" => 3,
+                    _ => 2,
+                };
+                s.apply_preset((index + if left { 3 } else { 1 }) % 4);
+            }
+            (SettingsTab::Graphics, 3) => {
+                s.render_scale =
+                    (s.render_scale as i32 + if left { -5 } else { 5 }).clamp(50, 150) as u32
+            }
+            (SettingsTab::Graphics, 4) => s.fxaa = !s.fxaa,
+            (SettingsTab::Graphics, 5) => s.sharpness += delta * 0.05,
+            (SettingsTab::Graphics, 6) => s.bloom += delta * 0.02,
+            (SettingsTab::Graphics, 7) => s.exposure += delta * 0.05,
+            (SettingsTab::Graphics, 8) => s.saturation += delta * 0.05,
+            (SettingsTab::Graphics, 9) => s.vignette += delta * 0.02,
+            (SettingsTab::Graphics, 10) => s.atmospheric_fog = !s.atmospheric_fog,
+            (SettingsTab::Graphics, 2) => s.fsr1 = !s.fsr1,
+            (SettingsTab::Display, 5) => {
+                let limits = [0, 30, 60, 90, 120, 144, 165, 240];
+                let index = limits.iter().position(|v| *v == s.fps_limit).unwrap_or(0);
+                s.fps_limit =
+                    limits[(index + if left { limits.len() - 1 } else { 1 }) % limits.len()];
+            }
+            (SettingsTab::Audio, 1) => s.master_volume += delta * 0.05,
+            (SettingsTab::Audio, 2) => s.music_volume += delta * 0.05,
+            (SettingsTab::Audio, 3) => s.effects_volume += delta * 0.05,
+            (SettingsTab::Gameplay, 1) => s.sensitivity += delta * 0.1,
+            (SettingsTab::Gameplay, 2) => s.invert_y = !s.invert_y,
+            (SettingsTab::Gameplay, 3) => s.fly_speed += delta,
+            (SettingsTab::Gameplay, 4) => s.vehicle_handling += delta * 0.1,
+            (SettingsTab::Interface, 1) => s.show_hud = !s.show_hud,
+            (SettingsTab::Interface, 2) => s.show_minimap = !s.show_minimap,
+            (SettingsTab::Interface, 3) => s.show_speedometer = !s.show_speedometer,
+            (SettingsTab::Interface, 4) => s.minimap_zoom += delta * 0.1,
+            _ => {}
+        }
+        self.settings.sanitize();
+    }
+    fn draw_settings(&mut self, ui: &mut egui::Ui, scale: f32) {
+        ui.horizontal(|ui| {
+            for tab in SETTINGS_TABS {
+                if ui
+                    .selectable_label(
+                        self.settings_tab == tab,
+                        RichText::new(tab.name()).size(21.0 * scale),
+                    )
+                    .clicked()
+                {
+                    self.settings_tab = tab;
+                    self.selected = 0;
+                }
+            }
+        });
+        ui.add_space(14.0 * scale);
+        let rows = self.setting_rows();
+        let description = &rows[self.selected.min(rows.len() - 1)];
+        ui.columns(2, |columns| {
+            for (index, (name, value, _)) in rows.iter().enumerate() {
+                let row = &mut columns[0];
+                let selected = index == self.selected;
+                let text = RichText::new(format!("{name}    < {value} >"))
+                    .size(17.0 * scale).color(if selected { Color32::BLACK } else { WHITE });
+                let response = row.add_sized([row.available_width(), 38.0 * scale], egui::Button::new(text).selected(selected));
+                if selected { response.scroll_to_me(Some(egui::Align::Center)); }
+                if response.clicked() {
+                    self.selected = index;
+                    self.adjust_setting(false);
+                }
+            }
+            if self.settings_tab == SettingsTab::Graphics {
+                columns[0].add_space(14.0);
+                columns[0].label(RichText::new("Upscaling technology").color(GOLD).strong());
+                for name in ["NVIDIA DLSS", "AMD FSR 2 / 3", "Frame generation", "Ray tracing"] {
+                    columns[0].add_enabled(false, egui::Button::new(format!("{name}    Unavailable in this build")));
+                }
+            }
+            let detail = &mut columns[1];
+            detail.add_space(4.0);
+            detail.label(RichText::new(description.0).size(25.0 * scale).color(GOLD));
+            detail.label(description.2);
+            detail.add_space(24.0);
+            detail.separator();
+            detail.label(RichText::new("Your system").strong());
+            detail.label(&self.graphics_device);
+            detail.label(&self.graphics_resolution);
+            detail.add_space(16.0);
+            detail.label(RichText::new("Changes are saved on this PC. Renderer changes require restart.").color(MUTED));
+            if self.settings_tab == SettingsTab::Graphics {
+                detail.add_space(16.0);
+                detail.label(RichText::new("FSR 1 is available now. DLSS, temporal FSR and frame generation still require engine integration.").color(MUTED));
+            }
+        });
+    }
+    pub fn open_graphics(&mut self) {
+        self.open(Page::Settings);
+        self.settings_tab = SettingsTab::Graphics;
+        self.selected = 1;
+    }
     pub fn sound_position(&self) -> (Option<Page>, usize) {
         (self.page, self.selected)
     }
@@ -188,6 +423,9 @@ impl Menu {
             has_played: false,
             selected: 0,
             message: String::new(),
+            settings_tab: SettingsTab::Display,
+            graphics_device: String::new(),
+            graphics_resolution: String::new(),
         }
     }
     pub fn open(&mut self, page: Page) {
@@ -208,7 +446,7 @@ impl Menu {
             Some(Page::Map) => DESTINATIONS.len(),
             Some(Page::Interiors) => INTERIORS.len(),
             Some(Page::Wardrobe) => self.clothes.len().max(1),
-            Some(Page::Settings) => 12,
+            Some(Page::Settings) => self.setting_rows().len(),
             _ => 1,
         };
         if up {
@@ -219,26 +457,7 @@ impl Menu {
         }
         if left || right {
             match self.page {
-                Some(Page::Settings) => match self.selected {
-                    0 if left => self.settings.fov -= 1.0,
-                    0 => self.settings.fov += 1.0,
-                    1 => self.settings.fullscreen = !self.settings.fullscreen,
-                    2 => self.settings.vsync = !self.settings.vsync,
-                    3 => self.settings.show_hud = !self.settings.show_hud,
-                    4 => self.settings.show_minimap = !self.settings.show_minimap,
-                    5 => self.settings.show_speedometer = !self.settings.show_speedometer,
-                    6 if left => self.settings.minimap_zoom -= 0.1,
-                    6 => self.settings.minimap_zoom += 0.1,
-                    7 if left => self.settings.sensitivity -= 0.1,
-                    7 => self.settings.sensitivity += 0.1,
-                    8 => self.settings.invert_y = !self.settings.invert_y,
-                    9 if left => self.settings.fly_speed -= 1.0,
-                    9 => self.settings.fly_speed += 1.0,
-                    10 if left => self.settings.vehicle_handling -= 0.1,
-                    10 => self.settings.vehicle_handling += 0.1,
-                    11 => self.settings = Settings::default(),
-                    _ => {}
-                },
+                Some(Page::Settings) => self.adjust_setting(left),
                 Some(Page::Map) => {
                     if left {
                         self.selected =
@@ -256,8 +475,8 @@ impl Menu {
             return None;
         }
         if accept {
-            if self.page == Some(Page::Settings) && self.selected == 11 {
-                self.settings = Settings::default();
+            if self.page == Some(Page::Settings) {
+                self.adjust_setting(false);
                 return None;
             }
             if let Some(index) = self.clothes.get(self.selected).map(|(_, enabled)| !enabled) {
@@ -472,6 +691,16 @@ impl Menu {
             }
             return None;
         }
+        if self.page == Some(Page::Settings) {
+            self.controller_input(
+                ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)),
+                ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)),
+                ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft)),
+                ctx.input(|i| i.key_pressed(egui::Key::ArrowRight)),
+                ctx.input(|i| i.key_pressed(egui::Key::Enter)),
+                false,
+            );
+        }
         let page = self.page.unwrap();
         egui::Area::new("freeroam-menu".into()).fixed_pos(screen.min).fade_in(false).show(ctx,|ui| {
             ui.set_min_size(screen.size());
@@ -517,25 +746,7 @@ impl Menu {
                 let mut child=ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::top_down(egui::Align::Min)));
                 egui::ScrollArea::vertical().max_height(rect.height()).show(&mut child,|ui|{
                     match page {
-                        Page::Settings=>{
-                            ui.set_max_width(700.0*scale);
-                            ui.label(RichText::new("Display").size(23.0).color(GOLD).strong());
-                            ui.add(egui::Slider::new(&mut self.settings.fov,55.0..=110.0).text("Field of view").suffix("°"));
-                            ui.checkbox(&mut self.settings.fullscreen,"Fullscreen");
-                            ui.checkbox(&mut self.settings.vsync,"VSync");
-                            ui.checkbox(&mut self.settings.show_hud,"Show HUD");
-                            ui.checkbox(&mut self.settings.show_minimap,"Show radar / minimap");
-                            ui.checkbox(&mut self.settings.show_speedometer,"Show speedometer");
-                            ui.add(egui::Slider::new(&mut self.settings.minimap_zoom,0.5..=2.5).text("Radar zoom"));
-                            ui.add_space(12.0);
-                            ui.label(RichText::new("Mouse & movement").size(23.0).color(GOLD).strong());
-                            ui.add(egui::Slider::new(&mut self.settings.sensitivity,0.2..=3.0).text("Mouse sensitivity"));
-                            ui.checkbox(&mut self.settings.invert_y,"Invert vertical look");
-                            ui.add(egui::Slider::new(&mut self.settings.fly_speed,6.0..=60.0).text("Free-fly speed"));
-                            ui.add(egui::Slider::new(&mut self.settings.vehicle_handling,0.5..=1.5).text("Tire grip"));
-                            ui.label(RichText::new("Changes apply immediately and are saved on this PC.").color(MUTED));
-                            if ui.button("Restore defaults").clicked() {self.settings=Settings::default();}
-                        },
+                        Page::Settings=>{ self.draw_settings(ui, scale); },
                         Page::Map=>{
                             for (index, key) in [egui::Key::Num1, egui::Key::Num2, egui::Key::Num3, egui::Key::Num4, egui::Key::Num5, egui::Key::Num6, egui::Key::Num7, egui::Key::Num8, egui::Key::Num9].into_iter().enumerate() {
                                 if ctx.input(|input| input.key_pressed(key)) {
@@ -749,11 +960,11 @@ mod tests {
             None
         );
         assert_eq!(menu.page, Some(Page::Settings));
-        menu.selected = 2;
+        menu.selected = 3;
         let old_vsync = menu.settings.vsync;
         menu.controller_input(false, false, false, true, false, false);
         assert_ne!(menu.settings.vsync, old_vsync);
-        menu.selected = 0;
+        menu.selected = 1;
         let old_fov = menu.settings.fov;
         menu.controller_input(false, false, false, true, false, false);
         assert_eq!(menu.settings.fov, old_fov + 1.0);
@@ -774,6 +985,32 @@ mod tests {
             menu.controller_input(false, false, false, false, true, false),
             Some(Action::Clothing(1, false))
         );
+    }
+    #[test]
+    fn graphics_and_audio_settings_are_reachable_with_controller_and_keyboard() {
+        let ctx = egui::Context::default();
+        let mut menu = Menu::new(&ctx, Vec::new());
+        menu.settings = Settings::default();
+        menu.open_graphics();
+        menu.selected = 2;
+        menu.controller_input(false, false, false, true, false, false);
+        assert!(!menu.settings.fsr1);
+        menu.selected = 3;
+        let before = menu.settings.render_scale;
+        frame(&ctx, &mut menu, &[]);
+        frame(&ctx, &mut menu, &[egui::Key::ArrowLeft]);
+        assert_eq!(menu.settings.render_scale, before - 5);
+        menu.selected = 0;
+        for _ in 0..3 {
+            menu.controller_input(false, false, false, true, false, false);
+        }
+        assert_eq!(menu.settings_tab, SettingsTab::Audio);
+        menu.selected = 1;
+        menu.controller_input(false, false, true, false, false, false);
+        assert_eq!(menu.settings.master_volume, 0.95);
+        menu.selected = menu.setting_rows().len() - 1;
+        menu.controller_input(false, false, false, false, true, false);
+        assert_eq!(menu.settings, Settings::default());
     }
     #[test]
     fn wardrobe_keyboard_toggles_selected_clothing() {

@@ -223,6 +223,28 @@ impl AudioEngine {
     }
 
     /// Sets music-bus gain in decibels.
+    pub fn set_mix_levels(&mut self, master: f32, music: f32, effects: f32) -> Result<()> {
+        anyhow::ensure!(
+            [master, music, effects]
+                .into_iter()
+                .all(|v| v.is_finite() && (0.0..=1.0).contains(&v)),
+            "audio levels must be finite values between zero and one"
+        );
+        let gain = |level: f32| {
+            if level == 0.0 {
+                Decibels::SILENCE
+            } else {
+                Decibels::from(20.0 * level.log10())
+            }
+        };
+        self.manager
+            .main_track()
+            .set_volume(gain(master), Tween::default());
+        self.music.set_volume(gain(music), Tween::default());
+        self.effects.set_volume(gain(effects), Tween::default());
+        Ok(())
+    }
+    /// Sets music-bus gain in decibels.
     pub fn set_music_volume(&mut self, decibels: f32) -> Result<()> {
         anyhow::ensure!(decibels.is_finite(), "music volume must be finite");
         self.music

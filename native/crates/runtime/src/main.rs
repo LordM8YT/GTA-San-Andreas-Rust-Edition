@@ -8,6 +8,7 @@ use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Instant};
 mod capture;
 mod controller;
 mod menu;
+mod postprocess;
 mod settings;
 mod streaming;
 use streaming::{Streamer, ORIGIN, RADIUS};
@@ -38,7 +39,7 @@ struct State {
     queue: wgpu::Queue,
     format: wgpu::TextureFormat,
     size: winit::dpi::PhysicalSize<u32>,
-    depth: wgpu::TextureView,
+    postprocess: postprocess::PostProcess,
     camera: wgpu::Buffer,
     camera_group: wgpu::BindGroup,
     opaque: wgpu::RenderPipeline,
@@ -51,6 +52,7 @@ struct State {
     gamepad: controller::Input,
     captured: bool,
     last: Instant,
+    next_frame: Instant,
     animation: Option<sa_script::CutAnimation>,
     started: Instant,
     collision: Option<CollisionWorld>,
@@ -75,6 +77,7 @@ struct State {
     _radar_textures: Vec<egui::TextureHandle>,
     menu: menu::Menu,
     applied_settings: settings::Settings,
+    persist_settings: bool,
     quit_requested: bool,
     car: Option<(sa_scene::vehicle::Car, Vec<GpuBatch>)>,
     driving: bool,
@@ -165,14 +168,27 @@ impl State {
         first_model: bool,
         radar_tiles: Vec<sa_scene::RadarTile>,
     ) -> Result<Self> {
-        let instance = wgpu::Instance::default();
+        let mut startup_settings = settings::Settings::load();
+        let args: Vec<_> = std::env::args().collect();
+        if let Some(pair) = args.windows(2).find(|w| w[0] == "--renderer") {
+            startup_settings.renderer = match pair[1].as_str() {
+                "auto" => settings::Renderer::Auto,
+                "vulkan" => settings::Renderer::Vulkan,
+                "dx12" => settings::Renderer::DirectX12,
+                other => anyhow::bail!("Unknown renderer {other}. Use auto, vulkan or dx12. OpenGL is not supported by this build."),
+            };
+        }
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: startup_settings.renderer.backends(),
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
         let surface = instance.create_surface(window.clone())?;
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 compatible_surface: Some(&surface),
                 ..Default::default()
             })
-            .await?;
+            .await.context("Selected renderer could not create a GPU adapter. Try --renderer auto or --renderer vulkan")?;
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor::default())
             .await?;
@@ -189,7 +205,7 @@ impl State {
         });
         let camera = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("camera"),
-            size: 64,
+            size: 96,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -197,7 +213,7 @@ impl State {
             label: Some("camera layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -260,7 +276,7 @@ impl State {
                     entry_point: Some(if alpha { "fs_blended" } else { "fs_main" }),
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
-                        format,
+                        format: postprocess::SCENE_FORMAT,
                         blend: if alpha {
                             Some(wgpu::BlendState::ALPHA_BLENDING)
                         } else {
@@ -299,7 +315,6 @@ impl State {
         let collision = scene.collision.take();
         let water = scene.water.take();
         let batches = Self::upload_scene(&device, &queue, &image_layout, &sampler, scene)?;
-        let depth = Self::make_depth(&device, size);
         let gui_context = egui::Context::default();
         let mut radar_texture_handles = Vec::with_capacity(radar_tiles.len());
         let radar_tiles = radar_tiles
@@ -322,6 +337,16 @@ impl State {
             })
             .collect::<Vec<_>>();
         let mut menu = menu::Menu::new(&gui_context, Vec::new());
+        menu.settings = startup_settings;
+        let gpu = adapter.get_info();
+        menu.graphics_device = format!("{} / {:?}", gpu.name, gpu.backend);
+        println!("Renderer: {}", menu.graphics_device);
+        let postprocess = postprocess::PostProcess::new(
+            &device,
+            format,
+            menu.settings.render_size(size.width, size.height),
+            [size.width.max(1), size.height.max(1)],
+        );
         if first_model || animation.is_some() {
             menu.page = None;
             menu.settings.show_hud = false;
@@ -347,7 +372,7 @@ impl State {
             queue,
             format,
             size,
-            depth,
+            postprocess,
             camera,
             camera_group,
             opaque,
@@ -375,6 +400,7 @@ impl State {
             gamepad: controller::Input::default(),
             captured: false,
             last: Instant::now(),
+            next_frame: Instant::now(),
             animation,
             started: Instant::now(),
             collision,
@@ -399,6 +425,7 @@ impl State {
             _radar_textures: radar_texture_handles,
             menu,
             applied_settings,
+            persist_settings: true,
             quit_requested: false,
             car: None,
             driving: false,
@@ -598,24 +625,6 @@ impl State {
         }
         self.streamer = Some(streamer);
     }
-    fn make_depth(device: &wgpu::Device, size: winit::dpi::PhysicalSize<u32>) -> wgpu::TextureView {
-        device
-            .create_texture(&wgpu::TextureDescriptor {
-                label: Some("depth"),
-                size: wgpu::Extent3d {
-                    width: size.width.max(1),
-                    height: size.height.max(1),
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Depth24Plus,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                view_formats: &[],
-            })
-            .create_view(&Default::default())
-    }
     fn configure(&self) {
         if self.size.width == 0 || self.size.height == 0 {
             return;
@@ -642,7 +651,11 @@ impl State {
     fn resize(&mut self, size: winit::dpi::PhysicalSize<u32>) {
         self.size = size;
         if size.width > 0 && size.height > 0 {
-            self.depth = Self::make_depth(&self.device, size);
+            self.postprocess.resize(
+                &self.device,
+                self.menu.settings.render_size(size.width, size.height),
+                [size.width.max(1), size.height.max(1)],
+            );
             self.configure();
         }
     }
@@ -987,6 +1000,24 @@ impl State {
             0,
             bytemuck::cast_slice(&(projection * view).to_cols_array()),
         );
+        self.queue.write_buffer(
+            &self.camera,
+            64,
+            bytemuck::cast_slice(&[
+                view_position.x,
+                view_position.y,
+                view_position.z,
+                0.0,
+                if self.interior == 0 && self.menu.settings.atmospheric_fog {
+                    1.0
+                } else {
+                    0.0
+                },
+                0.0,
+                0.0,
+                0.0,
+            ]),
+        );
     }
     fn respawn(&mut self) {
         self.driving = false;
@@ -1056,6 +1087,16 @@ impl State {
             None => {}
         }
     }
+    fn apply_audio_settings(&mut self) {
+        if let Some(audio) = &mut self.audio {
+            let s = &self.menu.settings;
+            if let Err(error) =
+                audio.set_mix_levels(s.master_volume, s.music_volume, s.effects_volume)
+            {
+                self.menu.message = format!("Could not apply audio levels: {error}");
+            }
+        }
+    }
     fn apply_settings(&mut self) {
         self.menu.settings.sanitize();
         if self.menu.settings == self.applied_settings {
@@ -1072,9 +1113,19 @@ impl State {
         if self.menu.settings.vsync != self.applied_settings.vsync {
             self.configure();
         }
-        if let Err(error) = self.menu.settings.save() {
-            self.menu.message = format!("Kunne ikke lagre innstillinger: {error}");
+        self.postprocess.resize(
+            &self.device,
+            self.menu
+                .settings
+                .render_size(self.size.width, self.size.height),
+            [self.size.width.max(1), self.size.height.max(1)],
+        );
+        if self.persist_settings {
+            if let Err(error) = self.menu.settings.save() {
+                self.menu.message = format!("Kunne ikke lagre innstillinger: {error}");
+            }
         }
+        self.apply_audio_settings();
         self.applied_settings = self.menu.settings.clone();
     }
     fn render(&mut self) -> bool {
@@ -1135,6 +1186,10 @@ impl State {
         let context = self.gui_context.clone();
         let mut action = None;
         let menu_before = self.menu.sound_position();
+        self.menu.graphics_resolution = format!(
+            "{} x {} render / {} x {} display",
+            self.postprocess.size[0], self.postprocess.size[1], self.size.width, self.size.height
+        );
         let mut output = context.run_ui(raw_input, |ui| {
             action = self.menu.draw(
                 ui.ctx(),
@@ -1175,7 +1230,7 @@ impl State {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("SA world"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view: &self.postprocess.color,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -1189,7 +1244,7 @@ impl State {
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth,
+                    view: &self.postprocess.depth,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
@@ -1225,6 +1280,13 @@ impl State {
                 pass.draw(0..b.count, 0..1);
             }
         }
+        self.postprocess.draw(
+            &mut encoder,
+            &self.queue,
+            &view,
+            &self.menu.settings,
+            [self.size.width, self.size.height],
+        );
         {
             let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("freeroam menus"),
@@ -1289,6 +1351,7 @@ struct App {
     mod_names: Vec<String>,
     game_dir: PathBuf,
     smoke_menus: bool,
+    smoke_graphics: bool,
     smoke_stream: bool,
     smoke_car: bool,
     smoke_ped: bool,
@@ -1436,6 +1499,11 @@ impl ApplicationHandler for App {
             radar_tiles,
         )) {
             Ok(mut state) => {
+                state.persist_settings = !self.smoke;
+                if self.smoke_graphics {
+                    state.menu.open_graphics();
+                    state.menu.settings.apply_preset(2);
+                }
                 state.frontend_sounds = self.frontend_sounds.take();
                 state.streamer = self.streamer.take();
                 state.menu.mods = self.mod_names.clone();
@@ -1461,7 +1529,7 @@ impl ApplicationHandler for App {
                         state.menu.message = format!("Bil kunne ikke lastes: {error}");
                     }
                 }
-                if self.smoke && !self.smoke_menus {
+                if self.smoke && !self.smoke_menus && !self.smoke_graphics {
                     state.menu.page = None;
                     state.menu.has_played = true;
                 }
@@ -1477,6 +1545,7 @@ impl ApplicationHandler for App {
                 match sa_audio::AudioEngine::new() {
                     Ok(audio) => {
                         state.audio = Some(audio);
+                        state.apply_audio_settings();
                         eprintln!("Audio output initialized (F10 plays a test tone)");
                     }
                     Err(error) => {
@@ -1563,6 +1632,21 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => state.resize(size),
             WindowEvent::RedrawRequested => {
+                if !self.smoke && state.menu.settings.fps_limit > 0 {
+                    let now = Instant::now();
+                    if now < state.next_frame {
+                        event_loop.set_control_flow(ControlFlow::WaitUntil(state.next_frame));
+                        return;
+                    }
+                    state.next_frame = now
+                        + std::time::Duration::from_secs_f64(
+                            1.0 / state.menu.settings.fps_limit as f64,
+                        );
+                    event_loop.set_control_flow(ControlFlow::WaitUntil(state.next_frame));
+                } else {
+                    event_loop.set_control_flow(ControlFlow::Poll);
+                }
+
                 if self.smoke_interiors {
                     state.last = Instant::now() - std::time::Duration::from_secs_f32(1.0 / 60.0);
                     state.keys.clear();
@@ -1816,6 +1900,43 @@ impl ApplicationHandler for App {
                     state.window.request_redraw();
                     return;
                 }
+                if self.smoke_graphics && rendered {
+                    self.smoke_frames += 1;
+                    if self.smoke_frames >= 4 {
+                        assert_eq!(
+                            state.postprocess.size,
+                            state
+                                .menu
+                                .settings
+                                .render_size(state.size.width, state.size.height)
+                        );
+                        println!(
+                            "GPU graphics mode {} passed: {}%, FSR 1 {}, {:?}",
+                            self.smoke_region,
+                            state.menu.settings.render_scale,
+                            state.menu.settings.fsr1,
+                            state.postprocess.size
+                        );
+                        self.smoke_frames = 0;
+                        self.smoke_region += 1;
+                        if self.smoke_region >= 7 {
+                            println!("GPU graphics smoke passed: 7 modes, live scaling and FSR 1 EASU/RCAS");
+                            event_loop.exit();
+                            return;
+                        }
+                        state.menu.settings.apply_preset(2);
+                        state.menu.settings.render_scale =
+                            [100, 67, 50, 67, 150, 100, 83][self.smoke_region];
+                        state.menu.settings.fsr1 = ![3, 5].contains(&self.smoke_region);
+                        if self.smoke_region == 5 {
+                            state.menu.settings.fxaa = false;
+                            state.menu.settings.bloom = 0.0;
+                            state.menu.settings.atmospheric_fog = false;
+                        }
+                    }
+                    state.window.request_redraw();
+                    return;
+                }
                 if self.smoke_menus && rendered {
                     self.smoke_frames += 1;
                     if self.smoke_frames >= 4 {
@@ -2005,6 +2126,13 @@ impl ApplicationHandler for App {
     }
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.poll_gamepad(event_loop);
+        if !self.smoke {
+            if let Some(state) = &self.state {
+                if Instant::now() >= state.next_frame {
+                    state.window.request_redraw();
+                }
+            }
+        }
         if self.smoke {
             if let Some(state) = &self.state {
                 let id = state.window.id();
@@ -2332,6 +2460,7 @@ fn main() -> Result<()> {
         smoke: args.iter().any(|a| {
             a == "--smoke-tour"
                 || a == "--smoke-menus"
+                || a == "--smoke-graphics"
                 || a == "--smoke-stream"
                 || a == "--smoke-car"
                 || a == "--smoke-ped"
@@ -2350,6 +2479,7 @@ fn main() -> Result<()> {
         game_dir: game,
         test_tone: sa_audio::SoundEffect::tone(660.0, 0.18, 48_000).ok(),
         smoke_menus: args.iter().any(|a| a == "--smoke-menus"),
+        smoke_graphics: args.iter().any(|a| a == "--smoke-graphics"),
         smoke_stream: args.iter().any(|a| a == "--smoke-stream"),
         smoke_car: args.iter().any(|a| a == "--smoke-car"),
         smoke_ped: args
