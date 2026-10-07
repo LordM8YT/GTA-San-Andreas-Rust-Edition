@@ -101,8 +101,9 @@ disabled by default so you can choose its placement.
 
 These are data resources; DLLs and scripts are not executed. Ped and vehicle IDs
 do not automatically provide AI, skeletal animation, clothing, or vehicle
-physics. FiveM files and the FiveM script API are not compatible with this
-format.
+physics. FiveM files are not loaded directly, and the FiveM script API is not supported.
+An experimental [GTA V / FiveM asset converter](gta5-conversion.md) prepares
+Legacy YFT/YDR/YDD/YTD models as native resources.
 
 Runnable custom vehicles are registered separately:
 

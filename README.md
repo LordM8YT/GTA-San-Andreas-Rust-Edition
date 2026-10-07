@@ -43,7 +43,8 @@ it is not a drop-in loader for arbitrary original San Andreas mods. Existing
 binary plugins, scripts, IDE/ IPL/IMG workflows, and mods that depend on the
 game executable or its plugin APIs are not expected to work without conversion
 or dedicated support. Read [native mod documentation](docs/native-mods.md)
-before preparing a resource.
+before preparing a resource. An experimental [GTA V / FiveM asset converter](docs/gta5-conversion.md)
+can prepare Legacy cars, props and explicitly mapped clothing as native resources.
 
 
 

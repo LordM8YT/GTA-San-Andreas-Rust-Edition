@@ -25,4 +25,17 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo test --workspace
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - name: Build GTA V extractor
+        working-directory: .
+        run: dotnet build tools/gta5-extract/Gta5Extract.csproj -c Release -p:RestoreLockedMode=true
+      - run: cargo build -p sa-assets --example audit_resource
+      - name: Conversion tests
+        working-directory: .
+        run: python -m unittest discover -s tools/tests -v
       - run: cargo build --release -p sa-runtime
