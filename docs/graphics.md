@@ -57,6 +57,39 @@ The test runs the real GPU pipelines and verifies target dimensions. It does
 not establish image-quality parity with commercial games or temporal stability.
 Smoke tests do not overwrite the user's saved settings.
 
+## Settings navigation
+
+Settings use a fixed category sidebar, a scrolling list of controls, and a
+fixed description/system panel. The mouse wheel moves only the control list;
+the selected row is revealed on keyboard/controller navigation, rather than
+forcing its scroll position on every frame. Each control has separate decrease
+and increase buttons. Arrow keys/D-pad select and adjust values, Enter/A
+adjusts the selected value, and Escape/B returns. Up from the first control
+selects the category; left/right then switches categories.
+
+## Neighbourhood upload
+
+Map decoding and old-region cleanup run on the background world worker.
+Replacement textures and vertex buffers are uploaded incrementally, with
+256 KiB packets, at most 64 operations per frame, and a soft 2 ms / 4 MiB
+per-frame budget. Individual driver calls can exceed the time budget. The
+previous region remains usable until the replacement's graphics, collision
+and water can be installed together. Static vertices upload directly from
+their packed representation, without a temporary float copy.
+
+Initial startup still uploads its first region synchronously. This change
+targets streaming stalls, not overall rendering cost or draw-call reduction.
+Streaming still replaces whole neighbourhoods rather than retaining individual
+objects across smaller chunks. GPU texture/mesh reuse across overlapping
+regions is a future improvement.
+On the local RTX 3070/Vulkan nine-region smoke tour, the Desert upload changed
+from one 139.44 ms CPU upload to 87 slices with an 11.83 ms maximum CPU slice.
+Across all streamed destinations, the largest slice was 14.71 ms in the final
+tour; an earlier tuning run reached 27.15 ms. These are
+CPU upload timings, not total frame times or a guarantee of hitch-free play.
+`--smoke-stream` also exercises a continuous 1.2 km return route at a fixed
+speed, with no teleport and assertions against camera jumps.
+
 Sources and licensing:
 
 - [AMD FSR 1 source](https://github.com/GPUOpen-Effects/FidelityFX-FSR).

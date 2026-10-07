@@ -2224,6 +2224,7 @@ name = "sa-scene"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytemuck",
  "glam 0.30.10",
  "png",
  "sa-assets",

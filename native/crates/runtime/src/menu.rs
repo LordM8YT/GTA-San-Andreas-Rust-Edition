@@ -173,6 +173,11 @@ pub struct Menu {
     selected: usize,
     pub message: String,
     settings_tab: SettingsTab,
+    settings_scroll_to_selection: bool,
+    #[cfg(test)]
+    settings_scroll_offset: f32,
+    #[cfg(test)]
+    settings_controls: Vec<(Rect, Rect)>,
     pub graphics_device: String,
     pub graphics_resolution: String,
 }
@@ -243,6 +248,7 @@ impl Menu {
             self.settings_tab = SETTINGS_TABS[(self.settings_tab.index()
                 + if left { SETTINGS_TABS.len() - 1 } else { 1 })
                 % SETTINGS_TABS.len()];
+            self.settings_scroll_to_selection = true;
             return;
         }
         if self.selected == self.setting_rows().len() - 1 {
@@ -315,58 +321,76 @@ impl Menu {
         self.settings.sanitize();
     }
     fn draw_settings(&mut self, ui: &mut egui::Ui, scale: f32) {
-        ui.horizontal(|ui| {
-            for tab in SETTINGS_TABS {
-                if ui
-                    .selectable_label(
-                        self.settings_tab == tab,
-                        RichText::new(tab.name()).size(21.0 * scale),
-                    )
-                    .clicked()
-                {
-                    self.settings_tab = tab;
-                    self.selected = 0;
-                }
-            }
-        });
-        ui.add_space(14.0 * scale);
+        #[cfg(test)]
+        self.settings_controls.clear();
         let rows = self.setting_rows();
-        let description = &rows[self.selected.min(rows.len() - 1)];
-        ui.columns(2, |columns| {
-            for (index, (name, value, _)) in rows.iter().enumerate() {
-                let row = &mut columns[0];
-                let selected = index == self.selected;
-                let text = RichText::new(format!("{name}    < {value} >"))
-                    .size(17.0 * scale).color(if selected { Color32::BLACK } else { WHITE });
-                let response = row.add_sized([row.available_width(), 38.0 * scale], egui::Button::new(text).selected(selected));
-                if selected { response.scroll_to_me(Some(egui::Align::Center)); }
-                if response.clicked() {
-                    self.selected = index;
-                    self.adjust_setting(false);
+        let reveal = std::mem::take(&mut self.settings_scroll_to_selection);
+        let total = ui.available_width();
+        let height = ui.available_height().max(160.0);
+        let sidebar = (155.0 * scale).min(total * 0.2);
+        let list_width = (total - sidebar - 36.0 * scale) * 0.56;
+        let detail_width = (total - sidebar - list_width - 36.0 * scale).max(100.0);
+        ui.spacing_mut().item_spacing = Vec2::new(18.0 * scale, 10.0 * scale);
+        ui.horizontal_top(|ui| {
+            ui.allocate_ui_with_layout(Vec2::new(sidebar, height), egui::Layout::top_down(egui::Align::Min), |ui| {
+                for tab in SETTINGS_TABS {
+                    let active = self.settings_tab == tab;
+                    let text = RichText::new(tab.name()).size(18.0 * scale).color(if active { Color32::BLACK } else { WHITE });
+                    if ui.add_sized([sidebar, 40.0 * scale], egui::Button::new(text).selected(active)).clicked() {
+                        self.settings_tab = tab;
+                        self.selected = 1;
+                        self.settings_scroll_to_selection = true;
+                    }
                 }
-            }
-            if self.settings_tab == SettingsTab::Graphics {
-                columns[0].add_space(14.0);
-                columns[0].label(RichText::new("Upscaling technology").color(GOLD).strong());
-                for name in ["NVIDIA DLSS", "AMD FSR 2 / 3", "Frame generation", "Ray tracing"] {
-                    columns[0].add_enabled(false, egui::Button::new(format!("{name}    Unavailable in this build")));
-                }
-            }
-            let detail = &mut columns[1];
-            detail.add_space(4.0);
-            detail.label(RichText::new(description.0).size(25.0 * scale).color(GOLD));
-            detail.label(description.2);
-            detail.add_space(24.0);
-            detail.separator();
-            detail.label(RichText::new("Your system").strong());
-            detail.label(&self.graphics_device);
-            detail.label(&self.graphics_resolution);
-            detail.add_space(16.0);
-            detail.label(RichText::new("Changes are saved on this PC. Renderer changes require restart.").color(MUTED));
-            if self.settings_tab == SettingsTab::Graphics {
-                detail.add_space(16.0);
-                detail.label(RichText::new("FSR 1 is available now. DLSS, temporal FSR and frame generation still require engine integration.").color(MUTED));
-            }
+                if ui.button("Back").clicked() { self.back(); }
+                ui.add_space(20.0 * scale);
+                ui.label(RichText::new("Left / right: adjust\nUp / down: select\nSelect Category to switch tabs").size(12.0 * scale).color(MUTED));
+            });
+            ui.allocate_ui_with_layout(Vec2::new(list_width, height), egui::Layout::top_down(egui::Align::Min), |ui| {
+                let mut scroll = egui::ScrollArea::vertical().id_salt("settings-list").max_height(height).auto_shrink([false, false]);
+                if reveal && self.selected == 0 { scroll = scroll.vertical_scroll_offset(0.0); }
+                let output = scroll.show(ui, |ui| {
+                    for (index, (name, value, _)) in rows.iter().enumerate().skip(1) {
+                        let selected = index == self.selected;
+                        let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 43.0 * scale), Sense::click());
+                        if selected && reveal { response.scroll_to_me(Some(egui::Align::Center)); }
+                        let fill = if selected { Color32::from_rgb(77,64,44) } else if response.hovered() { Color32::from_rgb(46,46,43) } else { Color32::from_black_alpha(150) };
+                        ui.painter().rect_filled(rect, 0.0, fill);
+                        ui.painter().text(rect.left_center()+Vec2::new(12.0*scale,0.0), egui::Align2::LEFT_CENTER, name, FontId::proportional(16.0*scale), if selected { GOLD } else { WHITE });
+                        let control_width = (list_width * 0.48).min(245.0 * scale);
+                        let arrow_width = 28.0 * scale;
+                        let left = Rect::from_min_size(Pos2::new(rect.right()-control_width,rect.top()+5.0*scale),Vec2::new(arrow_width,33.0*scale));
+                        let right = Rect::from_min_size(Pos2::new(rect.right()-arrow_width-5.0*scale,rect.top()+5.0*scale),Vec2::new(arrow_width,33.0*scale));
+                        #[cfg(test)]
+                        self.settings_controls.push((left, right));
+                        ui.painter().text(Pos2::new((left.right()+right.left())*0.5,rect.center().y), egui::Align2::CENTER_CENTER, value, FontId::proportional(14.0*scale), WHITE);
+                        let minus = ui.put(left, egui::Button::new("<")).clicked();
+                        let plus = ui.put(right, egui::Button::new(">")).clicked();
+                        if response.clicked() || minus || plus { self.selected = index; }
+                        if minus || plus { self.adjust_setting(minus); }
+                    }
+                    if self.settings_tab == SettingsTab::Graphics {
+                        ui.add_space(12.0);
+                        for name in ["NVIDIA DLSS", "AMD FSR 2 / 3", "Frame generation", "Ray tracing"] {
+                            ui.label(RichText::new(format!("{name}: unavailable")).size(13.0*scale).color(MUTED));
+                        }
+                    }
+                });
+                #[cfg(test)] { self.settings_scroll_offset = output.state.offset.y; }
+                #[cfg(not(test))] { let _ = output; }
+            });
+            ui.allocate_ui_with_layout(Vec2::new(detail_width, height), egui::Layout::top_down(egui::Align::Min), |ui| {
+                let description = &rows[self.selected.min(rows.len()-1)];
+                ui.label(RichText::new(description.0).size(23.0*scale).color(GOLD));
+                ui.label(description.2);
+                ui.add_space(20.0*scale);
+                ui.separator();
+                ui.label(RichText::new("Your system").strong());
+                ui.label(&self.graphics_device);
+                ui.label(&self.graphics_resolution);
+                ui.add_space(16.0*scale);
+                ui.label(RichText::new("Changes are saved automatically. Renderer changes require restart.").size(14.0*scale).color(MUTED));
+            });
         });
     }
     pub fn open_graphics(&mut self) {
@@ -424,6 +448,11 @@ impl Menu {
             selected: 0,
             message: String::new(),
             settings_tab: SettingsTab::Display,
+            settings_scroll_to_selection: true,
+            #[cfg(test)]
+            settings_scroll_offset: 0.0,
+            #[cfg(test)]
+            settings_controls: Vec::new(),
             graphics_device: String::new(),
             graphics_resolution: String::new(),
         }
@@ -431,6 +460,7 @@ impl Menu {
     pub fn open(&mut self, page: Page) {
         self.page = Some(page);
         self.selected = 0;
+        self.settings_scroll_to_selection = true;
     }
     pub fn controller_input(
         &mut self,
@@ -449,6 +479,9 @@ impl Menu {
             Some(Page::Settings) => self.setting_rows().len(),
             _ => 1,
         };
+        if (up || down) && self.page == Some(Page::Settings) {
+            self.settings_scroll_to_selection = true;
+        }
         if up {
             self.selected = (self.selected + item_count - 1) % item_count;
         }
@@ -692,14 +725,17 @@ impl Menu {
             return None;
         }
         if self.page == Some(Page::Settings) {
-            self.controller_input(
-                ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)),
-                ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)),
-                ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft)),
-                ctx.input(|i| i.key_pressed(egui::Key::ArrowRight)),
-                ctx.input(|i| i.key_pressed(egui::Key::Enter)),
-                false,
-            );
+            let [up, down, left, right, enter] = ctx.input_mut(|input| {
+                [
+                    egui::Key::ArrowUp,
+                    egui::Key::ArrowDown,
+                    egui::Key::ArrowLeft,
+                    egui::Key::ArrowRight,
+                    egui::Key::Enter,
+                ]
+                .map(|key| input.consume_key(egui::Modifiers::NONE, key))
+            });
+            self.controller_input(up, down, left, right, enter, false);
         }
         let page = self.page.unwrap();
         egui::Area::new("freeroam-menu".into()).fixed_pos(screen.min).fade_in(false).show(ctx,|ui| {
@@ -744,9 +780,10 @@ impl Menu {
                 let start=Pos2::new(left,top+210.0*scale);
                 let rect=Rect::from_min_max(start,Pos2::new(screen.right()-screen.width()*0.07,footer-36.0*scale));
                 let mut child=ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::top_down(egui::Align::Min)));
+                if page == Page::Settings { self.draw_settings(&mut child, scale); } else {
                 egui::ScrollArea::vertical().max_height(rect.height()).show(&mut child,|ui|{
                     match page {
-                        Page::Settings=>{ self.draw_settings(ui, scale); },
+                        Page::Settings=>{},
                         Page::Map=>{
                             for (index, key) in [egui::Key::Num1, egui::Key::Num2, egui::Key::Num3, egui::Key::Num4, egui::Key::Num5, egui::Key::Num6, egui::Key::Num7, egui::Key::Num8, egui::Key::Num9].into_iter().enumerate() {
                                 if ctx.input(|input| input.key_pressed(key)) {
@@ -819,6 +856,7 @@ impl Menu {
                     if ui.button("Back").clicked(){self.back();}
                     if !self.message.is_empty(){ui.label(RichText::new(&self.message).color(GOLD));}
                 });
+                }
             }
         });
         action
@@ -1011,6 +1049,92 @@ mod tests {
         menu.selected = menu.setting_rows().len() - 1;
         menu.controller_input(false, false, false, false, true, false);
         assert_eq!(menu.settings, Settings::default());
+    }
+    #[test]
+    fn mouse_arrows_adjust_both_directions_and_enter_changes_value_once() {
+        let ctx = egui::Context::default();
+        let mut menu = Menu::new(&ctx, Vec::new());
+        menu.open_graphics();
+        for _ in 0..4 {
+            frame(&ctx, &mut menu, &[]);
+        }
+        for (left, expected) in [(true, 95), (false, 105)] {
+            let controls = menu.settings_controls[2];
+            let pos = if left {
+                controls.0.center()
+            } else {
+                controls.1.center()
+            };
+            for pressed in [None, Some(true), Some(false)] {
+                let mut input = egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1440.0, 900.0))),
+                    focused: true,
+                    ..Default::default()
+                };
+                input.events.push(egui::Event::PointerMoved(pos));
+                if let Some(pressed) = pressed {
+                    input.events.push(egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    });
+                }
+                let mut output = ctx.run_ui(input, |ui| {
+                    menu.draw(ui.ctx(), [0.0; 3], false, None, 0.0, &[]);
+                });
+                output.textures_delta.clear();
+            }
+            assert_eq!(menu.settings.render_scale, expected);
+            assert_eq!(menu.selected, 3);
+            if left {
+                frame(&ctx, &mut menu, &[egui::Key::Enter]);
+                assert_eq!(menu.settings.render_scale, 100, "Enter adjusted twice");
+                frame(&ctx, &mut menu, &[]);
+            }
+        }
+    }
+    #[test]
+    fn mouse_wheel_scroll_does_not_snap_back_to_selected_setting() {
+        let ctx = egui::Context::default();
+        let mut menu = Menu::new(&ctx, Vec::new());
+        menu.open_graphics();
+        let mut scroll_after_wheel = 0.0;
+        for frame_index in 0..40 {
+            let mut input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0))),
+                time: Some(frame_index as f64 / 60.0),
+                focused: true,
+                ..Default::default()
+            };
+            input
+                .events
+                .push(egui::Event::PointerMoved(Pos2::new(300.0, 340.0)));
+            if frame_index == 3 {
+                input.events.push(egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    phase: egui::TouchPhase::Move,
+                    delta: Vec2::new(0.0, -160.0),
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            let mut output = ctx.run_ui(input, |ui| {
+                menu.draw(ui.ctx(), [0.0; 3], false, None, 0.0, &[]);
+            });
+            output.textures_delta.clear();
+            if frame_index == 20 {
+                scroll_after_wheel = menu.settings_scroll_offset;
+            }
+        }
+        assert!(
+            scroll_after_wheel > 30.0,
+            "wheel did not scroll the list: {scroll_after_wheel}"
+        );
+        assert!(
+            menu.settings_scroll_offset >= scroll_after_wheel - 1.0,
+            "scroll snapped back"
+        );
+        assert_eq!(menu.selected, 1, "mouse wheel must not change selection");
     }
     #[test]
     fn wardrobe_keyboard_toggles_selected_clothing() {

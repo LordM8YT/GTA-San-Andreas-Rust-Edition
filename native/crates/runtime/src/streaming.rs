@@ -49,8 +49,20 @@ pub const INTERIORS: [Interior; 3] = [
 pub fn distance(a: [f32; 2], b: [f32; 2]) -> f32 {
     ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt()
 }
+pub enum Retired {
+    Scene {
+        batches: Vec<crate::GpuBatch>,
+        collision: Option<sa_scene::collision::CollisionWorld>,
+        water: Option<std::sync::Arc<sa_scene::water::WaterMap>>,
+    },
+    Upload(Box<crate::upload::Upload>),
+}
+enum Work {
+    Load(Region),
+    Retire(Retired),
+}
 pub struct Streamer {
-    requests: SyncSender<Region>,
+    requests: SyncSender<Work>,
     results: Receiver<(Region, Result<Scene>)>,
     pending: Option<Region>,
     retry_after: Option<Instant>,
@@ -58,12 +70,19 @@ pub struct Streamer {
 }
 impl Streamer {
     pub fn new(mut loader: WorldLoader) -> Self {
-        let (requests, receiver) = mpsc::sync_channel::<Region>(1);
+        let (requests, receiver) = mpsc::sync_channel::<Work>(1);
         let (sender, results) = mpsc::sync_channel(1);
         std::thread::Builder::new()
             .name("world-stream".into())
             .spawn(move || {
-                while let Ok(region) = receiver.recv() {
+                while let Ok(work) = receiver.recv() {
+                    let region = match work {
+                        Work::Load(region) => region,
+                        Work::Retire(retired) => {
+                            retired.release();
+                            continue;
+                        }
+                    };
                     let started = std::time::Instant::now();
                     let scene = if region.interior == 0 {
                         loader.load(region.center, ORIGIN, RADIUS)
@@ -95,6 +114,14 @@ impl Streamer {
     pub fn pending(&self) -> bool {
         self.pending.is_some()
     }
+    pub fn retire(&mut self, retired: Retired) -> Option<Retired> {
+        match self.requests.try_send(Work::Retire(retired)) {
+            Ok(()) => None,
+            Err(mpsc::TrySendError::Full(Work::Retire(retired)))
+            | Err(mpsc::TrySendError::Disconnected(Work::Retire(retired))) => Some(retired),
+            _ => unreachable!(),
+        }
+    }
     pub fn retry_later(&mut self) {
         self.retry_after = Some(Instant::now() + Duration::from_secs(5));
     }
@@ -110,7 +137,7 @@ impl Streamer {
             && self
                 .retry_after
                 .is_none_or(|deadline| Instant::now() >= deadline)
-            && self.requests.try_send(region).is_ok()
+            && self.requests.try_send(Work::Load(region)).is_ok()
         {
             self.pending = Some(region);
         }
@@ -145,13 +172,64 @@ impl Streamer {
         }
     }
 }
+impl Retired {
+    fn release(self) {
+        match self {
+            Self::Scene {
+                batches,
+                collision,
+                water,
+            } => {
+                drop(batches);
+                drop(collision);
+                drop(water);
+            }
+            Self::Upload(upload) => drop(upload),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
+    fn retirement_is_nonblocking_preserves_full_queue_and_does_not_mark_loading() {
+        let (requests, receiver) = mpsc::sync_channel::<Work>(1);
+        let (_sender, results) = mpsc::sync_channel(1);
+        let mut stream = Streamer {
+            requests,
+            results,
+            pending: None,
+            retry_after: None,
+            connected: true,
+        };
+        let empty = || Retired::Scene {
+            batches: Vec::new(),
+            collision: None,
+            water: None,
+        };
+        assert!(stream.retire(empty()).is_none());
+        assert!(!stream.pending());
+        let retained = stream
+            .retire(empty())
+            .expect("full queue must return ownership");
+        stream.request(ORIGIN);
+        assert!(
+            !stream.pending(),
+            "loading must wait for cleanup queue capacity"
+        );
+        assert!(matches!(receiver.try_recv(), Ok(Work::Retire(_))));
+        assert!(stream.retire(retained).is_none());
+        assert!(matches!(receiver.try_recv(), Ok(Work::Retire(_))));
+        stream.request(ORIGIN);
+        assert!(stream.pending());
+        assert!(matches!(receiver.try_recv(), Ok(Work::Load(_))));
+        drop(receiver);
+        assert!(stream.retire(empty()).is_some());
+    }
+    #[test]
     fn failed_load_waits_before_retry_and_worker_loss_clears_pending() {
-        let (requests, receiver) = mpsc::sync_channel::<Region>(1);
+        let (requests, receiver) = mpsc::sync_channel::<Work>(1);
         let (sender, results) = mpsc::sync_channel(1);
         let mut stream = Streamer {
             requests,
@@ -162,7 +240,10 @@ mod tests {
         };
         stream.request(ORIGIN);
         assert_eq!(
-            receiver.try_recv().unwrap(),
+            match receiver.try_recv().unwrap() {
+                Work::Load(region) => region,
+                _ => panic!("expected load"),
+            },
             Region {
                 center: ORIGIN,
                 interior: 0

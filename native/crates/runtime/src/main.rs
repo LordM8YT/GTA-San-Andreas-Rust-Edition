@@ -11,6 +11,7 @@ mod menu;
 mod postprocess;
 mod settings;
 mod streaming;
+mod upload;
 use streaming::{Streamer, ORIGIN, RADIUS};
 use wgpu::util::DeviceExt;
 use winit::{
@@ -62,6 +63,8 @@ struct State {
     image_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     streamer: Option<Streamer>,
+    uploading: Option<(streaming::Region, upload::Upload)>,
+    retired: Vec<streaming::Retired>,
     region: [f32; 2],
     interior: u8,
     interior_destination: Option<usize>,
@@ -410,6 +413,8 @@ impl State {
             image_layout,
             sampler,
             streamer: None,
+            uploading: None,
+            retired: Vec::new(),
             region: ORIGIN,
             interior: 0,
             interior_destination: None,
@@ -454,6 +459,7 @@ impl State {
         sampler: &wgpu::Sampler,
         scene: Scene,
     ) -> Result<Vec<GpuBatch>> {
+        let upload_started = Instant::now();
         let mut images = std::collections::HashMap::new();
         for (key, image) in scene.textures {
             let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -508,15 +514,10 @@ impl State {
         }
         let mut batches = Vec::new();
         for batch in scene.batches {
-            let mut raw = Vec::with_capacity(batch.vertices.len() * 9);
-            for v in &batch.vertices {
-                raw.extend(v.position);
-                raw.extend(v.uv);
-                raw.extend(v.color);
-            }
+            let raw: &[f32] = bytemuck::cast_slice(&batch.vertices);
             let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some(&batch.key),
-                contents: bytemuck::cast_slice(&raw),
+                contents: bytemuck::cast_slice(raw),
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             });
             batches.push(GpuBatch {
@@ -525,103 +526,138 @@ impl State {
                 texture: images.remove(&batch.key).context("batch texture missing")?,
                 alpha: batch.alpha,
                 animated: batch.animated,
-                base: if batch.animated { raw } else { Vec::new() },
+                base: if batch.animated {
+                    raw.to_vec()
+                } else {
+                    Vec::new()
+                },
             });
         }
         batches.sort_by_key(|b| b.alpha);
+        eprintln!(
+            "Synchronous GPU upload: {} batches in {:.2} ms",
+            batches.len(),
+            upload_started.elapsed().as_secs_f64() * 1000.0
+        );
         Ok(batches)
+    }
+    fn loading(&self) -> bool {
+        self.uploading.is_some() || self.streamer.as_ref().is_some_and(|s| s.pending())
+    }
+    fn stale_region(&self, region: streaming::Region) -> bool {
+        let wanted_interior = self
+            .interior_destination
+            .map(|index| streaming::INTERIORS[index].id)
+            .unwrap_or(0);
+        self.destination.is_some_and(|target| {
+            streaming::distance(target, region.center) >= 1.0 || wanted_interior != region.interior
+        })
     }
     fn stream_world(&mut self) {
         let Some(mut streamer) = self.streamer.take() else {
             return;
         };
+        while let Some(retired) = self.retired.pop() {
+            if let Some(retired) = streamer.retire(retired) {
+                self.retired.push(retired);
+                break;
+            }
+        }
         if let Some((region, result)) = streamer.poll() {
-            let center = region.center;
-            let wanted_interior = self
-                .interior_destination
-                .map(|index| streaming::INTERIORS[index].id)
-                .unwrap_or(0);
-            let stale = self.destination.is_some_and(|target| {
-                streaming::distance(target, center) >= 1.0 || wanted_interior != region.interior
-            });
-            let result = result.and_then(|scene| {
-                if !stale && self.destination.is_some() && region.interior != 0 {
-                    let destination = streaming::INTERIORS[self
-                        .interior_destination
-                        .context("room destination missing")?];
-                    let point = Vec3::new(
-                        destination.position[0] - ORIGIN[0],
-                        destination.position[2],
-                        ORIGIN[1] - destination.position[1],
-                    );
-                    scene
-                        .collision
-                        .as_ref()
-                        .and_then(|world| world.standing_at(point, point.y + 1.0))
-                        .context("interior entrance has no safe standing position")?;
-                }
-                Ok(scene)
-            });
-            if !stale {
+            if !self.stale_region(region) {
                 match result {
-                    Ok(mut scene) => {
-                        let collision = scene.collision.take();
-                        let water = scene.water.take();
-                        match Self::upload_scene(
-                            &self.device,
-                            &self.queue,
-                            &self.image_layout,
-                            &self.sampler,
-                            scene,
-                        ) {
-                            Ok(batches) => {
-                                self.batches = batches;
-                                self.collision = collision;
-                                self.water = water;
-                                self.region = center;
-                                self.interior = region.interior;
-                                if self
-                                    .destination
-                                    .is_some_and(|target| streaming::distance(target, center) < 1.0)
-                                {
-                                    self.destination = None;
-                                    self.room_entry =
-                                        self.interior_destination.take().map(|index| {
-                                            let p = streaming::INTERIORS[index].position;
-                                            Vec3::new(p[0] - ORIGIN[0], p[2], ORIGIN[1] - p[1])
-                                        });
-                                    self.respawn();
-                                }
-                                eprintln!(
-                                    "Installed neighbourhood at {:.0}, {:.0}",
-                                    center[0], center[1]
-                                );
-                            }
-                            Err(error) => {
-                                streamer.retry_later();
-                                self.menu.message = format!("Kartet kunne ikke vises: {error}");
-                                eprintln!("GPU upload failed: {error:#}");
-                            }
+                    Ok(scene) => {
+                        let valid_entry = if self.destination.is_some() && region.interior != 0 {
+                            self.interior_destination
+                                .and_then(|index| {
+                                    let destination = streaming::INTERIORS[index];
+                                    let point = Vec3::new(
+                                        destination.position[0] - ORIGIN[0],
+                                        destination.position[2],
+                                        ORIGIN[1] - destination.position[1],
+                                    );
+                                    scene
+                                        .collision
+                                        .as_ref()
+                                        .and_then(|world| world.standing_at(point, point.y + 1.0))
+                                })
+                                .is_some()
+                        } else {
+                            true
+                        };
+                        if valid_entry {
+                            self.uploading = Some((region, upload::Upload::new(scene)));
+                        } else {
+                            self.menu.message =
+                                "Interior entrance has no safe standing position".into();
+                            streamer.retry_later();
                         }
                     }
                     Err(error) => {
-                        self.menu.message = format!("Kartlasting feilet: {error}");
-                        eprintln!("Streaming failed; keeping previous region: {error:#}");
+                        self.menu.message = format!("Map loading failed: {error}");
+                        eprintln!("Keeping previous region: {error:#}");
                     }
                 }
             }
         }
-        let center = [ORIGIN[0] + self.position.x, ORIGIN[1] - self.position.z];
-        if let Some(destination) = self.destination {
-            streamer.request_region(streaming::Region {
-                center: destination,
-                interior: self
-                    .interior_destination
-                    .map(|index| streaming::INTERIORS[index].id)
-                    .unwrap_or(0),
-            });
-        } else if self.interior == 0 && streaming::distance(center, self.region) > 140.0 {
-            streamer.request(center);
+        if let Some((region, mut upload)) = self.uploading.take() {
+            if self.stale_region(region) {
+                self.retired
+                    .extend(streamer.retire(streaming::Retired::Upload(Box::new(upload))));
+            } else {
+                match upload.advance(&self.device, &self.queue, &self.image_layout, &self.sampler) {
+                    Ok(false) => self.uploading = Some((region, upload)),
+                    Ok(true) => {
+                        let (batches, mut scene) = upload.finish();
+                        let old = streaming::Retired::Scene {
+                            batches: std::mem::replace(&mut self.batches, batches),
+                            collision: std::mem::replace(
+                                &mut self.collision,
+                                scene.collision.take(),
+                            ),
+                            water: std::mem::replace(&mut self.water, scene.water.take()),
+                        };
+                        self.retired.extend(streamer.retire(old));
+                        self.region = region.center;
+                        self.interior = region.interior;
+                        if self
+                            .destination
+                            .is_some_and(|target| streaming::distance(target, region.center) < 1.0)
+                        {
+                            self.destination = None;
+                            self.room_entry = self.interior_destination.take().map(|index| {
+                                let p = streaming::INTERIORS[index].position;
+                                Vec3::new(p[0] - ORIGIN[0], p[2], ORIGIN[1] - p[1])
+                            });
+                            self.respawn();
+                        }
+                        eprintln!(
+                            "Installed neighbourhood at {:.0}, {:.0}",
+                            region.center[0], region.center[1]
+                        );
+                    }
+                    Err(error) => {
+                        streamer.retry_later();
+                        self.menu.message = format!("GPU upload failed: {error}");
+                        self.retired
+                            .extend(streamer.retire(streaming::Retired::Upload(Box::new(upload))));
+                    }
+                }
+            }
+        }
+        if self.uploading.is_none() && self.retired.is_empty() {
+            let center = [ORIGIN[0] + self.position.x, ORIGIN[1] - self.position.z];
+            if let Some(destination) = self.destination {
+                streamer.request_region(streaming::Region {
+                    center: destination,
+                    interior: self
+                        .interior_destination
+                        .map(|index| streaming::INTERIORS[index].id)
+                        .unwrap_or(0),
+                });
+            } else if self.interior == 0 && streaming::distance(center, self.region) > 140.0 {
+                streamer.request(center);
+            }
         }
         self.streamer = Some(streamer);
     }
@@ -894,7 +930,7 @@ impl State {
             if now.duration_since(self.title_updated).as_secs_f32() >= 1.0 {
                 let fps =
                     self.frame_count as f32 / now.duration_since(self.title_updated).as_secs_f32();
-                let pending = self.streamer.as_ref().is_some_and(|s| s.pending());
+                let pending = self.loading();
                 self.window.set_title(&format!("SA Freeroam | {:.0} FPS | GTA {:.0}, {:.0}, {:.1} | {}{} | WASD Shift Space | P fly | R reset", fps, center[0], center[1], self.position.y, if self.driving { "Drive" } else if self.walking { "Walk" } else { "Fly" }, if pending { " | loading map..." } else { "" }));
                 self.frame_count = 0;
                 self.title_updated = now;
@@ -1182,7 +1218,7 @@ impl State {
             ORIGIN[1] - self.position.z,
             self.position.y,
         ];
-        let loading = self.streamer.as_ref().is_some_and(|s| s.pending());
+        let loading = self.loading();
         let context = self.gui_context.clone();
         let mut action = None;
         let menu_before = self.menu.sound_position();
@@ -1368,6 +1404,9 @@ struct App {
 }
 impl App {
     fn poll_gamepad(&mut self, event_loop: &ActiveEventLoop) {
+        if self.smoke {
+            return;
+        }
         let Some(gilrs) = self.gilrs.as_mut() else {
             return;
         };
@@ -1538,6 +1577,9 @@ impl ApplicationHandler for App {
                 }
                 if self.smoke_stream {
                     state.walking = false;
+                    // Use a fixed travel speed so saved user preferences do not
+                    // change how many region transitions the route exercises.
+                    state.menu.settings.fly_speed = 6.0;
                     state.position.y = 70.0;
                     state.pitch = 0.0;
                     state.yaw = -std::f32::consts::FRAC_PI_2;
@@ -1717,8 +1759,14 @@ impl ApplicationHandler for App {
                     }
                 }
                 if self.smoke_stream {
-                    state.keys.insert(KeyCode::KeyW);
-                    state.keys.insert(KeyCode::ShiftLeft);
+                    if self.smoke_returning && state.position.x >= -10.0 {
+                        // Finish the last replacement before counting the route's
+                        // transitions; the upload now spans multiple frames.
+                        state.keys.clear();
+                    } else {
+                        state.keys.insert(KeyCode::KeyW);
+                        state.keys.insert(KeyCode::ShiftLeft);
+                    }
                 }
                 if self.smoke
                     && !self.smoke_stream
@@ -1726,7 +1774,7 @@ impl ApplicationHandler for App {
                     && !self.smoke_ped
                     && self.smoke_frames == 3
                     && state.destination.is_none()
-                    && state.streamer.as_ref().is_some_and(|s| !s.pending())
+                    && !state.loading()
                 {
                     if let Some(directory) = &self.capture_dir {
                         state.capture_next = Some(directory.join(format!(
@@ -1834,7 +1882,11 @@ impl ApplicationHandler for App {
                         self.smoke_returning = true;
                         state.yaw = std::f32::consts::FRAC_PI_2;
                     }
-                    if self.smoke_returning && state.position.x >= -10.0 && rendered {
+                    if self.smoke_returning
+                        && state.position.x >= -10.0
+                        && rendered
+                        && !state.loading()
+                    {
                         assert!(
                             self.smoke_region >= 6,
                             "route did not exercise enough region swaps"
@@ -1850,10 +1902,7 @@ impl ApplicationHandler for App {
                         self.smoke_started.elapsed().as_secs() < 120,
                         "interior smoke timed out"
                     );
-                    if rendered
-                        && state.destination.is_none()
-                        && state.streamer.as_ref().is_some_and(|s| !s.pending())
-                    {
+                    if rendered && state.destination.is_none() && !state.loading() {
                         self.smoke_frames += 1;
                         let expected = if self.smoke_region < streaming::INTERIORS.len() {
                             streaming::INTERIORS[self.smoke_region].id
@@ -1968,10 +2017,7 @@ impl ApplicationHandler for App {
                     if self.smoke_started.elapsed().as_secs() > 180 {
                         panic!("smoke tour timed out");
                     }
-                    if rendered
-                        && state.destination.is_none()
-                        && state.streamer.as_ref().is_some_and(|s| !s.pending())
-                    {
+                    if rendered && state.destination.is_none() && !state.loading() {
                         self.smoke_frames += 1;
                         if self.smoke_frames >= 4 {
                             let (name, _) = streaming::DESTINATIONS[self.smoke_region];

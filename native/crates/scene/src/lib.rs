@@ -27,7 +27,8 @@ struct Placement {
     lod: i32,
     is_lod: bool,
 }
-#[derive(Clone, Copy, Default)]
+#[repr(C)]
+#[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
     pub position: [f32; 3],
     pub uv: [f32; 2],
