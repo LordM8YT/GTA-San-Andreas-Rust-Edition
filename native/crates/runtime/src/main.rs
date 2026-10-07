@@ -2347,16 +2347,19 @@ impl ApplicationHandler for App {
                             }
                         }
                         let seconds = self.smoke_started.elapsed().as_secs_f32();
-                        if self.smoke_appearance
-                            && self.network_players_seen >= 2
-                            && self.appearance_stage == 1
-                            && self.appearance_saw_clothes
+                        if self.network_players_seen >= 2
+                            && (!self.smoke_appearance
+                                || (self.appearance_stage == 1 && self.appearance_saw_clothes))
                             && seconds > 2.5
                             && !self.appearance_captured
                         {
                             if let Some(directory) = &self.capture_dir {
                                 state.capture_next =
-                                    Some(directory.join("multiplayer-outfits.png"));
+                                    Some(directory.join(if self.smoke_appearance {
+                                        "multiplayer-outfits.png"
+                                    } else {
+                                        "multiplayer-walking.png"
+                                    }));
                             }
                             self.appearance_captured = true;
                         }

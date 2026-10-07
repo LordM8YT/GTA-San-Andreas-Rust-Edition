@@ -47,7 +47,7 @@ the manifest and 128 MiB total assets. Select fewer models if those limits are h
 
 `data/fivem-import-report.json` records source hashes, converted geometry and
 missing textures. Lua/JS/C# scripts, NUI/HUD pages, handling/vehicle metadata,
-YMAP placements, YBN collision, and YTYP/MLO rooms/portals are reported or listed
+Raw YMAP, YBN collision, and YTYP/MLO rooms/portals are reported or listed
 but never imported. Manifest inspection is text-based and cannot interpret
 dynamic declarations. Peds and clothes still need the explicit rig/mapping
 workflow below. This is an asset import path, not a FiveM runtime.
@@ -57,6 +57,37 @@ failure/overwrite and Windows-junction rejection checks. The previously tested
 free Skyline's raw YFT/YTD files were also imported from an isolated resource
 folder and then downloaded, loaded, driven and restored through a dedicated
 relay session with two Vulkan clients. Third-party assets remain local.
+
+## Static map extensions from YMAP XML
+
+`--kind map` can preserve HD static placements from one **CodeWalker YMAP XML**
+export instead of using the prop preview grid:
+
+```powershell
+python tools/import-fivem.py examples/fivem-static-map --kind map --ymap stream/demo.ymap.xml --model-id 31200 --out "mods/[maps]/static-demo" --enable
+```
+
+The owned example contains two orange blocks near Grove Street, one rotated
+90 degrees. Its source XML is an importer fixture, not FiveM binary game data.
+Use `--offset X Y Z` to move an imported extension into the San Andreas map;
+positions otherwise retain the source world coordinates. The importer resolves
+archetype names or GTA name hashes against the selected YDR basenames, assigns
+native model IDs and preserves inverse quaternion rotations. Lower-detail LOD
+entities are omitted and listed in the report to avoid duplicate geometry.
+
+Only unit-scale static `CEntityDef` HD/orphan-HD entities are supported. Missing
+models, ambiguous names/hashes, invalid rotations, non-unit scales and MLO
+instances stop the whole import with a clear error. Include the custom models;
+references to GTA V base-game props and YTYP archetype aliases are not resolved.
+Raw `.ymap` files must first be exported to CodeWalker XML. Bake scale into the
+mesh before import. Rooms, portals, entity sets, light/audio metadata, navigation,
+doors, YBN collision and LOD streaming relationships are not recreated.
+The existing native loader derives static collision from the converted mesh.
+
+Rotation convention reference: [CodeWalker YmapEntityDef](https://github.com/dexyfex/CodeWalker/blob/master/CodeWalker.Core/GameFiles/FileTypes/YmapFile.cs).
+Tests cover translated positions, rotated placements, hash lookup, skipped LODs
+and atomic rejection of unsupported entities. The owned example was downloaded
+and rendered by two Vulkan clients through a dedicated relay session.
 
 ## Requirements and a vehicle
 

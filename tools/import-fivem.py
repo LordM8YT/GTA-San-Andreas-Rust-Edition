@@ -18,6 +18,9 @@ from types import SimpleNamespace
 spec = importlib.util.spec_from_file_location('convert_gta5', Path(__file__).with_name('convert-gta5.py'))
 converter = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(converter)
+map_spec = importlib.util.spec_from_file_location('fivem_map', Path(__file__).with_name('fivem_map.py'))
+map_converter = importlib.util.module_from_spec(map_spec)
+map_spec.loader.exec_module(map_converter)
 MAX_BYTES = 512 * 1024 * 1024
 MAX_FILES = 4096
 ASSET_EXTENSIONS = ('.yft', '.ydr', '.ydd', '.ytd', '.ymap', '.ytyp', '.ybn')
@@ -119,22 +122,27 @@ def select_models(root, files, kind, requested=()):
     else:
         # A car's base fragment retains children/wheels. Do not spawn its _hi
         # fragment as a second car; allow explicit selection for author review.
-        chosen = [p for p in models if not (asset_name(p)[0].endswith('_hi') and
+        chosen = [p for p in models if not (kind == 'vehicles' and asset_name(p)[0].endswith('_hi') and
                   any(q.parent == p.parent and asset_name(q)[0] == asset_name(p)[0][:-3] for q in models))]
     require(0 < len(chosen) <= (32 if kind == 'vehicles' else 64),
             'No compatible models, or native model budget exceeded (32 cars/64 props)')
     return sorted(chosen, key=lambda p: p.relative_to(root).as_posix().casefold())
 
 
-def import_resource(root, output, kind, requested=(), position=None, model_id=30000, enable=False):
+def import_resource(root, output, kind, requested=(), position=None, model_id=30000, enable=False,
+                    ymap=None, offset=(0., 0., 0.)):
     root = root.absolute()
     output = output.absolute()
     require(not output.exists(), 'Output already exists; choose a new directory')
     require(not output.resolve().is_relative_to(root.resolve()), 'Output must be outside the source resource')
     require(kind != 'props' or position is not None, 'Props require --position X Y Z for their preview placements')
+    require(kind != 'map' or ymap is not None, 'Map import requires --ymap relative/path.ymap.xml')
     require(position is None or all(math.isfinite(v) and abs(v) < 10000 for v in position), 'Invalid position')
     require(0 <= model_id <= 2147483583, 'Invalid starting model ID')
     files, report = inspect_resource(root)
+    if ymap is not None:
+        require(kind == 'map', '--ymap requires --kind map')
+        require(any(p.relative_to(root).as_posix() == ymap for p in files), 'YMAP must be an exact relative path inside the resource')
     chosen = select_models(root, files, kind, requested)
     output.parent.mkdir(parents=True, exist_ok=True)
     # Snapshot only data into an isolated tree. XML texture discovery cannot
@@ -145,7 +153,7 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
         fingerprints = {}
         snapshot_bytes = 0
         for path in files:
-            if asset_name(path)[1] in ('.yft', '.ydr', '.ytd') or path.suffix.lower() == '.dds':
+            if asset_name(path)[1] in ('.yft', '.ydr', '.ytd', '.ymap') or path.suffix.lower() == '.dds':
                 require(not path.is_symlink() and path.resolve().is_relative_to(root.resolve()), 'Source changed during import')
                 data = converter.read(path, 128 * 1024 * 1024)
                 snapshot_bytes += len(data)
@@ -159,7 +167,7 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
         package = work / 'package'; package.mkdir()
         manifest = dict(schema_version=2, enabled=enable, name=root.name)
         manifest['vehicles' if kind == 'vehicles' else 'models'] = []
-        if kind == 'props':
+        if kind != 'vehicles':
             manifest['placements'] = []
         report['converted'] = []
         report['source_sha256'] = fingerprints
@@ -196,8 +204,15 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
             else:
                 entry['id'] = model_id + index
                 manifest['models'].append(entry)
-                point = list(position); point[0] += 3 * (index % 8); point[1] += 3 * (index // 8)
-                manifest['placements'].append(dict(model_id=entry['id'], position=point))
+                if kind == 'props':
+                    point = list(position); point[0] += 3 * (index % 8); point[1] += 3 * (index // 8)
+                    manifest['placements'].append(dict(model_id=entry['id'], position=point))
+        if kind == 'map':
+            manifest['placements'], skipped = map_converter.placements(
+                source / ymap, [p.relative_to(root) for p in chosen], model_id, offset, converter.parse_xml)
+            report['map'] = dict(source=ymap, offset=list(offset), placements=len(manifest['placements']), skipped_lods=skipped)
+            report['warnings'] = [warning for warning in report['warnings'] if not warning.startswith('YMAP placements,')]
+            report['warnings'].append('Only HD static CEntityDef placements imported; MLO/portal/collision metadata remains unsupported.')
         require(sum(p.stat().st_size for p in package.rglob('*') if p.is_file()) <= 128 * 1024 * 1024,
                 'Converted pack exceeds 128 MiB server resource budget')
         require(sum(1 for p in package.rglob('*') if p.is_file()) + 1 <= 64,
@@ -214,7 +229,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('input', type=Path)
     parser.add_argument('--out', type=Path, help='New native resource directory; omit to inspect only')
-    parser.add_argument('--kind', choices=('vehicles', 'props'), default='vehicles')
+    parser.add_argument('--kind', choices=('vehicles', 'props', 'map'), default='vehicles')
+    parser.add_argument('--ymap', help='Exact relative CodeWalker .ymap.xml path for static map placements')
+    parser.add_argument('--offset', type=float, nargs=3, default=[0., 0., 0.], help='Translate imported map in SA world coordinates')
     parser.add_argument('--model', action='append', default=[], help='Exact relative model path; repeat to select assets')
     parser.add_argument('--position', type=float, nargs=3, help='Prop preview origin; models placed 3 m apart')
     parser.add_argument('--model-id', type=int, default=30000)
@@ -222,7 +239,7 @@ def main():
     args = parser.parse_args()
     try:
         if args.out:
-            report = import_resource(args.input, args.out, args.kind, args.model, args.position, args.model_id, args.enable)
+            report = import_resource(args.input, args.out, args.kind, args.model, args.position, args.model_id, args.enable, args.ymap, args.offset)
         else:
             _, report = inspect_resource(args.input)
         print(json.dumps(report, indent=2))
