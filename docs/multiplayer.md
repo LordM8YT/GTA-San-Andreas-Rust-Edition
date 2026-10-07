@@ -131,8 +131,15 @@ restores and renders the offline world. Separate-PC/internet tests remain pendin
   and within 300 metres are rendered. Remote animation uploads are capped at
   approximately 30 Hz.
 
-Vehicles are currently personal: other players see your car while you drive.
-Parked cars, passenger seats, exchanging vehicles, vehicle/player collisions,
+Vehicles are currently personal: one car per connected player. After you
+spawn/use it, other players see it while driving and after you exit. Its pose
+is independent of your walking position/interior; a nearby parked car remains
+visible even if its owner moves beyond the avatar rendering range. Both are
+culled independently at 300 metres in their own interior. Stationary car meshes
+are not uploaded repeatedly. Selecting another car replaces your personal car;
+disconnecting removes it. Parked cars are frozen, not independently simulated.
+
+Passenger seats, exchanging vehicles, vehicle/player collisions,
 damage, weapons, NPCs spawned through `/peds` and time/weather are
 **not synchronized**. Each client simulates their own
 movement and collisions. Remote actors have no physical collision. This is a
@@ -180,13 +187,15 @@ logs/captures under `native/target/mp-smoke-<timestamp>`. Add `-Appearance`
 to test different outfits and model changes using copies of our own demo
 resources; add `-Relay` and/or `-Dedicated` for those hosting modes.
 
-Appearance replication uses network protocol **2**. Update the runtime,
+Appearance replication uses network protocol **3**. Update the runtime,
 dedicated server and relay together; older protocol versions are rejected.
 
 For a GPU integration check, launch two runtime instances with `--smoke-network`
 and complementary `--host 127.0.0.1:17777` / `--join 127.0.0.1:17777` arguments.
 Start the host first. The test observes a remote walking ped and a moving car,
-then exits; `--capture-dir <directory>` saves a world screenshot. New guests seek an unoccupied standing position near the Grove Street road
+then both players exit and their parked cars remain visible. In the scripted
+HostTest/ClientTest route, the host also moves 350 metres away while the guest
+continues to render the nearby parked car. It then restores the offline world; `--capture-dir <directory>` saves a world screenshot. New guests seek an unoccupied standing position near the Grove Street road
 spawn, rather than spawning at the streaming center on a garage/roof.
 
 The network capacity test does not establish engine performance with twenty

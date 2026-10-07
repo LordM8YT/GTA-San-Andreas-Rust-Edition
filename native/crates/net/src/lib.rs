@@ -16,7 +16,7 @@ use std::{
 
 pub const MAX_PLAYERS: usize = 20;
 pub const DEFAULT_PORT: u16 = 7777;
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 const TICK: Duration = Duration::from_millis(50);
 const TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_FRAME: usize = 16 * 1024;
@@ -39,21 +39,40 @@ pub struct Pose {
     pub ped_model: u16,
     #[serde(default)]
     pub clothes: u16,
+    /// The peer's one personal car, independently of their walking pose.
+    /// Membership identity owns this record; no arbitrary vehicle IDs accepted.
+    #[serde(default)]
+    pub vehicle: Option<VehiclePose>,
+}
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct VehiclePose {
+    pub position: [f32; 3],
+    pub yaw: f32,
+    pub pitch: f32,
+    pub roll: f32,
+    pub speed: f32,
+    pub interior: u8,
+}
+impl VehiclePose {
+    fn valid(self) -> bool {
+        valid_motion(self.position, self.yaw, self.pitch, self.roll, self.speed)
+    }
+}
+fn valid_motion(position: [f32; 3], yaw: f32, pitch: f32, roll: f32, speed: f32) -> bool {
+    position.iter().all(|v| v.is_finite() && v.abs() <= 20000.0)
+        && [yaw, pitch, roll, speed].iter().all(|v| v.is_finite())
+        && yaw.abs() <= 100000.0
+        && pitch.abs() <= 4.0
+        && roll.abs() <= 4.0
+        && speed.abs() <= 200.0
 }
 impl Pose {
     fn valid(self) -> bool {
-        self.position
-            .iter()
-            .all(|v| v.is_finite() && v.abs() <= 20000.0)
-            && [self.yaw, self.pitch, self.roll, self.speed]
-                .iter()
-                .all(|v| v.is_finite())
-            && self.yaw.abs() <= 100000.0
-            && self.pitch.abs() <= 4.0
-            && self.roll.abs() <= 4.0
-            && self.speed.abs() <= 200.0
+        valid_motion(self.position, self.yaw, self.pitch, self.roll, self.speed)
             && self.car_model < 256
             && self.ped_model < 256
+            && self.vehicle.is_none_or(VehiclePose::valid)
+            && (!self.driving || self.vehicle.is_some())
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -607,6 +626,35 @@ mod tests {
         }
         .valid());
         assert_eq!(safe_name("\n\0"), "Player");
+        assert!(!Pose {
+            driving: true,
+            ..Pose::default()
+        }
+        .valid());
+        for car in [
+            VehiclePose {
+                position: [f32::NAN, 0.0, 0.0],
+                ..VehiclePose::default()
+            },
+            VehiclePose {
+                position: [20001.0, 0.0, 0.0],
+                ..VehiclePose::default()
+            },
+            VehiclePose {
+                speed: 201.0,
+                ..VehiclePose::default()
+            },
+            VehiclePose {
+                pitch: f32::INFINITY,
+                ..VehiclePose::default()
+            },
+        ] {
+            assert!(!Pose {
+                vehicle: Some(car),
+                ..Pose::default()
+            }
+            .valid());
+        }
         assert_eq!(safe_name(&"p".repeat(50)).len(), 24);
     }
     #[test]
@@ -622,6 +670,11 @@ mod tests {
             clothes: 0b101,
             driving: true,
             speed: 20.0,
+            vehicle: Some(VehiclePose {
+                position: [12.0, 3.0, -4.0],
+                speed: 20.0,
+                ..VehiclePose::default()
+            }),
             ..Pose::default()
         };
         wait(|| {
@@ -638,10 +691,35 @@ mod tests {
         let overflow = Session::join(host.address, "Overflow").unwrap();
         wait(|| report(&overflow).status.contains("Session full"));
         assert_eq!(report(&host).peers.len(), MAX_PLAYERS);
+        let parked = Pose {
+            driving: false,
+            position: [400.0, 3.0, -4.0],
+            speed: 0.0,
+            vehicle: Some(VehiclePose {
+                speed: 0.0,
+                ..pose.vehicle.unwrap()
+            }),
+            ..pose
+        };
+        wait(|| {
+            for client in &clients {
+                client.update(parked);
+            }
+            report(&host).peers.iter().skip(1).all(|p| p.pose == parked)
+        });
         drop(clients.pop());
         wait(|| report(&host).peers.len() == MAX_PLAYERS - 1);
         let replacement = Session::join(host.address, "Replacement").unwrap();
         wait(|| report(&replacement).connected && report(&host).peers.len() == MAX_PLAYERS);
+        wait(|| {
+            let r = report(&replacement);
+            let parked_owners: Vec<_> = r
+                .peers
+                .iter()
+                .filter(|p| p.name.starts_with("Player"))
+                .collect();
+            parked_owners.len() == MAX_PLAYERS - 2 && parked_owners.iter().all(|p| p.pose == parked)
+        });
         drop(host);
         wait(|| !report(&replacement).connected);
     }

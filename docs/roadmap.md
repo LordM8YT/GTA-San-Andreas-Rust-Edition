@@ -10,7 +10,7 @@ planlagt arbeid; [multiplayer-status](multiplayer.md) og
 | Prioritet | Arbeid | Kriterium for milepælen |
 | --- | --- | --- |
 | 1 | Multiplayer på forskjellige PC-er og nettverk | To faktiske PC-er kan koble til, kjøre mellom streamede områder, koble fra og koble til igjen. Test både LAN og internett; samme-PC-testen dekker ikke dette. |
-| 2 | Felles biler og passasjerer | En bil beholder identitet og posisjon etter utstigning, og to spillere kan kjøre sammen med én fører. Verten avgjør hvem som eier førersetet. |
+| 2 | Felles biler og passasjerer | Personlige biler vises nå etter utstigning. Neste del er bilbytte og at to spillere kan kjøre sammen med én fører. Verten avgjør hvem som eier førersetet. |
 | 3 | Bil, ped, antrekk og ressursversjoner – implementert første versjon | Valgte modeller og klesvalg deles fra en kontrollert ressursliste. Test videre på forskjellige PC-er med større modpakker. |
 | 4 | Motorlyd, fottrinn og kollisjonslyd | Lydene følger faktiske hendelser, plassering og fart. Originale menylyder og en lydmotor finnes allerede. |
 | 5 | Trafikk og gående NPC-er | Start i ett nabolag med et begrenset antall aktører; mål ytelse og definer hvem som simulerer dem i multiplayer. |

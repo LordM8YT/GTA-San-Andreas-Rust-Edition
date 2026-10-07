@@ -421,6 +421,7 @@ impl State {
                 && self.resource_installing.is_none(),
             "Disconnect from the current session first."
         );
+        self.network_car_spawned = false;
         let endpoint = if self.menu.relay_mode {
             let address = self
                 .menu

@@ -199,5 +199,6 @@ automatic-download choice is saved with settings.
 See [resource limits and cache behavior](multiplayer.md#native-server-resource-preparation)
 and [dedicated hosting](server-hosting.md). Selected custom cars, peds and
 clothing toggles synchronize through the shared session catalog. Remote peds
-use their selected rig and independent outfit state. Shared parked vehicles,
+use their selected rig and independent outfit state. Personal cars remain
+visible after exit while their owner stays connected. Exchanging cars,
 passengers and spawned NPC replication remain future work.

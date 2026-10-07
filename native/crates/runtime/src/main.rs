@@ -99,6 +99,7 @@ struct State {
     spawned_peds: Vec<SpawnedPed>,
     npc_seconds: f32,
     network_session: Option<sa_net::Session>,
+    network_car_spawned: bool,
     network_publication: Option<sa_net::relay::Publication>,
     network_browser: Option<multiplayer::BrowserRequest>,
     resource_game_dir: PathBuf,
@@ -174,6 +175,7 @@ impl State {
             {
                 *car = placed;
                 self.driving = true;
+                self.network_car_spawned = true;
                 self.keys.clear();
             }
         }
@@ -190,6 +192,7 @@ impl State {
                 car.stop();
             } else if self.position.distance(car.position) < 6.0 {
                 self.driving = true;
+                self.network_car_spawned = true;
             }
             self.keys.clear();
         }
@@ -468,6 +471,7 @@ impl State {
             spawned_peds: Vec::new(),
             npc_seconds: 0.0,
             network_session: None,
+            network_car_spawned: false,
             network_publication: None,
             network_browser: None,
             resource_game_dir: PathBuf::new(),
@@ -1569,7 +1573,12 @@ impl State {
                     self.remote_actors
                         .iter()
                         .filter(|a| a.visible)
-                        .flat_map(|a| if a.current.driving { &a.car } else { &a.ped }),
+                        .flat_map(|a| {
+                            a.car
+                                .iter()
+                                .filter(|_| a.car_visible)
+                                .chain(a.ped.iter().filter(|_| a.ped_visible))
+                        }),
                 )
                 .chain(
                     self.ped
@@ -1676,6 +1685,11 @@ struct App {
     network_saw_car: bool,
     network_captured: bool,
     network_restored: bool,
+    network_exited: bool,
+    network_saw_parked: bool,
+    network_parked_captured: bool,
+    network_far_sent: bool,
+    network_saw_parked_alone: bool,
     smoke_appearance: bool,
     appearance_stage: u8,
     appearance_saw_ped: bool,
@@ -2333,6 +2347,9 @@ impl ApplicationHandler for App {
                             .network_players_seen
                             .max(state.menu.network_players.len());
                         for actor in state.remote_actors.iter().filter(|a| a.visible) {
+                            self.network_saw_parked |= actor.car_visible && !actor.current.driving;
+                            self.network_saw_parked_alone |=
+                                actor.car_visible && !actor.ped_visible && !actor.current.driving;
                             if self.smoke_appearance {
                                 self.appearance_saw_ped |= actor.ped_model != 0;
                                 self.appearance_saw_car |=
@@ -2370,8 +2387,35 @@ impl ApplicationHandler for App {
                             }
                             self.appearance_captured = true;
                         }
-                        if seconds > 7.0 && !state.driving && self.network_saw_ped {
+                        if (7.0..11.0).contains(&seconds) && !state.driving && self.network_saw_ped
+                        {
                             state.place_car();
+                        }
+                        if seconds > 11.0 && !self.network_exited && state.driving {
+                            state.toggle_car();
+                            self.network_exited = !state.driving;
+                        }
+                        if seconds > 12.0
+                            && self.network_exited
+                            && self.network_saw_parked
+                            && !self.network_parked_captured
+                        {
+                            if let Some(directory) = &self.capture_dir {
+                                state.capture_next = Some(directory.join("multiplayer-parked.png"));
+                            }
+                            self.network_parked_captured = true;
+                        }
+                        if seconds > 13.5
+                            && self.network_exited
+                            && !self.network_far_sent
+                            && state.menu.player_name == "HostTest"
+                        {
+                            // Leave the car nearby while its owner crosses the avatar culling range.
+                            if let Some(player) = &mut state.player {
+                                player.feet.x += 350.0;
+                                state.position = player.eye();
+                            }
+                            self.network_far_sent = true;
                         }
                         if seconds > 10.0
                             && self.network_saw_car
@@ -2383,12 +2427,23 @@ impl ApplicationHandler for App {
                                 self.network_captured = true;
                             }
                         }
-                        if seconds > 13.0
+                        if seconds > 16.0
                             && self.network_saw_car
                             && self.network_saw_ped
                             && self.network_saw_walk
                             && self.network_saw_car_motion
                         {
+                            assert!(
+                                self.network_exited && self.network_saw_parked,
+                                "remote car disappeared after exit"
+                            );
+                            if state.menu.player_name == "ClientTest" {
+                                assert!(
+                                    self.network_saw_parked_alone,
+                                    "parked car visibility still follows its distant owner"
+                                );
+                            }
+                            println!("GPU parked vehicle smoke passed: remote car remains after exit and owner culling is independent");
                             if self.smoke_appearance {
                                 assert!(
                                     self.appearance_saw_ped
@@ -3277,6 +3332,11 @@ fn main() -> Result<()> {
         network_saw_car: false,
         network_captured: false,
         network_restored: false,
+        network_exited: false,
+        network_saw_parked: false,
+        network_parked_captured: false,
+        network_far_sent: false,
+        network_saw_parked_alone: false,
         smoke_appearance: args.iter().any(|a| a == "--smoke-appearance"),
         appearance_stage: 0,
         appearance_saw_ped: false,

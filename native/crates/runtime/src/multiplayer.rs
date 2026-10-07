@@ -1,6 +1,6 @@
 use super::{GpuBatch, State};
 use glam::{Quat, Vec3};
-use sa_net::{Peer, Pose};
+use sa_net::{Peer, Pose, VehiclePose};
 use std::time::{Duration, Instant};
 use wgpu::util::DeviceExt;
 
@@ -9,17 +9,129 @@ pub(super) struct BrowserRequest {
     receiver: std::sync::mpsc::Receiver<Result<Vec<sa_net::relay::Listing>, String>>,
 }
 
+#[cfg(test)]
+mod parked_tests {
+    use super::*;
+    #[test]
+    fn parked_mesh_updates_skip_small_jitter_but_keep_half_turns_and_motion() {
+        let car = VehiclePose::default();
+        assert!(car_changed(None, car));
+        assert!(!car_changed(Some(car), car));
+        assert!(!car_changed(
+            Some(car),
+            VehiclePose {
+                position: [0.0001, 0.0, 0.0],
+                ..car
+            }
+        ));
+        assert!(car_changed(
+            Some(car),
+            VehiclePose {
+                position: [0.01, 0.0, 0.0],
+                ..car
+            }
+        ));
+        assert!(car_changed(
+            Some(car),
+            VehiclePose {
+                yaw: std::f32::consts::PI,
+                ..car
+            }
+        ));
+        assert!(!car_changed(
+            Some(car),
+            VehiclePose {
+                yaw: std::f32::consts::TAU,
+                ..car
+            }
+        ));
+    }
+    #[test]
+    fn walking_and_teleporting_owner_do_not_move_their_parked_car() {
+        let car = VehiclePose {
+            position: [10.0, 3.0, 20.0],
+            yaw: 1.0,
+            ..VehiclePose::default()
+        };
+        let mut current = Pose {
+            vehicle: Some(car),
+            ..Pose::default()
+        };
+        let walking = Pose {
+            position: [3.0, 0.0, 0.0],
+            moving: true,
+            vehicle: Some(car),
+            ..Pose::default()
+        };
+        interpolate(&mut current, walking, 0.05);
+        assert!(current.position[0] > 0.0 && current.position[0] < 3.0);
+        assert_eq!(current.vehicle, Some(car));
+        let distant = Pose {
+            position: [350.0, 0.0, 0.0],
+            ..walking
+        };
+        interpolate(&mut current, distant, 0.05);
+        assert_eq!(current.position, distant.position);
+        assert_eq!(current.vehicle, Some(car));
+    }
+    #[test]
+    fn exiting_keeps_car_pose_and_large_vehicle_spawn_changes_are_immediate() {
+        let car = VehiclePose {
+            position: [0.0, 3.0, 0.0],
+            ..VehiclePose::default()
+        };
+        let mut current = Pose {
+            position: car.position,
+            driving: true,
+            vehicle: Some(car),
+            ..Pose::default()
+        };
+        let walking = Pose {
+            position: [2.0, 3.0, 0.0],
+            vehicle: Some(car),
+            ..Pose::default()
+        };
+        interpolate(&mut current, walking, 0.05);
+        assert_eq!(current, walking);
+        let moved = VehiclePose {
+            position: [100.0, 3.0, 0.0],
+            ..car
+        };
+        interpolate(
+            &mut current,
+            Pose {
+                vehicle: Some(moved),
+                ..walking
+            },
+            0.05,
+        );
+        assert_eq!(current.vehicle, Some(moved));
+        interpolate(
+            &mut current,
+            Pose {
+                vehicle: None,
+                ..walking
+            },
+            0.05,
+        );
+        assert_eq!(current.vehicle, None);
+    }
+}
+
 pub(super) struct RemoteActor {
     pub id: u32,
     pub current: Pose,
     pub target: Pose,
     pub visible: bool,
+    pub car_visible: bool,
+    pub ped_visible: bool,
     pub ped: Vec<GpuBatch>,
     pub car: Vec<GpuBatch>,
     clearance: f32,
     pub ped_model: usize,
     pub car_model: usize,
     model_changed: Instant,
+    car_render_pose: Option<VehiclePose>,
 }
 fn duplicate(device: &wgpu::Device, batches: &[GpuBatch]) -> Vec<GpuBatch> {
     batches
@@ -44,6 +156,20 @@ fn blend_angle(a: f32, b: f32, t: f32) -> f32 {
     let delta = (b - a).sin().atan2((b - a).cos());
     a + delta * t
 }
+fn car_changed(previous: Option<VehiclePose>, current: VehiclePose) -> bool {
+    previous.is_none_or(|previous| {
+        previous.interior != current.interior
+            || Vec3::from_array(previous.position)
+                .distance_squared(Vec3::from_array(current.position))
+                > 0.000_001
+            || {
+                let delta = previous.yaw - current.yaw;
+                delta.sin().atan2(delta.cos()).abs() > 0.0001
+            }
+            || (previous.pitch - current.pitch).abs() > 0.0001
+            || (previous.roll - current.roll).abs() > 0.0001
+    })
+}
 fn interpolate(current: &mut Pose, target: Pose, dt: f32) {
     let a = Vec3::from_array(current.position);
     let b = Vec3::from_array(target.position);
@@ -64,6 +190,22 @@ fn interpolate(current: &mut Pose, target: Pose, dt: f32) {
     current.ped_model = target.ped_model;
     current.car_model = target.car_model;
     current.clothes = target.clothes;
+    match (&mut current.vehicle, target.vehicle) {
+        (Some(car), Some(target))
+            if car.interior == target.interior
+                && Vec3::from_array(car.position).distance(Vec3::from_array(target.position))
+                    <= 30.0 =>
+        {
+            car.position = Vec3::from_array(car.position)
+                .lerp(Vec3::from_array(target.position), t)
+                .to_array();
+            car.yaw = blend_angle(car.yaw, target.yaw, t);
+            car.pitch += (target.pitch - car.pitch) * t;
+            car.roll += (target.roll - car.roll) * t;
+            car.speed = target.speed;
+        }
+        (_, vehicle) => current.vehicle = vehicle,
+    }
 }
 impl State {
     pub(super) fn network_action(&mut self, host: bool) {
@@ -80,6 +222,7 @@ impl State {
         self.menu.network_players.clear();
         self.menu.network_active = false;
         self.menu.session_code.clear();
+        self.network_car_spawned = false;
     }
     pub(super) fn browse_network(&mut self) {
         if self.network_browser.is_some() {
@@ -105,6 +248,18 @@ impl State {
         }
     }
     fn local_pose(&self) -> Pose {
+        let vehicle = self
+            .car
+            .as_ref()
+            .filter(|_| self.network_car_spawned || self.driving)
+            .map(|(car, _)| VehiclePose {
+                position: (car.position - Vec3::Y * car.clearance).to_array(),
+                yaw: car.yaw,
+                pitch: car.pitch,
+                roll: car.roll,
+                speed: car.speed,
+                interior: 0,
+            });
         if self.driving {
             if let Some((car, _)) = &self.car {
                 return Pose {
@@ -123,6 +278,7 @@ impl State {
                         .as_ref()
                         .map(|(ped, _)| ped.clothing_mask())
                         .unwrap_or(0),
+                    vehicle,
                 };
             }
         }
@@ -144,6 +300,7 @@ impl State {
                 .as_ref()
                 .map(|(ped, _)| ped.clothing_mask())
                 .unwrap_or(0),
+            vehicle,
             ..Pose::default()
         }
     }
@@ -164,12 +321,15 @@ impl State {
             current: peer.pose,
             target: peer.pose,
             visible: false,
+            car_visible: false,
+            ped_visible: false,
             ped: duplicate(&self.device, ped),
             car: duplicate(&self.device, car_batches),
             clearance: car.clearance,
             ped_model: ped_index,
             car_model: car_index,
             model_changed: Instant::now(),
+            car_render_pose: None,
         })
     }
     fn appearance_indices(&self, pose: Pose) -> Option<(usize, usize)> {
@@ -313,23 +473,39 @@ impl State {
                 }
             }
         }
+        let mut visibility_changed = false;
         for actor in &mut self.remote_actors {
             interpolate(&mut actor.current, actor.target, dt);
-            actor.visible = actor.current.interior == self.interior
+            let previous_visibility = (actor.ped_visible, actor.car_visible);
+            actor.ped_visible = !actor.current.driving
+                && actor.current.interior == self.interior
                 && Vec3::from_array(actor.current.position).distance(self.position) < 300.0;
+            actor.car_visible = actor.current.vehicle.is_some_and(|car| {
+                car.interior == self.interior
+                    && Vec3::from_array(car.position).distance(self.position) < 300.0
+            });
+            actor.visible = actor.ped_visible || actor.car_visible;
+            visibility_changed |= previous_visibility != (actor.ped_visible, actor.car_visible);
+        }
+        if visibility_changed {
+            self.network_pose_last = now - Duration::from_secs(1);
         }
         if now.duration_since(self.network_pose_last) < Duration::from_millis(33) {
             return;
         }
         self.network_pose_last = now;
-        for actor in self.remote_actors.iter().filter(|a| a.visible) {
+        for actor in self.remote_actors.iter_mut().filter(|a| a.visible) {
             let pose = actor.current;
             let feet = Vec3::from_array(pose.position);
             let rotation = Quat::from_rotation_y(pose.yaw + std::f32::consts::PI);
-            if pose.driving {
-                let rotation = rotation
-                    * Quat::from_rotation_x(pose.pitch)
-                    * Quat::from_rotation_z(-pose.roll);
+            if let Some(car) = pose
+                .vehicle
+                .filter(|car| actor.car_visible && car_changed(actor.car_render_pose, *car))
+            {
+                let feet = Vec3::from_array(car.position);
+                let rotation = Quat::from_rotation_y(car.yaw + std::f32::consts::PI)
+                    * Quat::from_rotation_x(car.pitch)
+                    * Quat::from_rotation_z(-car.roll);
                 for batch in &actor.car {
                     let mut raw = batch.base.clone();
                     for v in raw.as_chunks_mut::<9>().0.iter_mut() {
@@ -341,7 +517,11 @@ impl State {
                     self.queue
                         .write_buffer(&batch.buffer, 0, bytemuck::cast_slice(&raw));
                 }
-            } else if let Some((ped, _)) = if actor.ped_model == self.active_ped {
+                actor.car_render_pose = Some(car);
+            }
+            if let Some((ped, _)) = if !actor.ped_visible {
+                None
+            } else if actor.ped_model == self.active_ped {
                 self.ped.as_ref()
             } else {
                 self.ped_catalog
@@ -396,6 +576,7 @@ impl State {
                 self.player = Some(player);
                 self.place_car();
                 self.driving = false;
+                self.network_car_spawned = false;
                 return;
             }
         }

@@ -645,15 +645,19 @@ mod tests {
             ped_model: 2,
             clothes: 0b1001,
             driving: true,
+            vehicle: Some(crate::VehiclePose {
+                position: [120.0, 14.0, -35.0],
+                yaw: 0.9,
+                pitch: 0.12,
+                ..crate::VehiclePose::default()
+            }),
             yaw: 0.9,
             pitch: 0.12,
             ..Pose::default()
         };
         wait(|| {
             guest.update(pose);
-            private
-                .update(Pose::default())
-                .unwrap()
+            report(&private)
                 .peers
                 .iter()
                 .any(|p| p.name == "Guest" && p.pose == pose)
