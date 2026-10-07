@@ -49,14 +49,47 @@ the manifest and 128 MiB total assets. Select fewer models if those limits are h
 missing textures. Lua/JS/C# scripts, NUI/HUD pages, handling/vehicle metadata,
 YBN collision and YTYP/MLO rooms/portals are reported or listed
 but never imported. Manifest inspection is text-based and cannot interpret
-dynamic declarations. Peds and clothes still need the explicit rig/mapping
-workflow below. This is an asset import path, not a FiveM runtime.
+dynamic declarations. Peds and clothes use the explicit rig/mapping
+workflow below, now also available through folder import. This is an asset import path, not a FiveM runtime.
 
 The folder importer was tested with owned multi-model XML fixtures, atomic
 failure/overwrite and Windows-junction rejection checks. The previously tested
 free Skyline's raw YFT/YTD files were also imported from an isolated resource
 folder and then downloaded, loaded, driven and restored through a dedicated
 relay session with two Vulkan clients. Third-party assets remain local.
+
+## Player and clothing resource folders
+
+`--kind player` imports one selected YDD character into a native player
+resource. `--kind clothing` imports up to 16 selected YDD files as individually
+named wardrobe toggles on one native base player. Both require explicit
+`--base-player`, `--base-ifp` and `--bone-map` paths. The target rig and mapping
+are read into the isolated conversion snapshot; reports include their hashes.
+Native animation/base files are shared once within a clothing pack.
+
+```powershell
+python tools/import-fivem.py C:/Downloads/my-ped --kind player --model stream/character.ydd --base-player C:/MyNativePed/ped.dff --base-ifp C:/MyNativePed/ped.ifp --bone-map C:/MyNativePed/bones.json --out "mods/[peds]/character" --enable
+python tools/import-fivem.py C:/Downloads/my-clothes --kind clothing --model stream/shirt.ydd --model stream/hat.ydd --base-player C:/MyNativePed/ped.dff --base-ifp C:/MyNativePed/ped.ifp --bone-map C:/MyNativePed/bones.json --out "mods/[peds]/clothes" --enable
+```
+
+Add `--skeleton stream/source.yft.xml` for a source skeleton without an embedded
+one. This must be an exact relative CodeWalker model XML path inside the source
+resource. `--base-txd` optionally supplies the native clothing base player's
+textures. Converted characters use their own converted textures.
+
+When drawable and texture dictionary names differ, repeat an explicit relative
+pair such as `--texture stream/shirt.ydd=stream/shirt_diff_000_a_uni.ytd`.
+Pairs must reference selected models and included YTD/YTD XML files. Without
+an explicit pair, the existing basename matching/adjacent DDS workflow applies.
+
+One player per output resource is supported; select one with `--model` when
+several YDDs are present. All drawable items within each selected YDD are merged;
+extract/edit a dictionary first if its items represent alternate variants.
+This does not interpret freemode component slots, texture variants, body masks,
+facial animation or cloth simulation. Mesh fitting and weighted-bone mapping
+remain author work; the native loader also checks height and animation tracks.
+See the [owned ped/clothing example](../examples/fivem-skinned-models/README.md).
+Owned XML and raw Legacy YDD round-trip tests exercise native skin decoding.
 
 ## Static map extensions from YMAP or XML
 

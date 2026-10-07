@@ -1,0 +1,119 @@
+<?xml version='1.0' encoding='utf-8'?>
+<DrawableDictionary>
+  <Item>
+    <Skeleton>
+      <Bones>
+        <Item>
+          <Name>fixture_0</Name>
+          <Index value="0" />
+          <Tag value="1000" />
+          <ParentIndex value="-1" />
+          <Translation x="2.0" y="0.0" z="0.0" />
+          <Rotation x="0" y="0" z="0" w="1" />
+          <Scale x="1" y="1" z="1" />
+        </Item>
+        <Item>
+          <Name>fixture_1</Name>
+          <Index value="1" />
+          <Tag value="1001" />
+          <ParentIndex value="-1" />
+          <Translation x="2.0" y="0.0" z="0.8500000238418579" />
+          <Rotation x="0" y="0" z="0" w="1" />
+          <Scale x="1" y="1" z="1" />
+        </Item>
+        <Item>
+          <Name>fixture_2</Name>
+          <Index value="2" />
+          <Tag value="1002" />
+          <ParentIndex value="-1" />
+          <Translation x="2.0" y="0.0" z="1.149999976158142" />
+          <Rotation x="0" y="0" z="0" w="1" />
+          <Scale x="1" y="1" z="1" />
+        </Item>
+        <Item>
+          <Name>fixture_5</Name>
+          <Index value="3" />
+          <Tag value="1005" />
+          <ParentIndex value="-1" />
+          <Translation x="2.0" y="0.0" z="1.649999976158142" />
+          <Rotation x="0" y="0" z="0" w="1" />
+          <Scale x="1" y="1" z="1" />
+        </Item>
+        <Item>
+          <Name>fixture_32</Name>
+          <Index value="4" />
+          <Tag value="1032" />
+          <ParentIndex value="-1" />
+          <Translation x="1.6800000071525574" y="0.0" z="1.350000023841858" />
+          <Rotation x="0" y="0" z="0" w="1" />
+          <Scale x="1" y="1" z="1" />
+        </Item>
+        <Item>
+          <Name>fixture_22</Name>
+          <Index value="5" />
+          <Tag value="1022" />
+          <ParentIndex value="-1" />
+          <Translation x="2.3199999928474426" y="0.0" z="1.350000023841858" />
+          <Rotation x="0" y="0" z="0" w="1" />
+          <Scale x="1" y="1" z="1" />
+        </Item>
+        <Item>
+          <Name>fixture_41</Name>
+          <Index value="6" />
+          <Tag value="1041" />
+          <ParentIndex value="-1" />
+          <Translation x="1.8400000035762787" y="0.0" z="0.8500000238418579" />
+          <Rotation x="0" y="0" z="0" w="1" />
+          <Scale x="1" y="1" z="1" />
+        </Item>
+        <Item>
+          <Name>fixture_51</Name>
+          <Index value="7" />
+          <Tag value="1051" />
+          <ParentIndex value="-1" />
+          <Translation x="2.1599999964237213" y="0.0" z="0.8500000238418579" />
+          <Rotation x="0" y="0" z="0" w="1" />
+          <Scale x="1" y="1" z="1" />
+        </Item>
+      </Bones>
+    </Skeleton>
+    <ShaderGroup>
+      <Shaders>
+        <Item />
+      </Shaders>
+    </ShaderGroup>
+    <DrawableModelsHigh>
+      <Item>
+        <HasSkin value="1" />
+        <Geometries>
+          <Item>
+            <BoneIDs>0, 1, 2, 3, 4, 5, 6, 7</BoneIDs>
+            <ShaderIndex value="0" />
+            <VertexBuffer>
+              <Layout type="GTAV1">
+                <Position />
+                <BlendWeights />
+                <BlendIndices />
+                <Normal />
+                <Colour0 />
+                <TexCoord0 />
+              </Layout>
+              <Data>1.8199999928474426 -0.17000000178813934 1.7999999523162842 255 0 0 0 3 0 0 0 0.0 1.0 0.0 225 180 50 255 0.0 0.0
+2.1800000071525574 -0.17000000178813934 1.7999999523162842 255 0 0 0 3 0 0 0 0.0 1.0 0.0 225 180 50 255 0.0 0.0
+1.8199999928474426 0.17000000178813934 1.7999999523162842 255 0 0 0 3 0 0 0 0.0 1.0 0.0 225 180 50 255 0.0 0.0
+2.1800000071525574 0.17000000178813934 1.7999999523162842 255 0 0 0 3 0 0 0 0.0 1.0 0.0 225 180 50 255 0.0 0.0
+1.8199999928474426 -0.17000000178813934 1.909999966621399 255 0 0 0 3 0 0 0 0.0 1.0 0.0 225 180 50 255 0.0 0.0
+2.1800000071525574 -0.17000000178813934 1.909999966621399 255 0 0 0 3 0 0 0 0.0 1.0 0.0 225 180 50 255 0.0 0.0
+1.8199999928474426 0.17000000178813934 1.909999966621399 255 0 0 0 3 0 0 0 0.0 1.0 0.0 225 180 50 255 0.0 0.0
+2.1800000071525574 0.17000000178813934 1.909999966621399 255 0 0 0 3 0 0 0 0.0 1.0 0.0 225 180 50 255 0.0 0.0</Data>
+            </VertexBuffer>
+            <IndexBuffer>
+              <Data>0 1 3 0 3 2 4 6 7 4 7 5 0 4 5 0 5 1 2 3 7 2 7 6 0 2 6 0 6 4 1 5 7 1 7 3</Data>
+            </IndexBuffer>
+          </Item>
+        </Geometries>
+      </Item>
+    </DrawableModelsHigh>
+    <Name>hat</Name>
+  </Item>
+</DrawableDictionary>

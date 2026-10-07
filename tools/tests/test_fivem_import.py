@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from test_gta5_conversion import owned_clothing, AUDIT
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location('import_fivem', ROOT / 'tools/import-fivem.py')
@@ -46,6 +47,125 @@ def map_xml(path, archetype='prop', rotation='0 0 0 1', scale='1', kind='CEntity
 
 
 class FiveMImportTests(unittest.TestCase):
+    def rig(self, mapping, **extra):
+        return dict(base_player=ROOT/'mods/native-ped-demo/ped.dff',
+                    base_ifp=ROOT/'mods/native-ped-demo/ped.ifp', bone_map=mapping, **extra)
+
+    def test_player_folder_import_selects_one_ydd_and_preserves_native_animation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp=Path(temp); root=resource(temp/'input')
+            source,mapping,_=owned_clothing(root/'stream', ROOT/'mods/native-ped-demo/ped.dff')
+            source.rename(root/'stream/character.ydd.xml')
+            output=temp/'player'
+            report=f.import_resource(root,output,'player',enable=True,**self.rig(mapping))
+            manifest=json.loads((output/'resource.json').read_text())
+            self.assertEqual(manifest['name'],'character'); self.assertTrue(manifest['enabled'])
+            self.assertNotIn('clothes',manifest['player'])
+            self.assertEqual((output/manifest['player']['ifp']).read_bytes(),(ROOT/'mods/native-ped-demo/ped.ifp').read_bytes())
+            self.assertFalse((output/'stream/rig/base.dff').exists())
+            self.assertEqual(report['converted'][0]['source'],'stream/character.ydd.xml')
+            self.assertFalse(any(path.suffix=='.lua' for path in output.rglob('*')))
+            if AUDIT.exists():
+                result=subprocess.run([str(AUDIT),str(output/manifest['player']['dff']),'--skin'],capture_output=True,text=True)
+                self.assertEqual(result.returncode,0,result.stderr)
+
+    def test_clothing_folder_import_combines_two_items_and_copies_base_rig_once(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp=Path(temp); root=resource(temp/'input')
+            source,mapping,_=owned_clothing(root/'stream'); source.rename(root/'stream/shirt.ydd.xml')
+            source,mapping,_=owned_clothing(root/'stream',ROOT/'mods/native-clothing-demo/hat.dff'); source.rename(root/'stream/cap.ydd.xml')
+            output=temp/'clothes'; report=f.import_resource(root,output,'clothing',**self.rig(mapping))
+            manifest=json.loads((output/'resource.json').read_text()); player=manifest['player']
+            self.assertEqual([c['name'] for c in player['clothes']],['cap','shirt'])
+            self.assertEqual(len(list(output.rglob('*.ifp'))),1)
+            self.assertEqual((output/player['dff']).read_bytes(),(ROOT/'mods/native-ped-demo/ped.dff').read_bytes())
+            self.assertEqual(set(report['target_rig']),{'base_player','base_ifp','bone_map'})
+            for clothing in player['clothes']:
+                self.assertEqual(f.converter.native_rig(output/clothing['dff'])[1:],f.converter.native_rig(output/player['dff'])[1:])
+
+    @unittest.skipUnless((ROOT/'tools/tests/map-fixture/bin/Release/net9.0/MapFixture.dll').exists(), 'Build MapFixture')
+    def test_owned_binary_ydd_roundtrip_retargets_a_complete_player(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp=Path(temp); root=resource(temp/'input')
+            source,mapping,expected=owned_clothing(root/'stream',ROOT/'mods/native-ped-demo/ped.dff')
+            drawable=f.converter.parse_xml(source); drawable.tag='Item'
+            f.converter.ET.SubElement(drawable,'Name').text='owned_character'
+            dictionary=f.converter.ET.Element('DrawableDictionary'); dictionary.append(drawable)
+            f.converter.ET.ElementTree(dictionary).write(source)
+            binary=root/'stream/character.ydd'
+            result=subprocess.run(['dotnet',str(ROOT/'tools/tests/map-fixture/bin/Release/net9.0/MapFixture.dll'),str(source),str(binary)],capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr); self.assertEqual(binary.read_bytes()[:4],b'RSC7')
+            report=f.import_resource(root,temp/'native','player',requested=['stream/character.ydd'],**self.rig(mapping))
+            self.assertGreater(report['converted'][0]['vertices'],0)
+            manifest=json.loads((temp/'native/resource.json').read_text())
+            converted=[]
+            for tag, geometry in f.converter.chunks(f.converter.one(f.converter.one(f.converter.read(temp/'native'/manifest['player']['dff']),16),26)):
+                if tag != 15: continue
+                body=f.converter.one(geometry,1); _,nt,nv,_=f.converter.S.unpack_from('<4I',body)
+                offset=16+nv*12+nt*8+24
+                converted.extend(f.converter.S.unpack_from('<3f',body,offset+i*12) for i in range(nv))
+            self.assertEqual(len(converted),len(expected))
+            for original, placed in zip(expected,converted):
+                for a,b in zip(original,placed): self.assertAlmostEqual(a,b,places=5)
+            if AUDIT.exists():
+                result=subprocess.run([str(AUDIT),str(temp/'native'/manifest['player']['dff']),'--skin'],capture_output=True,text=True)
+                self.assertEqual(result.returncode,0,result.stderr)
+
+    def test_skinned_import_requires_rig_mapping_and_one_player_or_sixteen_clothes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp=Path(temp); root=resource(temp/'input'); source,mapping,_=owned_clothing(root/'stream')
+            with self.assertRaisesRegex(ValueError,'needs --base-player'):
+                f.import_resource(root,temp/'no-rig','player')
+            mapping.write_text('{}')
+            with self.assertRaisesRegex(ValueError,'Missing bone mapping'):
+                f.import_resource(root,temp/'bad-map','clothing',**self.rig(mapping))
+            self.assertFalse((temp/'bad-map').exists())
+            for i in range(17): (root/f'stream/item{i}.ydd.xml').write_bytes(source.read_bytes())
+            for kind in ('player','clothing'):
+                with self.assertRaisesRegex(ValueError,'model budget'):
+                    f.import_resource(root,temp/kind,kind,**self.rig(mapping))
+                self.assertFalse((temp/kind).exists())
+
+    def test_explicit_clothing_texture_pairing_uses_nonmatching_dictionary_name(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp=Path(temp); root=resource(temp/'input'); source,mapping,_=owned_clothing(root/'stream')
+            tree=f.converter.parse_xml(source)
+            parameter=f.converter.ET.SubElement(f.converter.ET.SubElement(tree.find('ShaderGroup/Shaders/Item'),'Parameters'),'Item',name='DiffuseSampler')
+            f.converter.ET.SubElement(parameter,'Name').text='shirt_diffuse'
+            f.converter.ET.ElementTree(tree).write(source)
+            (root/'textures').mkdir()
+            (root/'textures/different_diff_000_a_uni.ytd.xml').write_text('<TextureDictionary/>')
+            header=bytearray(128); header[:4]=b'DDS '
+            f.converter.S.pack_into('<II',header,12,1,1)
+            f.converter.S.pack_into('<7I',header,80,0x41,0,32,0xff,0xff00,0xff0000,0xff000000)
+            (root/'textures/shirt_diffuse.dds').write_bytes(header+bytes([12,34,56,255]))
+            report=f.import_resource(root,temp/'clothes','clothing',texture_map=['stream/jacket.ydd.xml=textures/different_diff_000_a_uni.ytd.xml'],**self.rig(mapping))
+            self.assertEqual(report['converted'][0]['textures'],1)
+            self.assertEqual(report['texture_overrides']['stream/jacket.ydd.xml'],'textures/different_diff_000_a_uni.ytd.xml')
+
+    def test_external_skeleton_is_copied_from_selected_resource_data_only(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp=Path(temp); root=resource(temp/'input'); source,mapping,_=owned_clothing(root/'stream')
+            tree=f.converter.parse_xml(source); bones=tree.find('Skeleton'); tree.remove(bones)
+            f.converter.ET.ElementTree(tree).write(source)
+            fragment=f.converter.ET.Element('Fragment'); drawable=f.converter.ET.SubElement(fragment,'Drawable'); drawable.append(bones)
+            f.converter.ET.ElementTree(fragment).write(root/'stream/rig.yft.xml')
+            report=f.import_resource(root,temp/'clothes','clothing',skeleton='stream/rig.yft.xml',**self.rig(mapping))
+            self.assertGreater(report['converted'][0]['vertices'],0)
+            for skeleton in ('../outside.xml','client.lua'):
+                with self.assertRaisesRegex(ValueError,'exact relative CodeWalker'):
+                    f.import_resource(root,temp/'bad','clothing',skeleton=skeleton,**self.rig(mapping))
+
+    def test_texture_pairing_rejects_missing_unselected_duplicate_and_escaping_paths(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp=Path(temp); root=resource(temp/'input'); source,mapping,_=owned_clothing(root/'stream')
+            (root/'stream/texture.ytd.xml').write_text('<TextureDictionary/>')
+            for pairs in (['missing.ydd=stream/texture.ytd.xml'],['stream/jacket.ydd.xml=../outside.ytd'],
+                          ['stream/jacket.ydd.xml=stream/texture.ytd.xml']*2):
+                with self.assertRaisesRegex(ValueError,'--texture'):
+                    f.import_resource(root,temp/'bad','clothing',texture_map=pairs,**self.rig(mapping))
+                self.assertFalse((temp/'bad').exists())
+
     def test_static_ytyp_alias_names_and_hashes_resolve_to_the_selected_drawable(self):
         with tempfile.TemporaryDirectory() as temp:
             temp = Path(temp); root = resource(temp / 'input')

@@ -41,6 +41,8 @@ def owned_clothing(directory, original=None):
             ET.SubElement(bone,name,value=str(number))
         world = c.inverse(bind)
         ET.SubElement(bone,'Translation',x=str(world[12]+2),y=str(world[13]),z=str(world[14]))
+        ET.SubElement(bone,'Rotation',x='0',y='0',z='0',w='1')
+        ET.SubElement(bone,'Scale',x='1',y='1',z='1')
         mapping[f'fixture_{id_}'] = id_
     shaders = ET.SubElement(ET.SubElement(drawable,'ShaderGroup'),'Shaders')
     ET.SubElement(shaders,'Item')
@@ -63,13 +65,13 @@ def owned_clothing(directory, original=None):
         mesh = ET.SubElement(geometries,'Item')
         ET.SubElement(mesh,'BoneIDs').text = ', '.join(map(str,range(len(ids))))
         ET.SubElement(mesh,'ShaderIndex',value='0')
-        buffer = ET.SubElement(mesh,'VertexBuffer'); layout = ET.SubElement(buffer,'Layout')
+        buffer = ET.SubElement(mesh,'VertexBuffer'); layout = ET.SubElement(buffer,'Layout',type='GTAV1')
         for field in ['Position','BlendWeights','BlendIndices','Normal','Colour0','TexCoord0']:
             ET.SubElement(layout,field)
         rows = []
         for i, position in enumerate(positions):
             indices = list(skin[skin_offset+i*4:skin_offset+i*4+4])
-            weights = S.unpack_from('<4f',skin,skin_offset+nv*4+i*16)
+            weights = [round(weight * 255) for weight in S.unpack_from('<4f',skin,skin_offset+nv*4+i*16)]
             colour = list(body[16+i*4:16+i*4+4])
             row = [position[0]+2,*position[1:],*weights,*indices,0.,1.,0.,*colour,0.,0.]
             rows.append(' '.join(map(str,row)))

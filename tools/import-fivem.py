@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inspect a FiveM resource without executing Lua; batch-convert cars or props."""
+"""Inspect a FiveM resource without executing Lua; convert models into native resources."""
 import argparse
 import contextlib
 import hashlib
@@ -100,7 +100,7 @@ def inspect_resource(root):
     if any(asset_name(p)[1] in ('.ymap', '.ytyp', '.ybn') for p in assets):
         notices.append('YMAP placements, static YTYP aliases require map conversion; MLO rooms/portals and YBN collision remain unsupported.')
     if any(asset_name(p)[1] == '.ydd' for p in assets):
-        notices.append('YDD peds/clothes need explicit target rig and bone mapping through convert-gta5.py.')
+        notices.append('YDD peds/clothes require --kind player/clothing and explicit native target rig/bone mapping.')
     metadata = [relative(p) for p in files if p.suffix.lower() == '.meta']
     if metadata:
         notices.append('GTA V handling, vehicle metadata, tuning and colours are not imported.')
@@ -110,7 +110,7 @@ def inspect_resource(root):
 
 
 def select_models(root, files, kind, requested=()):
-    extension = '.yft' if kind == 'vehicles' else '.ydr'
+    extension = '.yft' if kind == 'vehicles' else '.ydd' if kind in ('player', 'clothing') else '.ydr'
     models = [p for p in files if asset_name(p)[1] == extension]
     # Prefer raw resources when an XML export of the same asset sits beside it.
     models = [p for p in models if not (p.name.lower().endswith('.xml') and
@@ -124,13 +124,15 @@ def select_models(root, files, kind, requested=()):
         # fragment as a second car; allow explicit selection for author review.
         chosen = [p for p in models if not (kind == 'vehicles' and asset_name(p)[0].endswith('_hi') and
                   any(q.parent == p.parent and asset_name(q)[0] == asset_name(p)[0][:-3] for q in models))]
-    require(0 < len(chosen) <= (32 if kind == 'vehicles' else 64),
-            'No compatible models, or native model budget exceeded (32 cars/64 props)')
+    limit = {'vehicles': 32, 'player': 1, 'clothing': 16}.get(kind, 64)
+    require(0 < len(chosen) <= limit,
+            f'No compatible models, or native {kind} model budget exceeded ({limit}); select with --model')
     return sorted(chosen, key=lambda p: p.relative_to(root).as_posix().casefold())
 
 
 def import_resource(root, output, kind, requested=(), position=None, model_id=30000, enable=False,
-                    ymap=None, offset=(0., 0., 0.), ytyp=()):
+                    ymap=None, offset=(0., 0., 0.), ytyp=(), base_player=None, base_ifp=None,
+                    base_txd=None, bone_map=None, skeleton=None, texture_map=()):
     root = root.absolute()
     output = output.absolute()
     require(not output.exists(), 'Output already exists; choose a new directory')
@@ -149,6 +151,24 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
         require(any(p.relative_to(root).as_posix() == path and asset_name(p)[1] == '.ytyp' for p in files),
                 'YTYP must be an exact relative .ytyp or .ytyp.xml path inside the resource')
     chosen = select_models(root, files, kind, requested)
+    skinned = kind in ('player', 'clothing')
+    require(not skinned or (base_player and base_ifp and bone_map),
+            'Player/clothing import needs --base-player native.dff, --base-ifp native.ifp and --bone-map map.json')
+    require(skinned or not any((base_player, base_ifp, base_txd, bone_map, skeleton)),
+            'Target rig and skeleton options require --kind player or clothing')
+    require(not base_txd or kind == 'clothing', '--base-txd applies to the native base player in clothing imports only')
+    if skeleton:
+        require(any(p.relative_to(root).as_posix() == skeleton and p.name.lower().endswith('.xml')
+                    and asset_name(p)[1] in ('.yft', '.ydr', '.ydd') for p in files),
+                '--skeleton must be an exact relative CodeWalker model XML path inside the resource')
+    texture_choices = {}
+    for item in texture_map:
+        model, separator, texture = item.partition('=')
+        require(separator and model not in texture_choices, '--texture requires distinct MODEL=YTD pairs')
+        require(any(p.relative_to(root).as_posix() == model for p in chosen), '--texture model must be selected')
+        require(any(p.relative_to(root).as_posix() == texture and asset_name(p)[1] == '.ytd' for p in files),
+                '--texture must reference an exact relative YTD or YTD XML path inside the resource')
+        texture_choices[model] = texture
     output.parent.mkdir(parents=True, exist_ok=True)
     # Snapshot only data into an isolated tree. XML texture discovery cannot
     # wander through the source package or follow a changed source link.
@@ -158,7 +178,7 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
         fingerprints = {}
         snapshot_bytes = 0
         for path in files:
-            if asset_name(path)[1] in ('.yft', '.ydr', '.ytd', '.ymap', '.ytyp') or path.suffix.lower() == '.dds':
+            if asset_name(path)[1] in ('.yft', '.ydr', '.ydd', '.ytd', '.ymap', '.ytyp') or path.suffix.lower() == '.dds':
                 require(not path.is_symlink() and path.resolve().is_relative_to(root.resolve()), 'Source changed during import')
                 data = converter.read(path, 128 * 1024 * 1024)
                 snapshot_bytes += len(data)
@@ -171,9 +191,28 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
         checked_tree(root)
         package = work / 'package'; package.mkdir()
         manifest = dict(schema_version=2, enabled=enable, name=root.name)
-        manifest['vehicles' if kind == 'vehicles' else 'models'] = []
-        if kind != 'vehicles':
-            manifest['placements'] = []
+        if not skinned:
+            manifest['vehicles' if kind == 'vehicles' else 'models'] = []
+            if kind != 'vehicles': manifest['placements'] = []
+        rig = {}
+        if skinned:
+            target = work / 'rig'; target.mkdir()
+            report['target_rig'] = {}
+            for key, path, filename in [('base_player', base_player, 'base.dff'),
+                                        ('base_ifp', base_ifp, 'base.ifp'),
+                                        ('base_txd', base_txd, 'base.txd'),
+                                        ('bone_map', bone_map, 'bones.json')]:
+                if path:
+                    data = converter.read(Path(path), 128 * 1024 if key == 'bone_map' else 16 * 1024 * 1024)
+                    rig[key] = target / filename; rig[key].write_bytes(data)
+                    report['target_rig'][key] = dict(name=Path(path).name, sha256=hashlib.sha256(data).hexdigest())
+            rig_folder = package / 'stream/rig'; rig_folder.mkdir(parents=True)
+            for key in ('base_ifp', 'base_player', 'base_txd'):
+                if key in rig and (key == 'base_ifp' or kind == 'clothing'):
+                    shutil.copyfile(rig[key], rig_folder / rig[key].name)
+            if kind == 'clothing':
+                manifest['player'] = dict(dff='stream/rig/base.dff', ifp='stream/rig/base.ifp', clothes=[])
+                if base_txd: manifest['player']['txd'] = 'stream/rig/base.txd'
         report['converted'] = []
         report['source_sha256'] = fingerprints
         aliases, dictionaries = {}, {}
@@ -193,14 +232,17 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
                     f'Missing YTD dictionary declared by YTYP for {original.name}')
             local = [p for p in textures if p.parent == model.parent]
             textures = local or textures
+            if original.relative_to(root).as_posix() in texture_choices:
+                textures = [source / texture_choices[original.relative_to(root).as_posix()]]
             # Prefer raw YTD over its adjacent XML export; ambiguity is an error.
             textures = [p for p in textures if not (p.name.lower().endswith('.xml') and
                         any(q.parent == p.parent and q.name.casefold() == p.name[:-4].casefold() for q in textures))]
             require(len(textures) <= 1, f'Ambiguous texture dictionaries for {original.name}')
             converted = work / f'converted-{index:03}'
-            options = SimpleNamespace(input=model, out=converted, type='vehicle' if kind == 'vehicles' else 'map',
-                                      textures=textures[0] if textures else None, skeleton=None, base_player=None,
-                                      base_ifp=None, base_txd=None, bone_map=None, scale=1., flip_v=False,
+            options = SimpleNamespace(input=model, out=converted, type=kind if skinned else 'vehicle' if kind == 'vehicles' else 'map',
+                                      textures=textures[0] if textures else None, skeleton=source / skeleton if skeleton else None,
+                                      base_player=rig.get('base_player'), base_ifp=rig.get('base_ifp'),
+                                      base_txd=rig.get('base_txd'), bone_map=rig.get('bone_map'), scale=1., flip_v=False,
                                       enable=False, model_id=model_id + index, position=position or [0., 0., 0.])
             with contextlib.redirect_stdout(io.StringIO()):
                 converter.convert(options)
@@ -209,11 +251,20 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
             report['converted'].append(conversion)
             folder = f'stream/model-{index:03}'
             (package / folder).parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(converted / 'stream'), str(package / folder))
+            (package / folder).mkdir()
+            for filename in ('converted.dff', 'converted.txd'):
+                if (converted / 'stream' / filename).exists():
+                    shutil.move(str(converted / 'stream' / filename), str(package / folder / filename))
             entry = dict(dff=f'{folder}/converted.dff')
             if (package / folder / 'converted.txd').exists():
                 entry['txd'] = f'{folder}/converted.txd'
-            if kind == 'vehicles':
+            label = ''.join(ch for ch in stem if ch.isprintable())[:48].strip() or 'Custom model'
+            if kind == 'player':
+                manifest['name'] = label
+                manifest['player'] = dict(entry, ifp='stream/rig/base.ifp')
+            elif kind == 'clothing':
+                manifest['player']['clothes'].append(dict(entry, name=label, enabled=True))
+            elif kind == 'vehicles':
                 entry['name'] = ''.join(ch for ch in stem if ch.isprintable())[:48].strip() or 'Custom car'
                 manifest['vehicles'].append(entry)
             else:
@@ -222,6 +273,10 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
                 if kind == 'props':
                     point = list(position); point[0] += 3 * (index % 8); point[1] += 3 * (index // 8)
                     manifest['placements'].append(dict(model_id=entry['id'], position=point))
+        if skinned:
+            report['warnings'] = [warning for warning in report['warnings'] if not warning.startswith('YDD peds/clothes')]
+            report['warnings'].append('Explicit bone retargeting only; fit meshes to the native rig. No GTA V facial/cloth animation or freemode component metadata.')
+            report['texture_overrides'] = texture_choices
         if kind == 'map':
             map_source = converter.extract(source / ymap, work / 'ymap-xml')
             manifest['placements'], skipped = map_converter.placements(
@@ -246,7 +301,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('input', type=Path)
     parser.add_argument('--out', type=Path, help='New native resource directory; omit to inspect only')
-    parser.add_argument('--kind', choices=('vehicles', 'props', 'map'), default='vehicles')
+    parser.add_argument('--kind', choices=('vehicles', 'props', 'map', 'player', 'clothing'), default='vehicles')
+    parser.add_argument('--base-player', type=Path, help='Native target DFF rig; required for player/clothing')
+    parser.add_argument('--base-ifp', type=Path, help='Native target idle/walk/run IFP; required for player/clothing')
+    parser.add_argument('--base-txd', type=Path, help='Optional native base-player textures for clothing')
+    parser.add_argument('--bone-map', type=Path, help='Explicit source bone names/tags to native HAnim IDs')
+    parser.add_argument('--skeleton', help='Exact relative CodeWalker source skeleton XML inside this resource')
+    parser.add_argument('--texture', action='append', default=[], help='Exact relative MODEL=YTD texture pairing; repeat')
     parser.add_argument('--ymap', help='Exact relative Legacy .ymap or CodeWalker .ymap.xml path for static map placements')
     parser.add_argument('--ytyp', action='append', default=[], help='Exact relative static Legacy .ytyp or .ytyp.xml path; repeat for aliases/dictionaries')
     parser.add_argument('--offset', type=float, nargs=3, default=[0., 0., 0.], help='Translate imported map in SA world coordinates')
@@ -257,7 +318,9 @@ def main():
     args = parser.parse_args()
     try:
         if args.out:
-            report = import_resource(args.input, args.out, args.kind, args.model, args.position, args.model_id, args.enable, args.ymap, args.offset, args.ytyp)
+            report = import_resource(args.input, args.out, args.kind, args.model, args.position, args.model_id, args.enable,
+                                     args.ymap, args.offset, args.ytyp, args.base_player, args.base_ifp, args.base_txd,
+                                     args.bone_map, args.skeleton, args.texture)
         else:
             _, report = inspect_resource(args.input)
         print(json.dumps(report, indent=2))
