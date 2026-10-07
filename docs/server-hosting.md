@@ -68,8 +68,9 @@ mods you may redistribute. Guests download missing files, verify hashes and reus
 their cache next time; supported formats and limits are in
 [resource preparation](multiplayer.md#native-server-resource-preparation).
 
-The server distributes map assets and catalogs; remote chosen appearance is
-still Grove Street/Taxi until model selection replication is implemented.
+The server distributes map assets and catalogs. Selected car, ped and clothing
+choices synchronize between clients. The runtime, server and relay must all
+use network protocol 2; incompatible versions are rejected.
 
 ## Verification
 

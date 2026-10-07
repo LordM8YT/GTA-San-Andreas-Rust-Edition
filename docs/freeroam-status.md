@@ -7,8 +7,9 @@ ikke prioritert. Originalinstallasjonen leses; gta_sa.exe kjøres ikke.
 
 En spiller hoster, og opptil 19 andre kobler til med IP og port. Åpne Multiplayer
 fra hoved-/pausemenyen, F5 eller /mp. Spillerposisjoner og bilbevegelse deles;
-andre spillere vises foreløpig med Grove Street-ped og Taxi. Custom modeller,
-NPC-er, parkerte biler, passasjerer og felles bilkollisjoner er ikke synkronisert.
+valgte biler, peds og opptil 16 klesvalg per ped synkroniseres også fra
+sesjonens felles ressursliste. NPC-er, parkerte biler, passasjerer og felles
+bilkollisjoner er ikke synkronisert.
 Se [oppsett og begrensninger](multiplayer.md). Direkte internett-hosting krever
 videresendt TCP-port (standard 7777); automatisk NAT-traversering er ikke lagt inn.
 Relay-modus har serverbrowser, offentlige/private rom og joincode. Begge parter

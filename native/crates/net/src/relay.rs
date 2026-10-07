@@ -641,6 +641,9 @@ mod tests {
         wait(|| report(&guest).connected && report(&private).peers.len() == 2);
         let pose = Pose {
             position: [120.0, 14.0, -35.0],
+            car_model: 4,
+            ped_model: 2,
+            clothes: 0b1001,
             driving: true,
             yaw: 0.9,
             pitch: 0.12,

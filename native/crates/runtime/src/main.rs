@@ -1669,6 +1669,12 @@ struct App {
     network_saw_car: bool,
     network_captured: bool,
     network_restored: bool,
+    smoke_appearance: bool,
+    appearance_stage: u8,
+    appearance_saw_ped: bool,
+    appearance_saw_car: bool,
+    appearance_saw_clothes: bool,
+    appearance_captured: bool,
     network_players_seen: usize,
     smoke_ped: bool,
     smoke_wardrobe: bool,
@@ -2214,6 +2220,45 @@ impl ApplicationHandler for App {
                 if self.smoke_network {
                     state.keys.clear();
                     let seconds = self.smoke_started.elapsed().as_secs_f32();
+                    if self.smoke_appearance && self.network_players_seen >= 2 {
+                        let host = state.menu.player_name == "HostTest";
+                        if self.appearance_stage == 0 && seconds > 1.5 {
+                            assert!(
+                                state.menu.clothes.len() >= 2,
+                                "appearance smoke needs the native clothing demo"
+                            );
+                            state.apply_menu_action(Some(menu::Action::Clothing(
+                                if host { 0 } else { 1 },
+                                false,
+                            )));
+                            self.appearance_stage = 1;
+                        } else if self.appearance_stage == 1 && seconds > 4.5 {
+                            let index = state
+                                .menu
+                                .peds
+                                .iter()
+                                .rposition(|n| n == if host { "Ballas" } else { "Grove Street 2" })
+                                .unwrap();
+                            state.apply_menu_action(Some(menu::Action::Ped(index)));
+                            self.appearance_stage = 2;
+                        } else if self.appearance_stage == 2 && seconds > 6.0 {
+                            state.apply_menu_action(Some(menu::Action::Ped(0)));
+                            self.appearance_stage = 3;
+                        } else if self.appearance_stage == 3 && seconds > 9.0 {
+                            let index = state
+                                .menu
+                                .cars
+                                .iter()
+                                .rposition(|n| n == if host { "Infernus" } else { "Admiral" })
+                                .unwrap();
+                            state.apply_menu_action(Some(menu::Action::Car(index)));
+                            assert!(
+                                state.driving,
+                                "appearance smoke could not place the selected car"
+                            );
+                            self.appearance_stage = 4;
+                        }
+                    }
                     if self.network_players_seen >= 2
                         && ((3.0..4.0).contains(&seconds) || (8.0..9.0).contains(&seconds))
                     {
@@ -2281,6 +2326,18 @@ impl ApplicationHandler for App {
                             .network_players_seen
                             .max(state.menu.network_players.len());
                         for actor in state.remote_actors.iter().filter(|a| a.visible) {
+                            if self.smoke_appearance {
+                                self.appearance_saw_ped |= actor.ped_model != 0;
+                                self.appearance_saw_car |=
+                                    actor.car_model != 0 && actor.current.driving;
+                                self.appearance_saw_clothes |= actor.ped_model == 0
+                                    && actor.current.clothes
+                                        == if state.menu.player_name == "HostTest" {
+                                            1
+                                        } else {
+                                            2
+                                        };
+                            }
                             if actor.current.driving {
                                 self.network_saw_car = true;
                                 self.network_saw_car_motion |= actor.current.speed.abs() > 0.1;
@@ -2290,6 +2347,19 @@ impl ApplicationHandler for App {
                             }
                         }
                         let seconds = self.smoke_started.elapsed().as_secs_f32();
+                        if self.smoke_appearance
+                            && self.network_players_seen >= 2
+                            && self.appearance_stage == 1
+                            && self.appearance_saw_clothes
+                            && seconds > 2.5
+                            && !self.appearance_captured
+                        {
+                            if let Some(directory) = &self.capture_dir {
+                                state.capture_next =
+                                    Some(directory.join("multiplayer-outfits.png"));
+                            }
+                            self.appearance_captured = true;
+                        }
                         if seconds > 7.0 && !state.driving && self.network_saw_ped {
                             state.place_car();
                         }
@@ -2309,6 +2379,18 @@ impl ApplicationHandler for App {
                             && self.network_saw_walk
                             && self.network_saw_car_motion
                         {
+                            if self.smoke_appearance {
+                                assert!(
+                                    self.appearance_saw_ped
+                                        && self.appearance_saw_car
+                                        && self.appearance_saw_clothes,
+                                    "appearance replication missing: ped={} car={} clothes={}",
+                                    self.appearance_saw_ped,
+                                    self.appearance_saw_car,
+                                    self.appearance_saw_clothes
+                                );
+                                println!("GPU appearance smoke passed: distinct remote wardrobes, selected ped changes and selected car changes rendered");
+                            }
                             state.disconnect_network();
                             assert!(
                                 state.offline_world.is_none()
@@ -3151,6 +3233,7 @@ fn main() -> Result<()> {
                 || a == "--smoke-signs"
                 || a == "--smoke-neon"
                 || a == "--smoke-network"
+                || a == "--smoke-appearance"
                 || a == "--smoke-ped"
                 || a == "--smoke-wardrobe"
                 || a == "--smoke-interiors"
@@ -3175,13 +3258,21 @@ fn main() -> Result<()> {
         smoke_car: args.iter().any(|a| a == "--smoke-car"),
         smoke_signs: args.iter().any(|a| a == "--smoke-signs"),
         smoke_neon: args.iter().any(|a| a == "--smoke-neon"),
-        smoke_network: args.iter().any(|a| a == "--smoke-network"),
+        smoke_network: args
+            .iter()
+            .any(|a| a == "--smoke-network" || a == "--smoke-appearance"),
         network_saw_ped: false,
         network_saw_walk: false,
         network_saw_car_motion: false,
         network_saw_car: false,
         network_captured: false,
         network_restored: false,
+        smoke_appearance: args.iter().any(|a| a == "--smoke-appearance"),
+        appearance_stage: 0,
+        appearance_saw_ped: false,
+        appearance_saw_car: false,
+        appearance_saw_clothes: false,
+        appearance_captured: false,
         network_players_seen: 0,
         smoke_ped: args
             .iter()

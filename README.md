@@ -18,7 +18,7 @@ capabilities, and compatibility details.
 
 Open **Multiplayer**, press **F5**, or use **/mp** to host/join a session with
 up to **20 players including the host**. Player and driving poses synchronize;
-remote players currently use Grove Street and Taxi models. Direct IP/LAN
+selected cars, peds and clothing synchronize from the shared resource catalog. Direct IP/LAN
 connections are supported; direct internet hosting requires TCP port forwarding.
 The new relay mode adds a **server browser and join codes**, with outbound
 connections from host and guests. Run `start-relay.cmd` on a reachable trusted
@@ -29,8 +29,8 @@ For a server that stays running without a player's game, run **start-server.cmd*
 The headless server supports 20 clients, direct IP or relay/browser hosting,
 and native mod distribution. See [server setup](docs/server-hosting.md).
 Required native mods download and cache before joining; disconnect restores
-your offline world and local mods. Selected custom appearances, NPCs, shared
-vehicle collisions and passengers are not yet replicated. See [multiplayer setup and limits](docs/multiplayer.md).
+your offline world and local mods. NPCs, parked cars, shared vehicle
+collisions and passengers are not yet replicated. See [multiplayer setup and limits](docs/multiplayer.md).
 
 The next milestone is driving together with friends in shared vehicles.
 See the [roadmap](docs/roadmap.md) for priorities, direct P2P plans

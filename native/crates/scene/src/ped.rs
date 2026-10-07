@@ -267,6 +267,24 @@ impl Ped {
         Ok(())
     }
     pub fn frame(&self, name: &str, seconds: f32) -> Result<Vec<Batch>> {
+        self.frame_with_clothing(name, seconds, self.clothing_mask())
+    }
+    pub fn clothing_mask(&self) -> u16 {
+        self.clothing
+            .iter()
+            .enumerate()
+            .fold(0, |mask, (index, item)| {
+                mask | (u16::from(item.enabled) << index)
+            })
+    }
+    /// Remote outfits override visibility without modifying the local wardrobe.
+    /// All parts remain in the same GPU layout, including hidden clothing.
+    pub fn frame_with_clothing(
+        &self,
+        name: &str,
+        seconds: f32,
+        clothes: u16,
+    ) -> Result<Vec<Batch>> {
         let clip = self
             .clips
             .clips
@@ -278,10 +296,9 @@ impl Ped {
         let placement = placement(0, 0, [0.0, 0.0, self.height_offset], [0.0, 0.0, 0.0, 1.0])?;
         let mut batches = HashMap::new();
         for (index, part) in geometry.into_iter().enumerate() {
-            let hidden = self
-                .clothing
-                .iter()
-                .any(|c| !c.enabled && (c.first..c.first + c.count).contains(&index));
+            let hidden = self.clothing.iter().enumerate().any(|(slot, c)| {
+                clothes & (1 << slot) == 0 && (c.first..c.first + c.count).contains(&index)
+            });
             let counts: HashMap<_, _> = if hidden {
                 batches
                     .iter()
@@ -430,8 +447,24 @@ mod tests {
         source.configure_last_clothing("Jacket".into(), true);
         let mut ped = Ped::from_source(source, Path::new("not-an-installation")).unwrap();
         let shown = ped.frame("idle_stance", 0.0).unwrap();
+        assert_eq!(ped.clothing_mask(), 1);
+        let remote_hidden = ped.frame_with_clothing("idle_stance", 0.0, 0).unwrap();
+        assert_eq!(
+            ped.clothing_mask(),
+            1,
+            "remote wardrobe changed the local player"
+        );
         ped.set_clothing(0, false).unwrap();
         let hidden = ped.frame("idle_stance", 0.0).unwrap();
+        assert_eq!(ped.clothing_mask(), 0);
+        for (remote, local) in remote_hidden.iter().zip(&hidden) {
+            assert_eq!(remote.vertices.len(), local.vertices.len());
+            assert!(remote
+                .vertices
+                .iter()
+                .zip(&local.vertices)
+                .all(|(a, b)| a.color == b.color && a.position == b.position));
+        }
         assert_eq!(ped.clothing_options(), vec![("Jacket".into(), false)]);
         for (a, b) in shown.iter().zip(&hidden) {
             assert_eq!(a.key, b.key);

@@ -2,6 +2,7 @@ param(
     [string]$GameDir = 'E:\GTA San Andreas\Grand Theft Auto San Andreas',
     [switch]$Relay,
     [switch]$Dedicated,
+    [switch]$Appearance,
     [string]$HostModsDir,
     [string]$ClientModsDir,
     [string]$CacheDirectory
@@ -12,6 +13,17 @@ $mpSource = Join-Path $mpRepo 'native\target\release\sa-runtime.exe'
 if (-not (Test-Path -LiteralPath $mpSource)) { throw 'Build the release runtime first.' }
 $mpResults = Join-Path $mpRepo ('native\target\mp-smoke-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 New-Item -ItemType Directory -Path $mpResults -Force | Out-Null
+if ($Appearance -and -not $HostModsDir) {
+    $HostModsDir = Join-Path $mpResults 'appearance-mods'
+    New-Item -ItemType Directory -Path $HostModsDir -Force | Out-Null
+    foreach ($mpDemo in @('native-car-demo','native-clothing-demo')) {
+        Copy-Item -LiteralPath (Join-Path $mpRepo ('mods\' + $mpDemo)) -Destination $HostModsDir -Recurse
+        $mpDemoManifest = Join-Path $HostModsDir ($mpDemo + '\mod.json')
+        $mpManifestData = Get-Content -LiteralPath $mpDemoManifest -Raw | ConvertFrom-Json
+        $mpManifestData.enabled = $true
+        [System.IO.File]::WriteAllText($mpDemoManifest, ($mpManifestData | ConvertTo-Json -Depth 16), [System.Text.UTF8Encoding]::new($false))
+    }
+}
 $mpExe = Join-Path $mpResults 'sa-runtime-mp.exe'
 Copy-Item -LiteralPath $mpSource -Destination $mpExe
 $mpPortProbe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
@@ -24,6 +36,7 @@ $mpRelay = $null
 $mpServer = $null
 try {
     $mpCommon = @('--game-dir', ('"' + $GameDir + '"'), '--renderer', 'vulkan', '--smoke-network')
+    if ($Appearance) { $mpCommon += '--smoke-appearance' }
     $mpHostResources = @('--no-mods')
     $mpClientResources = @('--no-mods')
     if ($HostModsDir) { $mpHostResources = @('--mods-dir', ('"' + $HostModsDir + '"')) }
@@ -101,6 +114,7 @@ try {
     foreach ($mpRole in @('host', 'client')) {
         $mpLog = Get-Content (Join-Path $mpResults ($mpRole + '.log')) -Raw
         if ($mpLog -notmatch 'GPU multiplayer smoke passed:.*2 players seen') { throw "$mpRole failed. Inspect logs in $mpResults" }
+        if ($Appearance -and $mpLog -notmatch 'GPU appearance smoke passed') { throw "$mpRole appearance replication failed. Inspect logs." }
         if (-not (Test-Path -LiteralPath (Join-Path $mpResults ($mpRole + '\multiplayer-world.png')))) { throw "$mpRole capture missing." }
     }
     Write-Output "Two-instance Vulkan multiplayer smoke passed. Results: $mpResults"

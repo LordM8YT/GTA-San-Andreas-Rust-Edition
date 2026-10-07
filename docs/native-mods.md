@@ -197,6 +197,7 @@ installation remain separate; disconnect restores the offline world. The
 automatic-download choice is saved with settings.
 
 See [resource limits and cache behavior](multiplayer.md#native-server-resource-preparation)
-and [dedicated hosting](server-hosting.md). Appearance selection replication
-still remains separate work; downloaded custom models can be selected locally,
-while other players currently appear as Grove Street/Taxi.
+and [dedicated hosting](server-hosting.md). Selected custom cars, peds and
+clothing toggles synchronize through the shared session catalog. Remote peds
+use their selected rig and independent outfit state. Shared parked vehicles,
+passengers and spawned NPC replication remain future work.

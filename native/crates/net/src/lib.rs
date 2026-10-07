@@ -16,7 +16,7 @@ use std::{
 
 pub const MAX_PLAYERS: usize = 20;
 pub const DEFAULT_PORT: u16 = 7777;
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 const TICK: Duration = Duration::from_millis(50);
 const TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_FRAME: usize = 16 * 1024;
@@ -32,6 +32,13 @@ pub struct Pose {
     pub driving: bool,
     pub moving: bool,
     pub interior: u8,
+    /// Indices in the version-checked, ordered session catalogs.
+    #[serde(default)]
+    pub car_model: u16,
+    #[serde(default)]
+    pub ped_model: u16,
+    #[serde(default)]
+    pub clothes: u16,
 }
 impl Pose {
     fn valid(self) -> bool {
@@ -45,6 +52,8 @@ impl Pose {
             && self.pitch.abs() <= 4.0
             && self.roll.abs() <= 4.0
             && self.speed.abs() <= 200.0
+            && self.car_model < 256
+            && self.ped_model < 256
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -587,6 +596,16 @@ mod tests {
             ..Pose::default()
         }
         .valid());
+        assert!(!Pose {
+            car_model: 256,
+            ..Pose::default()
+        }
+        .valid());
+        assert!(!Pose {
+            ped_model: u16::MAX,
+            ..Pose::default()
+        }
+        .valid());
         assert_eq!(safe_name("\n\0"), "Player");
         assert_eq!(safe_name(&"p".repeat(50)).len(), 24);
     }
@@ -598,6 +617,9 @@ mod tests {
             .collect();
         let pose = Pose {
             position: [12.0, 3.0, -4.0],
+            car_model: 7,
+            ped_model: 3,
+            clothes: 0b101,
             driving: true,
             speed: 20.0,
             ..Pose::default()

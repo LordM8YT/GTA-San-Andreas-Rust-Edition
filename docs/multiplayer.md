@@ -105,8 +105,8 @@ Keeping the offline world for restoration increases memory use during a session.
 GTA V/FiveM resources must first be converted to supported native assets.
 Automatic download does not run Lua, DLL or FiveM scripts. Hosts should share
 only resources they may redistribute; each player reads original assets locally.
-Hashes detect changed data, not trustworthiness of the host. Custom model
-**selection** is still not synchronized: remote avatars remain Grove/Taxi.
+Hashes detect changed data, not trustworthiness of the host. Selected cars,
+peds and clothing now synchronize using the shared ordered catalogs.
 
 Verified with real direct/relay sockets, corrupt/interrupted cache tests, and
 two Vulkan runtime instances using different local resources and separate
@@ -117,8 +117,11 @@ restores and renders the offline world. Separate-PC/internet tests remain pendin
 
 - Player ground position, facing, idle/walk state and interior ID.
 - While driving: vehicle ground position, yaw, pitch, roll and speed.
-- Other players appear as the original Grove Street ped and Taxi. The local
-  player can still choose custom models; their custom appearance is not sent.
+- Selected original/custom car and ped models, and up to 16 clothing toggles
+  per ped. Remote animation uses the selected rig; clothing is applied per
+  player without changing your own outfit. Missing model IDs use original
+  Grove Street/Taxi fallbacks. Model replacement is limited to one per frame
+  and at most once per second per peer.
 - Remote movement is smoothed, with immediate changes for teleports,
   entering/exiting vehicles and interior changes. Only actors in your interior
   and within 300 metres are rendered. Remote animation uploads are capped at
@@ -126,8 +129,8 @@ restores and renders the offline world. Separate-PC/internet tests remain pendin
 
 Vehicles are currently personal: other players see your car while you drive.
 Parked cars, passenger seats, exchanging vehicles, vehicle/player collisions,
-damage, weapons, NPCs spawned through `/peds`, clothing, time/weather and custom
-appearance replication are **not synchronized**. Each client simulates their own
+damage, weapons, NPCs spawned through `/peds` and time/weather are
+**not synchronized**. Each client simulates their own
 movement and collisions. Remote actors have no physical collision. This is a
 freeroam connection/replication prototype, not a complete shared simulation.
 
@@ -169,7 +172,12 @@ twenty-first player, freed-slot reuse, host departure, incompatible versions,
 forged snapshots, fragmented/coalesced packets and bounded buffers.
 
 On Windows, `tools/test-multiplayer.ps1` runs the two-instance check and saves
-logs/captures under `native/target/mp-smoke-<timestamp>`.
+logs/captures under `native/target/mp-smoke-<timestamp>`. Add `-Appearance`
+to test different outfits and model changes using copies of our own demo
+resources; add `-Relay` and/or `-Dedicated` for those hosting modes.
+
+Appearance replication uses network protocol **2**. Update the runtime,
+dedicated server and relay together; older protocol versions are rejected.
 
 For a GPU integration check, launch two runtime instances with `--smoke-network`
 and complementary `--host 127.0.0.1:17777` / `--join 127.0.0.1:17777` arguments.
