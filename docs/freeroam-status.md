@@ -96,6 +96,13 @@ feilmelding vises i menyen.
 - Én kjørbar taxi med følgekamerа, terrengkontakt, veggkollisjon og inn/ut.
   `--smoke-car` kontrollerer kjøring, bremsing, utstigning og ny innstigning.
   Bilens dynamiske geometri beholdes når nabolag byttes.
+- Bakkekontakt måles fra hvert hjuls forventede høyde på den skrå bilen.
+  Fjæringen følger også veiens høydeendring under kjøring, slik at den lave
+  akslingen ikke alene trekker bilen ned i veien. Oppover-/nedoverbakker,
+  sidehelling, bakketopper og fall testes med egne kollisjonsflater.
+  Den lesebaserte sjekken `sa-scene --example vehicle-slopes` kontrollerte
+  106 retninger på skrå originalflater rundt Grove Street, med maksimalt
+  1,9 cm avvik fra forventet bilhøyde. Dette er ikke en audit av hele kartet.
 - Egne fragmentpass for alpha cutout og blending.
 - `--smoke-tour`: skjult native GPU-test gjennom ni områder.
 - `--smoke-stream`: sammenhengende frem-/tilbakerute på omtrent 1,2 km
@@ -128,7 +135,8 @@ gå gjennom døren og stå på gulvet. Testdata inneholder ingen spill-assets.
 
 ## Gjenstående arbeid
 
-Bilfysikken er enkel: fjæring, tilt, hjulanimasjon, skade og trafikk gjenstår.
+Bilfysikken er fortsatt enkel: grunnleggende fjæring og tilt finnes, men
+videre tuning, hjulanimasjon, skade og trafikk gjenstår.
 Én aktiv custom DFF/TXD-bil kan overta F9-bilen via `vehicles` i mod-formatet.
 Følgekameraet testes mot vegger, tak og terreng.
 F9 prøver flere bilplasseringer med underlag under fotavtrykket,

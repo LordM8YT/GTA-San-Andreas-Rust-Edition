@@ -142,6 +142,12 @@ impl Car {
         let throttle = throttle.clamp(-1.0, 1.0);
         let side = Vec3::new(self.yaw.cos(), 0.0, -self.yaw.sin());
         let mut velocity = self.forward() * self.speed + side * self.lateral_speed;
+        // Probe from each wheel's expected height on the tilted body. A centre-
+        // height ray misses the uphill axle and biases suspension toward the low axle.
+        const TRAVEL: f32 = 0.75;
+        let expected_height = |x: f32, z: f32| {
+            self.position.y - self.clearance + z * self.pitch.tan() + x * self.roll.tan()
+        };
         // Four tire contact points avoid losing all traction at the centre of a ledge.
         let contacts = [-0.72, 0.72]
             .into_iter()
@@ -149,15 +155,18 @@ impl Car {
             .map(|(x, z)| {
                 world.ground_below(
                     self.position + side * x + self.forward() * z,
-                    self.position.y - self.clearance + 0.28,
+                    expected_height(x, z) + TRAVEL,
                 )
             })
             .collect::<Vec<_>>();
         let supports: Vec<_> = contacts
             .iter()
-            .flatten()
-            .copied()
-            .filter(|g| self.position.y - self.clearance <= *g + 0.5)
+            .enumerate()
+            .filter_map(|(i, ground)| {
+                let x = if i < 2 { -0.72 } else { 0.72 };
+                let z = if i % 2 == 0 { -1.35 } else { 1.35 };
+                ground.filter(|g| expected_height(x, z) - g <= TRAVEL)
+            })
             .collect();
         let grounded = supports.len() >= 2;
         let grip = if grounded {
@@ -215,10 +224,11 @@ impl Car {
         let slope_roll = (((height(2) + height(3)) - (height(0) + height(1))) * 0.5 / 1.44).atan();
         let blend = 1.0 - (-8.0 * dt).exp();
         self.pitch +=
-            ((slope_pitch + acceleration * grip * 0.012).clamp(-0.3, 0.3) - self.pitch) * blend;
+            ((slope_pitch + acceleration * grip * 0.012).clamp(-0.6, 0.6) - self.pitch) * blend;
         self.roll +=
-            ((slope_roll + lateral_acceleration * 0.016).clamp(-0.25, 0.25) - self.roll) * blend;
+            ((slope_roll + lateral_acceleration * 0.016).clamp(-0.5, 0.5) - self.roll) * blend;
         let motion = (self.forward() * self.speed + side * self.lateral_speed) * dt;
+        let before_motion = self.position;
         let steps = ((motion.length() / 0.15).ceil() as usize).clamp(1, 20);
         for _ in 0..steps {
             let desired = self.position + motion / steps as f32;
@@ -245,14 +255,22 @@ impl Car {
         self.vertical_speed -= 9.81 * dt;
         if grounded {
             let ground = supports.iter().sum::<f32>() / supports.len() as f32;
-            let target = ground + self.clearance;
+            let moved = self.position - before_motion;
+            let ground_velocity = (moved.dot(self.forward()) * slope_pitch.tan()
+                + moved.dot(side) * slope_roll.tan())
+                / dt;
+            let ground = ground + ground_velocity * dt;
+            let normal_offset = self.clearance
+                * (1.0 + slope_pitch.tan().powi(2) + slope_roll.tan().powi(2)).sqrt();
+            let target = ground + normal_offset;
             // A damped suspension settles instead of snapping to one centre ray.
-            self.vertical_speed +=
-                (9.81 + (target - self.position.y) * 140.0 - self.vertical_speed * 22.0) * dt;
+            self.vertical_speed += (9.81 + (target - self.position.y) * 140.0
+                - (self.vertical_speed - ground_velocity) * 22.0)
+                * dt;
             self.position.y += self.vertical_speed * dt;
             if self.position.y < target {
                 self.position.y = target;
-                self.vertical_speed = self.vertical_speed.max(0.0);
+                self.vertical_speed = self.vertical_speed.max(ground_velocity);
             }
         } else {
             self.position.y += self.vertical_speed * dt;
@@ -287,6 +305,122 @@ mod tests {
             [-20.0, y, z1],
         ])
     }
+    fn ramp(slope: f32) -> Batch {
+        mesh(&[
+            [-20.0, -100.0 * slope, -100.0],
+            [20.0, -100.0 * slope, -100.0],
+            [20.0, 100.0 * slope, 100.0],
+            [-20.0, -100.0 * slope, -100.0],
+            [20.0, 100.0 * slope, 100.0],
+            [-20.0, 100.0 * slope, 100.0],
+        ])
+    }
+    #[test]
+    fn both_axles_support_the_car_on_uphill_and_downhill_roads() {
+        for slope in [-0.25_f32, 0.25] {
+            let world = CollisionWorld::from_batches(&[ramp(slope)]);
+            let mut car = Car::new(Vec3::Y * 0.6, 0.6);
+            for _ in 0..120 {
+                car.step(&world, 0.0, 0.0, false, 1.0, 1.0 / 120.0);
+            }
+            assert!(
+                (car.position.y - 0.6).abs() < 0.04,
+                "one axle sank the body on slope {slope}: {:?}",
+                car.position
+            );
+            assert!(
+                (car.pitch - slope.atan()).abs() < 0.03,
+                "wrong road pitch on slope {slope}: {}",
+                car.pitch
+            );
+            for _ in 0..240 {
+                car.step(&world, 1.0, 0.0, false, 1.0, 1.0 / 120.0);
+            }
+            let road_y = car.position.z * slope;
+            assert!(
+                (car.position.y - car.clearance - road_y).abs() < 0.07,
+                "body lost the road at {:?}, road={road_y}",
+                car.position
+            );
+            assert!(car.position.z > 5.0 && car.speed > 5.0);
+        }
+    }
+
+    #[test]
+    fn banked_roads_follow_the_road_plane_at_different_headings() {
+        let gradient = Vec3::new(0.25, 0.0, 0.2);
+        let point = |x: f32, z: f32| [x, x * gradient.x + z * gradient.z, z];
+        let world = CollisionWorld::from_batches(&[mesh(&[
+            point(-100.0, -100.0),
+            point(100.0, -100.0),
+            point(100.0, 100.0),
+            point(-100.0, -100.0),
+            point(100.0, 100.0),
+            point(-100.0, 100.0),
+        ])]);
+        for yaw in [0.0, 0.8, -1.7] {
+            let mut car = Car::new(Vec3::Y * 0.6, 0.6);
+            car.yaw = yaw;
+            let forward_grade = gradient.dot(car.forward());
+            let side_grade = gradient.dot(Vec3::new(yaw.cos(), 0.0, -yaw.sin()));
+            for _ in 0..240 {
+                car.step(&world, 0.0, 0.0, false, 1.0, 1.0 / 120.0);
+            }
+            let expected_height = 0.6 * (1.0 + gradient.length_squared()).sqrt();
+            assert!((car.position.y - expected_height).abs() < 0.04);
+            assert!((car.pitch - forward_grade.atan()).abs() < 0.03);
+            assert!((car.roll - side_grade.atan()).abs() < 0.03);
+        }
+    }
+    #[test]
+    fn crossing_a_hill_crest_keeps_support_and_a_real_drop_still_falls() {
+        let strip = |z0: f32, y0: f32, z1: f32, y1: f32| {
+            mesh(&[
+                [-20.0, y0, z0],
+                [20.0, y0, z0],
+                [20.0, y1, z1],
+                [-20.0, y0, z0],
+                [20.0, y1, z1],
+                [-20.0, y1, z1],
+            ])
+        };
+        let world = CollisionWorld::from_batches(&[
+            strip(-20.0, 0.0, 0.0, 0.0),
+            strip(0.0, 0.0, 12.0, 3.0),
+            strip(12.0, 3.0, 24.0, 0.0),
+            strip(24.0, 0.0, 60.0, 0.0),
+        ]);
+        let mut car = Car::new(Vec3::new(0.0, 0.6, -5.0), 0.6);
+        for _ in 0..720 {
+            car.step(&world, 1.0, 0.0, false, 1.0, 1.0 / 120.0);
+            if let Some(road) = world.ground_below(car.position, car.position.y + 1.0) {
+                let gap = car.position.y - car.clearance - road;
+                assert!(
+                    gap > -0.4 && gap < 0.6,
+                    "crest suspension lost road: gap={gap}, {:?}",
+                    car.position
+                );
+            }
+        }
+        assert!(
+            car.position.z > 25.0,
+            "crest stopped car at {:?}",
+            car.position
+        );
+        let world =
+            CollisionWorld::from_batches(&[floor(-20.0, 0.0, 0.0), floor(0.0, 100.0, -5.0)]);
+        let mut car = Car::new(Vec3::new(0.0, 0.6, -3.0), 0.6);
+        car.speed = 10.0;
+        for _ in 0..60 {
+            car.step(&world, 0.0, 0.0, false, 1.0, 1.0 / 120.0);
+        }
+        assert!(
+            car.position.z > 1.0 && car.position.y < 0.5 && car.position.y > -4.0,
+            "suspension snapped to lower floor instead of falling: {:?}",
+            car.position
+        );
+    }
+
     #[test]
     fn spawn_needs_full_support_and_clear_roof_and_tries_other_sides() {
         let eye = Vec3::Y * 1.6;
