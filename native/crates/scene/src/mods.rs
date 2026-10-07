@@ -60,6 +60,38 @@ struct ClothingModel {
 fn enabled_clothing() -> bool {
     true
 }
+/// FiveM-style bracket folders group resources; ordinary folders are leaves.
+fn resource_folders(root: &Path) -> Result<Vec<PathBuf>> {
+    fn collect(
+        directory: &Path,
+        root: &Path,
+        depth: usize,
+        folders: &mut Vec<PathBuf>,
+    ) -> Result<()> {
+        ensure!(depth <= 4, "mod category nesting exceeds four levels");
+        let mut entries = fs::read_dir(directory)?.collect::<std::io::Result<Vec<_>>>()?;
+        ensure!(entries.len() <= 128, "too many entries in mod directory");
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
+            let folder = entry.path().canonicalize()?;
+            ensure!(folder.starts_with(root), "mod directory escapes root");
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('[') && name.ends_with(']') {
+                collect(&folder, root, depth + 1, folders)?;
+            } else {
+                folders.push(folder);
+                ensure!(folders.len() <= 128, "too many mod resources");
+            }
+        }
+        Ok(())
+    }
+    let mut folders = Vec::new();
+    collect(root, root, 0, &mut folders)?;
+    Ok(folders)
+}
 #[derive(Deserialize)]
 struct Instance {
     model_id: i32,
@@ -143,23 +175,26 @@ impl WorldLoader {
             return Ok(());
         }
         let root = directory.canonicalize()?;
-        let mut folders: Vec<_> = fs::read_dir(&root)?.collect::<std::io::Result<Vec<_>>>()?;
-        folders.sort_by_key(|entry| entry.file_name());
-        ensure!(folders.len() <= 128, "too many mod resources");
-        for entry in folders {
-            if !entry.file_type()?.is_dir() {
+        let mut resource_names = HashSet::new();
+        for folder in resource_folders(&root)? {
+            let manifest_path = if folder.join("mod.json").is_file() {
+                "mod.json"
+            } else if folder.join("resource.json").is_file() {
+                "resource.json"
+            } else {
                 continue;
-            }
-            let folder = entry.path().canonicalize()?;
-            ensure!(folder.starts_with(&root), "mod directory escapes root");
-            if !folder.join("mod.json").is_file() {
-                continue;
-            }
-            let manifest: Manifest = serde_json::from_slice(&resource(&folder, "mod.json")?)
+            };
+            let manifest: Manifest = serde_json::from_slice(&resource(&folder, manifest_path)?)
                 .with_context(|| format!("mod manifest {}", folder.display()))?;
-            let folder_name = entry.file_name().to_string_lossy().into_owned();
+            let folder_name = folder
+                .file_name()
+                .context("resource folder name missing")?
+                .to_string_lossy()
+                .into_owned();
+            ensure!(resource_names.insert(folder_name.to_ascii_lowercase()),
+                "duplicate resource folder name: {folder_name}; names must be unique across categories");
             let name = if manifest.name.is_empty() {
-                folder_name
+                folder_name.clone()
             } else {
                 manifest.name.clone()
             };
@@ -240,11 +275,7 @@ impl WorldLoader {
             );
             for model in manifest.models {
                 ensure!(model.id >= 0, "negative mod model ID");
-                let key = format!(
-                    "mod_{}_{}",
-                    entry.file_name().to_string_lossy().to_ascii_lowercase(),
-                    model.id
-                );
+                let key = format!("mod_{}_{}", folder_name.to_ascii_lowercase(), model.id);
                 let geometry = decode_dff(&resource(&folder, &model.dff)?)
                     .with_context(|| format!("mod model {}", model.dff))?;
                 if let Some(txd) = model.txd {
@@ -364,12 +395,12 @@ mod tests {
     #[test]
     fn custom_room_loads_and_player_can_enter() {
         let root = std::env::temp_dir().join(format!("sa-native-room-{}", std::process::id()));
-        let folder = root.join("mods/room");
-        let disabled = root.join("mods/disabled-room");
+        let folder = root.join("mods/[maps]/room");
+        let disabled = root.join("mods/[maps]/disabled-room");
         fs::create_dir_all(&folder).unwrap();
         fs::create_dir_all(&disabled).unwrap();
         fs::write(
-            disabled.join("mod.json"),
+            disabled.join("resource.json"),
             br#"{"enabled":false,"name":"Disabled sample"}"#,
         )
         .unwrap();
@@ -494,11 +525,12 @@ mod tests {
         fs::remove_file(folder.join("room.dff")).unwrap();
         fs::remove_file(folder.join("car.dff")).unwrap();
         fs::remove_file(folder.join("mod.json")).unwrap();
-        fs::remove_file(disabled.join("mod.json")).unwrap();
+        fs::remove_file(disabled.join("resource.json")).unwrap();
         drop(loader);
         fs::remove_file(root.join("empty.img")).unwrap();
         fs::remove_dir(folder).unwrap();
         fs::remove_dir(disabled).unwrap();
+        fs::remove_dir(root.join("mods/[maps]")).unwrap();
         fs::remove_dir(root.join("mods")).unwrap();
         fs::remove_dir(root).unwrap();
     }

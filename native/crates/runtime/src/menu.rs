@@ -843,7 +843,7 @@ impl Menu {
                             ui.label(RichText::new("Detected local resources").size(23.0).color(GOLD).strong());
                             if self.mods.is_empty(){ui.label("No mod resources were detected. Place each resource in its own folder under mods/.");}else{for name in &self.mods{ui.label(format!("•  {name}"));}}
                             ui.add_space(18.0);
-                            ui.label("To enable or disable a resource, edit its mod.json and set enabled to true or false, then restart.");
+                            ui.label("To enable or disable a resource, set enabled in its resource.json or mod.json, then restart.");
                             ui.label(RichText::new("Supports documented custom models, textures, buildings, cars, player characters, and skinned clothing. Scripts, DLL plugins, and arbitrary GTA/FiveM mods are not executed. Choose clothes in the wardrobe (F6).").color(MUTED));
                         },
                         Page::Quit=>{

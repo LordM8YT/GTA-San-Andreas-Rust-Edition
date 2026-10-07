@@ -1,7 +1,10 @@
 # Native mod resources
 
-The Rust free-roam runtime loads `mods/<resource>/mod.json` in alphabetical
-folder order. The local-resources menu lists detected enabled and disabled
+The Rust free-roam runtime loads `mods/<resource>/mod.json` or `resource.json`.
+FiveM-style category folders such as `mods/[vehicles]/my_car/` are also supported,
+including up to four nested bracket categories. Load order is an alphabetical
+walk through each category; resource folder names must be unique across categories.
+If both manifests exist, `mod.json` takes priority. The local-resources menu lists detected enabled and disabled
 resources. Set `enabled` to `true` or `false` in the manifest and restart to
 change a resource's state. The launcher starts from the project root so the
 project's `mods/` folder is found. Use `--no-mods` to disable mods and
@@ -18,7 +21,41 @@ San Andreas mods directly. Binary plugins, ASI/DLL mods, CLEO scripts, original
 game-code or plugin APIs, and unconverted archives/workflows such as IMG/IPL
 are not drop-in compatible. Convert assets into a supported resource or add
 explicit format support; scripts and DLLs are not executed. FiveM resources
-and the FiveM script API are also incompatible.
+and the FiveM script API are also incompatible. The resource folder workflow
+can be similar, but the engine still uses SA asset formats and its own JSON
+manifest. `fxmanifest.lua`, GTA V `.meta` files and executable scripts are not parsed.
+
+## Create a resource
+
+From the project root, with Python 3 installed:
+
+```text
+python tools/new-resource.py my_car --type vehicle
+python tools/new-resource.py my_building --type map
+python tools/new-resource.py my_character --type player
+python tools/new-resource.py my_outfit --type clothing
+```
+
+The generator creates a disabled resource and never overwrites an existing
+resource. `--mods-dir PATH` selects another mod directory. For example:
+
+```text
+mods/[vehicles]/my_car/
+  resource.json
+  README.md
+  stream/                 # Your DFF/TXD assets
+  data/README.md          # Optional authoring/source files
+```
+
+Add the assets listed in the generated README, register optional TXD/COL paths,
+then set `enabled` to `true` and restart. Paths in the manifest are relative to
+the resource root, for example `stream/car.dff`. Model registration and map
+placements currently remain in `resource.json`; putting a GTA V metadata file
+in `data/` does not make it load. A clothing template includes its base player
+because clothes currently attach to a matching custom player skeleton.
+
+This takes inspiration from the [FiveM resource workflow](https://docs.fivem.net/docs/scripting-reference/resource-manifest/)
+and [stream folder layout](https://docs.fivem.net/docs/assets-manual/beginner-series/part-4/).
 
 Original game assets are read from the user's installation. Do not redistribute
 Rockstar assets or converted/upscaled copies in project releases. Share your

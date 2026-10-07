@@ -27,7 +27,7 @@ installation, positioned from the game's world coordinates. It rotates with the
 player's heading, supports adjustable zoom, and overlays the runtime's travel
 markers. If the original radar texture dictionary is unavailable, the runtime
 does not substitute a fabricated map. The local-resource menu
-lists detected enabled and disabled resources; edit `enabled` in each `mod.json`
+lists detected enabled and disabled resources; edit `enabled` in each `resource.json` or `mod.json`
 and restart to change their state.
 
 Original menu sound effects now load directly from the installation. The audio
@@ -38,7 +38,7 @@ interiors and **R** or a map destination to return outside.
 
 ## Mod compatibility
 
-The native runtime loads documented `mod.json` resources and supported assets;
+The native runtime loads documented `resource.json` / `mod.json` resources and supported assets;
 it is not a drop-in loader for arbitrary original San Andreas mods. Existing
 binary plugins, scripts, IDE/ IPL/IMG workflows, and mods that depend on the
 game executable or its plugin APIs are not expected to work without conversion
