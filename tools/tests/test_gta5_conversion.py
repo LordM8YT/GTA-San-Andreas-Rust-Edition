@@ -26,9 +26,9 @@ def args(source, output, **options):
     return SimpleNamespace(**defaults)
 
 
-def owned_clothing(directory):
-    """Express our existing jacket in a shifted GTA V XML rig to exercise retargeting."""
-    original = ROOT / 'mods/native-clothing-demo/jacket.dff'
+def owned_clothing(directory, original=None):
+    """Express an owned skinned mesh in a shifted GTA V XML rig to exercise retargeting."""
+    original = original or ROOT / 'mods/native-clothing-demo/jacket.dff'
     clump = c.one(c.read(original),16)
     _, ids, binds = c.native_rig(original)
     drawable = ET.Element('Drawable')
@@ -70,7 +70,8 @@ def owned_clothing(directory):
         for i, position in enumerate(positions):
             indices = list(skin[skin_offset+i*4:skin_offset+i*4+4])
             weights = S.unpack_from('<4f',skin,skin_offset+nv*4+i*16)
-            row = [position[0]+2,*position[1:],*weights,*indices,0.,1.,0.,255,70,70,255,0.,0.]
+            colour = list(body[16+i*4:16+i*4+4])
+            row = [position[0]+2,*position[1:],*weights,*indices,0.,1.,0.,*colour,0.,0.]
             rows.append(' '.join(map(str,row)))
         ET.SubElement(buffer,'Data').text = '\n'.join(rows)
         ET.SubElement(ET.SubElement(mesh,'IndexBuffer'),'Data').text = ' '.join(str(v) for b,a,mat,z in triangles for v in (a,b,z))
@@ -157,6 +158,22 @@ class ConversionTests(unittest.TestCase):
                 result=subprocess.run(command,capture_output=True,text=True)
                 self.assertEqual(result.returncode,0,result.stderr)
                 self.assertIn('Native decoder accepted',result.stdout)
+
+    def test_full_player_conversion_registers_converted_mesh_and_native_animation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory=Path(directory)
+            source,mapping,expected=owned_clothing(directory,ROOT/'mods/native-ped-demo/ped.dff')
+            options=args(source,directory/'player',type='player',base_player=ROOT/'mods/native-ped-demo/ped.dff',base_ifp=ROOT/'mods/native-ped-demo/ped.ifp',bone_map=mapping,enable=True)
+            with contextlib.redirect_stdout(io.StringIO()):c.convert(options)
+            manifest=json.loads((options.out/'resource.json').read_text())
+            self.assertEqual(manifest['player'],{'dff':'stream/converted.dff','ifp':'stream/base.ifp'})
+            self.assertEqual((options.out/'stream/base.ifp').read_bytes(),options.base_ifp.read_bytes())
+            self.assertFalse((options.out/'stream/base.dff').exists())
+            self.assertNotIn('clothes',manifest['player'])
+            self.assertEqual(c.native_rig(options.out/'stream/converted.dff')[1:],c.native_rig(options.base_player)[1:])
+            if AUDIT.exists():
+                result=subprocess.run([str(AUDIT),str(options.out/'stream/converted.dff'),'--skin'],capture_output=True,text=True)
+                self.assertEqual(result.returncode,0,result.stderr)
 
     def test_missing_weighted_bone_mapping_does_not_publish_resource(self):
         with tempfile.TemporaryDirectory() as directory:

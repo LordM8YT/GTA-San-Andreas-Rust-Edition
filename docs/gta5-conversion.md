@@ -1,7 +1,7 @@
 # GTA V / FiveM asset conversion (experimental)
 
 The offline converter creates a native `resource.json` folder from **unencrypted
-GTA V Legacy** YFT (cars), YDR (props), YDD (clothes/drawables) and YTD textures.
+GTA V Legacy** YFT (cars), YDR (props), YDD (players/clothes/drawables) and YTD textures.
 It does not run FiveM resources or their scripts. The game continues to load
 native DFF/TXD assets; this tool converts models before starting the game.
 
@@ -41,6 +41,32 @@ vehicles.meta, carcols, damage, tuning parts, lights and wheel animation are not
 imported. This is a usable asset conversion path, not exact GTA V rendering or
 full FiveM compatibility. Enhanced/Gen9, escrow/encrypted resources and RPF
 archives are not supported.
+
+## Custom player peds
+
+`--type player` converts a complete skinned character into a native player
+resource. It uses the converted mesh as the player, rather than adding it as
+clothing. Supply the target native skeleton/animation and explicit bone map,
+as for clothing below. A YDD with an embedded skeleton needs no `--skeleton`;
+otherwise export the matching source YFT skeleton as CodeWalker XML.
+
+```powershell
+python tools/convert-gta5.py C:/Downloads/ped/custom.ydd --textures C:/Downloads/ped/custom.ytd --type player --skeleton C:/Downloads/ped/source.yft.xml --base-player C:/MyNativePed/ped.dff --base-ifp C:/MyNativePed/ped.ifp --bone-map C:/MyNativePed/bones.json --out "mods/[peds]/custom-player" --enable
+```
+
+Restart to use the player. Enable only one player resource. The target DFF
+supplies the bone hierarchy and bind matrices; only its animation IFP is copied
+into this player package. Textures come from the converted character. The
+converted player must fit our upright 1–2.5 m height requirement and all weighted
+bones need matching tracks in the native idle/walk/run clips. Additional facial
+bones need a deliberate mapping or model editing; automatic facial animation
+and GTA V animations are not imported.
+
+This replaces the controlled player. Ambient NPC spawning, model selection
+during gameplay, per-ped AI and arbitrary FiveM script APIs are not implemented.
+Custom peds are still hidden while driving. Use our `native-ped-demo` as an
+example of a compatible target rig; its simple skeleton is not a universal
+mapping for every downloaded character.
 
 ## Clothing and skeletons
 
@@ -89,9 +115,11 @@ Vulkan driving/braking/exit/re-entry smoke test passed. Several shared GTA V
 textures were absent, so the report identifies their replacement materials.
 The downloaded and converted third-party model is not committed or redistributed.
 
-Clothing retargeting was tested using our own jacket expressed in CodeWalker XML
+Full player retargeting and clothing retargeting were tested using our own jacket expressed in CodeWalker XML
 with an intentionally shifted source rig. Its converted vertices match the
-native garment and its native skin/bind matrices decode. The converted jacket
+native garment and its native skin/bind matrices decode. A complete player
+conversion registers the converted mesh directly and preserves the base clips;
+its Vulkan walk/run/idle and camera-toggle smoke tests passed. The converted jacket
 also passed the Vulkan walk/run/idle and wardrobe hide/show tests. This does **not** prove
 arbitrary downloaded FiveM clothes fit or animate correctly; each rig needs its
 own mapping and fit check.

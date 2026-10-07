@@ -8,3 +8,4 @@ tools/gta5-extract/obj/
 tools/__pycache__/
 tools/tests/__pycache__/
 mods/local-fivem-test/
+mods/local-ped-test/

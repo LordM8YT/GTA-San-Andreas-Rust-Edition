@@ -150,7 +150,9 @@ player body; skeleton size does not change the collision shape.
 
 `mods/native-ped-demo` contains a custom skinned character and custom clips.
 Set `enabled` to `true` and restart to try it. The demo is disabled by default.
-This replaces the entire player character. The character is currently hidden
+This replaces the entire player character. The [GTA V converter](gta5-conversion.md#custom-player-peds)
+also supports `--type player` with an explicit bone map and compatible native rig.
+The character is currently hidden
 while driving.
 
 Separate skinned clothing items can be added to the player resource:

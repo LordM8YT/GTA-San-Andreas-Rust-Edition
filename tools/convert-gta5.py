@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Convert legacy GTA V resources or CodeWalker XML into a native SA resource.
 
-Vehicles/props use the highest available drawable LOD. Clothing requires an
-explicit bone map and a native base player; it is retargeted into that bind pose.
+Vehicles/props use the highest available drawable LOD. Players and clothing
+require an explicit bone map and a native base player for bind-pose retargeting.
 No FiveM Lua, GTA V game code, archives or escrow payloads are executed.
 """
 import argparse
@@ -312,9 +312,9 @@ def convert(args):
                 images.setdefault(path.stem.lower(),path)
         frames = None
         rig = None
-        if args.type == 'clothing':
+        if args.type in ('clothing','player'):
             require(args.base_player and args.base_ifp and args.bone_map,
-                    'Clothing needs --base-player native.dff, --base-ifp native.ifp and --bone-map map.json')
+                    'Skinned conversion needs --base-player native.dff, --base-ifp native.ifp and --bone-map map.json')
             frames, palette, binds = native_rig(args.base_player)
             mapping = json.loads(read(args.bone_map))
             require(isinstance(mapping,dict), 'Bone map must map GTA bone names/tags to native HAnim IDs')
@@ -354,7 +354,7 @@ def convert(args):
                                   'uv':fields.get('TexCoord0',[0.,0.]), 'colour':[int(max(0,min(255,v))) for v in fields.get('Colour0',[255]*4)]}
                         if args.flip_v: vertex['uv'][1] = 1 - vertex['uv'][1]
                         if rig:
-                            require('BlendWeights' in fields and 'BlendIndices' in fields and bones, 'Clothing requires skin weights and an external or embedded skeleton')
+                            require('BlendWeights' in fields and 'BlendIndices' in fields and bones, 'Player/clothing conversion requires skin weights and an external or embedded skeleton')
                             palette, binds, mapping = rig
                             weights = fields['BlendWeights']; total = sum(weights)
                             require(total > 0 and all(w >= 0 for w in weights), 'Invalid clothing weights')
@@ -417,6 +417,8 @@ def convert(args):
         elif args.type == 'map':
             entry['id'] = args.model_id; manifest['models'] = [entry]
             manifest['placements'] = [{'model_id':args.model_id,'position':args.position}]
+        elif args.type == 'player':
+            manifest['player'] = dict(entry,ifp='stream/base.ifp')
         else:
             player = {'dff':'stream/base.dff','ifp':'stream/base.ifp','clothes':[dict(entry,name=args.out.name,enabled=True)]}
             if args.base_txd: player['txd'] = 'stream/base.txd'
@@ -427,7 +429,8 @@ def convert(args):
             (staging/'stream/converted.dff').write_bytes(payload)
             if txd: (staging/'stream/converted.txd').write_bytes(txd)
             if rig:
-                for path, name in [(args.base_player,'base.dff'),(args.base_ifp,'base.ifp'),(args.base_txd,'base.txd')]:
+                base_files = [(args.base_ifp,'base.ifp')] if args.type == 'player' else [(args.base_player,'base.dff'),(args.base_ifp,'base.ifp'),(args.base_txd,'base.txd')]
+                for path, name in base_files:
                     if path: (staging/'stream'/name).write_bytes(read(path))
             (staging/'resource.json').write_text(json.dumps(manifest,indent=2)+'\n',encoding='utf-8')
             (staging/'data/conversion-report.json').write_text(json.dumps(report,indent=2)+'\n',encoding='utf-8')
@@ -441,9 +444,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('input',type=Path)
     parser.add_argument('--out',type=Path,required=True)
-    parser.add_argument('--type',choices=['vehicle','clothing','map'],required=True)
+    parser.add_argument('--type',choices=['vehicle','player','clothing','map'],required=True)
     parser.add_argument('--textures',type=Path,help='YTD, YTD XML or directory containing DDS textures')
-    parser.add_argument('--skeleton',type=Path,help='External CodeWalker YFT XML skeleton for clothing')
+    parser.add_argument('--skeleton',type=Path,help='External CodeWalker YFT XML skeleton for player/clothing')
     parser.add_argument('--base-player',type=Path)
     parser.add_argument('--base-ifp',type=Path)
     parser.add_argument('--base-txd',type=Path)
@@ -455,7 +458,7 @@ def main():
     parser.add_argument('--position',type=float,nargs=3,default=[2500.,-1670.,12.35])
     args = parser.parse_args()
     try:
-        require(args.type != 'clothing' or args.scale == 1, 'Clothing scale must be 1; fit the garment to the base rig before conversion')
+        require(args.type not in ('clothing','player') or args.scale == 1, 'Skinned scale must be 1; fit the mesh to the base rig before conversion')
         require(all(math.isfinite(v) for v in args.position), 'Invalid placement position')
         require(math.isfinite(args.scale) and 0 < args.scale <= 100 and args.model_id >= 0,'Invalid scale or model ID')
         convert(args)
