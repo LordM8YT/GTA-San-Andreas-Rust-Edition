@@ -25,15 +25,15 @@ dokumentasjon på ytelse med 20 fullt renderende spillere.
 ## Spillerhosting med serverbrowser og joincode
 
 Dagens vert simulerer sin lokale verden og videresender spillerposeringer.
-Dette kan videreføres til spillerhosting med en serverbrowser. En egen
-katalogtjeneste må registrere aktive sesjoner, navn, spillerantall,
-kompatibel runtime-versjon og hvilke ressurser de krever. Offentlige sesjoner
-vises i listen; private sesjoner kan finnes via en joincode. En joincode må
-kobles til adgangskontroll for å fungere som privat invitasjon.
+En første relay-versjon med serverbrowser og offentlige/private rom finnes nå;
+se [oppsettet](multiplayer.md). `sa-relay` registrerer navn, spillerantall og
+runtime-versjon. Private rom utelates fra listen og bruker en tilfeldig joincode
+som invitasjon. Begge parter kobler ut, og all trafikk går via relayen.
+Ressurslister og automatisk nedlasting er ennå ikke koblet inn.
 
-En liste eller kode åpner ikke porter i seg selv. Tilkobling uten manuell
-portåpning trenger NAT-traversering og en relay-reserve når direkte forbindelse
-ikke virker, blant annet bak CGNAT. Verten er fortsatt en spillers PC når
+Direkte P2P uten manuell portåpning trenger NAT-traversering og en relay-reserve
+når direkte forbindelse ikke virker, blant annet bak CGNAT. Direkte P2P er
+fortsatt framtidig arbeid. Verten er fortsatt en spillers PC når
 trafikken går via relay; et dedikert spillserverprogram er ikke nødvendig.
 Katalog og relay trenger derimot en tilgjengelig tjeneste med drift og
 konfigurasjon. Ingen slik offentlig tjeneste er satt opp for prosjektet nå.

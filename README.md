@@ -19,13 +19,19 @@ capabilities, and compatibility details.
 Open **Multiplayer**, press **F5**, or use **/mp** to host/join a session with
 up to **20 players including the host**. Player and driving poses synchronize;
 remote players currently use Grove Street and Taxi models. Direct IP/LAN
-connections are supported; internet hosting requires TCP port forwarding.
+connections are supported; direct internet hosting requires TCP port forwarding.
+The new relay mode adds a **server browser and join codes**, with outbound
+connections from host and guests. Run `start-relay.cmd` on a reachable trusted
+LAN/VPN machine, then configure its address in Multiplayer. The game host
+needs no port forwarding in relay mode. No public relay or Steam integration
+is configured; the prototype relay uses unencrypted TCP.
 Custom assets, NPCs, shared vehicle collisions and passengers are not yet
 replicated. See [multiplayer setup and limits](docs/multiplayer.md).
 
 The next milestone is driving together with friends in shared vehicles.
-See the [roadmap](docs/roadmap.md) for priorities, server-browser/P2P plans
-and automatic resource caching. These planned features are not available yet.
+See the [roadmap](docs/roadmap.md) for priorities, direct P2P plans
+and automatic resource caching. Shared vehicles and resource downloads remain
+planned features.
 
 ## Menus, HUD, and settings
 

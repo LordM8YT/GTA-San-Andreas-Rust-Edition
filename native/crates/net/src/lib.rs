@@ -1,6 +1,7 @@
 //! Player-hosted prototype. Networking never runs on the render thread.
 //! Host assigns identities and relays poses; movement is client-authoritative.
 use serde::{Deserialize, Serialize};
+pub mod relay;
 use std::{
     io::{self, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
@@ -361,10 +362,18 @@ fn client_worker(
     local: &Mutex<Pose>,
     report: &Mutex<Report>,
 ) -> io::Result<()> {
-    let mut wire = Wire::new(TcpStream::connect_timeout(
-        &address,
-        Duration::from_secs(3),
-    )?)?;
+    let stream = TcpStream::connect_timeout(&address, Duration::from_secs(3))?;
+    client_stream(stream, address, name, stop, local, report)
+}
+fn client_stream(
+    stream: TcpStream,
+    address: SocketAddr,
+    name: String,
+    stop: &AtomicBool,
+    local: &Mutex<Pose>,
+    report: &Mutex<Report>,
+) -> io::Result<()> {
+    let mut wire = Wire::new(stream)?;
     wire.queue(&Message::Hello {
         version: VERSION,
         name,

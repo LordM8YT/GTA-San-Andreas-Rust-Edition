@@ -97,6 +97,8 @@ struct State {
     spawned_peds: Vec<SpawnedPed>,
     npc_seconds: f32,
     network_session: Option<sa_net::Session>,
+    network_publication: Option<sa_net::relay::Publication>,
+    network_browser: Option<multiplayer::BrowserRequest>,
     remote_actors: Vec<multiplayer::RemoteActor>,
     network_revision: u64,
     network_last: Instant,
@@ -458,6 +460,8 @@ impl State {
             spawned_peds: Vec::new(),
             npc_seconds: 0.0,
             network_session: None,
+            network_publication: None,
+            network_browser: None,
             remote_actors: Vec::new(),
             network_revision: 0,
             network_last: Instant::now(),
@@ -1233,6 +1237,7 @@ impl State {
         match action {
             Some(menu::Action::Host) => self.network_action(true),
             Some(menu::Action::Join) => self.network_action(false),
+            Some(menu::Action::Browse) => self.browse_network(),
             Some(menu::Action::Disconnect) => self.disconnect_network(),
             Some(menu::Action::Play) => {
                 self.menu.has_played = true;
@@ -1898,11 +1903,27 @@ impl ApplicationHandler for App {
                 if let Some(pair) = launch_args.windows(2).find(|a| a[0] == "--name") {
                     state.menu.player_name = pair[1].clone();
                 }
-                if let Some(pair) = launch_args.windows(2).find(|a| a[0] == "--host") {
+                if let Some(pair) = launch_args.windows(2).find(|a| a[0] == "--relay-address") {
+                    state.menu.relay_address = pair[1].clone();
+                    state.menu.relay_mode = true;
+                }
+                state.menu.public_session = launch_args.iter().any(|a| a == "--public-session");
+                if launch_args.iter().any(|a| a == "--relay-host") {
+                    state.menu.relay_mode = true;
+                    state.menu.open(menu::Page::Network);
+                    state.network_action(true);
+                } else if let Some(pair) = launch_args.windows(2).find(|a| a[0] == "--join-code") {
+                    state.menu.relay_mode = true;
+                    state.menu.join_code = pair[1].clone();
+                    state.menu.open(menu::Page::Network);
+                    state.network_action(false);
+                } else if let Some(pair) = launch_args.windows(2).find(|a| a[0] == "--host") {
+                    state.menu.relay_mode = false;
                     state.menu.host_address = pair[1].clone();
                     state.menu.open(menu::Page::Network);
                     state.network_action(true);
                 } else if let Some(pair) = launch_args.windows(2).find(|a| a[0] == "--join") {
+                    state.menu.relay_mode = false;
                     state.menu.join_address = pair[1].clone();
                     state.menu.open(menu::Page::Network);
                     state.network_action(false);
@@ -1911,7 +1932,11 @@ impl ApplicationHandler for App {
                     state.menu.page = None;
                     state.menu.has_played = true;
                 }
-                if self.smoke_network && launch_args.iter().any(|a| a == "--join") {
+                if self.smoke_network
+                    && launch_args
+                        .iter()
+                        .any(|a| a == "--join" || a == "--join-code")
+                {
                     state.position.x += 6.0;
                     if let Some(player) = &mut state.player {
                         player.feet.x += 6.0;
@@ -2155,7 +2180,9 @@ impl ApplicationHandler for App {
                 if self.smoke_network {
                     state.keys.clear();
                     let seconds = self.smoke_started.elapsed().as_secs_f32();
-                    if (3.0..4.0).contains(&seconds) || (8.0..9.0).contains(&seconds) {
+                    if self.network_players_seen >= 2
+                        && ((3.0..4.0).contains(&seconds) || (8.0..9.0).contains(&seconds))
+                    {
                         state.keys.insert(KeyCode::KeyW);
                     }
                 }
@@ -2206,6 +2233,11 @@ impl ApplicationHandler for App {
                     );
                     if rendered {
                         self.smoke_frames += 1;
+                        // Start choreography after both clients actually joined;
+                        // differing startup/relay delays must not skip walking.
+                        if self.network_players_seen < 2 && state.menu.network_players.len() >= 2 {
+                            self.smoke_started = Instant::now();
+                        }
                         self.network_players_seen = self
                             .network_players_seen
                             .max(state.menu.network_players.len());

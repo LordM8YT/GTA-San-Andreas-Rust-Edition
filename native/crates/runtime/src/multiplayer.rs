@@ -4,6 +4,11 @@ use sa_net::{Peer, Pose, Session};
 use std::time::{Duration, Instant};
 use wgpu::util::DeviceExt;
 
+pub(super) struct BrowserRequest {
+    address: std::net::SocketAddr,
+    receiver: std::sync::mpsc::Receiver<Result<Vec<sa_net::relay::Listing>, String>>,
+}
+
 pub(super) struct RemoteActor {
     pub id: u32,
     pub current: Pose,
@@ -71,18 +76,40 @@ impl State {
         } else {
             &self.menu.join_address
         };
-        let result = address
-            .trim()
-            .parse()
-            .map_err(|_| "Use an IP address and port, for example 192.168.1.10:7777.".to_string())
-            .and_then(|address| {
-                if host {
-                    Session::host(address, &self.menu.player_name)
-                } else {
-                    Session::join(address, &self.menu.player_name)
-                }
-                .map_err(|e| e.to_string())
-            });
+        let result = if self.menu.relay_mode {
+            self.menu
+                .relay_address
+                .trim()
+                .parse()
+                .map_err(|_| "Use a relay IP and port, for example 127.0.0.1:7778.".to_string())
+                .and_then(|relay| {
+                    if host {
+                        Session::host_relay(relay, &self.menu.player_name, self.menu.public_session)
+                            .map(|(session, publication)| {
+                                self.network_publication = Some(publication);
+                                session
+                            })
+                    } else {
+                        Session::join_relay(relay, &self.menu.join_code, &self.menu.player_name)
+                    }
+                    .map_err(|e| e.to_string())
+                })
+        } else {
+            address
+                .trim()
+                .parse()
+                .map_err(|_| {
+                    "Use an IP address and port, for example 192.168.1.10:7777.".to_string()
+                })
+                .and_then(|address| {
+                    if host {
+                        Session::host(address, &self.menu.player_name)
+                    } else {
+                        Session::join(address, &self.menu.player_name)
+                    }
+                    .map_err(|e| e.to_string())
+                })
+        };
         match result {
             Ok(session) => {
                 eprintln!(
@@ -99,11 +126,36 @@ impl State {
         }
     }
     pub(super) fn disconnect_network(&mut self) {
+        self.network_publication = None;
         self.network_session = None;
         self.remote_actors.clear();
         self.menu.network_status = "Offline".into();
         self.menu.network_players.clear();
         self.menu.network_active = false;
+        self.menu.session_code.clear();
+    }
+    pub(super) fn browse_network(&mut self) {
+        if self.network_browser.is_some() {
+            return;
+        }
+        let Ok(address) = self.menu.relay_address.trim().parse() else {
+            self.menu.browser_status = "Enter the relay's IP and port first.".into();
+            return;
+        };
+        let (sender, receiver) = std::sync::mpsc::channel();
+        match std::thread::Builder::new()
+            .name("server-browser".into())
+            .spawn(move || {
+                let result = sa_net::relay::browse(address).map_err(|e| e.to_string());
+                let _ = sender.send(result);
+            }) {
+            Ok(_) => {
+                self.network_browser = Some(BrowserRequest { address, receiver });
+                self.menu.server_list.clear();
+                self.menu.browser_status = "Refreshing sessions...".into();
+            }
+            Err(e) => self.menu.browser_status = e.to_string(),
+        }
     }
     fn local_pose(&self) -> Pose {
         if self.driving {
@@ -158,6 +210,42 @@ impl State {
         })
     }
     pub(super) fn update_network(&mut self) {
+        if let Some(request) = &self.network_browser {
+            match request.receiver.try_recv() {
+                Ok(result) => {
+                    if self.menu.relay_mode
+                        && self
+                            .menu
+                            .relay_address
+                            .trim()
+                            .parse::<std::net::SocketAddr>()
+                            .ok()
+                            == Some(request.address)
+                    {
+                        match result {
+                            Ok(servers) => {
+                                self.menu.browser_status =
+                                    format!("{} public sessions", servers.len());
+                                self.menu.server_list = servers;
+                            }
+                            Err(e) => {
+                                self.menu.browser_status = format!("Server list unavailable: {e}")
+                            }
+                        }
+                    } else {
+                        self.menu.server_list.clear();
+                        self.menu.browser_status =
+                            "Relay changed. Refresh the server browser.".into();
+                    }
+                    self.network_browser = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.menu.browser_status = "Server list request ended.".into();
+                    self.network_browser = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            }
+        }
         let now = Instant::now();
         let dt = now
             .duration_since(self.network_last)
@@ -169,6 +257,14 @@ impl State {
         };
         if let Some(report) = session.update(self.local_pose()) {
             self.menu.network_status = report.status.clone();
+            if let Some(publication) = &self.network_publication {
+                let published = publication.report();
+                if !published.code.is_empty() && self.menu.session_code != published.code {
+                    eprintln!("Multiplayer join code: {}", published.code);
+                }
+                self.menu.session_code = published.code;
+                self.menu.network_status = format!("{} | {}", report.status, published.status);
+            }
             self.menu.network_active = true;
             self.menu.network_players = report
                 .peers

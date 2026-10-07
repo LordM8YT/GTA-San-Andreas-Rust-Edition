@@ -137,6 +137,7 @@ pub enum Action {
     ClearPeds,
     Host,
     Join,
+    Browse,
     Disconnect,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
@@ -186,6 +187,13 @@ pub struct Menu {
     pub player_name: String,
     pub host_address: String,
     pub join_address: String,
+    pub relay_mode: bool,
+    pub relay_address: String,
+    pub public_session: bool,
+    pub join_code: String,
+    pub session_code: String,
+    pub server_list: Vec<sa_net::relay::Listing>,
+    pub browser_status: String,
     pub network_status: String,
     pub network_players: Vec<String>,
     pub network_active: bool,
@@ -470,6 +478,14 @@ impl Menu {
             player_name: "Player".into(),
             host_address: "0.0.0.0:7777".into(),
             join_address: "127.0.0.1:7777".into(),
+            relay_mode: false,
+            relay_address: std::env::var("SA_RELAY_ADDRESS")
+                .unwrap_or_else(|_| "127.0.0.1:7778".into()),
+            public_session: false,
+            join_code: String::new(),
+            session_code: String::new(),
+            server_list: Vec::new(),
+            browser_status: String::new(),
             network_status: "Offline".into(),
             network_players: Vec::new(),
             network_active: false,
@@ -510,7 +526,13 @@ impl Menu {
     ) -> Option<Action> {
         let item_count = match self.page {
             Some(Page::Main | Page::Pause) => 11,
-            Some(Page::Network) => 4,
+            Some(Page::Network) => {
+                if self.relay_mode {
+                    5
+                } else {
+                    4
+                }
+            }
             Some(Page::Cars) => self.cars.len().max(1),
             Some(Page::Peds) => self.peds.len().max(1),
             Some(Page::Map) => DESTINATIONS.len(),
@@ -595,6 +617,7 @@ impl Menu {
                         0 => Action::Host,
                         1 => Action::Join,
                         2 => Action::Disconnect,
+                        4 => Action::Browse,
                         _ => Action::Play,
                     })
                 }
@@ -928,17 +951,37 @@ impl Menu {
                             ui.label("One player hosts. Up to 20 players, including the host.");
                             ui.label(RichText::new(&self.network_status).color(GOLD));
                             ui.add_space(12.0);
+                            ui.columns(2, |columns| {
+                            let ui = &mut columns[0];
                             ui.label("Your name");
                             ui.add(egui::TextEdit::singleline(&mut self.player_name).char_limit(24));
-                            ui.label("Host address (listen on all interfaces with 0.0.0.0:7777)");
-                            ui.text_edit_singleline(&mut self.host_address);
-                            ui.label("Join address (the host's IP and port)");
-                            ui.text_edit_singleline(&mut self.join_address);
+                            ui.add_enabled_ui(!self.network_active, |ui| {
+                                if ui.checkbox(&mut self.relay_mode, "Player hosting via relay / join code").changed() {
+                                    self.server_list.clear();
+                                    self.browser_status.clear();
+                                }
+                                if self.relay_mode {
+                                    ui.label("Relay address");
+                                    if ui.text_edit_singleline(&mut self.relay_address).changed() {
+                                        self.server_list.clear();
+                                    }
+                                    ui.checkbox(&mut self.public_session, "Show my session in the server browser");
+                                    ui.label("Join code");
+                                    ui.add(egui::TextEdit::singleline(&mut self.join_code).char_limit(12));
+                                } else {
+                                    ui.label("Host address (0.0.0.0:7777 for LAN)");
+                                    ui.text_edit_singleline(&mut self.host_address);
+                                    ui.label("Join address (the host's IP and port)");
+                                    ui.text_edit_singleline(&mut self.join_address);
+                                }
+                            });
                             ui.add_space(10.0);
                             if !ctx.egui_wants_keyboard_input() {
-                                if ctx.input(|i|i.key_pressed(egui::Key::ArrowDown)){self.selected=(self.selected+1)%4;}
-                                if ctx.input(|i|i.key_pressed(egui::Key::ArrowUp)){self.selected=(self.selected+3)%4;}
+                                let count = if self.relay_mode {5} else {4};
+                                if ctx.input(|i|i.key_pressed(egui::Key::ArrowDown)){self.selected=(self.selected+1)%count;}
+                                if ctx.input(|i|i.key_pressed(egui::Key::ArrowUp)){self.selected=(self.selected+count-1)%count;}
                             }
+                            ui.horizontal_wrapped(|ui| {
                             for (index,label,event) in [(0,"Host session",Action::Host),(1,"Join session",Action::Join),(2,"Disconnect",Action::Disconnect),(3,"Enter free roam",Action::Play)] {
                                 let enabled=if index>=2{self.network_active}else{!self.network_active};
                                 if ui.add_enabled(enabled,egui::Button::new(label).selected(self.selected==index)).clicked()
@@ -946,12 +989,35 @@ impl Menu {
                                     action=Some(event);
                                 }
                             }
+                            });
+                            let ui = &mut columns[1];
+                            if !self.session_code.is_empty() {
+                                ui.label(RichText::new(format!("Share join code: {}", self.session_code)).size(22.0).color(GOLD));
+                                if ui.button("Copy join code").clicked() {ctx.copy_text(self.session_code.clone());}
+                                ui.add_space(12.0);
+                            }
+                            if self.relay_mode {
+                                ui.label(RichText::new("Server browser").size(24.0).color(GOLD));
+                                if ui.add(egui::Button::new("Refresh sessions").selected(self.selected==4)).clicked()
+                                    || (self.selected==4 && !ctx.egui_wants_keyboard_input() && ctx.input(|i|i.key_pressed(egui::Key::Enter))) {
+                                    action=Some(Action::Browse);
+                                }
+                                ui.label(&self.browser_status);
+                                if self.server_list.is_empty() {ui.label("Refresh to find public sessions. For a private session, use your friend's join code.");}
+                                for server in &self.server_list {
+                                    if ui.add_enabled(!self.network_active && server.players < server.capacity, egui::Button::new(format!("Join {} — {} / {}", server.name, server.players, server.capacity))).clicked() {
+                                        self.join_code = server.code.clone();
+                                        action = Some(Action::Join);
+                                    }
+                                }
+                            }
                             ui.add_space(12.0);
                             ui.label(format!("Players: {} / 20",self.network_players.len()));
                             for name in &self.network_players{ui.label(name);}
                             ui.add_space(12.0);
-                            ui.label("For LAN, join the host's local IP. Over the internet, the host must allow TCP port 7777 and forward it in their router.");
+                            ui.label(if self.relay_mode {"Both players connect out to the relay. The game host needs no port forwarding. A reachable relay service is required; no public relay is configured by default. Prototype: use a trusted network."} else {"For LAN, join the host's local IP. Over the internet, direct hosting requires TCP port forwarding."});
                             ui.label("Prototype: other players use the Grove Street ped and Taxi. Custom assets, spawned NPCs and shared vehicle collisions are not synchronized yet.");
+                            });
                         }
                         Page::Commands=>{
                             ui.label("/cars - vehicles    /peds - player models    /mp - multiplayer");
@@ -1032,6 +1098,22 @@ mod tests {
         menu.command = "/mp".into();
         menu.submit_command();
         assert_eq!(menu.page, Some(Page::Network));
+    }
+    #[test]
+    fn relay_browser_is_reachable_and_direct_mode_has_no_hidden_browser_action() {
+        let ctx = egui::Context::default();
+        let mut menu = Menu::new(&ctx, Vec::new());
+        menu.open(Page::Network);
+        assert_eq!(
+            menu.controller_input(true, false, false, false, true, false),
+            Some(Action::Play)
+        );
+        menu.relay_mode = true;
+        menu.open(Page::Network);
+        assert_eq!(
+            menu.controller_input(true, false, false, false, true, false),
+            Some(Action::Browse)
+        );
     }
 
     #[test]
