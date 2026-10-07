@@ -1,7 +1,16 @@
 //! Lightweight vehicle dynamics with tire slip and steering inertia.
 //! Position is the model origin; speed and slip are in metres per second.
 use crate::collision::CollisionWorld;
-use glam::Vec3;
+use glam::{Quat, Vec3};
+/// Render the original model's -Z front in the simulated +Z-forward body frame.
+pub fn model_rotation(yaw: f32, pitch: f32, roll: f32) -> Quat {
+    // Simulation stores independent forward/side grade angles. Euler bank
+    // after pitch would multiply side grade by 1/cos(pitch) without this correction.
+    let bank = (roll.tan() * pitch.cos()).atan();
+    Quat::from_rotation_y(yaw + std::f32::consts::PI)
+        * Quat::from_rotation_x(pitch)
+        * Quat::from_rotation_z(-bank)
+}
 /// Native tuning values; omitted JSON fields retain the original prototype defaults.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -500,6 +509,38 @@ mod tests {
             assert!((car.position.y - expected_height).abs() < 0.04);
             assert!((car.pitch - forward_grade.atan()).abs() < 0.03);
             assert!((car.roll - side_grade.atan()).abs() < 0.03);
+        }
+    }
+    #[test]
+    fn rendered_wheel_plane_matches_combined_road_grade_and_bank() {
+        for gradient in [Vec3::new(0.25, 0.0, 0.2), Vec3::new(-0.2, 0.0, 0.3)] {
+            let point = |x: f32, z: f32| [x, x * gradient.x + z * gradient.z, z];
+            let world = CollisionWorld::from_batches(&[mesh(&[
+                point(-100.0, -100.0),
+                point(100.0, -100.0),
+                point(100.0, 100.0),
+                point(-100.0, -100.0),
+                point(100.0, 100.0),
+                point(-100.0, 100.0),
+            ])]);
+            for yaw in [0.0, 0.8, -1.7, std::f32::consts::PI] {
+                let mut car = Car::new(Vec3::Y * 0.6, 0.6);
+                car.yaw = yaw;
+                for _ in 0..240 {
+                    car.step(&world, 0.0, 0.0, false, 1.0, 1.0 / 120.0);
+                }
+                let rotation = model_rotation(car.yaw, car.pitch, car.roll);
+                for x in [-0.72, 0.72] {
+                    for z in [-1.35, 1.35] {
+                        let wheel = rotation * Vec3::new(x, -car.clearance, z) + car.position;
+                        let gap = wheel.y - wheel.x * gradient.x - wheel.z * gradient.z;
+                        assert!(
+                            gap.abs() < 0.0001,
+                            "rendered wheel left road plane: yaw={yaw}, gap={gap}"
+                        );
+                    }
+                }
+            }
         }
     }
     #[test]

@@ -503,9 +503,7 @@ impl State {
                 .filter(|car| actor.car_visible && car_changed(actor.car_render_pose, *car))
             {
                 let feet = Vec3::from_array(car.position);
-                let rotation = Quat::from_rotation_y(car.yaw + std::f32::consts::PI)
-                    * Quat::from_rotation_x(car.pitch)
-                    * Quat::from_rotation_z(-car.roll);
+                let rotation = sa_scene::vehicle::model_rotation(car.yaw, car.pitch, car.roll);
                 for batch in &actor.car {
                     let mut raw = batch.base.clone();
                     for v in raw.as_chunks_mut::<9>().0.iter_mut() {

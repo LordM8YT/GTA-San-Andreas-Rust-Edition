@@ -1007,9 +1007,7 @@ impl State {
             }
         }
         if let Some((car, batches)) = &self.car {
-            let rotation = Quat::from_rotation_y(car.yaw + std::f32::consts::PI)
-                * Quat::from_rotation_x(car.pitch)
-                * Quat::from_rotation_z(-car.roll);
+            let rotation = sa_scene::vehicle::model_rotation(car.yaw, car.pitch, car.roll);
             for batch in batches {
                 let mut raw = batch.base.clone();
                 for v in raw.as_chunks_mut::<9>().0.iter_mut() {
