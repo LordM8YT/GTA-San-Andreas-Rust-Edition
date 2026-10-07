@@ -152,11 +152,7 @@ fn prepare(
             .unwrap_or_else(|| loader.load_original_car(game, "taxi"))?,
     )];
     cars.extend(loader.take_car_catalog());
-    for (name, model) in [
-        ("Taxi", "taxi"),
-        ("Infernus", "infernus"),
-        ("Admiral", "admiral"),
-    ] {
+    for (name, model) in loader.additional_original_car_models() {
         cancelled(cancel)?;
         cars.push((name.into(), loader.load_original_car(game, model)?));
     }
@@ -168,11 +164,7 @@ fn prepare(
             .unwrap_or_else(|| sa_scene::ped::Ped::load(game))?,
     )];
     peds.extend(loader.take_ped_catalog(game)?);
-    for (name, model) in [
-        ("Grove Street", "fam1"),
-        ("Grove Street 2", "fam2"),
-        ("Ballas", "ballas1"),
-    ] {
+    for (name, model) in loader.additional_original_ped_models() {
         cancelled(cancel)?;
         peds.push((name.into(), sa_scene::ped::Ped::load_model(game, model)?));
     }

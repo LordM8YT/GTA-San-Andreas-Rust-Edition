@@ -16,7 +16,7 @@ use std::{
 
 pub const MAX_PLAYERS: usize = 20;
 pub const DEFAULT_PORT: u16 = 7777;
-const VERSION: u32 = 3;
+const VERSION: u32 = 4;
 const TICK: Duration = Duration::from_millis(50);
 const TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_FRAME: usize = 16 * 1024;

@@ -70,7 +70,7 @@ their cache next time; supported formats and limits are in
 
 The server distributes map assets and catalogs. Selected car, ped and clothing
 choices synchronize between clients. The runtime, server and relay must all
-use network protocol 3; incompatible versions are rejected.
+use network protocol 4; incompatible versions are rejected.
 
 ## Verification
 

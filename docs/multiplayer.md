@@ -187,7 +187,7 @@ logs/captures under `native/target/mp-smoke-<timestamp>`. Add `-Appearance`
 to test different outfits and model changes using copies of our own demo
 resources; add `-Relay` and/or `-Dedicated` for those hosting modes.
 
-Appearance replication uses network protocol **3**. Update the runtime,
+Appearance replication uses network protocol **4**. Update the runtime,
 dedicated server and relay together; older protocol versions are rejected.
 
 For a GPU integration check, launch two runtime instances with `--smoke-network`
@@ -215,3 +215,9 @@ It saves logs/captures alongside the existing direct-mode test. Network tests
 cover public/private discovery, code joining, driving poses, twenty-player
 capacity, rejected overflow, slot reuse, bad credentials/version/frame sizes,
 host withdrawal and relay failure. These are local tests, not an internet test.
+
+Original fallback catalogs contain each original choice once. When a custom
+primary model is present, the original Taxi/Grove Street choice remains
+available alongside it. Both offline and server preparation use the same catalog
+ordering. Protocol 4 rejects older catalog numbering to prevent a selected
+vehicle or character from appearing as a different model on another client.

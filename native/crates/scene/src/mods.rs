@@ -319,6 +319,29 @@ fn png_texture(data: &[u8]) -> Result<Texture> {
     })
 }
 impl WorldLoader {
+    /// Original catalog tail after the primary model, consistent across clients.
+    pub fn additional_original_car_models(
+        &self,
+    ) -> impl Iterator<Item = (&'static str, &'static str)> + '_ {
+        [
+            ("Taxi", "taxi"),
+            ("Infernus", "infernus"),
+            ("Admiral", "admiral"),
+        ]
+        .into_iter()
+        .filter(|(_, model)| !self.resources.car_name.is_empty() || *model != "taxi")
+    }
+    pub fn additional_original_ped_models(
+        &self,
+    ) -> impl Iterator<Item = (&'static str, &'static str)> + '_ {
+        [
+            ("Grove Street", "fam1"),
+            ("Grove Street 2", "fam2"),
+            ("Ballas", "ballas1"),
+        ]
+        .into_iter()
+        .filter(|(_, model)| !self.resources.ped_name.is_empty() || *model != "fam1")
+    }
     /// Read an original model from the installation and apply native resource tuning.
     pub fn load_original_car(&self, game: &Path, model: &str) -> Result<Scene> {
         let mut scene = super::load_car_model(game, model)?;
@@ -685,6 +708,14 @@ mod tests {
             collision_models: HashMap::new(),
             resources: Resources::default(),
         };
+        assert_eq!(
+            loader.additional_original_car_models().collect::<Vec<_>>(),
+            vec![("Infernus", "infernus"), ("Admiral", "admiral")]
+        );
+        assert_eq!(
+            loader.additional_original_ped_models().collect::<Vec<_>>(),
+            vec![("Grove Street 2", "fam2"), ("Ballas", "ballas1")]
+        );
         fs::write(
             folder.join("ped.dff"),
             include_bytes!("../../../../mods/native-ped-demo/ped.dff"),
@@ -752,6 +783,8 @@ mod tests {
         assert_eq!(cars.len(), 1);
         assert_eq!(cars[0].0, "Custom sedan");
         assert_eq!(loader.resources.car_name, "Custom coupe");
+        assert_eq!(loader.additional_original_car_models().count(), 3);
+        assert_eq!(loader.additional_original_ped_models().count(), 3);
         assert_eq!(
             loader.resources.original_vehicle_handling["taxi"].acceleration,
             7.0

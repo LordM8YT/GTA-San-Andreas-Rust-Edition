@@ -2365,6 +2365,10 @@ impl ApplicationHandler for App {
                         // differing startup/relay delays must not skip walking.
                         if self.network_players_seen < 2 && state.menu.network_players.len() >= 2 {
                             self.smoke_started = Instant::now();
+                            eprintln!(
+                                "GPU server catalog smoke: cars={:?}, peds={:?}",
+                                state.menu.cars, state.menu.peds
+                            );
                         }
                         self.network_players_seen = self
                             .network_players_seen
@@ -3290,11 +3294,7 @@ fn main() -> Result<()> {
                 .map(|l| l.take_car_catalog())
                 .unwrap_or_default();
             if let Some(world_loader) = loader.as_ref() {
-                for (name, model) in [
-                    ("Taxi", "taxi"),
-                    ("Infernus", "infernus"),
-                    ("Admiral", "admiral"),
-                ] {
+                for (name, model) in world_loader.additional_original_car_models() {
                     match world_loader.load_original_car(&game, model) {
                         Ok(scene) => catalog.push((name.into(), scene)),
                         Err(e) => eprintln!("Vehicle {model} unavailable: {e:#}"),
@@ -3309,12 +3309,8 @@ fn main() -> Result<()> {
                 .map(|l| l.take_ped_catalog(&game))
                 .transpose()?
                 .unwrap_or_default();
-            if loader.is_some() {
-                for (name, model) in [
-                    ("Grove Street", "fam1"),
-                    ("Grove Street 2", "fam2"),
-                    ("Ballas", "ballas1"),
-                ] {
+            if let Some(world_loader) = loader.as_ref() {
+                for (name, model) in world_loader.additional_original_ped_models() {
                     match sa_scene::ped::Ped::load_model(&game, model) {
                         Ok(ped) => catalog.push((name.into(), ped)),
                         Err(e) => eprintln!("Ped {model} unavailable: {e:#}"),
