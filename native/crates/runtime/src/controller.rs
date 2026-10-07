@@ -51,6 +51,11 @@ fn movement_axes(x: f32, y: f32) -> (f32, f32) {
     (stick_axis(x), stick_axis(y))
 }
 
+// Positive vehicle yaw turns toward screen-left in the +Z-forward world.
+pub fn car_steering(left: bool, right: bool, stick_x: f32) -> f32 {
+    (f32::from(left) - f32::from(right) - stick_x).clamp(-1.0, 1.0)
+}
+
 pub fn read(gamepad: &Gamepad) -> Input {
     let axis = |axis| gamepad.axis_data(axis).map_or(0.0, |data| data.value());
     let (move_x, move_y) = movement_axes(axis(Axis::LeftStickX), axis(Axis::LeftStickY));
@@ -79,6 +84,56 @@ pub fn read(gamepad: &Gamepad) -> Input {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn car_controls_turn_toward_the_requested_driver_side() {
+        use glam::Vec3;
+        use sa_scene::{collision::CollisionWorld, vehicle::Car, Batch, Vertex};
+        let ground = Batch {
+            key: "steering-test".into(),
+            alpha: false,
+            animated: false,
+            vertices: [
+                [-100.0, 0.0, -100.0],
+                [100.0, 0.0, -100.0],
+                [100.0, 0.0, 100.0],
+                [-100.0, 0.0, -100.0],
+                [100.0, 0.0, 100.0],
+                [-100.0, 0.0, 100.0],
+            ]
+            .into_iter()
+            .map(|position| Vertex {
+                position,
+                ..Default::default()
+            })
+            .collect(),
+        };
+        let world = CollisionWorld::from_batches(&[ground]);
+        for yaw in [0.0, 1.1, -2.4] {
+            for speed in [8.0_f32, -4.0] {
+                for (left, right, stick, requested_side) in [
+                    (false, true, 0.0, 1.0),
+                    (true, false, 0.0, -1.0),
+                    (false, false, 1.0, 1.0),
+                    (false, false, -1.0, -1.0),
+                ] {
+                    let mut car = Car::new(Vec3::Y * 0.6, 0.6);
+                    car.yaw = yaw;
+                    car.speed = speed;
+                    // The chase camera looks forward with +Y up: forward cross up is right.
+                    let driver_right = car.forward().cross(Vec3::Y);
+                    let input = car_steering(left, right, stick);
+                    for _ in 0..60 {
+                        car.step(&world, 0.0, input, false, 1.0, 1.0 / 60.0);
+                    }
+                    assert!(car.forward().dot(driver_right) * requested_side * speed.signum() > 0.05,
+                        "inverted steering: yaw={yaw}, speed={speed}, left={left}, right={right}, stick={stick}");
+                }
+            }
+        }
+        assert_eq!(car_steering(true, true, 0.0), 0.0);
+        assert_eq!(car_steering(false, false, 0.0), 0.0);
+    }
+
     #[test]
     fn left_stick_directions_match_keyboard_movement() {
         // gilrs uses positive Y for up; runtime uses positive Y input for W.

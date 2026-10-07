@@ -814,10 +814,11 @@ impl State {
                     - f32::from(self.keys.contains(&KeyCode::KeyS))
                     + self.gamepad.throttle)
                     .clamp(-1.0, 1.0);
-                let steer = (f32::from(self.keys.contains(&KeyCode::KeyD))
-                    - f32::from(self.keys.contains(&KeyCode::KeyA))
-                    + self.gamepad.move_x)
-                    .clamp(-1.0, 1.0);
+                let steer = controller::car_steering(
+                    self.keys.contains(&KeyCode::KeyA),
+                    self.keys.contains(&KeyCode::KeyD),
+                    self.gamepad.move_x,
+                );
                 car.step(
                     world,
                     throttle,
