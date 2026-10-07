@@ -136,7 +136,7 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
     require(not output.exists(), 'Output already exists; choose a new directory')
     require(not output.resolve().is_relative_to(root.resolve()), 'Output must be outside the source resource')
     require(kind != 'props' or position is not None, 'Props require --position X Y Z for their preview placements')
-    require(kind != 'map' or ymap is not None, 'Map import requires --ymap relative/path.ymap.xml')
+    require(kind != 'map' or ymap is not None, 'Map import requires --ymap relative/path.ymap or .ymap.xml')
     require(position is None or all(math.isfinite(v) and abs(v) < 10000 for v in position), 'Invalid position')
     require(0 <= model_id <= 2147483583, 'Invalid starting model ID')
     files, report = inspect_resource(root)
@@ -208,8 +208,9 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
                     point = list(position); point[0] += 3 * (index % 8); point[1] += 3 * (index // 8)
                     manifest['placements'].append(dict(model_id=entry['id'], position=point))
         if kind == 'map':
+            map_source = converter.extract(source / ymap, work / 'ymap-xml')
             manifest['placements'], skipped = map_converter.placements(
-                source / ymap, [p.relative_to(root) for p in chosen], model_id, offset, converter.parse_xml)
+                map_source, [p.relative_to(root) for p in chosen], model_id, offset, converter.parse_xml)
             report['map'] = dict(source=ymap, offset=list(offset), placements=len(manifest['placements']), skipped_lods=skipped)
             report['warnings'] = [warning for warning in report['warnings'] if not warning.startswith('YMAP placements,')]
             report['warnings'].append('Only HD static CEntityDef placements imported; MLO/portal/collision metadata remains unsupported.')
@@ -230,7 +231,7 @@ def main():
     parser.add_argument('input', type=Path)
     parser.add_argument('--out', type=Path, help='New native resource directory; omit to inspect only')
     parser.add_argument('--kind', choices=('vehicles', 'props', 'map'), default='vehicles')
-    parser.add_argument('--ymap', help='Exact relative CodeWalker .ymap.xml path for static map placements')
+    parser.add_argument('--ymap', help='Exact relative Legacy .ymap or CodeWalker .ymap.xml path for static map placements')
     parser.add_argument('--offset', type=float, nargs=3, default=[0., 0., 0.], help='Translate imported map in SA world coordinates')
     parser.add_argument('--model', action='append', default=[], help='Exact relative model path; repeat to select assets')
     parser.add_argument('--position', type=float, nargs=3, help='Prop preview origin; models placed 3 m apart')

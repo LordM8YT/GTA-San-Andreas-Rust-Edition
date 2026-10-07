@@ -282,8 +282,9 @@ def extract(path, temporary):
         return path
     project = Path(__file__).parent / 'gta5-extract' / 'Gta5Extract.csproj'
     dll = project.parent / 'bin/Release/net9.0/Gta5Extract.dll'
-    if not dll.exists():
-        subprocess.run(['dotnet','build',str(project),'-c','Release'], check=True)
+    sources = [project, *project.parent.glob('*.cs'), project.parent/'packages.lock.json']
+    if not dll.exists() or any(path.exists() and path.stat().st_mtime > dll.stat().st_mtime for path in sources):
+        subprocess.run(['dotnet','build',str(project),'-c','Release','-p:RestoreLockedMode=true'], check=True)
     subprocess.run(['dotnet',str(dll),str(path),str(temporary)], check=True)
     return temporary / (path.name + '.xml')
 

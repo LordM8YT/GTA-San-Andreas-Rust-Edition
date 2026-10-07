@@ -47,7 +47,7 @@ the manifest and 128 MiB total assets. Select fewer models if those limits are h
 
 `data/fivem-import-report.json` records source hashes, converted geometry and
 missing textures. Lua/JS/C# scripts, NUI/HUD pages, handling/vehicle metadata,
-Raw YMAP, YBN collision, and YTYP/MLO rooms/portals are reported or listed
+YBN collision and YTYP/MLO rooms/portals are reported or listed
 but never imported. Manifest inspection is text-based and cannot interpret
 dynamic declarations. Peds and clothes still need the explicit rig/mapping
 workflow below. This is an asset import path, not a FiveM runtime.
@@ -58,10 +58,10 @@ free Skyline's raw YFT/YTD files were also imported from an isolated resource
 folder and then downloaded, loaded, driven and restored through a dedicated
 relay session with two Vulkan clients. Third-party assets remain local.
 
-## Static map extensions from YMAP XML
+## Static map extensions from YMAP or XML
 
-`--kind map` can preserve HD static placements from one **CodeWalker YMAP XML**
-export instead of using the prop preview grid:
+`--kind map` can preserve HD static placements from one **Legacy YMAP** file
+or **CodeWalker YMAP XML** export instead of using the prop preview grid:
 
 ```powershell
 python tools/import-fivem.py examples/fivem-static-map --kind map --ymap stream/demo.ymap.xml --model-id 31200 --out "mods/[maps]/static-demo" --enable
@@ -69,6 +69,8 @@ python tools/import-fivem.py examples/fivem-static-map --kind map --ymap stream/
 
 The owned example contains two orange blocks near Grove Street, one rotated
 90 degrees. Its source XML is an importer fixture, not FiveM binary game data.
+For a binary map, use `--ymap stream/name.ymap`; the pinned CodeWalker extractor
+converts it internally. Binary maps require the .NET SDK; XML-only import does not.
 Use `--offset X Y Z` to move an imported extension into the San Andreas map;
 positions otherwise retain the source world coordinates. The importer resolves
 archetype names or GTA name hashes against the selected YDR basenames, assigns
@@ -79,8 +81,9 @@ Only unit-scale static `CEntityDef` HD/orphan-HD entities are supported. Missing
 models, ambiguous names/hashes, invalid rotations, non-unit scales and MLO
 instances stop the whole import with a clear error. Include the custom models;
 references to GTA V base-game props and YTYP archetype aliases are not resolved.
-Raw `.ymap` files must first be exported to CodeWalker XML. Bake scale into the
-mesh before import. Rooms, portals, entity sets, light/audio metadata, navigation,
+Only unencrypted Legacy RSC7 maps are accepted; Gen9/Enhanced, RPF and escrow
+remain unsupported. Bake scale into the mesh before import. Rooms, portals,
+entity sets, light/audio metadata, navigation,
 doors, YBN collision and LOD streaming relationships are not recreated.
 The existing native loader derives static collision from the converted mesh.
 
@@ -88,6 +91,9 @@ Rotation convention reference: [CodeWalker YmapEntityDef](https://github.com/dex
 Tests cover translated positions, rotated placements, hash lookup, skipped LODs
 and atomic rejection of unsupported entities. The owned example was downloaded
 and rendered by two Vulkan clients through a dedicated relay session.
+The binary route was checked by encoding our owned fixture to RSC7 and comparing
+its extracted placements/rotations with the XML import, including rejection of
+bad headers and excessive declared memory. This is not a test of every external map.
 
 ## Requirements and a vehicle
 
@@ -211,6 +217,7 @@ Run automated checks:
 
 ```powershell
 cargo build --manifest-path native/Cargo.toml -p sa-assets --example audit_resource
+dotnet build tools/tests/map-fixture/MapFixture.csproj -c Release -p:RestoreLockedMode=true
 python -m unittest discover -s tools/tests -v
 dotnet build tools/gta5-extract/Gta5Extract.csproj -c Release -p:RestoreLockedMode=true
 ```

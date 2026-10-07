@@ -15,4 +15,7 @@ model ID if 31200 is already in use. Add `--offset X Y Z` to relocate the map.
 Omit `--enable` to prepare a disabled resource for review. This source folder is
 CodeWalker XML for our offline importer; FiveM itself needs compiled game files.
 
-See [conversion limits](../../docs/gta5-conversion.md#static-map-extensions-from-ymap-xml).
+Legacy binary `.ymap` is also supported through the .NET extractor; select its
+relative path with `--ymap`. The fixture stays XML so it can be inspected easily.
+
+See [conversion limits](../../docs/gta5-conversion.md#static-map-extensions-from-ymap-or-xml).

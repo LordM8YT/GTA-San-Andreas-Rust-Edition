@@ -46,6 +46,40 @@ def map_xml(path, archetype='prop', rotation='0 0 0 1', scale='1', kind='CEntity
 
 
 class FiveMImportTests(unittest.TestCase):
+    @unittest.skipUnless((ROOT / 'tools/tests/map-fixture/bin/Release/net9.0/MapFixture.dll').exists(),
+                         'Build MapFixture to exercise owned binary YMAP round-trip')
+    def test_owned_binary_ymap_preserves_placements_through_legacy_decoder(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp); root = resource(temp / 'input')
+            mesh(root / 'stream/prop.ydr.xml')
+            source = map_xml(root / 'source.ymap.xml', rotation='0 0 0.70710678 0.70710678')
+            binary = root / 'stream/map.ymap'
+            helper = ROOT / 'tools/tests/map-fixture/bin/Release/net9.0/MapFixture.dll'
+            result = subprocess.run(['dotnet', str(helper), str(source), str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(binary.read_bytes()[:4], b'RSC7')
+            f.import_resource(root, temp / 'binary', 'map', ymap='stream/map.ymap', offset=[2., 3., 4.])
+            f.import_resource(root, temp / 'xml', 'map', ymap='source.ymap.xml', offset=[2., 3., 4.])
+            a = json.loads((temp / 'binary/resource.json').read_text())
+            b = json.loads((temp / 'xml/resource.json').read_text())
+            self.assertEqual(a['placements'][0]['model_id'], b['placements'][0]['model_id'])
+            self.assertEqual(a['placements'][0]['position'], [12., 23., 7.])
+            for raw, xml in zip(a['placements'][0]['rotation'], b['placements'][0]['rotation']):
+                self.assertAlmostEqual(raw, xml, places=6)
+
+    @unittest.skipUnless((ROOT / 'tools/gta5-extract/bin/Release/net9.0/Gta5Extract.dll').exists(), 'Build extractor')
+    def test_raw_ymap_bad_header_and_excessive_declared_allocation_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp); root = resource(temp / 'input')
+            mesh(root / 'stream/prop.ydr.xml')
+            path = root / 'stream/map.ymap'
+            for index, data in enumerate([b'RSC8' + bytes(12), b'RSC7' + bytes(4) + bytes([255])*8]):
+                path.write_bytes(data)
+                output = temp / f'bad-{index}'
+                with self.assertRaises(f.converter.subprocess.CalledProcessError):
+                    f.import_resource(root, output, 'map', ymap='stream/map.ymap')
+                self.assertFalse(output.exists())
+
     def test_static_map_preserves_inverse_quaternion_and_translates_positions(self):
         with tempfile.TemporaryDirectory() as temp:
             temp = Path(temp); root = resource(temp / 'input')

@@ -69,7 +69,7 @@ or dedicated support. Read [native mod documentation](docs/native-mods.md)
 before preparing a resource. An experimental [GTA V / FiveM asset converter](docs/gta5-conversion.md)
 can prepare Legacy cars, props and explicitly mapped clothing as native resources.
 The new folder importer can inspect FiveM packages and batch-convert their cars
-or props, and preserve static placements from CodeWalker YMAP XML. Unsupported
+or props, and preserve static placements from Legacy YMAP or CodeWalker XML. Unsupported
 scripts and metadata are listed in the import report. See
 [FiveM conversion](docs/gta5-conversion.md#import-a-resource-folder).
 

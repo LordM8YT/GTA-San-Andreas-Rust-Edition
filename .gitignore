@@ -8,6 +8,8 @@ tools/gta5-extract/bin/
 tools/gta5-extract/obj/
 tools/__pycache__/
 tools/tests/__pycache__/
+tools/tests/map-fixture/bin/
+tools/tests/map-fixture/obj/
 mods/local-fivem-test/
 mods/local-ped-test/
 mods/local-upscaled-textures/
