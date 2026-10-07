@@ -532,7 +532,7 @@ impl Menu {
                             ui.add(egui::Slider::new(&mut self.settings.sensitivity,0.2..=3.0).text("Mouse sensitivity"));
                             ui.checkbox(&mut self.settings.invert_y,"Invert vertical look");
                             ui.add(egui::Slider::new(&mut self.settings.fly_speed,6.0..=60.0).text("Free-fly speed"));
-                            ui.add(egui::Slider::new(&mut self.settings.vehicle_handling,0.5..=1.5).text("Vehicle handling"));
+                            ui.add(egui::Slider::new(&mut self.settings.vehicle_handling,0.5..=1.5).text("Tire grip"));
                             ui.label(RichText::new("Changes apply immediately and are saved on this PC.").color(MUTED));
                             if ui.button("Restore defaults").clicked() {self.settings=Settings::default();}
                         },
@@ -560,7 +560,7 @@ impl Menu {
                         },
                         Page::Controls=>{
                             egui::Grid::new("controls").spacing([80.0*scale,17.0*scale]).show(ui,|ui|{
-                                for (key,description) in [("Left stick","Move / steer"),("Right stick","Look around"),("A","Jump / select"),("X","Run"),("Y","Enter / exit car"),("RT / LT","Accelerate / reverse"),("LB","Handbrake"),("Start / B","Pause / go back"),("Back","Open map"),("W A S D","Move / drive"),("Mouse","Look around"),("Shift","Run / fly faster"),("Space","Jump / brake in car"),("F6","Wardrobe"),("I","Interiors"),("F9","Spawn and enter a car"),("F","Enter / exit the car"),("V","Toggle first / third person"),("P","Toggle walk / free-fly"),("Q / E","Fly down / up"),("1–9","Travel to map regions"),("R","Return to Grove Street"),("M","Open map"),("Esc","Pause / go back")]{ui.label(RichText::new(key).color(GOLD).strong());ui.label(description);ui.end_row();}
+                                for (key,description) in [("Left stick","Move / steer"),("Right stick","Look around"),("A","Jump / select"),("X","Run"),("Y","Enter / exit car"),("RT / LT","Accelerate / brake / reverse"),("LB","Handbrake"),("Start / B","Pause / go back"),("Back","Open map"),("W A S D","Move / drive"),("Mouse","Look around"),("Shift","Run / fly faster"),("Space","Jump / handbrake in car"),("F6","Wardrobe"),("I","Interiors"),("F9","Spawn and enter a car"),("F","Enter / exit the car"),("V","Toggle first / third person"),("P","Toggle walk / free-fly"),("Q / E","Fly down / up"),("1–9","Travel to map regions"),("R","Return to Grove Street"),("M","Open map"),("Esc","Pause / go back")]{ui.label(RichText::new(key).color(GOLD).strong());ui.label(description);ui.end_row();}
                             });
                         },
                         Page::Interiors=>{

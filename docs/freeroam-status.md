@@ -11,7 +11,7 @@ Exe-en ligger i `native/target/release/sa-runtime.exe`.
 
 - WASD: gå. Shift: løp. Space: hopp. Klikk i vinduet for musestyring.
 - Xbox-kontroller (standardmapping): venstre stikke går/styrer, høyre stikke ser rundt;
-  A hopper/bekrefter, X løper, Y går inn/ut av bil, RT gasser, LT rygger,
+  A hopper/bekrefter, X løper, Y går inn/ut av bil, RT gasser, LT bremser/rygger,
   LB håndbrems. Start åpner pause, View/Back åpner kart, D-pad navigerer og B går tilbake.
   Kontrolleren kan kobles til mens runtime kjører; tastatur/mus virker fortsatt samtidig.
   Ingen vibrasjon eller bindingstilpasning ennå.
@@ -19,7 +19,7 @@ Exe-en ligger i `native/target/release/sa-runtime.exe`.
 - P: gåmodus/flykamera. Q/E: ned/opp i flykamera. Esc: pausemeny.
 - M: kartmeny. Mus, piltaster/Enter eller Xbox D-pad/A brukes i menyene.
 - F9: hent taxi foran deg og sett deg inn. F: gå ut / inn nær bilen.
-- I bil: W/S gass og rygging, A/D styring, Space brems.
+- I bil: W/S gass og brems/rygging, A/D styring, Space håndbrems.
 - R: last Grove Street og gå tilbake dit.
 - 1: Grove Street; 2: Los Santos sentrum; 3: Santa Maria-stranden.
 - 4: LS flyplass; 5: landsbygda; 6: San Fierro.
@@ -158,3 +158,6 @@ deretter synlig spiller/peds, kjørbare biler og utvidet ressurs-API.
 
 Formatkilder: [COL](https://gtamods.com/wiki/Collision_File),
 [IPL-flagg](https://gtaundergroundmod.com/pages/ug-mp/documentation/dl/map-dl/ipl/inst).
+
+Kjørefysikken bruker nå treghet, gradvis styring og sideveis dekkgrep.
+Se [vehicle dynamics](vehicle-dynamics.md) for detaljer og begrensninger.

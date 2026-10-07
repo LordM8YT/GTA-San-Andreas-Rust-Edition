@@ -152,7 +152,7 @@ impl State {
                     self.driving = false;
                     self.walking = true;
                 }
-                car.speed = 0.0;
+                car.stop();
             } else if self.position.distance(car.position) < 6.0 {
                 self.driving = true;
             }
@@ -760,7 +760,7 @@ impl State {
                 let center = [ORIGIN[0] + car.position.x, ORIGIN[1] - car.position.z];
                 if streaming::distance(center, self.region) > RADIUS - 60.0 {
                     car.position = previous;
-                    car.speed = 0.0;
+                    car.stop();
                 }
                 self.position = world.clip_camera(
                     car.position + Vec3::Y,
