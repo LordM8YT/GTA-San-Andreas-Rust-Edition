@@ -2,7 +2,9 @@
 pub mod col;
 pub mod game_path;
 pub mod ifp;
+pub mod roadsign;
 pub mod skin;
+pub mod uvanim;
 use anyhow::{bail, ensure, Context, Result};
 use std::{
     collections::HashMap,
@@ -108,6 +110,18 @@ impl Img {
         self.file.read_exact(&mut data)?;
         Ok(data)
     }
+    /// Inspect an entry header without allocating or reading its entire model.
+    pub fn read_prefix(&mut self, name: &str, bytes: usize) -> Result<Vec<u8>> {
+        ensure!(bytes <= 16 * 1024 * 1024, "IMG prefix budget");
+        let entry = self
+            .entries
+            .get(&name.to_ascii_lowercase())
+            .context("missing IMG entry")?;
+        let mut data = vec![0; bytes.min(entry.bytes)];
+        self.file.seek(SeekFrom::Start(entry.offset))?;
+        self.file.read_exact(&mut data)?;
+        Ok(data)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -144,6 +158,7 @@ fn root(data: &[u8], tag: u32) -> Result<&[u8]> {
 pub struct Material {
     pub color: [u8; 4],
     pub texture: Option<String>,
+    pub uv_animation: Option<std::sync::Arc<uvanim::UvAnimation>>,
 }
 #[derive(Clone)]
 pub struct Geometry {
@@ -153,8 +168,13 @@ pub struct Geometry {
     pub colors: Vec<[u8; 4]>,
     pub triangles: Vec<[u16; 4]>,
     pub materials: Vec<Material>,
+    /// Original roadsign effects use baked world positions, independent of atomic frames.
+    pub road_signs: Vec<roadsign::RoadSign>,
 }
-fn mat_list(data: &[u8]) -> Result<Vec<Material>> {
+fn mat_list(
+    data: &[u8],
+    tracks: &HashMap<String, std::sync::Arc<uvanim::UvAnimation>>,
+) -> Result<Vec<Material>> {
     let header = one(data, 1)?;
     let count = u32at(header, 0)? as usize;
     ensure!(
@@ -191,13 +211,20 @@ fn mat_list(data: &[u8]) -> Result<Vec<Material>> {
         } else {
             None
         };
-        materials.push(Material { color, texture });
+        materials.push(Material {
+            color,
+            texture,
+            uv_animation: uvanim::material(body, tracks)?,
+        });
     }
     ensure!(cursor == fresh.len(), "extra material chunks");
     Ok(materials)
 }
 
-fn geometry(data: &[u8]) -> Result<Geometry> {
+fn geometry(
+    data: &[u8],
+    tracks: &HashMap<String, std::sync::Arc<uvanim::UvAnimation>>,
+) -> Result<Geometry> {
     let s = one(data, 1)?;
     let flags = u32at(s, 0)?;
     let nt = u32at(s, 4)? as usize;
@@ -276,7 +303,7 @@ fn geometry(data: &[u8]) -> Result<Geometry> {
         }
     }
     ensure!(p == s.len(), "unsupported geometry tail");
-    let materials = mat_list(one(data, 8)?)?;
+    let materials = mat_list(one(data, 8)?, tracks)?;
     ensure!(
         triangles
             .iter()
@@ -290,6 +317,7 @@ fn geometry(data: &[u8]) -> Result<Geometry> {
         colors,
         triangles,
         materials,
+        road_signs: roadsign::from_geometry(data)?,
     })
 }
 fn transform(m: &[f32; 12], v: [f32; 3], translation: bool) -> [f32; 3] {
@@ -314,19 +342,31 @@ fn compose(a: &[f32; 12], b: &[f32; 12]) -> [f32; 12] {
     out
 }
 pub fn decode_dff(data: &[u8]) -> Result<Vec<Geometry>> {
-    decode_dff_parts(data, false)
+    decode_dff_parts(data, false, &HashMap::new())
+}
+pub fn decode_dff_with_uv(
+    data: &[u8],
+    tracks: &HashMap<String, std::sync::Arc<uvanim::UvAnimation>>,
+) -> Result<Vec<Geometry>> {
+    decode_dff_parts(data, false, tracks)
 }
 pub fn decode_vehicle_dff(data: &[u8]) -> Result<Vec<Geometry>> {
-    decode_dff_parts(data, true)
+    decode_dff_parts(data, true, &HashMap::new())
 }
-fn decode_dff_parts(data: &[u8], vehicle: bool) -> Result<Vec<Geometry>> {
+fn decode_dff_parts(
+    data: &[u8],
+    vehicle: bool,
+    shared: &HashMap<String, std::sync::Arc<uvanim::UvAnimation>>,
+) -> Result<Vec<Geometry>> {
     // Some original SA models serialize a UV animation dictionary before
     // the clump. Its presence must not hide otherwise supported geometry.
     let mut stream = data;
     let mut dictionaries = 0;
+    let mut uv_tracks = shared.clone();
     while u32at(stream, 0)? == 43 {
         ensure!(dictionaries < 16, "DFF dictionary budget");
         let dictionary = root(stream, 43)?;
+        uv_tracks.extend(uvanim::dictionary(dictionary)?);
         let sections = chunks(dictionary)?;
         ensure!(
             sections.first().is_some_and(|c| c.tag == 1),
@@ -401,7 +441,7 @@ fn decode_dff_parts(data: &[u8], vehicle: bool) -> Result<Vec<Geometry>> {
     let geometries: Vec<_> = chunks(gl)?
         .into_iter()
         .filter(|c| c.tag == 15)
-        .map(|c| geometry(c.body))
+        .map(|c| geometry(c.body, &uv_tracks))
         .collect::<Result<_>>()?;
     ensure!(
         (1..=128).contains(&ng) && ng == geometries.len(),
@@ -426,6 +466,7 @@ fn decode_dff_parts(data: &[u8], vehicle: bool) -> Result<Vec<Geometry>> {
         })
         .collect::<Result<_>>()?;
     ensure!(frame_names.len() <= nf, "excess frame extensions");
+    let mut effects_seen = vec![false; ng];
     for atomic in atomics {
         let s = one(atomic.body, 1)?;
         let fi = u32at(s, 0)? as usize;
@@ -458,6 +499,9 @@ fn decode_dff_parts(data: &[u8], vehicle: bool) -> Result<Vec<Geometry>> {
             continue;
         }
         let mut g = geometries[gi].clone();
+        if std::mem::replace(&mut effects_seen[gi], true) {
+            g.road_signs.clear();
+        }
         for v in &mut g.positions {
             *v = transform(&frames[fi], *v, true);
         }

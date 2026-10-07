@@ -29,6 +29,7 @@ struct GpuBatch {
     texture: wgpu::BindGroup,
     alpha: bool,
     animated: bool,
+    uv_animation: Option<Arc<sa_assets::uvanim::UvAnimation>>,
     base: Vec<f32>,
 }
 struct SpawnedPed {
@@ -555,7 +556,8 @@ impl State {
                 texture: images.remove(&batch.key).context("batch texture missing")?,
                 alpha: batch.alpha,
                 animated: batch.animated,
-                base: if batch.animated {
+                uv_animation: batch.uv_animation.clone(),
+                base: if batch.animated || batch.uv_animation.is_some() {
                     raw.to_vec()
                 } else {
                     Vec::new()
@@ -787,6 +789,21 @@ impl State {
                 self.queue
                     .write_buffer(&batch.buffer, 0, bytemuck::cast_slice(&raw));
             }
+        }
+        // UV tracks only touch their small animated material batches. Positions,
+        // static map buffers and collision meshes remain unchanged.
+        for batch in &self.batches {
+            let Some(track) = &batch.uv_animation else {
+                continue;
+            };
+            let matrix = track.matrix((now - self.started).as_secs_f32());
+            let mut raw = batch.base.clone();
+            for vertex in raw.as_chunks_mut::<9>().0.iter_mut() {
+                let uv = sa_assets::uvanim::UvAnimation::transform(matrix, [vertex[3], vertex[4]]);
+                vertex[3..5].copy_from_slice(&uv);
+            }
+            self.queue
+                .write_buffer(&batch.buffer, 0, bytemuck::cast_slice(&raw));
         }
         let previous_position = self.position;
         let forward = Vec3::new(
@@ -1196,6 +1213,7 @@ impl State {
                     texture: batch.texture.clone(),
                     alpha: batch.alpha,
                     animated: true,
+                    uv_animation: None,
                     base: Vec::new(),
                 }
             })
@@ -1619,6 +1637,8 @@ struct App {
     smoke_graphics: bool,
     smoke_stream: bool,
     smoke_car: bool,
+    smoke_signs: bool,
+    smoke_neon: bool,
     smoke_network: bool,
     network_saw_ped: bool,
     network_saw_walk: bool,
@@ -1759,6 +1779,45 @@ impl ApplicationHandler for App {
                 .expect("window"),
         );
         let scene = self.scene.take().expect("loaded scene");
+        let sign_camera = (self.smoke_signs || self.smoke_neon).then(|| {
+            let text = scene
+                .batches
+                .iter()
+                .find(|b| {
+                    if self.smoke_neon {
+                        b.key.contains("|uv|7313:")
+                    } else {
+                        b.key == "runtime:roadsignfont"
+                    }
+                })
+                .expect("original sign text missing");
+            let quad = text
+                .vertices
+                .as_chunks::<6>()
+                .0
+                .iter()
+                .min_by(|a, b| {
+                    let distance =
+                        |v: &sa_scene::Vertex| v.position[0].powi(2) + v.position[2].powi(2);
+                    distance(&a[0]).total_cmp(&distance(&b[0]))
+                })
+                .expect("sign glyph missing");
+            let a = Vec3::from_array(quad[0].position);
+            let right = (Vec3::from_array(quad[1].position) - a).normalize();
+            let up = (Vec3::from_array(quad[2].position) - Vec3::from_array(quad[1].position))
+                .normalize();
+            let normal = right.cross(up).normalize();
+            let target = if self.smoke_neon {
+                text.vertices
+                    .iter()
+                    .map(|v| Vec3::from_array(v.position))
+                    .sum::<Vec3>()
+                    / text.vertices.len() as f32
+            } else {
+                a + right * 1.0 + up * 0.5
+            };
+            (target + normal * 5.0, -normal)
+        });
         let radar_tiles = match sa_scene::load_radar_tiles(&self.game_dir) {
             Ok(tiles) => Some(tiles),
             Err(error) => {
@@ -1869,6 +1928,17 @@ impl ApplicationHandler for App {
                     state.position.y = 70.0;
                     state.pitch = 0.0;
                     state.yaw = -std::f32::consts::FRAC_PI_2;
+                }
+                if let Some((eye, forward)) = sign_camera {
+                    // Keep the capture camera on the scene under test. Streaming
+                    // transitions are exercised separately by the region tour.
+                    state.streamer = None;
+                    state.walking = false;
+                    state.third_person = false;
+                    state.position = eye;
+                    state.yaw = forward.x.atan2(forward.z);
+                    state.pitch = forward.y.asin();
+                    self.smoke_started = Instant::now();
                 }
                 match sa_audio::AudioEngine::new() {
                     Ok(audio) => {
@@ -2091,6 +2161,40 @@ impl ApplicationHandler for App {
                 }
                 let previous_position = state.position;
                 let rendered = state.render();
+                if self.smoke_neon {
+                    if rendered {
+                        self.smoke_frames += 1;
+                    }
+                    if !self.smoke_returning && self.smoke_started.elapsed().as_secs_f32() > 1.2 {
+                        assert!(state
+                            .batches
+                            .iter()
+                            .any(|b| b.uv_animation.is_some() && !b.base.is_empty()));
+                        if let Some(directory) = &self.capture_dir {
+                            state.capture_next = Some(directory.join("neon-animated.png"));
+                        }
+                        self.smoke_returning = true;
+                    } else if self.smoke_returning && state.capture_next.is_none() {
+                        println!(
+                            "GPU original UV animation rendered across two times at {:?}",
+                            state.position
+                        );
+                        event_loop.exit();
+                    }
+                    state.window.request_redraw();
+                    return;
+                }
+                if self.smoke_signs {
+                    if rendered {
+                        self.smoke_frames += 1;
+                        if self.smoke_frames >= 4 {
+                            println!("GPU original sign text rendered at {:?}", state.position);
+                            event_loop.exit();
+                        }
+                    }
+                    state.window.request_redraw();
+                    return;
+                }
                 if state.quit_requested {
                     event_loop.exit();
                 }
@@ -2769,7 +2873,15 @@ fn main() -> Result<()> {
     } else if first_model {
         sa_scene::load_first_model(&game)?
     } else {
-        loader.as_mut().unwrap().load(ORIGIN, ORIGIN, RADIUS)?
+        loader.as_mut().unwrap().load(
+            if args.iter().any(|a| a == "--smoke-neon") {
+                [2000.0, 2300.0]
+            } else {
+                ORIGIN
+            },
+            ORIGIN,
+            RADIUS,
+        )?
     };
     println!(
         "{} placements, {} triangles, {} texture batches",
@@ -2955,6 +3067,8 @@ fn main() -> Result<()> {
                 || a == "--smoke-graphics"
                 || a == "--smoke-stream"
                 || a == "--smoke-car"
+                || a == "--smoke-signs"
+                || a == "--smoke-neon"
                 || a == "--smoke-network"
                 || a == "--smoke-ped"
                 || a == "--smoke-wardrobe"
@@ -2978,6 +3092,8 @@ fn main() -> Result<()> {
         smoke_graphics: args.iter().any(|a| a == "--smoke-graphics"),
         smoke_stream: args.iter().any(|a| a == "--smoke-stream"),
         smoke_car: args.iter().any(|a| a == "--smoke-car"),
+        smoke_signs: args.iter().any(|a| a == "--smoke-signs"),
+        smoke_neon: args.iter().any(|a| a == "--smoke-neon"),
         smoke_network: args.iter().any(|a| a == "--smoke-network"),
         network_saw_ped: false,
         network_saw_walk: false,

@@ -437,6 +437,7 @@ mod tests {
             key: "test".into(),
             alpha: false,
             animated: false,
+            uv_animation: None,
             vertices: points
                 .iter()
                 .map(|p| Vertex {

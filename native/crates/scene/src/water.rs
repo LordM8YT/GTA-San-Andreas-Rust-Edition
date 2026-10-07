@@ -74,6 +74,7 @@ impl WaterMap {
             vertices: Vec::new(),
             alpha: true,
             animated: false,
+            uv_animation: None,
         };
         for (points, visible) in &self.triangles {
             if !visible {

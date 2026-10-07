@@ -474,6 +474,8 @@ mod tests {
         let mut loader = WorldLoader {
             water: std::sync::Arc::new(crate::water::WaterMap::default()),
             water_texture: None,
+            roadsign_font: None,
+            uv_tracks: HashMap::new(),
             texture_parents: HashMap::new(),
             img: WorldArchive {
                 exterior: Img::open(&root.join("empty.img")).unwrap(),

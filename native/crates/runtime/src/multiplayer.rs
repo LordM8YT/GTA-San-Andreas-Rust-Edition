@@ -26,6 +26,7 @@ fn duplicate(device: &wgpu::Device, batches: &[GpuBatch]) -> Vec<GpuBatch> {
             texture: b.texture.clone(),
             alpha: b.alpha,
             animated: b.animated,
+            uv_animation: b.uv_animation.clone(),
             base: b.base.clone(),
         })
         .collect()

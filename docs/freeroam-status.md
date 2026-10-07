@@ -48,6 +48,23 @@ feilmelding vises i menyen.
 
 ## Implementert
 
+- Original 2DFX-skilttekst lastes fra DFF-filene og tegnes med `roadsignfont`
+  fra installasjonens `models/particle.txd`. Linjer, farger, piler og symboler
+  beholdes. Alle synlige tegn deler én tekstur og tegnegruppe og inngår ikke i
+  kollisjonskartet. Originalinstallasjonen ga 489 tekstfelt i 207 modeller;
+  Vulkan-testen bekrefter lesbar tekst ved broen nær Grove Street. Dette dekker
+  dynamisk skilttekst; andre manglende bygningsteksturer må undersøkes separat.
+  `--smoke-signs --capture-dir <mappe>` tar et testbilde av et nærliggende skilt.
+- Originale RenderWare-teksturanimasjoner brukes på rullende skilt, neonskilt
+  og fossefall. 21 spor indekseres én gang ved oppstart; grunngeometri og
+  kollisjoner beholdes mens de animerte materialenes UV-er oppdateres.
+  Animasjonsdata følger også kartet gjennom bakgrunnslasting og GPU-opplasting.
+  Første UV-kanal støttes; full MatFX/dual-texture-belysning og tidsstyrte
+  dag-/nattobjekter er fortsatt ikke implementert.
+  `--smoke-neon --capture-dir <mappe>` tester det rullende Las Venturas-skiltet.
+  Formatgrunnlag: [original skiltkode](https://github.com/gta-reversed/gta-reversed/blob/master/source/game_sa/CustomRoadsignMgr.cpp)
+  og [RenderWare UV-animasjoner](https://github.com/aap/librw/blob/master/src/uvanim.cpp).
+
 - Hovedmeny inspirert av San Andreas, tilpasset freeroam, med verden som bakgrunn.
 - Pause, kart med ni reisemål, innstillinger, kontroller og lokal mod-oversikt
   med synlig status for aktive og deaktiverte ressurser.

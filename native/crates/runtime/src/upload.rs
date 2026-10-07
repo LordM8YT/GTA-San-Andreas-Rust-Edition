@@ -185,7 +185,8 @@ impl Upload {
                             .context("batch texture missing")?,
                         alpha: batch.alpha,
                         animated: batch.animated,
-                        base: if batch.animated {
+                        uv_animation: batch.uv_animation.clone(),
+                        base: if batch.animated || batch.uv_animation.is_some() {
                             bytemuck::cast_slice(&batch.vertices).to_vec()
                         } else {
                             Vec::new()

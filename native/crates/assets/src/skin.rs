@@ -179,7 +179,7 @@ pub fn decode(data: &[u8]) -> Result<Model> {
     );
     let mut parts = Vec::new();
     for section in geometry_chunks {
-        let geometry = geometry(section.body)?;
+        let geometry = geometry(section.body, &std::collections::HashMap::new())?;
         let plugins = chunks(one(section.body, 3)?)?;
         let skins: Vec<_> = plugins.into_iter().filter(|c| c.tag == 0x116).collect();
         ensure!(skins.len() == 1, "missing skin plugin");
@@ -342,7 +342,10 @@ mod tests {
             .find(|c| c.tag == 15)
             .unwrap()
             .body;
-        let vertices = geometry(raw_geometry).unwrap().positions.len();
+        let vertices = geometry(raw_geometry, &std::collections::HashMap::new())
+            .unwrap()
+            .positions
+            .len();
         let mut skin = vec![1, 1, 1, 0, 0];
         skin.extend(vec![0; vertices * 4]);
         for _ in 0..vertices {

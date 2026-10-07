@@ -2,6 +2,7 @@
 pub mod collision;
 mod mods;
 pub mod ped;
+mod roadsign;
 mod texture;
 pub mod vehicle;
 pub mod water;
@@ -39,6 +40,7 @@ pub struct Batch {
     pub vertices: Vec<Vertex>,
     pub alpha: bool,
     pub animated: bool,
+    pub uv_animation: Option<std::sync::Arc<sa_assets::uvanim::UvAnimation>>,
 }
 pub struct Scene {
     pub water: Option<std::sync::Arc<water::WaterMap>>,
@@ -195,6 +197,16 @@ struct WorldArchive {
     interior: Option<Img>,
 }
 impl WorldArchive {
+    fn prefix(&mut self, name: &str) -> Result<Vec<u8>> {
+        if self.exterior.has(name) {
+            self.exterior.read_prefix(name, 4)
+        } else {
+            self.interior
+                .as_mut()
+                .context("interior archive unavailable")?
+                .read_prefix(name, 4)
+        }
+    }
     fn has(&self, name: &str) -> bool {
         self.exterior.has(name) || self.interior.as_ref().is_some_and(|img| img.has(name))
     }
@@ -324,16 +336,22 @@ fn add_model(
     for g in geometry {
         for t in &g.triangles {
             let material = &g.materials[t[3] as usize];
-            let key = material
+            let base_key = material
                 .texture
                 .as_ref()
                 .map(|n| format!("{txd}:{n}"))
                 .unwrap_or_else(|| "runtime:white".into());
+            let key = if let Some(track) = &material.uv_animation {
+                format!("{base_key}|uv|{}:{}", r.id, track.name)
+            } else {
+                base_key
+            };
             let batch = batches.entry(key.clone()).or_insert_with(|| Batch {
                 key,
                 vertices: Vec::new(),
                 alpha: false,
                 animated: false,
+                uv_animation: material.uv_animation.clone(),
             });
             for index in [t[0], t[1], t[2]] {
                 let i = index as usize;
@@ -366,6 +384,8 @@ pub struct WorldLoader {
     texture_parents: HashMap<String, String>,
     water: std::sync::Arc<water::WaterMap>,
     water_texture: Option<Texture>,
+    roadsign_font: Option<Texture>,
+    uv_tracks: HashMap<String, std::sync::Arc<sa_assets::uvanim::UvAnimation>>,
 }
 pub const DISTANT_RADIUS: f32 = 2500.0;
 /// Standalone taxi mesh; no script or cutscene timeline is loaded.
@@ -430,7 +450,10 @@ fn car_scene(
                 has_alpha: false,
             }
         } else {
-            let (_, name) = key.split_once(':').context("car texture key")?;
+            let base_key = key
+                .split_once("|uv|")
+                .map_or(key.as_str(), |(base, _)| base);
+            let (_, name) = base_key.split_once(':').context("car texture key")?;
             texture(name)?
         };
         if !batches[key].alpha {
@@ -482,6 +505,19 @@ impl WorldLoader {
             },
         };
         let defs = definitions(&game)?;
+        let mut uv_tracks = HashMap::new();
+        let mut models: Vec<_> = img
+            .names()
+            .filter(|n| n.ends_with(".dff"))
+            .cloned()
+            .collect();
+        models.sort();
+        for model in models {
+            if img.prefix(&model)? == 43_u32.to_le_bytes() {
+                uv_tracks.extend(sa_assets::uvanim::from_dff(&img.read(&model)?)?);
+            }
+        }
+        eprintln!("Indexed {} original UV animation tracks", uv_tracks.len());
         let water_file = sa_assets::game_path::resolve(&game, "data/water.dat")?;
         let water = std::sync::Arc::new(if water_file.exists() {
             water::WaterMap::parse(lines(&water_file)?)?
@@ -497,6 +533,17 @@ impl WorldLoader {
             None
         };
         let mut texture_parents = HashMap::new();
+        let roadsign_font = (|| -> Result<Texture> {
+            let bytes = fs::read(sa_assets::game_path::resolve(&game, "models/particle.txd")?)?;
+            let font = decode_txd(&bytes, "roadsignfont")?;
+            ensure!(
+                font.width == 32 && font.height == 512,
+                "unsupported roadsign font atlas"
+            );
+            Ok(font)
+        })()
+        .map_err(|e| eprintln!("Original sign font unavailable: {e:#}"))
+        .ok();
         for path in registered(&game, "IDE", ".ide")? {
             texture::add_parents(lines(&path)?, &mut texture_parents);
         }
@@ -531,6 +578,8 @@ impl WorldLoader {
             texture_parents,
             water,
             water_texture,
+            roadsign_font,
+            uv_tracks,
         })
     }
     pub fn placement_count(&self) -> usize {
@@ -591,10 +640,12 @@ impl WorldLoader {
             vertices: Vec::new(),
             alpha: false,
             animated: false,
+            uv_animation: None,
         };
         let mut fallback = HashMap::new();
         let mut count = 0;
         let mut lod_count = 0;
+        let mut sign_models = std::collections::HashSet::new();
         let mut triangles = 0;
         for r in rows {
             if self.resources.excluded.contains(&r.id) {
@@ -644,7 +695,7 @@ impl WorldLoader {
             if !models.contains_key(&dff) {
                 models.insert(
                     dff.clone(),
-                    match decode_dff(&img.read(&dff)?) {
+                    match sa_assets::decode_dff_with_uv(&img.read(&dff)?, &self.uv_tracks) {
                         Ok(model) => model,
                         Err(error) => {
                             eprintln!("skipping unsupported {dff}: {error}");
@@ -677,6 +728,9 @@ impl WorldLoader {
                 add_model(&mut fallback, &models[&dff], r, origin, &def.txd)?;
             }
             triangles += add_model(&mut batches, &models[&dff], r, origin, &def.txd)?;
+            if !is_lod && self.roadsign_font.is_some() && sign_models.insert(dff.clone()) {
+                triangles += roadsign::add(&mut batches, &models[&dff], origin);
+            }
             count += 1;
             lod_count += usize::from(is_lod);
             ensure!(
@@ -697,16 +751,29 @@ impl WorldLoader {
             },
         );
         let mut fallback_textures = 0;
+        if batches.contains_key(roadsign::KEY) {
+            textures.insert(
+                roadsign::KEY.into(),
+                self.roadsign_font.clone().context("sign font missing")?,
+            );
+            eprintln!(
+                "{} original sign glyphs restored",
+                batches[roadsign::KEY].vertices.len() / 6
+            );
+        }
         let mut inherited_textures = 0;
         let mut dictionaries = HashMap::<String, Vec<u8>>::new();
         let mut dictionary_bytes = 0;
         for key in batches.keys() {
-            if key == "runtime:white" {
+            if textures.contains_key(key) {
                 continue;
             }
-            let (txd, tex) = key.split_once(':').context("invalid texture key")?;
+            let texture_key = key
+                .split_once("|uv|")
+                .map_or(key.as_str(), |(base, _)| base);
+            let (txd, tex) = texture_key.split_once(':').context("invalid texture key")?;
             let file = format!("{txd}.txd");
-            let texture = if let Some(image) = self.resources.textures.get(key) {
+            let texture = if let Some(image) = self.resources.textures.get(texture_key) {
                 image.clone()
             } else {
                 let result = texture::resolve(txd, &self.texture_parents, |dictionary| {
@@ -775,6 +842,7 @@ impl WorldLoader {
                 vertices: Vec::new(),
                 alpha: true,
                 animated: false,
+                uv_animation: None,
             }
         };
         if !water_batch.vertices.is_empty() {
