@@ -116,6 +116,14 @@ feilmelding vises i menyen.
   Metadata-audit dekodet 12 955 av 12 955 DFF-er fra lokal `gta3.img`.
   Denne metadata-auditen beviser geometrilesing, ikke alle materialeffekter.
 - GPU-opplasting beholder ikke CPU-kopier av statisk, ikke-animert geometri.
+- Nabolagsstreaming gjenbruker GPU-teksturer fra det aktive området når samme
+  uendrede ressursloader fortsatt brukes. Server-/modbytte får egne opplastinger,
+  slik at like teksturnavn med ulike bilder ikke blandes. CPU-bilder frigjøres
+  gradvis innenfor opplastingens tidsbudsjett.
+  Før/etter-test på RTX 3070/Vulkan langs samme 1,2 km-rute med sju områdeskifter
+  reduserte samlet opplasting fra 2871,6 til 871,5 MiB (omtrent 70 prosent).
+  Antall opplastingsframes gikk fra 1100 til 417. Dette måler redusert arbeid,
+  ikke en garantert FPS eller fravær av alle driver-/lastingshakk.
 - Én aktiv kjørbar bil, valgt fra bilmenyens originale og custom modeller,
   med følgekamera, terrengkontakt, veggkollisjon og inn/ut.
   `--smoke-car` kontrollerer kjøring, bremsing, utstigning og ny innstigning.

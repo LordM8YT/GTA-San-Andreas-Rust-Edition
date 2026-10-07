@@ -25,6 +25,7 @@ use winit::{
 };
 
 struct GpuBatch {
+    texture_key: String,
     buffer: wgpu::Buffer,
     count: u32,
     texture: wgpu::BindGroup,
@@ -568,6 +569,7 @@ impl State {
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             });
             batches.push(GpuBatch {
+                texture_key: batch.key.clone(),
                 buffer,
                 count: batch.vertices.len() as u32,
                 texture: images.remove(&batch.key).context("batch texture missing")?,
@@ -634,7 +636,11 @@ impl State {
                             true
                         };
                         if valid_entry {
-                            self.uploading = Some((region, upload::Upload::new(scene)));
+                            // This streamer keeps one immutable resource loader.
+                            // Reuse textures only within that loader's world;
+                            // session preparation deliberately uses Upload::new.
+                            self.uploading =
+                                Some((region, upload::Upload::reusing(scene, &self.batches)));
                         } else {
                             self.menu.message =
                                 "Interior entrance has no safe standing position".into();
@@ -1225,6 +1231,7 @@ impl State {
                         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                     });
                 GpuBatch {
+                    texture_key: batch.texture_key.clone(),
                     buffer,
                     count: batch.count,
                     texture: batch.texture.clone(),

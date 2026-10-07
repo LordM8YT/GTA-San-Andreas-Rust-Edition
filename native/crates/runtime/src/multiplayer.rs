@@ -25,6 +25,7 @@ fn duplicate(device: &wgpu::Device, batches: &[GpuBatch]) -> Vec<GpuBatch> {
     batches
         .iter()
         .map(|b| GpuBatch {
+            texture_key: b.texture_key.clone(),
             buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("remote player mesh"),
                 contents: bytemuck::cast_slice(&b.base),

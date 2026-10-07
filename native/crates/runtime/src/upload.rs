@@ -34,6 +34,8 @@ pub struct Upload {
     frames: usize,
     peak_ms: f64,
     bytes: usize,
+    reused_images: usize,
+    reused_bytes: usize,
 }
 impl Upload {
     pub fn new(mut scene: Scene) -> Self {
@@ -48,7 +50,22 @@ impl Upload {
             frames: 0,
             peak_ms: 0.0,
             bytes: 0,
+            reused_images: 0,
+            reused_bytes: 0,
         }
+    }
+    /// Texture keys are identities only within an immutable world loader.
+    /// Never call this across a session/mod-resource switch: equal names may
+    /// carry different pixels. BindGroup clones retain the actual GPU images.
+    pub fn reusing(scene: Scene, previous: &[GpuBatch]) -> Self {
+        let images = previous
+            .iter()
+            .filter(|batch| scene.textures.contains_key(&batch.texture_key))
+            .map(|batch| (batch.texture_key.clone(), batch.texture.clone()))
+            .collect();
+        let mut upload = Self::new(scene);
+        upload.images = images;
+        upload
     }
     /// Returns true only when every image and vertex buffer has been uploaded.
     /// The time limit is soft: an individual driver call cannot be interrupted.
@@ -62,12 +79,18 @@ impl Upload {
         let started = Instant::now();
         let mut bytes = 0;
         let mut done = false;
-        for _ in 0..64 {
+        for _ in 0..256 {
             if bytes >= FRAME_BYTES || started.elapsed() >= FRAME_TIME {
                 break;
             }
             if self.current_image.is_none() {
                 if let Some((key, image)) = self.textures.next() {
+                    if self.images.contains_key(&key) {
+                        self.reused_images += 1;
+                        self.reused_bytes += image.rgba.len();
+                        // Drop CPU pixels gradually under the same frame budget.
+                        continue;
+                    }
                     let texture = device.create_texture(&wgpu::TextureDescriptor {
                         label: Some(&key),
                         size: wgpu::Extent3d {
@@ -177,6 +200,7 @@ impl Upload {
                     let buffer = self.current_buffer.take().unwrap();
                     let batch = buffer.batch;
                     self.ready.push(GpuBatch {
+                        texture_key: batch.key.clone(),
                         buffer: buffer.buffer,
                         count: batch.vertices.len() as u32,
                         texture: self
@@ -202,7 +226,7 @@ impl Upload {
     }
     pub fn finish(mut self) -> (Vec<GpuBatch>, Scene) {
         self.ready.sort_by_key(|batch| batch.alpha);
-        eprintln!("Incremental GPU upload: {} batches / {:.1} MiB over {} frames; peak CPU slice {:.2} ms", self.ready.len(), self.bytes as f64 / 1048576.0, self.frames, self.peak_ms);
+        eprintln!("Incremental GPU upload: {} batches / {:.1} MiB over {} frames; peak CPU slice {:.2} ms; reused {} textures / {:.1} MiB", self.ready.len(), self.bytes as f64 / 1048576.0, self.frames, self.peak_ms, self.reused_images, self.reused_bytes as f64 / 1048576.0);
         (self.ready, self.scene)
     }
 }
