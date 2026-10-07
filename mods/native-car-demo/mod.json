@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "enabled": false,
+  "name": "Native custom car demo",
+  "vehicles": [
+    {
+      "dff": "car.dff"
+    }
+  ]
+}

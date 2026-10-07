@@ -1,0 +1,5 @@
+native/target/
+native/**/*.exe
+settings.json
+private-assets/
+*.log

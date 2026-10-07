@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="nb">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SA Runtime · Grove Street</title>
+<style>
+:root{color-scheme:dark;--lime:#bce766;--muted:#91a3a0;--panel:#151d1d;--border:#2c3936}*{box-sizing:border-box}body{margin:0;background:#090f10;color:#f2f6ee;font-family:system-ui,sans-serif}button,input,select{font:inherit}button{cursor:pointer}button:disabled{cursor:wait;opacity:.5}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--lime);outline-offset:4px}[hidden]{display:none!important}#world{display:block;width:100vw;height:100vh;touch-action:none}#menu{position:fixed;inset:0;display:grid;grid-template-columns:270px minmax(0,1fr);padding:7vh max(5vw,24px);gap:50px;background:#090f10fa;overflow:auto}nav{display:flex;flex-direction:column;gap:10px}.brand{font-size:29px;letter-spacing:2px;color:var(--lime);font-weight:750;margin-bottom:4px}.tag{font-size:12px;letter-spacing:2px;color:var(--muted);margin-bottom:35px}.tab{border:0;color:inherit;background:var(--panel);padding:19px;text-align:left;font-weight:650}.tab[aria-pressed=true]{background:#3d532b}.tab span{color:var(--muted);margin-right:20px}main{max-width:900px}h1{font-size:clamp(30px,4vw,50px);margin:0 0 12px;letter-spacing:-1px}h2{font-size:23px;margin:22px 0 15px}p{color:var(--muted);line-height:1.6}.rule{width:72px;height:4px;background:var(--lime);margin:26px 0}.card{padding:24px;background:var(--panel);border:1px solid var(--border);margin:18px 0}.launch{background:#3d532b;border:1px solid #56733c;color:#f5ffe9;text-align:left;padding:22px;width:100%;font-weight:700;font-size:19px}.launch:hover:not(:disabled){background:#506b36}.secondary{border:1px solid var(--border);background:var(--panel);color:inherit;padding:12px 17px;margin:5px 8px 5px 0}.statrow{display:flex;gap:30px;flex-wrap:wrap}.statrow strong{font-size:24px;color:#eaf4d9;display:block}.statrow small{color:var(--muted)}#loading{font-size:14px;color:var(--lime);white-space:pre-wrap}#hud{position:fixed;top:18px;left:22px;pointer-events:none;background:#0b1517c9;padding:14px 18px;border-radius:5px;font-size:13px}#hud strong{color:var(--lime);display:block;margin-bottom:6px}#coords{display:block;color:#d5e4dd}#hudButtons{position:fixed;right:18px;top:16px}#help{position:fixed;bottom:18px;left:22px;background:#0b1517cc;padding:10px 15px;font-size:12px;color:#d5e4dd;pointer-events:none}label{display:block;margin:22px 0 8px}input[type=range]{width:min(100%,400px);accent-color:var(--lime)}select{padding:8px;background:#20302a;color:white;border:1px solid var(--border)}a{color:var(--lime)}ul{line-height:1.8;color:var(--muted)}.error{color:#ffaba0!important}.caps{letter-spacing:1px;font-size:12px;color:var(--lime)}#modsList{white-space:pre-line}.footnote{font-size:13px;margin-top:35px}#boundary{color:#ffd89b}table{width:100%;border-collapse:collapse}td{border-bottom:1px solid var(--border);padding:10px;color:var(--muted)}td:first-child{color:#eaf4d9}
+@media(max-width:760px){#menu{grid-template-columns:1fr;padding:25px;gap:25px}nav{display:block}.tab{padding:12px;margin:3px}.tag{margin-bottom:15px}.tab span{display:none}#help{max-width:90vw}.brand{font-size:24px}}
+</style>
+</head>
+<body>
+<canvas id="world" aria-label="Originalt Grove Street-område med fritt flykamera" tabindex="0"></canvas>
+<div id="hud" hidden><strong>GROVE STREET / TESTOMRÅDE</strong><span id="fps">— FPS</span> · <span id="modeLabel">Classic</span><span id="coords"></span><span id="boundary"></span></div>
+<div id="hudButtons" hidden><button class="secondary" id="menuButton">Meny · Esc</button><button class="secondary" id="resetButton">Reset · R</button></div>
+<div id="help" hidden>WASD fly · Mus / dra for å se · Q/E høyde · Shift raskere · R reset · F fullskjerm<br>Flykamera uten kollisjon · Kun dette kartutsnittet er lastet</div>
+<section id="menu" aria-label="Testmeny">
+<nav aria-label="Seksjoner"><div class="brand">SA / RUNTIME</div><div class="tag">GROVE STREET · EARLY TEST</div>
+<button class="tab" data-panel="map" aria-pressed="true"><span>01</span>KART</button>
+<button class="tab" data-panel="graphics" aria-pressed="false"><span>02</span>GRAFIKK</button>
+<button class="tab" data-panel="mods" aria-pressed="false"><span>03</span>MODS</button>
+<button class="tab" data-panel="controls" aria-pressed="false"><span>04</span>KONTROLLER</button>
+<p class="footnote">Dine originale spillfiler.<br>Ny, separat visning.</p></nav>
+<main>
+<section data-content="map"><div class="caps">LOS SANTOS</div><h1>Grove Street</h1><p>Utforsk et lite område fra din egen San Andreas-installasjon.</p><div class="rule"></div>
+<button class="launch" id="start" disabled>Forbereder testområdet …</button>
+<div class="card statrow"><div><strong id="objectCount">—</strong><small>objektplasseringer</small></div><div><strong id="triangleCount">—</strong><small>trekanter</small></div><div><strong id="textureCount">—</strong><small>teksturer</small></div></div>
+<p id="loading" role="status" aria-live="polite">Laster scene …</p><p>Dette er en test av kart og renderer. Du utforsker med flykamera. Spillerfigur, biler, kollisjon og missions er ikke implementert ennå.</p>
+</section>
+<section data-content="graphics" hidden><h1>Grafikk</h1><p>Innstillingene gjelder denne økten.</p><div class="rule"></div>
+<label for="lighting">Lysmodus</label><select id="lighting"><option value="classic">Classic · original vertex-belysning</option><option value="enhanced">Enhanced test · enkelt retningslys</option></select><p>Enhanced er foreløpig et enkelt lystestvalg, uten nye skygger eller post-processing.</p>
+<label for="fov">Synsfelt · <output id="fovValue">70</output>° vertikalt</label><input id="fov" type="range" min="45" max="100" value="70">
+<label for="scale">Oppløsningsskala · <output id="scaleValue">1</output>×</label><input id="scale" type="range" min="0.5" max="2" step="0.25" value="1">
+<p>Visningen tilpasser seg vinduets størrelse, også ultrawide. Hastigheten avhenger av maskinen og nettleseren.</p><button class="secondary" id="fullscreen">Fullskjerm</button>
+</section>
+<section data-content="mods" hidden><h1>Mods</h1><p>Lokale data-mods lastes når runtime starter.</p><div class="rule"></div><div class="card"><h2>Aktive mods</h2><p id="modsList">Laster …</p></div><p>Legg egne innstillinger, teksturoverstyringer og objektplasseringer i <code>mods/</code>. Start runtime på nytt etter endringer.</p><a href="/api/texture-list" target="_blank" rel="noopener">Se teksturnøkler for denne scenen ↗</a><p>Egne PNG-filer kan overstyre teksturer uten å endre spillets filer. Se <code>mods/README.md</code> for format og eksempler.</p><p>Gamecode-scripting og custom mesh-import kommer senere.</p></section>
+<section data-content="controls" hidden><h1>Kontroller</h1><p>Fritt flykamera, uten fysikk eller kollisjon.</p><div class="rule"></div><table><tbody><tr><td>W / A / S / D</td><td>Fly frem, venstre, bak og høyre</td></tr><tr><td>Mus / dra venstre museknapp</td><td>Se rundt</td></tr><tr><td>Q / E</td><td>Fly ned / opp</td></tr><tr><td>Shift</td><td>4× kamerahastighet</td></tr><tr><td>R</td><td>Tilbake til startposisjon</td></tr><tr><td>Esc / M</td><td>Åpne meny / fortsett</td></tr><tr><td>F</td><td>Fullskjerm</td></tr></tbody></table><p>Du kan fly gjennom vegger. Området utenfor kartutsnittet er tomt.</p></section>
+</main></section>
+<script src="/world.js" defer></script>
+</body></html>

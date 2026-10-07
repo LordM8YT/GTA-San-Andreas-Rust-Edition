@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "enabled": false,
+  "name": "Native walkable room demo",
+  "models": [
+    {
+      "id": 30000,
+      "dff": "room.dff"
+    }
+  ],
+  "placements": [
+    {
+      "model_id": 30000,
+      "position": [
+        2500,
+        -1670,
+        12.35
+      ]
+    }
+  ]
+}

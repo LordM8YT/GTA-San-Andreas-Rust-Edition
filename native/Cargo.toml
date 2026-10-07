@@ -1,0 +1,16 @@
+[workspace]
+members = ["crates/assets", "crates/scene", "crates/script", "crates/runtime"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+anyhow = "1"
+bytemuck = { version = "1", features = ["derive"] }
+glam = "0.30"
+pollster = "0.4"
+wgpu = "30.0.1"
+winit = "0.30.13"
+

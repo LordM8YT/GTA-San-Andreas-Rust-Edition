@@ -1,0 +1,147 @@
+# Native freeroam – arbeidsstatus 6. oktober 2026
+
+Målet er freeroam på originalkartet med lokale custom ressurser. Missions er
+ikke prioritert. Originalinstallasjonen leses; gta_sa.exe kjøres ikke.
+
+## Start og kontroller
+
+Dobbeltklikk `start-freeroam.cmd` eller `start-native.cmd`. Ferdig Windows-exe
+ligger i `native/target/release/sa-runtime.exe`.
+
+- WASD: gå. Shift: løp. Space: hopp. Klikk i vinduet for musestyring.
+- I dypt vann: WASD beveger i overflaten, Space gir et løft.
+- P: gåmodus/flykamera. Q/E: ned/opp i flykamera. Esc: pausemeny.
+- M: kartmeny. Mus eller piltaster/Enter brukes i hovedmenyen.
+- F9: hent taxi foran deg og sett deg inn. F: gå ut / inn nær bilen.
+- I bil: W/S gass og rygging, A/D styring, Space brems.
+- R: last Grove Street og gå tilbake dit.
+- 1: Grove Street; 2: Los Santos sentrum; 3: Santa Maria-stranden.
+- 4: LS flyplass; 5: landsbygda; 6: San Fierro.
+- 7: Las Venturas; 8: ørkenen; 9: Mount Chiliad.
+
+Området lastes ferdig før teleport. Et bakgrunnsarbeid laster neste nabolag
+etter omtrent 140 meter. Gjeldende område beholdes mens dette pågår.
+Bevegelse stoppes ved sikkerhetsgrensen dersom lasting ikke har rukket å bli
+ferdig. Vindustittelen viser FPS, GTA-koordinater, modus og lasting.
+Mislykket kartlasting beholder området og venter fem sekunder før nytt
+forsøk. Hvis bakgrunnslasteren stopper, frigjøres lasteindikatoren og
+feilmelding vises i menyen.
+
+## Implementert
+
+- Hovedmeny inspirert av San Andreas, tilpasset freeroam, med verden som bakgrunn.
+- Pause, kart med ni reisemål, innstillinger, kontroller og lokal mod-oversikt.
+- Innstillinger for synsfelt, mus, fullskjerm, VSync, HUD og flyfart lagres i
+  `%LOCALAPPDATA%/SAFreeroam/settings.json`. Menyer stopper spillerbevegelsen.
+- Tap av vindusfokus åpner pausemenyen. Kartmenyen støtter også tallene 1–9.
+- `--smoke-menus` rendrer alle sju menysidene og kan lagre renderbilder.
+
+- Indeksering av 44 771 utendørsplasseringer på denne installasjonen.
+- Rettet IPL-feil: bare de nederste åtte bitene er interiør-ID. Flaggene over
+  disse bitene skal ikke føre til at utendørsterreng forkastes.
+- Faktiske transformerte modellgrenser brukes i nabolagsutvalget.
+- Objekter fra IDE `anim` tas med som statisk geometri. Bevegelsen deres
+  er fortsatt ikke implementert.
+- IDE `txdp` kobler teksturordbøker til foreldre. Barnets teksturer har
+  prioritet; sirkler og for lange kjeder avbrytes. Ordlistene mellomlagres
+  under én områdelast med 64 MiB grense.
+- Original `water.dat` leses som trekanter/firkanter, med synlighetsflagg
+  og høydeinterpolering. Vann rendres med original `waterclear256` fra
+  lokal `particle.txd`; geometrien inngår ikke i vanlig gulvkollisjon.
+- Enkel flyting og overflatebevegelse hindrer synking til havbunnen.
+  Dette er foreløpig uten bølger, dykking eller svømmeanimasjon.
+- `--probe-water` kontrollerer flyting med original kystgeometri.
+- Foreldre angitt via IPL LOD-lenker filtreres bort fra detaljvisningen.
+- Fjern-LOD vises opptil 2,5 km. LOD-modeller hvis grenser berører
+  detaljområdet holdes ute; fjernmodellene inngår aldri i gangkollisjon.
+  Kameraets fjernplan er 3,5 km. Overgangen kan fortsatt ha synlige hull
+  eller sprang for store grupper; dette er ikke full original LOD-styring.
+- Originale COL1/2/3/4-kollisjonscontainere dekodes. 8 255 originalmodeller
+  ble indeksert. Trekanter brukes direkte; bokser og kuler trianguleres.
+- Visuell kollisjon brukes som reserve for modeller uten COL.
+- Førstepersons gåmodus starter automatisk. Gjenoppretting ved fall langt
+  under kartet. P beholder flymodus for utforskning og feilsøking.
+- Native mods: DFF, TXD, PNG, valgfri COL, plasseringer og modell-erstatning.
+- DFF med innledende UV-animasjonsordbok leses som statisk geometri.
+  Ugyldige UV-koordinater får reserveverdi; romlige data avvises ved feil.
+  Metadata-audit dekodet 12 955 av 12 955 DFF-er fra lokal `gta3.img`.
+  Dette beviser geometrilesing, ikke animasjon eller alle materialeffekter.
+- GPU-opplasting beholder ikke CPU-kopier av statisk geometri.
+- Én kjørbar taxi med følgekamerа, terrengkontakt, veggkollisjon og inn/ut.
+  `--smoke-car` kontrollerer kjøring, bremsing, utstigning og ny innstigning.
+  Bilens dynamiske geometri beholdes når nabolag byttes.
+- Egne fragmentpass for alpha cutout og blending.
+- `--smoke-tour`: skjult native GPU-test gjennom ni områder.
+- `--smoke-stream`: sammenhengende frem-/tilbakerute på omtrent 1,2 km
+  med vanlige flybevegelsestaster. Kontrollerer flere nabolagsbytter,
+  endelige koordinater og at sceneinstallering ikke hopper kameraet.
+- Hopp stoppes av tak over hodet, inkludert treff ved kroppens ytterkant.
+  Pause med null tidssteg endrer heller ikke hopp-/gravitasjonstilstanden.
+- Små trinn opp til 38 cm undersøkes ved kroppens fremkant før veggløsning.
+  Sideveis inngang blokkeres dersom hele kroppshøyden ikke får plass.
+- `--probe-walk`: fire retninger fra Grove Street med original kollisjon,
+  1200 fysikksteg per retning. Logger faktisk fremdrift og kontakt med bakken.
+- `--capture-dir PATH` sammen med smoke-testen lagrer private renderbilder.
+
+## Verifikasjon
+
+Arbeidsløkken bruker `cargo test --workspace`, `--probe-world` og
+`--smoke-tour`. GPU-testen venter på vellykket rendering, laster ni områder
+og sjekker endelige spillerposisjoner. Bilder ligger privat under
+`native/target/captures/`. Grove Street-bildet er visuelt inspisert.
+
+Utvalg før/etter retting av IPL-flagg, målt på 81 grunnprøver per område:
+landsbygda 27 til 81, Las Venturas 62 til 81, ørkenen 11 til 74.
+Dette beviser underlag ved prøvene, ikke at alle veier, broer eller trapper
+er uten feil. Noen prøver kan ligge på vann eller bratte flater. Første
+niområders-test brukte omtrent 0,2–1,1 sekund per CPU-last.
+
+IPL-regresjonstesten feilet som forventet mot den gamle filtreringen. Et eget
+generert rom testes gjennom native mod-loader og kollisjon: spilleren kan
+gå gjennom døren og stå på gulvet. Testdata inneholder ingen spill-assets.
+
+## Gjenstående arbeid
+
+Bilfysikken er enkel: fjæring, tilt, hjulanimasjon, skade og trafikk gjenstår.
+Én aktiv custom DFF/TXD-bil kan overta F9-bilen via `vehicles` i mod-formatet.
+Følgekameraet testes mot vegger, tak og terreng.
+F9 prøver flere bilplasseringer med underlag under fotavtrykket,
+karosseriklaring og takhøyde; blokkert rotasjon i svinger avvises.
+Utstigning prøver flere
+sider og krever gulv, kroppsklaring og en fri vei ut. Dette bruker samme
+COL/visuelle reservegeometri som øvrig kollisjon, med et begrenset antall prøver.
+Spilleren har nå en synlig `fam1`-figur med tomgang, gange og løp i
+tredjeperson. V bytter mellom første- og tredjeperson. Kameraet har
+kollisjon mot kartet. AI for andre peds, riktig hoppe-/svømme-/bilsete-
+animasjon og overgangsblending gjenstår. Multiplayer gjenstår.
+Asset-laget har nå en separat Skin/HAnim-laster og CPU-skinning med
+beinvekter og inverse bind-matriser. Bind-posen er kontrollert mot 265
+originale peds i det lokale arkivet. Dette brukes nå av spiller-renderingen,
+og én custom skinnet spillerfigur kan overta den via `player` i mod-formatet.
+Separate skinnede klær støttes via `player.clothes` med kompatible HAnim-
+bein og bind-matriser. Garderoben (F6) lar deg slå importerte plagg av og
+på under spilling. Kroppsdelmasker og montering av originale CJ-komponenter
+gjenstår. Antrekk lagres foreløpig ikke mellom spilløkter.
+ANP3-klipp kan nå samples og kobles til skjelettet via bein-ID. Alle 294
+klipp i lokal `ped.ifp` er lest og kontrollert med fem gyldige prøveposer
+per klipp. Gange, tomgang, løp og sprint matcher alle 32 spor til skjelettet.
+Live tomgang og løp er visuelt kontrollert i GPU-bilder. `--smoke-ped`
+tester 20 meter gange/løp, stopp og kamerabytte med kontrollert tidssteg.
+FiveM/GTA V-ressurser lastes ikke direkte. Custom DFF-rom kan plasseres med
+kollisjon, men dette er ikke en ferdig GTA V MLO-/portal-/interiørmotor.
+Originalinteriørarkivet leses nå også. Separat romlasting og 600 steg med
+gange/hopp er kontrollert i CJ sitt hus, Sweet sitt hus og Madd Dogg sin
+villa. Tilgang fra freeroam-menyen og dørinnganger gjenstår; se
+`native-interiors.md` for kontrollen og begrensningene.
+
+Kartet har detaljstreaming med foreløpig fjern-LOD. Bølger, dykking, tidsstyrte objekter,
+enkelte RenderWare-effekter, transparentsortering, mipmaps og mer
+korrekt fysikk gjenstår. Modeller kan hoppes over med forklaring i konsollen,
+og noen materialer får reservefarge. COL-kuler bruker trekanttilnærming og
+kroppskollisjon bruker et begrenset antall prøver fremfor en full kapselsweep.
+
+Neste prioritering: robust løpende streaming/bevegelsestest, ytelse og LOD,
+deretter synlig spiller/peds, kjørbare biler og utvidet ressurs-API.
+
+Formatkilder: [COL](https://gtamods.com/wiki/Collision_File),
+[IPL-flagg](https://gtaundergroundmod.com/pages/ug-mp/documentation/dl/map-dl/ipl/inst).

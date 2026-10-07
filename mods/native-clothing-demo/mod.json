@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "enabled": false,
+  "name": "Native skinned clothing demo",
+  "player": {
+    "dff": "ped.dff",
+    "ifp": "ped.ifp",
+    "clothes": [
+      {
+        "dff": "jacket.dff",
+        "name": "R\u00f8d jakke"
+      },
+      {
+        "dff": "hat.dff",
+        "name": "Gul hatt"
+      }
+    ]
+  }
+}
