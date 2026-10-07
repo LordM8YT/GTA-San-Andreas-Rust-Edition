@@ -139,11 +139,34 @@ culled independently at 300 metres in their own interior. Stationary car meshes
 are not uploaded repeatedly. Selecting another car replaces your personal car;
 disconnecting removes it. Parked cars are frozen, not independently simulated.
 
-Passenger seats, exchanging vehicles, vehicle/player collisions,
+Exchanging vehicles, vehicle/player collisions,
 damage, weapons, NPCs spawned through `/peds` and time/weather are
 **not synchronized**. Each client simulates their own
 movement and collisions. Remote actors have no physical collision. This is a
 freeroam connection/replication prototype, not a complete shared simulation.
+
+## Riding together
+
+Press **G** within 6 metres of another player's personal car to request a
+passenger seat. **F** chooses the nearer car (your own car to drive, another
+player's car to ride) and leaves a granted passenger seat. Controller Y uses
+the same nearest-car action. Leave your own driver seat before boarding.
+
+The host reserves up to three passenger places per personal car. It checks
+availability, distance, matching interiors and speed (at most 5 m/s). Replies
+appear in the multiplayer HUD; a denied request keeps you connected. Requests
+have sequence numbers so repeated or stale packets cannot reserve a seat again.
+Passengers follow the driver's interpolated car and keep their own parked car.
+F/G exits seek a supported clear spot without passing through a wall. Spawning
+a car, travelling, changing to free-fly or disconnecting cancels the reservation.
+A missing owner/car, model change, interior change or vehicle teleport over
+30 metres ends the ride; recovery uses the last known vehicle position.
+
+This first version uses three fixed passenger offsets for every model, without
+model-specific seat counts or visible seated characters. Driver and passengers
+are hidden inside the car, as drivers already were. It does not implement
+vehicle theft, ownership transfer, animated doors or shared collision physics.
+The host controls reservations; vehicle motion remains client-authoritative.
 
 ## Transport and hosting architecture
 
@@ -185,9 +208,10 @@ forged snapshots, fragmented/coalesced packets and bounded buffers.
 On Windows, `tools/test-multiplayer.ps1` runs the two-instance check and saves
 logs/captures under `native/target/mp-smoke-<timestamp>`. Add `-Appearance`
 to test different outfits and model changes using copies of our own demo
-resources; add `-Relay` and/or `-Dedicated` for those hosting modes.
+resources; add `-Passenger` to board, ride in and exit another player's car;
+add `-Relay` and/or `-Dedicated` for those hosting modes.
 
-Appearance replication uses network protocol **4**. Update the runtime,
+Appearance replication uses network protocol **5**. Update the runtime,
 dedicated server and relay together; older protocol versions are rejected.
 
 For a GPU integration check, launch two runtime instances with `--smoke-network`
@@ -219,5 +243,5 @@ host withdrawal and relay failure. These are local tests, not an internet test.
 Original fallback catalogs contain each original choice once. When a custom
 primary model is present, the original Taxi/Grove Street choice remains
 available alongside it. Both offline and server preparation use the same catalog
-ordering. Protocol 4 rejects older catalog numbering to prevent a selected
+ordering. Protocol 5 rejects older catalog numbering to prevent a selected
 vehicle or character from appearing as a different model on another client.

@@ -195,6 +195,7 @@ pub struct Menu {
     pub server_list: Vec<sa_net::relay::Listing>,
     pub browser_status: String,
     pub network_status: String,
+    pub ride_status: String,
     pub network_players: Vec<String>,
     pub network_active: bool,
     pub network_ready: bool,
@@ -497,6 +498,7 @@ impl Menu {
             server_list: Vec::new(),
             browser_status: String::new(),
             network_status: "Offline".into(),
+            ride_status: String::new(),
             network_players: Vec::new(),
             network_active: false,
             network_ready: false,
@@ -707,6 +709,12 @@ impl Menu {
                                     .color(GOLD),
                                 );
                                 ui.label(RichText::new(&self.network_status).color(WHITE));
+                                ui.label(
+                                    RichText::new("G Passenger | F Enter / leave").color(WHITE),
+                                );
+                                if !self.ride_status.is_empty() {
+                                    ui.label(RichText::new(&self.ride_status).color(GOLD));
+                                }
                             });
                     });
             }
@@ -926,7 +934,7 @@ impl Menu {
                         },
                         Page::Controls=>{
                             egui::Grid::new("controls").spacing([80.0*scale,17.0*scale]).show(ui,|ui|{
-                                for (key,description) in [("Left stick","Move / steer"),("Right stick","Look around"),("A","Jump / select"),("X","Run"),("Y","Enter / exit car"),("RT / LT","Accelerate / brake / reverse"),("LB","Handbrake"),("Start / B","Pause / go back"),("Back","Open map"),("W A S D","Move / drive"),("Mouse","Look around"),("Shift","Run / fly faster"),("Space","Jump / handbrake in car"),("F6","Wardrobe"),("I","Interiors"),("F9","Spawn and enter a car"),("F","Enter / exit the car"),("V","Toggle first / third person"),("P","Toggle walk / free-fly"),("Q / E","Fly down / up"),("1–9","Travel to map regions"),("R","Return to Grove Street"),("M","Open map"),("Esc","Pause / go back")]{ui.label(RichText::new(key).color(GOLD).strong());ui.label(description);ui.end_row();}
+                                for (key,description) in [("Left stick","Move / steer"),("Right stick","Look around"),("A","Jump / select"),("X","Run"),("Y","Enter / exit car"),("RT / LT","Accelerate / brake / reverse"),("LB","Handbrake"),("Start / B","Pause / go back"),("Back","Open map"),("W A S D","Move / drive"),("Mouse","Look around"),("Shift","Run / fly faster"),("Space","Jump / handbrake in car"),("F6","Wardrobe"),("I","Interiors"),("F9","Spawn and enter a car"),("F","Enter / exit nearest car or leave passenger seat"),("G","Ride in another player's car"),("V","Toggle first / third person"),("P","Toggle walk / free-fly"),("Q / E","Fly down / up"),("1–9","Travel to map regions"),("R","Return to Grove Street"),("M","Open map"),("Esc","Pause / go back")]{ui.label(RichText::new(key).color(GOLD).strong());ui.label(description);ui.end_row();}
                             });
                         },
                         Page::Interiors=>{

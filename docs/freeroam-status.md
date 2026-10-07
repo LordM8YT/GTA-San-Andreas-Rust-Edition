@@ -13,8 +13,8 @@ En spiller hoster, og opptil 19 andre kobler til med IP og port. Åpne Multiplay
 fra hoved-/pausemenyen, F5 eller /mp. Spillerposisjoner og bilbevegelse deles;
 valgte biler, peds og opptil 16 klesvalg per ped synkroniseres også fra
 sesjonens felles ressursliste. Personlige biler vises også etter utstigning,
-med separat synlighet for bilen og eieren. NPC-er, passasjerer, bilbytte og
-felles bilkollisjoner er ikke synkronisert.
+med separat synlighet for bilen og eieren. Passasjerplasser reserveres av hosten: G ber om plass i en annen spillers
+bil, og F går ut igjen. NPC-er, bilbytte og felles bilkollisjoner er ikke synkronisert.
 Se [oppsett og begrensninger](multiplayer.md). Direkte internett-hosting krever
 videresendt TCP-port (standard 7777); automatisk NAT-traversering er ikke lagt inn.
 Relay-modus har serverbrowser, offentlige/private rom og joincode. Begge parter
@@ -185,7 +185,8 @@ Spilleren har nå en synlig `fam1`-figur med tomgang, gange og løp i
 tredjeperson. V bytter mellom første- og tredjeperson. Kameraet har
 kollisjon mot kartet. AI for andre peds, riktig hoppe-/svømme-/bilsete-
 animasjon og overgangsblending gjenstår. Multiplayer finnes som prototype;
-felles kjøretøy, passasjerer og synkronisert custom utseende gjenstår.
+personlige parkerte biler, passasjerreservasjoner og custom utseende deles.
+Bilbytte og felles kollisjonssimulering gjenstår.
 Asset-laget har nå en separat Skin/HAnim-laster og CPU-skinning med
 beinvekter og inverse bind-matriser. Bind-posen er kontrollert mot 265
 originale peds i det lokale arkivet. Dette brukes nå av spiller-renderingen,

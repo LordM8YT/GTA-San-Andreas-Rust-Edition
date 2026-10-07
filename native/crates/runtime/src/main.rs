@@ -100,6 +100,11 @@ struct State {
     npc_seconds: f32,
     network_session: Option<sa_net::Session>,
     network_car_spawned: bool,
+    passenger: Option<sa_net::PassengerSeat>,
+    passenger_car: Option<sa_net::VehiclePose>,
+    ride_request: Option<sa_net::RideRequest>,
+    ride_sequence: u32,
+    ride_reply: Option<sa_net::RideReply>,
     network_publication: Option<sa_net::relay::Publication>,
     network_browser: Option<multiplayer::BrowserRequest>,
     resource_game_dir: PathBuf,
@@ -165,6 +170,7 @@ impl State {
         Ok(())
     }
     fn place_car(&mut self) {
+        self.leave_passenger();
         if self.interior != 0 {
             return;
         }
@@ -185,6 +191,17 @@ impl State {
         }
     }
     fn toggle_car(&mut self) {
+        if self.passenger.is_some() {
+            self.try_leave_passenger();
+            return;
+        }
+        if self.ride_request.is_some_and(|r| r.owner.is_some()) {
+            self.leave_passenger();
+            return;
+        }
+        if !self.driving && self.try_passenger(false) {
+            return;
+        }
         if let (Some(world), Some((car, _))) = (&self.collision, &mut self.car) {
             if self.driving {
                 if let Some(player) = car.exit_player(world) {
@@ -476,6 +493,11 @@ impl State {
             npc_seconds: 0.0,
             network_session: None,
             network_car_spawned: false,
+            passenger: None,
+            passenger_car: None,
+            ride_request: None,
+            ride_sequence: 0,
+            ride_reply: None,
             network_publication: None,
             network_browser: None,
             resource_game_dir: PathBuf::new(),
@@ -866,7 +888,9 @@ impl State {
         } else {
             speed
         };
-        if self.driving {
+        if self.passenger.is_some() {
+            // The host grants the seat; the interpolated remote car drives its camera.
+        } else if self.driving {
             if let (Some(world), Some((car, _))) = (&self.collision, &mut self.car) {
                 let previous = car.position;
                 let throttle = (f32::from(self.keys.contains(&KeyCode::KeyW))
@@ -1093,7 +1117,9 @@ impl State {
                 })
             })
             .unwrap_or(self.position + forward);
-        let target = if self.driving {
+        let target = if let Some(car) = self.passenger_car.filter(|_| self.passenger.is_some()) {
+            Vec3::from_array(car.position) + Vec3::Y
+        } else if self.driving {
             self.car
                 .as_ref()
                 .map(|(c, _)| c.position + Vec3::Y)
@@ -1163,6 +1189,7 @@ impl State {
         );
     }
     fn respawn(&mut self) {
+        self.leave_passenger();
         self.driving = false;
         self.spawned_peds.clear();
         // Recover on loaded ground rather than teleporting into an unloaded map.
@@ -1278,6 +1305,7 @@ impl State {
                 self.capture(true);
             }
             Some(menu::Action::Teleport(index)) => {
+                self.leave_passenger();
                 self.interior_destination = None;
                 self.destination = Some(streaming::DESTINATIONS[index].1);
                 self.menu.has_played = true;
@@ -1286,6 +1314,7 @@ impl State {
                 self.capture(true);
             }
             Some(menu::Action::Interior(index)) => {
+                self.leave_passenger();
                 let target = streaming::INTERIORS[index];
                 self.destination = Some([target.position[0], target.position[1]]);
                 self.interior_destination = Some(index);
@@ -1304,6 +1333,7 @@ impl State {
                 }
             }
             Some(menu::Action::Car(index)) => {
+                self.leave_passenger();
                 if self.interior != 0 {
                     self.menu.message = "Vehicles can be spawned outside.".into();
                     return;
@@ -1695,6 +1725,10 @@ struct App {
     network_far_sent: bool,
     network_saw_parked_alone: bool,
     smoke_appearance: bool,
+    smoke_passenger: bool,
+    passenger_stage: u8,
+    passenger_moved: bool,
+    passenger_start: Vec3,
     appearance_stage: u8,
     appearance_saw_ped: bool,
     appearance_saw_car: bool,
@@ -2246,6 +2280,67 @@ impl ApplicationHandler for App {
                 if self.smoke_network {
                     state.keys.clear();
                     let seconds = self.smoke_started.elapsed().as_secs_f32();
+                    if self.smoke_passenger && self.network_players_seen >= 2 {
+                        let host = state.menu.player_name == "HostTest";
+                        if host {
+                            if seconds > 10.0 && seconds < 13.0 || seconds > 15.5 {
+                                if let Some((car, _)) = &mut state.car {
+                                    car.stop();
+                                }
+                            }
+                            if (13.0..15.0).contains(&seconds) {
+                                state.keys.insert(KeyCode::KeyW);
+                            }
+                            if state.remote_actors.iter().any(|a| a.target.ride.is_some()) {
+                                self.passenger_stage = 1;
+                                self.passenger_moved |=
+                                    state.car.as_ref().is_some_and(|(car, _)| car.speed > 1.0);
+                            }
+                        } else if seconds > 10.5 && self.passenger_stage == 0 {
+                            if state.driving {
+                                state.toggle_car();
+                            }
+                            if let Some(car) =
+                                state.remote_actors.iter().find_map(|a| a.target.vehicle)
+                            {
+                                if let Some(world) = &state.collision {
+                                    let mut remote = sa_scene::vehicle::Car::new(
+                                        Vec3::from_array(car.position),
+                                        0.0,
+                                    );
+                                    remote.yaw = car.yaw;
+                                    if let Some(player) = remote.exit_player(world) {
+                                        state.position = player.eye();
+                                        state.player = Some(player);
+                                        state.walking = true;
+                                        assert!(
+                                            state.try_passenger(true),
+                                            "could not request nearby passenger seat"
+                                        );
+                                        self.passenger_stage = 1;
+                                    }
+                                }
+                            }
+                        }
+                        if !host && state.passenger.is_some() {
+                            if self.passenger_stage == 1 {
+                                self.passenger_start =
+                                    Vec3::from_array(state.passenger_car.unwrap().position);
+                                self.passenger_stage = 2;
+                            }
+                            self.passenger_moved |= state.passenger_car.is_some_and(|car| {
+                                Vec3::from_array(car.position).distance(self.passenger_start) > 3.0
+                            });
+                            if seconds > 16.0 {
+                                assert!(
+                                    self.passenger_moved,
+                                    "passenger did not follow the moving car"
+                                );
+                                state.toggle_car();
+                                self.passenger_stage = 3;
+                            }
+                        }
+                    }
                     if self.smoke_appearance && self.network_players_seen >= 2 {
                         let host = state.menu.player_name == "HostTest";
                         if self.appearance_stage == 0 && seconds > 1.5 {
@@ -2412,7 +2507,9 @@ impl ApplicationHandler for App {
                             }
                             self.appearance_captured = true;
                         }
-                        if (7.0..11.0).contains(&seconds) && !state.driving && self.network_saw_ped
+                        if (7.0..if self.smoke_passenger { 10.0 } else { 11.0 }).contains(&seconds)
+                            && !state.driving
+                            && self.network_saw_ped
                         {
                             let tuning =
                                 state.car.as_ref().expect("network car missing").0.handling;
@@ -2427,11 +2524,14 @@ impl ApplicationHandler for App {
                                     tuning.acceleration, tuning.brake_deceleration, tuning.tire_grip);
                             }
                         }
-                        if seconds > 11.0 && !self.network_exited && state.driving {
+                        if seconds > if self.smoke_passenger { 18.0 } else { 11.0 }
+                            && !self.network_exited
+                            && state.driving
+                        {
                             state.toggle_car();
                             self.network_exited = !state.driving;
                         }
-                        if seconds > 12.0
+                        if seconds > if self.smoke_passenger { 19.0 } else { 12.0 }
                             && self.network_exited
                             && self.network_saw_parked
                             && !self.network_parked_captured
@@ -2441,7 +2541,7 @@ impl ApplicationHandler for App {
                             }
                             self.network_parked_captured = true;
                         }
-                        if seconds > 13.5
+                        if seconds > if self.smoke_passenger { 20.0 } else { 13.5 }
                             && self.network_exited
                             && !self.network_far_sent
                             && state.menu.player_name == "HostTest"
@@ -2463,7 +2563,21 @@ impl ApplicationHandler for App {
                                 self.network_captured = true;
                             }
                         }
-                        if seconds > 16.0
+                        if self.smoke_passenger && seconds > 14.5 && seconds < 15.0 {
+                            if let Some(directory) = &self.capture_dir {
+                                if !directory.join("multiplayer-passenger.png").exists() {
+                                    state.capture_next =
+                                        Some(directory.join("multiplayer-passenger.png"));
+                                }
+                            }
+                        }
+                        if self.smoke_passenger
+                            && state.menu.player_name == "ClientTest"
+                            && self.passenger_stage == 3
+                        {
+                            self.network_exited = state.passenger.is_none() && state.walking;
+                        }
+                        if seconds > if self.smoke_passenger { 23.0 } else { 16.0 }
                             && self.network_saw_car
                             && self.network_saw_ped
                             && self.network_saw_walk
@@ -2480,6 +2594,23 @@ impl ApplicationHandler for App {
                                 );
                             }
                             println!("GPU parked vehicle smoke passed: remote car remains after exit and owner culling is independent");
+                            if self.smoke_passenger {
+                                assert!(
+                                    self.passenger_moved && self.passenger_stage >= 1,
+                                    "passenger ride missing"
+                                );
+                                if state.menu.player_name == "ClientTest" {
+                                    assert_eq!(self.passenger_stage, 3);
+                                    assert!(
+                                        state.passenger.is_none() && state.ride_request.is_none()
+                                    );
+                                    assert_eq!(
+                                        state.ride_reply.unwrap().result,
+                                        sa_net::RideResult::Left
+                                    );
+                                }
+                                println!("GPU passenger smoke passed: host reserved seat, passenger followed moving car and exited safely");
+                            }
                             if self.smoke_appearance {
                                 assert!(
                                     self.appearance_saw_ped
@@ -2862,6 +2993,9 @@ impl ApplicationHandler for App {
                             KeyCode::KeyF if !event.repeat => {
                                 state.toggle_car();
                             }
+                            KeyCode::KeyG if !event.repeat => {
+                                state.try_passenger(true);
+                            }
                             KeyCode::Digit1
                             | KeyCode::Digit2
                             | KeyCode::Digit3
@@ -2884,11 +3018,13 @@ impl ApplicationHandler for App {
                                     KeyCode::Digit8 => 7,
                                     _ => 8,
                                 };
+                                state.leave_passenger();
                                 state.interior_destination = None;
                                 state.destination = Some(streaming::DESTINATIONS[index].1);
                                 state.keys.clear();
                             }
                             KeyCode::KeyR if !event.repeat => {
+                                state.leave_passenger();
                                 if state.streamer.is_some() {
                                     state.interior_destination = None;
                                     state.destination = Some(ORIGIN);
@@ -2923,6 +3059,7 @@ impl ApplicationHandler for App {
                                 }
                             }
                             KeyCode::KeyP if !event.repeat => {
+                                state.leave_passenger();
                                 if state.driving {
                                     state.toggle_car();
                                 }
@@ -3371,6 +3508,10 @@ fn main() -> Result<()> {
         network_far_sent: false,
         network_saw_parked_alone: false,
         smoke_appearance: args.iter().any(|a| a == "--smoke-appearance"),
+        smoke_passenger: args.iter().any(|a| a == "--smoke-passenger"),
+        passenger_stage: 0,
+        passenger_moved: false,
+        passenger_start: Vec3::ZERO,
         appearance_stage: 0,
         appearance_saw_ped: false,
         appearance_saw_car: false,

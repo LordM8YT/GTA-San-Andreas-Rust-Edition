@@ -175,6 +175,7 @@ fn interpolate(current: &mut Pose, target: Pose, dt: f32) {
     let b = Vec3::from_array(target.position);
     if current.interior != target.interior
         || current.driving != target.driving
+        || current.ride != target.ride
         || a.distance(b) > 30.0
     {
         *current = target;
@@ -190,6 +191,8 @@ fn interpolate(current: &mut Pose, target: Pose, dt: f32) {
     current.ped_model = target.ped_model;
     current.car_model = target.car_model;
     current.clothes = target.clothes;
+    current.ride = target.ride;
+    current.ride_reply = target.ride_reply;
     match (&mut current.vehicle, target.vehicle) {
         (Some(car), Some(target))
             if car.interior == target.interior
@@ -208,17 +211,116 @@ fn interpolate(current: &mut Pose, target: Pose, dt: f32) {
     }
 }
 impl State {
+    fn request_ride(&mut self, owner: Option<u32>) {
+        self.ride_sequence = self.ride_sequence.wrapping_add(1).max(1);
+        self.ride_request = Some(sa_net::RideRequest {
+            sequence: self.ride_sequence,
+            owner,
+        });
+        self.keys.clear();
+    }
+    pub(super) fn try_passenger(&mut self, explicit: bool) -> bool {
+        if self.network_session.is_none() || !self.menu.network_ready || self.driving {
+            return false;
+        }
+        if self.passenger.is_some() {
+            self.try_leave_passenger();
+            return true;
+        }
+        let feet = self
+            .player
+            .as_ref()
+            .map_or(self.position - Vec3::Y * 1.6, |p| p.feet);
+        let nearest = self
+            .remote_actors
+            .iter()
+            .filter_map(|actor| {
+                let car = actor.target.vehicle?;
+                if car.interior != self.interior {
+                    return None;
+                }
+                let distance = feet.distance(Vec3::from_array(car.position));
+                (distance < 6.0).then_some((actor.id, distance))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+        if let Some((owner, distance)) = nearest {
+            let own_distance = self
+                .car
+                .as_ref()
+                .map_or(f32::INFINITY, |(car, _)| feet.distance(car.position));
+            if explicit || distance < own_distance {
+                self.request_ride(Some(owner));
+                self.menu.ride_status = "Requesting a passenger seat...".into();
+                return true;
+            }
+        }
+        if explicit {
+            self.menu.ride_status = "Move within 6 metres of another player's car.".into();
+        }
+        false
+    }
+    fn exit_passenger_position(&mut self) {
+        if let Some(car) = self.passenger_car {
+            if let Some(world) = &self.collision {
+                let mut vehicle = sa_scene::vehicle::Car::new(Vec3::from_array(car.position), 0.0);
+                vehicle.yaw = car.yaw;
+                if let Some(player) = vehicle.exit_player(world) {
+                    self.position = player.eye();
+                    self.player = Some(player);
+                } else {
+                    let player = sa_scene::collision::Player::spawn(
+                        world,
+                        Vec3::from_array(car.position) + Vec3::Y * 3.0,
+                    );
+                    self.position = player.eye();
+                    self.player = Some(player);
+                }
+            }
+        }
+        self.passenger = None;
+        self.passenger_car = None;
+        self.driving = false;
+        self.walking = true;
+        self.keys.clear();
+    }
+    pub(super) fn leave_passenger(&mut self) {
+        if self.passenger.is_some() || self.ride_request.is_some_and(|r| r.owner.is_some()) {
+            self.request_ride(None);
+            if self.passenger.is_some() {
+                self.exit_passenger_position();
+            }
+        }
+    }
+    pub(super) fn try_leave_passenger(&mut self) {
+        if let Some(car) = self.passenger_car {
+            if let Some(world) = &self.collision {
+                let mut vehicle = sa_scene::vehicle::Car::new(Vec3::from_array(car.position), 0.0);
+                vehicle.yaw = car.yaw;
+                if vehicle.exit_player(world).is_none() {
+                    self.menu.ride_status =
+                        "No clear supported exit. Wait for an open road.".into();
+                    return;
+                }
+            }
+        }
+        self.leave_passenger();
+    }
     pub(super) fn network_action(&mut self, host: bool) {
         if let Err(error) = self.prepare_network(host) {
             self.menu.message = format!("Could not prepare multiplayer: {error:#}");
         }
     }
     pub(super) fn disconnect_network(&mut self) {
+        self.leave_passenger();
+        self.ride_request = None;
+        self.ride_reply = None;
+        self.ride_sequence = 0;
         self.clear_session_resources();
         self.network_publication = None;
         self.network_session = None;
         self.remote_actors.clear();
         self.menu.network_status = "Offline".into();
+        self.menu.ride_status.clear();
         self.menu.network_players.clear();
         self.menu.network_active = false;
         self.menu.session_code.clear();
@@ -279,15 +381,20 @@ impl State {
                         .map(|(ped, _)| ped.clothing_mask())
                         .unwrap_or(0),
                     vehicle,
+                    ride_request: self.ride_request,
+                    ..Pose::default()
                 };
             }
         }
-        let feet = self
-            .player
-            .as_ref()
-            .filter(|_| self.walking)
-            .map(|p| p.feet)
-            .unwrap_or(self.position - Vec3::Y * 1.6);
+        let feet = if let Some((seat, car)) = self.passenger.zip(self.passenger_car) {
+            Vec3::from_array(seat.feet(car))
+        } else {
+            self.player
+                .as_ref()
+                .filter(|_| self.walking)
+                .map(|p| p.feet)
+                .unwrap_or(self.position - Vec3::Y * 1.6)
+        };
         Pose {
             position: feet.to_array(),
             yaw: if self.walking { self.ped_yaw } else { self.yaw },
@@ -301,6 +408,7 @@ impl State {
                 .map(|(ped, _)| ped.clothing_mask())
                 .unwrap_or(0),
             vehicle,
+            ride_request: self.ride_request,
             ..Pose::default()
         }
     }
@@ -396,6 +504,41 @@ impl State {
             return;
         };
         if let Some(report) = session.update(self.local_pose()) {
+            if let Some(peer) = report.peers.iter().find(|p| p.id == report.local_id) {
+                if let Some(reply) = peer.pose.ride_reply {
+                    if self.ride_reply != Some(reply) {
+                        self.menu.ride_status = reply.result.label().into();
+                        eprintln!("Passenger: {} ({})", reply.result.label(), reply.sequence);
+                        self.ride_reply = Some(reply);
+                    }
+                    if self
+                        .ride_request
+                        .is_some_and(|request| request.sequence == reply.sequence)
+                    {
+                        self.ride_request = None;
+                    }
+                }
+                // A pending leave must not be undone by an older snapshot.
+                let grant = peer
+                    .pose
+                    .ride
+                    .filter(|_| !self.ride_request.is_some_and(|r| r.owner.is_none()));
+                if self.passenger.is_some() && grant.is_none() {
+                    self.exit_passenger_position();
+                }
+                self.passenger = grant;
+                if grant.is_some() {
+                    if let Some(owner) = report
+                        .peers
+                        .iter()
+                        .find(|p| Some(p.id) == grant.map(|s| s.owner))
+                    {
+                        self.passenger_car = owner.pose.vehicle;
+                    }
+                    self.driving = false;
+                    self.walking = false;
+                }
+            }
             let ready = report.connected && report.peers.iter().any(|p| p.id == report.local_id);
             if ready && !self.menu.network_ready && report.local_id != 0 {
                 self.spread_network_spawn(&report);
@@ -478,6 +621,7 @@ impl State {
             interpolate(&mut actor.current, actor.target, dt);
             let previous_visibility = (actor.ped_visible, actor.car_visible);
             actor.ped_visible = !actor.current.driving
+                && actor.current.ride.is_none()
                 && actor.current.interior == self.interior
                 && Vec3::from_array(actor.current.position).distance(self.position) < 300.0;
             actor.car_visible = actor.current.vehicle.is_some_and(|car| {
@@ -489,6 +633,23 @@ impl State {
         }
         if visibility_changed {
             self.network_pose_last = now - Duration::from_secs(1);
+        }
+        if let Some(seat) = self.passenger {
+            if let Some(car) = self
+                .remote_actors
+                .iter()
+                .find(|a| a.id == seat.owner)
+                .and_then(|a| a.current.vehicle)
+            {
+                self.passenger_car = Some(car);
+                let center = Vec3::from_array(car.position) + Vec3::Y;
+                let forward = Vec3::new(car.yaw.sin(), 0.0, car.yaw.cos());
+                let desired = center - forward * 7.0 + Vec3::Y * 2.5;
+                self.position = self
+                    .collision
+                    .as_ref()
+                    .map_or(desired, |world| world.clip_camera(center, desired));
+            }
         }
         if now.duration_since(self.network_pose_last) < Duration::from_millis(33) {
             return;
