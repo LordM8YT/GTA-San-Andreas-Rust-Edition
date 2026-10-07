@@ -19,8 +19,7 @@ Run from the repository root:
 python tools/convert-gta5.py C:/Downloads/car/skyline.yft --textures C:/Downloads/car/skyline.ytd --type vehicle --out "mods/[vehicles]/skyline" --enable
 ```
 
-Restart the game and press **F9** to spawn/enter the custom vehicle. Only one
-custom vehicle resource can be enabled. Choose the normal `.yft` for a lighter
+Restart the game and press **F9** to spawn/enter the custom vehicle. Use `/cars` or F7 to select among enabled vehicles. Choose the normal `.yft` for a lighter
 model or `_hi.yft` for its high-detail geometry. Output directories must be new;
 existing resources are never overwritten. Omit `--enable` to prepare a disabled
 resource for review. `--scale` and `--flip-v` are available for rigid models.
@@ -54,16 +53,16 @@ otherwise export the matching source YFT skeleton as CodeWalker XML.
 python tools/convert-gta5.py C:/Downloads/ped/custom.ydd --textures C:/Downloads/ped/custom.ytd --type player --skeleton C:/Downloads/ped/source.yft.xml --base-player C:/MyNativePed/ped.dff --base-ifp C:/MyNativePed/ped.ifp --bone-map C:/MyNativePed/bones.json --out "mods/[peds]/custom-player" --enable
 ```
 
-Restart to use the player. Enable only one player resource. The target DFF
+Restart to register the player. Use `/peds` or F8 to select an enabled player resource. The target DFF
 supplies the bone hierarchy and bind matrices; only its animation IFP is copied
 into this player package. Textures come from the converted character. The
-converted player must fit our upright 1–2.5 m height requirement and all weighted
+converted player must fit our upright 1â€“2.5 m height requirement and all weighted
 bones need matching tracks in the native idle/walk/run clips. Additional facial
 bones need a deliberate mapping or model editing; automatic facial animation
 and GTA V animations are not imported.
 
-This replaces the controlled player. Ambient NPC spawning, model selection
-during gameplay, per-ped AI and arbitrary FiveM script APIs are not implemented.
+This replaces the controlled player. Nearby idle peds can be spawned from the Peds menu, with a limit of eight.
+Navigation/combat AI and arbitrary FiveM script APIs are not implemented.
 Custom peds are still hidden while driving. Use our `native-ped-demo` as an
 example of a compatible target rig; its simple skeleton is not a universal
 mapping for every downloaded character.

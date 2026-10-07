@@ -116,12 +116,13 @@ Runnable custom vehicles are registered separately:
 }
 ```
 
-Only one custom vehicle can be active at a time. It replaces the F9 taxi and
-uses the same driving controls. `txd` can be omitted for an untextured DFF.
+Up to 32 custom vehicles can be registered. One vehicle is active at a time.
+Use `/cars` or F7 to select and spawn; F9 respawns the selected vehicle. `txd` can be omitted for an untextured DFF.
 All textures must be included in the resource TXD; automatic lookup in the
 original `vehicle.txd` is available only for the standard taxi. Use a typical
 passenger car with original SA scale and model axes. Physics uses a fixed
-passenger-car shape, without custom handling, wheel animation, or damage.
+passenger-car shape, without custom handling, wheel animation, or damage. Tire slip, axle forces, handbrake grip reduction,
+four-point ground contact, suspension and body pitch/roll are simulated.
 
 `mods/native-car-demo` is a simple custom blue car with no original assets.
 Set `enabled` to `true` in its `mod.json` and restart to try it. The demo is
@@ -138,7 +139,9 @@ A custom player character is registered with `player`:
 }
 ```
 
-Only one player resource can be active. The model must have PC Skin/HAnim
+Up to 16 player resources can be registered. `/peds` or F8 selects the controlled
+player. Use “Spawn nearby” or S to place an idle ped in the world (maximum eight).
+Spawned peds have no navigation/combat AI; remove them from the Peds menu. The model must have PC Skin/HAnim
 data with bone IDs and weights. `txd` can be omitted for untextured geometry.
 `ifp` can be omitted when the skeleton matches the original `anim/ped.ifp`;
 otherwise, provide custom ANP3 clips named `idle_stance`, `walk_player`, and
@@ -178,8 +181,7 @@ Outfits are not yet saved between sessions. Original CJ component assembly and
 FiveM clothing are not loaded directly.
 
 `mods/native-clothing-demo` shows a separate red jacket and yellow hat on our
-custom demo character. It is disabled by default. Enable only one of the player
-demos at a time.
+custom demo character. It is disabled by default. Select a player demo through `/peds` after enabling its resource.
 
 Filer begrenses til 16 MiB hver, totalt 512 modeller, 512 teksturoverstyringer
 og 256 MiB mod-ressurser. Ressurser kan ikke referere til filer utenfor egen

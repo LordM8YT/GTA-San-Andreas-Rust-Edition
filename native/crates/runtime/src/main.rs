@@ -30,6 +30,12 @@ struct GpuBatch {
     animated: bool,
     base: Vec<f32>,
 }
+struct SpawnedPed {
+    model: usize,
+    feet: Vec3,
+    yaw: f32,
+    batches: Vec<GpuBatch>,
+}
 struct State {
     audio: Option<sa_audio::AudioEngine>,
     frontend_sounds: Option<sa_audio::FrontendSounds>,
@@ -84,6 +90,12 @@ struct State {
     quit_requested: bool,
     car: Option<(sa_scene::vehicle::Car, Vec<GpuBatch>)>,
     driving: bool,
+    car_catalog: Vec<Option<(sa_scene::vehicle::Car, Vec<GpuBatch>)>>,
+    ped_catalog: Vec<Option<(sa_scene::ped::Ped, Vec<GpuBatch>)>>,
+    spawned_peds: Vec<SpawnedPed>,
+    npc_seconds: f32,
+    active_car: usize,
+    active_ped: usize,
     ped: Option<(sa_scene::ped::Ped, Vec<GpuBatch>)>,
     third_person: bool,
     ped_visible: bool,
@@ -434,6 +446,12 @@ impl State {
             quit_requested: false,
             car: None,
             driving: false,
+            car_catalog: vec![None],
+            ped_catalog: vec![None],
+            spawned_peds: Vec::new(),
+            npc_seconds: 0.0,
+            active_car: 0,
+            active_ped: 0,
             ped: None,
             third_person: true,
             ped_visible: true,
@@ -712,7 +730,9 @@ impl State {
         let dt = if self.menu.page.is_some() {
             0.0
         } else {
-            (now - self.last).as_secs_f32().min(0.05)
+            (now - self.last)
+                .as_secs_f32()
+                .min(if self.driving { 0.25 } else { 0.05 })
         };
         self.last = now;
         self.stream_world();
@@ -794,9 +814,9 @@ impl State {
                     - f32::from(self.keys.contains(&KeyCode::KeyS))
                     + self.gamepad.throttle)
                     .clamp(-1.0, 1.0);
-                let steer = (f32::from(self.keys.contains(&KeyCode::KeyA))
-                    - f32::from(self.keys.contains(&KeyCode::KeyD))
-                    - self.gamepad.move_x)
+                let steer = (f32::from(self.keys.contains(&KeyCode::KeyD))
+                    - f32::from(self.keys.contains(&KeyCode::KeyA))
+                    + self.gamepad.move_x)
                     .clamp(-1.0, 1.0);
                 car.step(
                     world,
@@ -900,8 +920,36 @@ impl State {
                 }
             }
         }
+        self.npc_seconds += dt;
+        for npc in &self.spawned_peds {
+            let source = if npc.model == self.active_ped {
+                self.ped.as_ref()
+            } else {
+                self.ped_catalog.get(npc.model).and_then(|p| p.as_ref())
+            };
+            if let Some((ped, _)) = source {
+                if let Ok(posed) = ped.frame("idle_stance", self.npc_seconds) {
+                    let rotation = Quat::from_rotation_y(npc.yaw + std::f32::consts::PI);
+                    for (mesh, batch) in posed.iter().zip(&npc.batches) {
+                        let mut raw = Vec::with_capacity(mesh.vertices.len() * 9);
+                        for vertex in &mesh.vertices {
+                            raw.extend(
+                                (rotation * Vec3::from_array(vertex.position) + npc.feet)
+                                    .to_array(),
+                            );
+                            raw.extend(vertex.uv);
+                            raw.extend(vertex.color);
+                        }
+                        self.queue
+                            .write_buffer(&batch.buffer, 0, bytemuck::cast_slice(&raw));
+                    }
+                }
+            }
+        }
         if let Some((car, batches)) = &self.car {
-            let rotation = Quat::from_rotation_y(car.yaw + std::f32::consts::PI);
+            let rotation = Quat::from_rotation_y(car.yaw + std::f32::consts::PI)
+                * Quat::from_rotation_x(car.pitch)
+                * Quat::from_rotation_z(-car.roll);
             for batch in batches {
                 let mut raw = batch.base.clone();
                 for v in raw.as_chunks_mut::<9>().0.iter_mut() {
@@ -1057,6 +1105,7 @@ impl State {
     }
     fn respawn(&mut self) {
         self.driving = false;
+        self.spawned_peds.clear();
         // Recover on loaded ground rather than teleporting into an unloaded map.
         let eye = Vec3::new(
             self.region[0] - ORIGIN[0],
@@ -1076,6 +1125,75 @@ impl State {
             self.position = player.eye();
             self.player = Some(player);
         }
+    }
+    fn spawn_ped(&mut self, index: usize) -> Result<()> {
+        anyhow::ensure!(
+            self.spawned_peds.len() < 8,
+            "At most 8 spawned peds. Remove some first."
+        );
+        let world = self.collision.as_ref().context("No loaded ground")?;
+        let side = Vec3::new(self.yaw.cos(), 0.0, -self.yaw.sin());
+        let origin = if self.driving {
+            self.car
+                .as_ref()
+                .map(|(car, _)| car.position + Vec3::Y * (1.6 - car.clearance))
+                .unwrap_or(self.position)
+        } else {
+            self.player
+                .as_ref()
+                .map(|p| p.eye())
+                .unwrap_or(self.position)
+        };
+        let forward = Vec3::new(self.yaw.sin(), 0.0, self.yaw.cos());
+        let distance = 3.0 + self.spawned_peds.len() as f32 * 0.7;
+        let player = [side, -side, forward, -forward]
+            .into_iter()
+            .find_map(|direction| {
+                world
+                    .standing_at(origin + direction * distance, origin.y + 0.5)
+                    .filter(|p| world.clip_camera(origin, p.eye()).distance(p.eye()) < 0.1)
+            })
+            .context("No safe standing space nearby; move to an open road")?;
+        let source = if index == self.active_ped {
+            self.ped.as_ref()
+        } else {
+            self.ped_catalog.get(index).and_then(|p| p.as_ref())
+        }
+        .context("Ped model unavailable")?;
+        let rotation = Quat::from_rotation_y(self.yaw + std::f32::consts::PI);
+        let batches = source
+            .1
+            .iter()
+            .map(|batch| {
+                let mut raw = batch.base.clone();
+                for vertex in raw.as_chunks_mut::<9>().0.iter_mut() {
+                    let point = rotation * Vec3::new(vertex[0], vertex[1], vertex[2]) + player.feet;
+                    vertex[..3].copy_from_slice(&point.to_array());
+                }
+                let buffer = self
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("spawned ped"),
+                        contents: bytemuck::cast_slice(&raw),
+                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    });
+                GpuBatch {
+                    buffer,
+                    count: batch.count,
+                    texture: batch.texture.clone(),
+                    alpha: batch.alpha,
+                    animated: true,
+                    base: Vec::new(),
+                }
+            })
+            .collect();
+        self.spawned_peds.push(SpawnedPed {
+            model: index,
+            feet: player.feet,
+            yaw: self.yaw,
+            batches,
+        });
+        Ok(())
     }
     fn apply_menu_action(&mut self, action: Option<menu::Action>) {
         if action.is_some() {
@@ -1113,6 +1231,89 @@ impl State {
                         self.menu.message = error.to_string();
                     }
                     self.menu.clothes = ped.clothing_options();
+                }
+            }
+            Some(menu::Action::Car(index)) => {
+                if self.interior != 0 {
+                    self.menu.message = "Vehicles can be spawned outside.".into();
+                    return;
+                }
+                if index < self.car_catalog.len() {
+                    let selected = if index == self.active_car {
+                        self.car.as_ref()
+                    } else {
+                        self.car_catalog[index].as_ref()
+                    };
+                    let origin = if self.driving {
+                        self.car
+                            .as_ref()
+                            .map(|(c, _)| c.position + Vec3::Y * (1.6 - c.clearance))
+                            .unwrap_or(self.position)
+                    } else {
+                        self.player
+                            .as_ref()
+                            .map(|p| p.eye())
+                            .unwrap_or(self.position)
+                    };
+                    let placed = selected.and_then(|(c, _)| {
+                        self.collision.as_ref().and_then(|world| {
+                            sa_scene::vehicle::Car::spawn_near(world, origin, self.yaw, c.clearance)
+                        })
+                    });
+                    let Some(placed) = placed else {
+                        self.menu.message =
+                            "No clear supported space nearby. Move to an open road.".into();
+                        return;
+                    };
+                    if index != self.active_car {
+                        if let Some(next) = self.car_catalog[index].take() {
+                            self.car_catalog[self.active_car] = self.car.replace(next);
+                            self.active_car = index;
+                        }
+                    }
+                    if let Some((car, _)) = &mut self.car {
+                        *car = placed;
+                    }
+                    self.driving = true;
+                    if self.driving {
+                        self.menu.has_played = true;
+                        self.menu.message.clear();
+                        self.menu.page = None;
+                        self.keys.clear();
+                        self.capture(true);
+                    } else {
+                        self.menu.message =
+                            "No clear supported space nearby. Move to an open road.".into();
+                    }
+                }
+            }
+            Some(menu::Action::SpawnPed(index)) => match self.spawn_ped(index) {
+                Ok(()) => {
+                    self.menu.has_played = true;
+                    self.menu.message.clear();
+                    self.menu.page = None;
+                    self.keys.clear();
+                    self.capture(true);
+                }
+                Err(e) => self.menu.message = e.to_string(),
+            },
+            Some(menu::Action::ClearPeds) => self.spawned_peds.clear(),
+            Some(menu::Action::Ped(index)) => {
+                if index < self.ped_catalog.len() {
+                    if index != self.active_ped {
+                        if let Some(next) = self.ped_catalog[index].take() {
+                            self.ped_catalog[self.active_ped] = self.ped.replace(next);
+                            self.active_ped = index;
+                        }
+                    }
+                    if let Some((ped, _)) = &self.ped {
+                        self.menu.clothes = ped.clothing_options();
+                    }
+                    self.menu.has_played = true;
+                    self.menu.message.clear();
+                    self.menu.page = None;
+                    self.keys.clear();
+                    self.capture(true);
                 }
             }
             Some(menu::Action::Main) => {
@@ -1298,6 +1499,7 @@ impl State {
                 .batches
                 .iter()
                 .chain(self.car.iter().flat_map(|(_, b)| b))
+                .chain(self.spawned_peds.iter().flat_map(|p| &p.batches))
                 .chain(
                     self.ped
                         .iter()
@@ -1373,6 +1575,9 @@ impl State {
 struct App {
     frontend_sounds: Option<sa_audio::FrontendSounds>,
     car_scene: Option<Scene>,
+    initial_models: (String, String),
+    car_catalog: Vec<(String, Scene)>,
+    ped_catalog: Vec<(String, sa_scene::ped::Ped)>,
     ped: Option<sa_scene::ped::Ped>,
     scene: Option<Scene>,
     state: Option<State>,
@@ -1387,6 +1592,7 @@ struct App {
     mod_names: Vec<String>,
     game_dir: PathBuf,
     smoke_menus: bool,
+    smoke_spawner: bool,
     smoke_graphics: bool,
     smoke_stream: bool,
     smoke_car: bool,
@@ -1568,6 +1774,37 @@ impl ApplicationHandler for App {
                         state.menu.message = format!("Bil kunne ikke lastes: {error}");
                     }
                 }
+                state.menu.cars = vec![self.initial_models.0.clone()];
+                state.menu.peds = vec![self.initial_models.1.clone()];
+                for (name, scene) in std::mem::take(&mut self.car_catalog) {
+                    let previous = state.car.take();
+                    match state.install_car(scene) {
+                        Ok(()) => {
+                            state.car_catalog.push(state.car.take());
+                            state.menu.cars.push(name);
+                        }
+                        Err(e) => eprintln!("Catalog upload failed: {e:#}"),
+                    }
+                    state.car = previous;
+                }
+                for (name, ped) in std::mem::take(&mut self.ped_catalog) {
+                    match ped.scene().and_then(|scene| {
+                        State::upload_scene(
+                            &state.device,
+                            &state.queue,
+                            &state.image_layout,
+                            &state.sampler,
+                            scene,
+                        )
+                    }) {
+                        Ok(batches) => {
+                            state.ped_catalog.push(Some((ped, batches)));
+                            state.menu.peds.push(name);
+                        }
+                        Err(e) => eprintln!("Catalog ped upload failed: {e:#}"),
+                    }
+                }
+                state.driving = false;
                 if self.smoke && !self.smoke_menus && !self.smoke_graphics {
                     state.menu.page = None;
                     state.menu.has_played = true;
@@ -1631,6 +1868,15 @@ impl ApplicationHandler for App {
         let _ = state.gui_input.on_window_event(&state.window, &event);
         if let WindowEvent::KeyboardInput { event, .. } = &event {
             if event.state == ElementState::Pressed && !event.repeat {
+                if state.menu.page.is_none()
+                    && matches!(&event.logical_key,winit::keyboard::Key::Character(text) if text.as_str()=="/")
+                {
+                    state.menu.command = "/".into();
+                    state.menu.open(menu::Page::Commands);
+                    state.keys.clear();
+                    state.capture(false);
+                    return;
+                }
                 if event.physical_key == PhysicalKey::Code(KeyCode::Escape)
                     && state.streamer.is_some()
                 {
@@ -1988,7 +2234,34 @@ impl ApplicationHandler for App {
                 }
                 if self.smoke_menus && rendered {
                     self.smoke_frames += 1;
-                    if self.smoke_frames >= 4 {
+                    let mut frame_limit = 4;
+                    if self.smoke_spawner {
+                        if state.menu.page == Some(menu::Page::Cars) {
+                            frame_limit = state.menu.cars.len() + 1;
+                            let index = self.smoke_frames - 1;
+                            if index < state.menu.cars.len() {
+                                state.apply_menu_action(Some(menu::Action::Car(index)));
+                                assert!(state.driving, "catalog car spawn failed");
+                                state.menu.open(menu::Page::Cars);
+                            }
+                        } else if state.menu.page == Some(menu::Page::Peds) {
+                            frame_limit = state.menu.peds.len() + 1;
+                            let index = self.smoke_frames - 1;
+                            if index < state.menu.peds.len() {
+                                state.apply_menu_action(Some(menu::Action::Ped(index)));
+                                assert_eq!(state.active_ped, index);
+                                state.apply_menu_action(Some(menu::Action::SpawnPed(index)));
+                                assert_eq!(
+                                    state.spawned_peds.len(),
+                                    index + 1,
+                                    "ped spawn failed: {}",
+                                    state.menu.message
+                                );
+                                state.menu.open(menu::Page::Peds);
+                            }
+                        }
+                    }
+                    if self.smoke_frames >= frame_limit {
                         println!("GPU rendered menu {:?}", state.menu.page);
                         self.smoke_frames = 0;
                         self.smoke_region += 1;
@@ -2001,10 +2274,13 @@ impl ApplicationHandler for App {
                             menu::Page::Mods,
                             menu::Page::Wardrobe,
                             menu::Page::Interiors,
+                            menu::Page::Cars,
+                            menu::Page::Peds,
+                            menu::Page::Commands,
                             menu::Page::Quit,
                         ];
                         if self.smoke_region >= pages.len() {
-                            println!("GPU menu smoke passed: 9 menus");
+                            println!("GPU menu smoke passed: 12 menus");
                             event_loop.exit();
                         } else {
                             state.menu.open(pages[self.smoke_region]);
@@ -2072,6 +2348,22 @@ impl ApplicationHandler for App {
                                         eprintln!("Audio test tone failed: {error:#}");
                                     }
                                 }
+                            }
+                            KeyCode::Slash if !event.repeat => {
+                                state.menu.command = "/".into();
+                                state.menu.open(menu::Page::Commands);
+                                state.keys.clear();
+                                state.capture(false);
+                            }
+                            KeyCode::F7 if !event.repeat => {
+                                state.menu.open(menu::Page::Cars);
+                                state.keys.clear();
+                                state.capture(false);
+                            }
+                            KeyCode::F8 if !event.repeat => {
+                                state.menu.open(menu::Page::Peds);
+                                state.keys.clear();
+                                state.capture(false);
                             }
                             KeyCode::F6 if !event.repeat => {
                                 state.menu.open(menu::Page::Wardrobe);
@@ -2499,6 +2791,46 @@ fn main() -> Result<()> {
         } else {
             None
         },
+        initial_models: loader.as_ref().map(|l| l.model_names()).unwrap_or_default(),
+        car_catalog: {
+            let mut catalog = loader
+                .as_mut()
+                .map(|l| l.take_car_catalog())
+                .unwrap_or_default();
+            if loader.is_some() {
+                for (name, model) in [
+                    ("Taxi", "taxi"),
+                    ("Infernus", "infernus"),
+                    ("Admiral", "admiral"),
+                ] {
+                    match sa_scene::load_car_model(&game, model) {
+                        Ok(scene) => catalog.push((name.into(), scene)),
+                        Err(e) => eprintln!("Vehicle {model} unavailable: {e:#}"),
+                    }
+                }
+            }
+            catalog
+        },
+        ped_catalog: {
+            let mut catalog = loader
+                .as_mut()
+                .map(|l| l.take_ped_catalog(&game))
+                .transpose()?
+                .unwrap_or_default();
+            if loader.is_some() {
+                for (name, model) in [
+                    ("Grove Street", "fam1"),
+                    ("Grove Street 2", "fam2"),
+                    ("Ballas", "ballas1"),
+                ] {
+                    match sa_scene::ped::Ped::load_model(&game, model) {
+                        Ok(ped) => catalog.push((name.into(), ped)),
+                        Err(e) => eprintln!("Ped {model} unavailable: {e:#}"),
+                    }
+                }
+            }
+            catalog
+        },
         scene: Some(scene),
         state: None,
         first_model,
@@ -2506,6 +2838,7 @@ fn main() -> Result<()> {
         smoke: args.iter().any(|a| {
             a == "--smoke-tour"
                 || a == "--smoke-menus"
+                || a == "--smoke-spawner"
                 || a == "--smoke-graphics"
                 || a == "--smoke-stream"
                 || a == "--smoke-car"
@@ -2524,7 +2857,10 @@ fn main() -> Result<()> {
         mod_names,
         game_dir: game,
         test_tone: sa_audio::SoundEffect::tone(660.0, 0.18, 48_000).ok(),
-        smoke_menus: args.iter().any(|a| a == "--smoke-menus"),
+        smoke_spawner: args.iter().any(|a| a == "--smoke-spawner"),
+        smoke_menus: args
+            .iter()
+            .any(|a| a == "--smoke-menus" || a == "--smoke-spawner"),
         smoke_graphics: args.iter().any(|a| a == "--smoke-graphics"),
         smoke_stream: args.iter().any(|a| a == "--smoke-stream"),
         smoke_car: args.iter().any(|a| a == "--smoke-car"),

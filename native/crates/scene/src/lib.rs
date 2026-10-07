@@ -370,9 +370,16 @@ pub struct WorldLoader {
 pub const DISTANT_RADIUS: f32 = 2500.0;
 /// Standalone taxi mesh; no script or cutscene timeline is loaded.
 pub fn load_car(game: &Path) -> Result<Scene> {
+    load_car_model(game, "taxi")
+}
+pub fn load_car_model(game: &Path, model: &str) -> Result<Scene> {
+    ensure!(
+        model.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
+        "invalid vehicle model name"
+    );
     let mut main = Img::open(&sa_assets::game_path::resolve(game, "models/gta3.img")?)?;
-    let geometry = sa_assets::decode_vehicle_dff(&main.read("taxi.dff")?)?;
-    let taxi = main.read("taxi.txd")?;
+    let geometry = sa_assets::decode_vehicle_dff(&main.read(&format!("{model}.dff"))?)?;
+    let taxi = main.read(&format!("{model}.txd"))?;
     let common = fs::read(sa_assets::game_path::resolve(
         game,
         "models/generic/vehicle.txd",

@@ -18,7 +18,11 @@ Exe-en ligger i `native/target/release/sa-runtime.exe`.
 - I dypt vann: WASD beveger i overflaten, Space gir et løft.
 - P: gåmodus/flykamera. Q/E: ned/opp i flykamera. Esc: pausemeny.
 - M: kartmeny. Mus, piltaster/Enter eller Xbox D-pad/A brukes i menyene.
-- F9: hent taxi foran deg og sett deg inn. F: gå ut / inn nær bilen.
+- /cars eller F7: velg og spawn bil. /peds eller F8: bytt spillerfigur.
+  Trykk /, skriv kommandoen og Enter. Menyene finnes ogsaa i pausemenyen.
+  Velg Spawn nearby eller S i peds-menyen for en figur i verden (maks aatte),
+  med idle-animasjon uten kamp-/gang-AI.
+- F9: hent valgt bil foran deg og sett deg inn. F: gå ut / inn nær bilen.
 - I bil: W/S gass og brems/rygging, A/D styring, Space håndbrems.
 - R: last Grove Street og gå tilbake dit.
 - 1: Grove Street; 2: Los Santos sentrum; 3: Santa Maria-stranden.
@@ -165,3 +169,8 @@ Se [vehicle dynamics](vehicle-dynamics.md) for detaljer og begrensninger.
 Grafikkmenyen har egne kategorier, kvalitetsprofiler og fungerende FSR 1.
 Se [grafikkstatus](graphics.md) og [Linux/Vulkan](linux.md). DLSS og temporal
 FSR er fortsatt ikke integrert.
+
+Vehicle handling uses axle tire forces, combined braking/cornering grip,
+four ground contacts and damped suspension/body lean. Keyboard/controller
+steering direction is corrected. This remains a simplified passenger-car
+simulation without damage, wheel articulation or full rigid-body collisions.

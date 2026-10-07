@@ -7,6 +7,8 @@ pub struct Car {
     pub yaw: f32,
     pub speed: f32,
     pub clearance: f32,
+    pub pitch: f32,
+    pub roll: f32,
     vertical_speed: f32,
     lateral_speed: f32,
     steering_angle: f32,
@@ -19,6 +21,8 @@ impl Car {
             yaw: 0.0,
             speed: 0.0,
             clearance,
+            pitch: 0.0,
+            roll: 0.0,
             vertical_speed: 0.0,
             lateral_speed: 0.0,
             steering_angle: 0.0,
@@ -108,7 +112,7 @@ impl Car {
         handling: f32,
         dt: f32,
     ) {
-        let dt = dt.clamp(0.0, 0.05);
+        let dt = dt.clamp(0.0, 0.25);
         if dt == 0.0 {
             return;
         }
@@ -138,10 +142,29 @@ impl Car {
         let throttle = throttle.clamp(-1.0, 1.0);
         let side = Vec3::new(self.yaw.cos(), 0.0, -self.yaw.sin());
         let mut velocity = self.forward() * self.speed + side * self.lateral_speed;
-        let grounded = world
-            .ground_below(self.position, self.position.y - self.clearance + 0.45)
-            .is_some_and(|ground| self.position.y - self.clearance <= ground + 0.45);
-        let grip = if grounded { 1.0 } else { 0.0 };
+        // Four tire contact points avoid losing all traction at the centre of a ledge.
+        let contacts = [-0.72, 0.72]
+            .into_iter()
+            .flat_map(|x| [-1.35, 1.35].map(move |z| (x, z)))
+            .map(|(x, z)| {
+                world.ground_below(
+                    self.position + side * x + self.forward() * z,
+                    self.position.y - self.clearance + 0.28,
+                )
+            })
+            .collect::<Vec<_>>();
+        let supports: Vec<_> = contacts
+            .iter()
+            .flatten()
+            .copied()
+            .filter(|g| self.position.y - self.clearance <= *g + 0.5)
+            .collect();
+        let grounded = supports.len() >= 2;
+        let grip = if grounded {
+            supports.len() as f32 / 4.0
+        } else {
+            0.0
+        };
         // Steering lock falls with speed; wheel input and body rotation both have inertia.
         let lock = 0.55 / (1.0 + (self.speed.abs() / 16.0).powi(2));
         let target_steering = steer.clamp(-1.0, 1.0) * lock;
@@ -164,11 +187,20 @@ impl Car {
                 * dt;
         self.speed = self.speed.signum() * (self.speed.abs() - resistance).max(0.0);
         velocity += self.forward() * (self.speed - old_speed);
-        let desired_yaw_rate = self.speed / 2.7 * self.steering_angle.tan();
-        let max_yaw_rate =
-            (8.5 * handling / self.speed.abs().max(3.0)) * if handbrake { 1.55 } else { 1.0 };
-        let target_yaw_rate = desired_yaw_rate.clamp(-max_yaw_rate, max_yaw_rate) * grip;
-        self.yaw_rate += (target_yaw_rate - self.yaw_rate) * (1.0 - (-5.0 * dt).exp());
+        // Axle slip generates both lateral force and yaw torque. Forces are bounded
+        // by a friction circle so braking and cornering share the available grip.
+        let tire_budget = (4.6 * handling).powi(2) - (acceleration * grip * 0.5).powi(2);
+        let front_limit = tire_budget.max(0.5).sqrt() * grip;
+        let rear_limit = 4.6 * handling * grip * if handbrake { 0.12 } else { 1.0 };
+        let front_slip =
+            self.lateral_speed + 1.35 * self.yaw_rate - self.speed * self.steering_angle.tan();
+        let rear_slip = self.lateral_speed - 1.35 * self.yaw_rate;
+        let front_force = (-front_slip * 5.5).clamp(-front_limit, front_limit);
+        let rear_force = (-rear_slip * 5.5).clamp(-rear_limit, rear_limit);
+        let lateral_acceleration = front_force + rear_force;
+        velocity += side * lateral_acceleration * dt;
+        self.yaw_rate += (1.35 * (front_force - rear_force) / 2.2 - self.yaw_rate * 0.22) * dt;
+        self.yaw_rate = self.yaw_rate.clamp(-2.0, 2.0);
         let old_yaw = self.yaw;
         self.yaw += self.yaw_rate * dt;
         if !self.body_clear(world, self.position) {
@@ -178,32 +210,52 @@ impl Car {
         let side = Vec3::new(self.yaw.cos(), 0.0, -self.yaw.sin());
         self.speed = velocity.dot(self.forward());
         self.lateral_speed = velocity.dot(side);
-        // Limited tire force preserves momentum through corners. The handbrake
-        // reduces rear grip instead of making the car stop instantly.
-        let lateral_acceleration = (-self.lateral_speed * 7.0)
-            .clamp(-8.5 * handling, 8.5 * handling)
-            * grip
-            * if handbrake { 0.16 } else { 1.0 };
-        self.lateral_speed += lateral_acceleration * dt;
+        let height = |index: usize| contacts[index].unwrap_or(self.position.y - self.clearance);
+        let slope_pitch = (((height(1) + height(3)) - (height(0) + height(2))) * 0.5 / 2.7).atan();
+        let slope_roll = (((height(2) + height(3)) - (height(0) + height(1))) * 0.5 / 1.44).atan();
+        let blend = 1.0 - (-8.0 * dt).exp();
+        self.pitch +=
+            ((slope_pitch + acceleration * grip * 0.012).clamp(-0.3, 0.3) - self.pitch) * blend;
+        self.roll +=
+            ((slope_roll + lateral_acceleration * 0.016).clamp(-0.25, 0.25) - self.roll) * blend;
         let motion = (self.forward() * self.speed + side * self.lateral_speed) * dt;
         let steps = ((motion.length() / 0.15).ceil() as usize).clamp(1, 20);
         for _ in 0..steps {
             let desired = self.position + motion / steps as f32;
             if !self.body_clear(world, desired) {
+                let bottom = self.position.y - self.clearance;
+                let high = [-0.7, 0.7]
+                    .into_iter()
+                    .flat_map(|x| [-2.25, 2.25].map(move |z| (x, z)))
+                    .filter_map(|(x, z)| {
+                        world.ground_below(desired + side * x + self.forward() * z, bottom + 0.25)
+                    })
+                    .fold(bottom, f32::max);
+                let raised = Vec3::new(desired.x, high + self.clearance, desired.z);
+                if high > bottom + 0.01 && high - bottom <= 0.25 && self.body_clear(world, raised) {
+                    self.position = raised;
+                    self.vertical_speed = self.vertical_speed.max(0.0);
+                    continue;
+                }
                 self.stop();
                 break;
             }
             self.position = desired;
         }
-        self.vertical_speed -= 17.0 * dt;
-        self.position.y += self.vertical_speed * dt;
-        if let Some(ground) =
-            world.ground_below(self.position, self.position.y - self.clearance + 0.45)
-        {
-            if self.position.y - self.clearance <= ground + 0.4 {
-                self.position.y = ground + self.clearance;
-                self.vertical_speed = 0.0;
+        self.vertical_speed -= 9.81 * dt;
+        if grounded {
+            let ground = supports.iter().sum::<f32>() / supports.len() as f32;
+            let target = ground + self.clearance;
+            // A damped suspension settles instead of snapping to one centre ray.
+            self.vertical_speed +=
+                (9.81 + (target - self.position.y) * 140.0 - self.vertical_speed * 22.0) * dt;
+            self.position.y += self.vertical_speed * dt;
+            if self.position.y < target {
+                self.position.y = target;
+                self.vertical_speed = self.vertical_speed.max(0.0);
             }
+        } else {
+            self.position.y += self.vertical_speed * dt;
         }
     }
 }
@@ -339,6 +391,52 @@ mod tests {
         }
         assert!(sliding.lateral_speed.abs() > normal.lateral_speed.abs() + 0.5);
         assert!(sliding.speed > 5.0);
+    }
+    #[test]
+    fn low_curb_is_traversable_but_tall_wall_still_blocks() {
+        let curb = mesh(&[
+            [-20.0, 0.0, 3.0],
+            [-20.0, 0.15, 3.0],
+            [20.0, 0.15, 3.0],
+            [-20.0, 0.0, 3.0],
+            [20.0, 0.15, 3.0],
+            [20.0, 0.0, 3.0],
+        ]);
+        let world =
+            CollisionWorld::from_batches(&[floor(-100.0, 3.0, 0.0), floor(3.0, 100.0, 0.15), curb]);
+        let mut car = Car::new(Vec3::Y * 0.6, 0.6);
+        for _ in 0..180 {
+            car.step(&world, 1.0, 0.0, false, 1.0, 1.0 / 60.0);
+        }
+        assert!(
+            car.position.z > 10.0,
+            "curb stopped car at {:?}",
+            car.position
+        );
+        assert!(car.position.y >= 0.74 && car.position.is_finite());
+    }
+    #[test]
+    fn steering_direction_reverses_when_backing_and_slow_frames_keep_elapsed_time() {
+        let world = CollisionWorld::from_batches(&[floor(-500.0, 500.0, 0.0)]);
+        let mut forward = Car::new(Vec3::Y * 0.6, 0.6);
+        forward.speed = 10.0;
+        let mut reverse = Car::new(Vec3::Y * 0.6, 0.6);
+        reverse.speed = -5.0;
+        for _ in 0..60 {
+            forward.step(&world, 0.0, 0.4, false, 1.0, 1.0 / 60.0);
+            reverse.step(&world, 0.0, 0.4, false, 1.0, 1.0 / 60.0);
+        }
+        assert!(forward.yaw > 0.1 && reverse.yaw < -0.1);
+        let mut slow = Car::new(Vec3::Y * 0.6, 0.6);
+        let mut fast = Car::new(Vec3::Y * 0.6, 0.6);
+        for _ in 0..10 {
+            slow.step(&world, 1.0, 0.0, false, 1.0, 0.1);
+        }
+        for _ in 0..120 {
+            fast.step(&world, 1.0, 0.0, false, 1.0, 1.0 / 120.0);
+        }
+        assert!(slow.position.distance(fast.position) < 0.01);
+        assert!(forward.roll.abs() > 0.001 && forward.roll.abs() < 0.26);
     }
     #[test]
     fn driving_is_consistent_across_frame_rates_and_air_has_no_traction() {

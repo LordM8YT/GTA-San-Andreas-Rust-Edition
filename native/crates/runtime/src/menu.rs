@@ -117,6 +117,9 @@ pub enum Page {
     Mods,
     Wardrobe,
     Interiors,
+    Cars,
+    Peds,
+    Commands,
     Quit,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -127,6 +130,10 @@ pub enum Action {
     Quit,
     Main,
     Clothing(usize, bool),
+    Car(usize),
+    Ped(usize),
+    SpawnPed(usize),
+    ClearPeds,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 enum SettingsTab {
@@ -169,6 +176,9 @@ pub struct Menu {
     pub settings: Settings,
     pub mods: Vec<String>,
     pub clothes: Vec<(String, bool)>,
+    pub cars: Vec<String>,
+    pub peds: Vec<String>,
+    pub command: String,
     pub has_played: bool,
     selected: usize,
     pub message: String,
@@ -444,6 +454,9 @@ impl Menu {
             settings: Settings::load(),
             mods,
             clothes: Vec::new(),
+            cars: Vec::new(),
+            peds: Vec::new(),
+            command: String::new(),
             has_played: false,
             selected: 0,
             message: String::new(),
@@ -455,6 +468,13 @@ impl Menu {
             settings_controls: Vec::new(),
             graphics_device: String::new(),
             graphics_resolution: String::new(),
+        }
+    }
+    pub fn submit_command(&mut self) {
+        match self.command.trim().to_ascii_lowercase().as_str() {
+            "/cars" => self.open(Page::Cars),
+            "/peds" => self.open(Page::Peds),
+            _ => self.message = "Unknown command. Use /cars or /peds.".into(),
         }
     }
     pub fn open(&mut self, page: Page) {
@@ -472,7 +492,9 @@ impl Menu {
         back: bool,
     ) -> Option<Action> {
         let item_count = match self.page {
-            Some(Page::Main | Page::Pause) => 8,
+            Some(Page::Main | Page::Pause) => 10,
+            Some(Page::Cars) => self.cars.len().max(1),
+            Some(Page::Peds) => self.peds.len().max(1),
             Some(Page::Map) => DESTINATIONS.len(),
             Some(Page::Interiors) => INTERIORS.len(),
             Some(Page::Wardrobe) => self.clothes.len().max(1),
@@ -491,6 +513,9 @@ impl Menu {
         if left || right {
             match self.page {
                 Some(Page::Settings) => self.adjust_setting(left),
+                Some(Page::Peds) if right && self.selected < self.peds.len() => {
+                    return Some(Action::SpawnPed(self.selected))
+                }
                 Some(Page::Map) => {
                     if left {
                         self.selected =
@@ -528,6 +553,8 @@ impl Menu {
                         4 => self.open(Page::Mods),
                         5 => self.open(Page::Wardrobe),
                         6 => self.open(Page::Interiors),
+                        7 => self.open(Page::Cars),
+                        8 => self.open(Page::Peds),
                         _ if self.page == Some(Page::Main) => self.open(Page::Quit),
                         _ => return Some(Action::Main),
                     }
@@ -537,6 +564,12 @@ impl Menu {
                 }
                 Some(Page::Interiors) if self.selected < INTERIORS.len() => {
                     return Some(Action::Interior(self.selected));
+                }
+                Some(Page::Cars) if self.selected < self.cars.len() => {
+                    return Some(Action::Car(self.selected))
+                }
+                Some(Page::Peds) if self.selected < self.peds.len() => {
+                    return Some(Action::Ped(self.selected))
                 }
                 Some(Page::Quit) => return Some(Action::Quit),
                 _ => {}
@@ -612,7 +645,7 @@ impl Menu {
                             .strong(),
                         );
                         ui.label(
-                            RichText::new("Esc  Menu    M  Map    P  Walk / fly")
+                            RichText::new("Esc  Menu    M  Map    F7  Cars    F8  Peds")
                                 .size(14.0)
                                 .color(MUTED),
                         );
@@ -750,21 +783,21 @@ impl Menu {
             let top=screen.top()+screen.height()*0.12;
             painter.text(Pos2::new(left,top),egui::Align2::LEFT_TOP,"San Andreas",FontId::new(80.0*scale,FontFamily::Name("street".into())),WHITE);
             painter.text(Pos2::new(left+3.0,top+91.0*scale),egui::Align2::LEFT_TOP,"Freeroam",FontId::new(27.0*scale,FontFamily::Name("menu".into())),GOLD);
-            let heading=match page{Page::Main=>"The whole state. Your way.",Page::Pause=>"Take a breath",Page::Map=>"Choose a destination",Page::Settings=>"Settings",Page::Controls=>"Controls",Page::Wardrobe=>"Wardrobe",Page::Interiors=>"Interiors",Page::Mods=>"Local resources",Page::Quit=>"Leave free roam?"};
+            let heading=match page{Page::Main=>"The whole state. Your way.",Page::Pause=>"Take a breath",Page::Map=>"Choose a destination",Page::Settings=>"Settings",Page::Controls=>"Controls",Page::Wardrobe=>"Wardrobe",Page::Interiors=>"Interiors",Page::Mods=>"Local resources",Page::Cars=>"Spawn a vehicle",Page::Peds=>"Choose your player",Page::Commands=>"Commands",Page::Quit=>"Leave free roam?"};
             painter.text(Pos2::new(left,top+150.0*scale),egui::Align2::LEFT_TOP,heading,FontId::proportional(18.0*scale),MUTED);
             let footer=screen.bottom()-48.0*scale;
             painter.text(Pos2::new(left,footer),egui::Align2::LEFT_CENTER,"D-pad / arrows  Move     A / Enter  Select     B / Esc  Back",FontId::proportional(14.0*scale),MUTED);
             painter.text(Pos2::new(screen.right()-40.0*scale,footer),egui::Align2::RIGHT_CENTER,"SA Runtime  •  Free Roam",FontId::proportional(14.0*scale),MUTED);
             if matches!(page,Page::Main|Page::Pause) {
-                let labels=if page==Page::Main{["Explore San Andreas","Map & destinations","Settings","Controls","Mods","Wardrobe","Interiors","Quit"]}else{["Resume","Map & destinations","Settings","Controls","Mods","Wardrobe","Interiors","Main menu"]};
+                let labels=if page==Page::Main{["Explore San Andreas","Map & destinations","Settings","Controls","Mods","Wardrobe","Interiors","Cars","Peds","Quit"]}else{["Resume","Map & destinations","Settings","Controls","Mods","Wardrobe","Interiors","Cars","Peds","Main menu"]};
                 if ctx.input(|i|i.key_pressed(egui::Key::ArrowDown)){self.selected=(self.selected+1)%labels.len();}
                 if ctx.input(|i|i.key_pressed(egui::Key::ArrowUp)){self.selected=(self.selected+labels.len()-1)%labels.len();}
                 for (index,label) in labels.iter().enumerate() {
-                    let rect=Rect::from_min_size(Pos2::new(left,top+(217.0+index as f32*57.0)*scale),Vec2::new(360.0*scale,49.0*scale));
+                    let rect=Rect::from_min_size(Pos2::new(left,top+(217.0+index as f32*45.0)*scale),Vec2::new(360.0*scale,39.0*scale));
                     if Self::nav(ui,rect,label,self.selected==index,index,scale)||(self.selected==index&&ctx.input(|i|i.key_pressed(egui::Key::Enter))) {
                         match index {
                             0=>action=Some(Action::Play),1=>self.open(Page::Map),2=>self.open(Page::Settings),
-                            3=>self.open(Page::Controls),4=>self.open(Page::Mods),5=>self.open(Page::Wardrobe),6=>self.open(Page::Interiors),
+                            3=>self.open(Page::Controls),4=>self.open(Page::Mods),5=>self.open(Page::Wardrobe),6=>self.open(Page::Interiors),7=>self.open(Page::Cars),8=>self.open(Page::Peds),
                             _=>if page==Page::Main{self.open(Page::Quit)}else{action=Some(Action::Main)},
                         }
                     }
@@ -838,6 +871,35 @@ impl Menu {
                                     if ui.checkbox(enabled,text).changed(){self.selected=index;action=Some(Action::Clothing(index,*enabled));}
                                 }
                             }
+                        },
+                        Page::Commands=>{
+                            ui.label("/cars - spawn a vehicle    /peds - change your player");
+                            let enter=ctx.input(|i|i.key_pressed(egui::Key::Enter));
+                            let response=ui.text_edit_singleline(&mut self.command);
+                            if !ctx.memory(|m|m.has_focus(response.id)) {response.request_focus();}
+                            if enter || ui.button("Open menu").clicked() {self.submit_command();}
+                        },
+                        Page::Cars | Page::Peds=>{
+                            ui.label(if page==Page::Cars {"Spawn nearby and enter. One vehicle is active at a time."} else {"Use a player model or spawn a nearby ped (S / D-pad right). Spawned peds idle; they have no AI."});
+                            if page==Page::Peds && ui.button("Remove spawned peds").clicked(){action=Some(Action::ClearPeds);}
+                            let names=if page==Page::Cars {self.cars.clone()}else{self.peds.clone()};
+                            let navigation=ctx.input(|i|(i.key_pressed(egui::Key::ArrowDown),i.key_pressed(egui::Key::ArrowUp),i.key_pressed(egui::Key::Enter)));
+                            if !names.is_empty(){
+                                if navigation.0 {self.selected=(self.selected+1)%names.len();}
+                                if navigation.1 {self.selected=(self.selected+names.len()-1)%names.len();}
+                                if navigation.2 {action=Some(if page==Page::Cars {Action::Car(self.selected)}else{Action::Ped(self.selected)});}
+                            }
+                            if page==Page::Peds && !names.is_empty() && ctx.input(|i|i.key_pressed(egui::Key::S)){action=Some(Action::SpawnPed(self.selected));}
+                            for (index,name) in names.iter().enumerate() {
+                                let text=if index==self.selected {format!("> {name}")}else{name.clone()};
+                                ui.horizontal(|ui| {
+                                if ui.add_sized([440.0*scale,40.0*scale],egui::Button::new(text)).clicked(){
+                                    action=Some(if page==Page::Cars {Action::Car(index)}else{Action::Ped(index)});
+                                }
+                                if page==Page::Peds && ui.button("Spawn nearby").clicked(){action=Some(Action::SpawnPed(index));}
+                                });
+                            }
+                            if names.is_empty(){ui.label("No models are available.");}
                         },
                         Page::Mods=>{
                             ui.label(RichText::new("Detected local resources").size(23.0).color(GOLD).strong());
@@ -939,6 +1001,54 @@ mod tests {
         action
     }
     #[test]
+    fn commands_open_catalogs_and_controller_selects_models() {
+        let ctx = egui::Context::default();
+        let mut menu = Menu::new(&ctx, Vec::new());
+        menu.cars = vec!["Taxi".into(), "Infernus".into()];
+        menu.peds = vec!["Grove".into()];
+        menu.command = " /CARS ".into();
+        menu.submit_command();
+        assert_eq!(menu.page, Some(Page::Cars));
+        menu.controller_input(false, true, false, false, false, false);
+        assert_eq!(
+            menu.controller_input(false, false, false, false, true, false),
+            Some(Action::Car(1))
+        );
+        menu.command = "/peds".into();
+        menu.submit_command();
+        assert_eq!(menu.page, Some(Page::Peds));
+        assert_eq!(
+            menu.controller_input(false, false, false, false, true, false),
+            Some(Action::Ped(0))
+        );
+        assert_eq!(
+            menu.controller_input(false, false, false, true, false, false),
+            Some(Action::SpawnPed(0))
+        );
+        menu.command = "/nope".into();
+        menu.submit_command();
+        assert_eq!(menu.page, Some(Page::Peds));
+        assert!(menu.message.contains("Unknown"));
+    }
+    #[test]
+    fn command_enter_and_keyboard_catalog_selection_work() {
+        let ctx = egui::Context::default();
+        let mut menu = Menu::new(&ctx, Vec::new());
+        menu.cars = vec!["Taxi".into(), "Infernus".into()];
+        menu.command = "/cars".into();
+        menu.open(Page::Commands);
+        frame(&ctx, &mut menu, &[]);
+        frame(&ctx, &mut menu, &[egui::Key::Enter]);
+        assert_eq!(menu.page, Some(Page::Cars));
+        frame(&ctx, &mut menu, &[]);
+        frame(&ctx, &mut menu, &[egui::Key::ArrowDown]);
+        frame(&ctx, &mut menu, &[]);
+        assert_eq!(
+            frame(&ctx, &mut menu, &[egui::Key::Enter]),
+            Some(Action::Car(1))
+        );
+    }
+    #[test]
     fn keyboard_navigation_and_back_preserve_game_state() {
         let ctx = egui::Context::default();
         let mut menu = Menu::new(&ctx, Vec::new());
@@ -968,7 +1078,7 @@ mod tests {
         let mut menu = Menu::new(&ctx, Vec::new());
         assert_eq!(menu.selected, 0);
         menu.controller_input(true, false, false, false, false, false);
-        assert_eq!(menu.selected, 7);
+        assert_eq!(menu.selected, 9);
         menu.controller_input(false, true, false, false, false, false);
         assert_eq!(menu.selected, 0);
         assert_eq!(

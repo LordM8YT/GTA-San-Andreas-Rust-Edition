@@ -110,7 +110,11 @@ pub(super) struct Resources {
     pub excluded: HashSet<i32>,
     pub names: Vec<String>,
     pub vehicle: Option<Scene>,
+    pub vehicles: Vec<(String, Scene)>,
+    pub car_name: String,
+    pub ped_name: String,
     pub player: Option<ped::Source>,
+    pub players: Vec<(String, ped::Source)>,
 }
 /// Canonical containment also rejects escapes through directory junctions.
 fn resource(root: &Path, relative: &str) -> Result<Vec<u8>> {
@@ -207,8 +211,11 @@ impl WorldLoader {
                 "mod model/placement budget"
             );
             ensure!(
-                manifest.vehicles.len() + usize::from(self.resources.vehicle.is_some()) <= 1,
-                "only one custom drivable vehicle is supported; disable other vehicle resources"
+                manifest.vehicles.len()
+                    + self.resources.vehicles.len()
+                    + usize::from(self.resources.vehicle.is_some())
+                    <= 32,
+                "custom vehicle limit (32)"
             );
             for vehicle in manifest.vehicles {
                 let geometry = sa_assets::decode_vehicle_dff(&resource(&folder, &vehicle.dff)?)
@@ -227,12 +234,20 @@ impl WorldLoader {
                     )
                 })?;
                 ensure!(scene.triangles > 0, "empty custom vehicle");
-                self.resources.vehicle = Some(scene);
+                if self.resources.vehicle.is_none() {
+                    self.resources.car_name = name.clone();
+                    self.resources.vehicle = Some(scene);
+                } else {
+                    self.resources
+                        .vehicles
+                        .push((format!("{name} / {}", vehicle.dff), scene));
+                }
             }
             if let Some(player) = manifest.player {
                 ensure!(
-                    self.resources.player.is_none(),
-                    "only one custom player resource is supported"
+                    self.resources.players.len() + usize::from(self.resources.player.is_some())
+                        < 16,
+                    "custom player limit (16)"
                 );
                 let dictionary = player
                     .txd
@@ -263,7 +278,12 @@ impl WorldLoader {
                         clothing.enabled,
                     );
                 }
-                self.resources.player = Some(source);
+                if self.resources.player.is_none() {
+                    self.resources.ped_name = name.clone();
+                    self.resources.player = Some(source);
+                } else {
+                    self.resources.players.push((name.clone(), source));
+                }
             }
             ensure!(
                 self.resources.geometry.len() + manifest.models.len() <= 512,
@@ -348,14 +368,20 @@ impl WorldLoader {
                 .sum();
             let dictionary_bytes: usize = self.resources.dictionaries.values().map(Vec::len).sum();
             let texture_bytes: usize = self.resources.textures.values().map(|t| t.rgba.len()).sum();
-            let vehicle_bytes = self.resources.vehicle.as_ref().map_or(0, |scene| {
-                scene
-                    .batches
-                    .iter()
-                    .map(|b| b.vertices.len() * std::mem::size_of::<Vertex>())
-                    .sum::<usize>()
-                    + scene.textures.values().map(|t| t.rgba.len()).sum::<usize>()
-            });
+            let vehicle_bytes: usize = self
+                .resources
+                .vehicle
+                .iter()
+                .chain(self.resources.vehicles.iter().map(|(_, s)| s))
+                .map(|scene| {
+                    scene
+                        .batches
+                        .iter()
+                        .map(|b| b.vertices.len() * std::mem::size_of::<Vertex>())
+                        .sum::<usize>()
+                        + scene.textures.values().map(|t| t.rgba.len()).sum::<usize>()
+                })
+                .sum();
             ensure!(
                 geometry_bytes
                     + dictionary_bytes
@@ -366,6 +392,12 @@ impl WorldLoader {
                         .player
                         .as_ref()
                         .map_or(0, ped::Source::memory_bytes)
+                    + self
+                        .resources
+                        .players
+                        .iter()
+                        .map(|(_, p)| p.memory_bytes())
+                        .sum::<usize>()
                     <= 256 * 1024 * 1024,
                 "total mod memory budget (256 MiB)"
             );
@@ -376,6 +408,29 @@ impl WorldLoader {
     }
     pub fn mod_names(&self) -> &[String] {
         &self.resources.names
+    }
+    pub fn model_names(&self) -> (String, String) {
+        (
+            if self.resources.car_name.is_empty() {
+                "Taxi".into()
+            } else {
+                self.resources.car_name.clone()
+            },
+            if self.resources.ped_name.is_empty() {
+                "Grove Street".into()
+            } else {
+                self.resources.ped_name.clone()
+            },
+        )
+    }
+    pub fn take_car_catalog(&mut self) -> Vec<(String, Scene)> {
+        std::mem::take(&mut self.resources.vehicles)
+    }
+    pub fn take_ped_catalog(&mut self, game: &Path) -> Result<Vec<(String, ped::Ped)>> {
+        std::mem::take(&mut self.resources.players)
+            .into_iter()
+            .map(|(name, source)| Ok((name, ped::Ped::from_source(source, game)?)))
+            .collect()
     }
     pub fn take_custom_car(&mut self) -> Option<Scene> {
         self.resources.vehicle.take()
@@ -453,7 +508,38 @@ mod tests {
             serde_json::to_vec(&manifest).unwrap(),
         )
         .unwrap();
+        manifest["vehicles"] = serde_json::json!([{"dff":"car.dff"},{"dff":"car.dff"}]);
+        fs::write(
+            folder.join("mod.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        let extra = root.join("mods/second-ped");
+        fs::create_dir_all(&extra).unwrap();
+        fs::write(
+            extra.join("ped.dff"),
+            include_bytes!("../../../../mods/native-ped-demo/ped.dff"),
+        )
+        .unwrap();
+        fs::write(
+            extra.join("ped.ifp"),
+            include_bytes!("../../../../mods/native-ped-demo/ped.ifp"),
+        )
+        .unwrap();
+        fs::write(
+            extra.join("resource.json"),
+            br#"{"enabled":true,"name":"Second ped","player":{"dff":"ped.dff","ifp":"ped.ifp"}}"#,
+        )
+        .unwrap();
         loader.enable_mods(&root.join("mods")).unwrap();
+        assert_eq!(loader.take_car_catalog().len(), 1);
+        assert_eq!(
+            loader
+                .take_ped_catalog(Path::new("not-an-installation"))
+                .unwrap()
+                .len(),
+            1
+        );
         assert!(loader
             .mod_names()
             .iter()
@@ -531,6 +617,10 @@ mod tests {
         fs::remove_dir(folder).unwrap();
         fs::remove_dir(disabled).unwrap();
         fs::remove_dir(root.join("mods/[maps]")).unwrap();
+        for name in ["ped.dff", "ped.ifp", "resource.json"] {
+            fs::remove_file(extra.join(name)).unwrap();
+        }
+        fs::remove_dir(extra).unwrap();
         fs::remove_dir(root.join("mods")).unwrap();
         fs::remove_dir(root).unwrap();
     }

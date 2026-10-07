@@ -51,8 +51,8 @@ def main():
         "Add `txd` paths for textured models. Maps can include a `col` path; choose "
         "an unused model ID and edit placements in `resource.json`. Custom players "
         "need matching bone IDs and idle_stance/walk_player/run_player clips; "
-        "clothing needs the same bind pose as its player. Only one custom vehicle "
-        "and one custom player can currently be active.\n\n"
+        "clothing needs the same bind pose as its player. Select one active vehicle "
+        "and player from /cars and /peds.\n\n"
         "Set `enabled` to `true` in `resource.json` and restart the game. "
         "See `docs/native-mods.md` in the project for the full format.\n",
         encoding="utf-8",

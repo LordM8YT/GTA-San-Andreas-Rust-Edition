@@ -150,11 +150,18 @@ pub struct Ped {
 }
 impl Ped {
     pub fn load(game: &Path) -> Result<Self> {
+        Self::load_model(game, "fam1")
+    }
+    pub fn load_model(game: &Path, model: &str) -> Result<Self> {
+        ensure!(
+            model.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
+            "invalid ped model name"
+        );
         let mut archive = Img::open(&sa_assets::game_path::resolve(game, "models/gta3.img")?)?;
         Self::from_source(
             Source::decode(
-                &archive.read("fam1.dff")?,
-                Some(archive.read("fam1.txd")?),
+                &archive.read(&format!("{model}.dff"))?,
+                Some(archive.read(&format!("{model}.txd"))?),
                 None,
             )?,
             game,
