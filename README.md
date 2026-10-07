@@ -68,6 +68,9 @@ game executable or its plugin APIs are not expected to work without conversion
 or dedicated support. Read [native mod documentation](docs/native-mods.md)
 before preparing a resource. An experimental [GTA V / FiveM asset converter](docs/gta5-conversion.md)
 can prepare Legacy cars, props and explicitly mapped clothing as native resources.
+The new folder importer can inspect FiveM packages and batch-convert their cars
+or props, with a report of unsupported scripts and metadata. See
+[FiveM conversion](docs/gta5-conversion.md#import-a-resource-folder).
 
 
 

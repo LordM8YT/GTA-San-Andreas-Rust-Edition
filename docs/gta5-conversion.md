@@ -5,6 +5,59 @@ GTA V Legacy** YFT (cars), YDR (props), YDD (players/clothes/drawables) and YTD 
 It does not run FiveM resources or their scripts. The game continues to load
 native DFF/TXD assets; this tool converts models before starting the game.
 
+## Import a resource folder
+
+`tools/import-fivem.py` inspects an extracted FiveM resource with a root
+`fxmanifest.lua` or legacy `__resource.lua`. Inspection lists model files,
+scripts, metadata and unsupported features without executing Lua:
+
+Reference: [Cfx resource manifest documentation](https://docs.fivem.net/docs/scripting-reference/resource-manifest/).
+
+```powershell
+python tools/import-fivem.py C:/Downloads/my-car-pack
+python tools/import-fivem.py C:/Downloads/my-car-pack --kind vehicles --out "mods/[vehicles]/my-car-pack" --enable
+```
+
+Batch import converts YFT cars or YDR props, including their CodeWalker XML
+exports, into one native resource. Matching YTD textures are found by basename,
+preferring the same folder; ambiguous dictionaries stop the import. Embedded
+and adjacent DDS textures follow the existing converter. A car's base YFT is
+preferred when its `_hi` variant is also present, preserving its fragment
+children; repeat `--model stream/name.yft` to choose exact relative model paths.
+Raw assets take precedence over adjacent XML exports of the same asset.
+
+For props, specify a preview location in original San Andreas world coordinates:
+
+```powershell
+python tools/import-fivem.py C:/Downloads/my-props --kind props --position 2500 -1670 12.35 --model-id 31000 --out "mods/[maps]/my-props"
+```
+
+Props receive sequential model IDs and preview placements three metres apart.
+This does **not** import their original YMAP/ IPL placement; review/edit the
+native placements and choose model IDs that do not conflict with other mods.
+Output is disabled unless `--enable` is given. Restart to register the pack.
+
+The output directory must be new and outside the source resource. Input is
+limited to 4,096 entries, 12 directory levels, 128 MiB per file and 512 MiB total;
+links and Windows junctions are rejected. An isolated data snapshot is converted
+and the completed output is published together, so failed conversions leave no
+partial resource. Native file/model/server-sharing limits also apply: at most
+32 cars or 64 props, 16 MiB per converted DFF/TXD, 64 shared files including
+the manifest and 128 MiB total assets. Select fewer models if those limits are hit.
+
+`data/fivem-import-report.json` records source hashes, converted geometry and
+missing textures. Lua/JS/C# scripts, NUI/HUD pages, handling/vehicle metadata,
+YMAP placements, YBN collision, and YTYP/MLO rooms/portals are reported or listed
+but never imported. Manifest inspection is text-based and cannot interpret
+dynamic declarations. Peds and clothes still need the explicit rig/mapping
+workflow below. This is an asset import path, not a FiveM runtime.
+
+The folder importer was tested with owned multi-model XML fixtures, atomic
+failure/overwrite and Windows-junction rejection checks. The previously tested
+free Skyline's raw YFT/YTD files were also imported from an isolated resource
+folder and then downloaded, loaded, driven and restored through a dedicated
+relay session with two Vulkan clients. Third-party assets remain local.
+
 ## Requirements and a vehicle
 
 Use Python 3.11+ and the .NET 9 SDK. The first binary conversion builds our small
