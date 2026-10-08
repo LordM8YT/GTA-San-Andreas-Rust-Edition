@@ -17,6 +17,7 @@ mod postprocess;
 mod progress;
 mod session_resources;
 mod settings;
+mod shared_smoke;
 mod streaming;
 mod upload;
 use streaming::{Streamer, ORIGIN, RADIUS};
@@ -116,6 +117,11 @@ struct State {
     npc_seconds: f32,
     network_session: Option<sa_net::Session>,
     network_car_spawned: bool,
+    driver_grant: Option<sa_net::DriverGrant>,
+    vehicle_request: Option<sa_net::VehicleRequest>,
+    vehicle_reply: Option<sa_net::VehicleReply>,
+    vehicle_sequence: u32,
+    motion_sequence: u32,
     passenger: Option<sa_net::PassengerSeat>,
     passenger_car: Option<sa_net::VehiclePose>,
     ride_request: Option<sa_net::RideRequest>,
@@ -193,6 +199,9 @@ impl State {
         Ok(())
     }
     fn place_car(&mut self) {
+        if self.network_session.is_some() && self.vehicle_request.is_some() {
+            return;
+        }
         self.leave_passenger();
         if self.interior != 0 {
             return;
@@ -213,8 +222,14 @@ impl State {
                 self.keys.clear();
             }
         }
+        if self.network_session.is_some() && self.driving {
+            self.spawn_shared_car();
+        }
     }
     fn toggle_car(&mut self) {
+        if self.network_session.is_some() && self.toggle_shared_car() {
+            return;
+        }
         if self.passenger.is_some() {
             self.try_leave_passenger();
             return;
@@ -551,6 +566,11 @@ impl State {
             npc_seconds: 0.0,
             network_session: None,
             network_car_spawned: false,
+            driver_grant: None,
+            vehicle_request: None,
+            vehicle_reply: None,
+            vehicle_sequence: 0,
+            motion_sequence: 0,
             passenger: None,
             passenger_car: None,
             ride_request: None,
@@ -1269,6 +1289,7 @@ impl State {
         );
     }
     fn respawn(&mut self) {
+        self.release_driver();
         self.leave_passenger();
         self.driving = false;
         self.spawned_peds.clear();
@@ -1386,6 +1407,7 @@ impl State {
                 self.capture(true);
             }
             Some(menu::Action::Teleport(index)) => {
+                self.release_driver();
                 self.leave_passenger();
                 self.interior_destination = None;
                 self.destination = Some(streaming::DESTINATIONS[index].1);
@@ -1395,6 +1417,7 @@ impl State {
                 self.capture(true);
             }
             Some(menu::Action::Interior(index)) => {
+                self.release_driver();
                 self.leave_passenger();
                 let target = streaming::INTERIORS[index];
                 self.destination = Some([target.position[0], target.position[1]]);
@@ -1467,6 +1490,9 @@ impl State {
                     } else {
                         self.menu.message =
                             "No clear supported space nearby. Move to an open road.".into();
+                    }
+                    if self.network_session.is_some() && self.driving {
+                        self.spawn_shared_car();
                     }
                 }
             }
@@ -1725,7 +1751,12 @@ impl State {
                 .batches
                 .iter()
                 .filter(|batch| !self.culling_enabled || self.frustum.visible(batch.bounds))
-                .chain(self.car.iter().flat_map(|(_, b)| b))
+                .chain(
+                    self.car
+                        .iter()
+                        .filter(|_| self.network_session.is_none() || self.driving)
+                        .flat_map(|(_, b)| b),
+                )
                 .chain(self.spawned_peds.iter().flat_map(|p| &p.batches))
                 .chain(
                     self.remote_actors
@@ -1846,6 +1877,7 @@ struct App {
     smoke_neon: bool,
     smoke_network: bool,
     smoke_join_failure: bool,
+    shared_smoke: Option<shared_smoke::SharedSmoke>,
     network_saw_ped: bool,
     network_saw_walk: bool,
     network_saw_car_motion: bool,
@@ -2500,7 +2532,7 @@ impl ApplicationHandler for App {
                         )));
                     }
                 }
-                if self.smoke_network {
+                if self.smoke_network && self.shared_smoke.is_none() {
                     state.keys.clear();
                     let seconds = self.smoke_started.elapsed().as_secs_f32();
                     if self.smoke_passenger && self.network_players_seen >= 2 {
@@ -2604,8 +2636,8 @@ impl ApplicationHandler for App {
                                 selected.expect("selected original car missing").0.handling;
                             state.apply_menu_action(Some(menu::Action::Car(index)));
                             assert!(
-                                state.driving,
-                                "appearance smoke could not place the selected car"
+                                state.driving || state.vehicle_request.is_some(),
+                                "appearance smoke could not request the selected car"
                             );
                             assert_eq!(
                                 state.car.as_ref().unwrap().0.handling,
@@ -2617,6 +2649,13 @@ impl ApplicationHandler for App {
                                 tuning.acceleration
                             );
                             self.appearance_stage = 4;
+                        } else if self.appearance_stage == 4 && state.vehicle_request.is_none() {
+                            assert!(
+                                state.driving && state.driver_grant.is_some(),
+                                "selected car was not granted by server: {}",
+                                state.menu.ride_status
+                            );
+                            self.appearance_stage = 5;
                         }
                     }
                     if self.network_players_seen >= 2
@@ -2627,6 +2666,24 @@ impl ApplicationHandler for App {
                 }
                 let previous_position = state.position;
                 let rendered = state.render();
+                if let Some(smoke) = &mut self.shared_smoke {
+                    if smoke.tick(state, rendered, self.capture_dir.as_deref()) {
+                        assert!(state.offline_world.is_none() && state.network_session.is_none());
+                        assert_eq!(
+                            state.menu.mods, self.mod_names,
+                            "shared session did not restore local mods"
+                        );
+                        assert_eq!(
+                            state.car.as_ref().map(|(c, _)| c.handling),
+                            self.offline_car_handling
+                        );
+                        println!("GPU shared vehicle smoke passed: spawn, drive, park, transfer, passenger streaming, driver disconnect, stable parked car, rejoin and offline restore");
+                        println!("GPU multiplayer smoke passed: shared vehicles; 2 players seen; offline resources restored and rendered");
+                        event_loop.exit();
+                    }
+                    state.window.request_redraw();
+                    return;
+                }
                 if self.smoke_join_failure {
                     assert!(
                         self.smoke_started.elapsed().as_secs() < 90,
@@ -2806,10 +2863,13 @@ impl ApplicationHandler for App {
                             self.network_saw_parked_alone |=
                                 actor.car_visible && !actor.ped_visible && !actor.current.driving;
                             if self.smoke_appearance {
-                                self.appearance_saw_ped |= actor.ped_model != 0;
-                                self.appearance_saw_car |=
-                                    actor.car_model != 0 && actor.current.driving;
-                                self.appearance_saw_clothes |= actor.ped_model == 0
+                                self.appearance_saw_ped |=
+                                    actor.ped_visible && actor.ped_model != 0;
+                                self.appearance_saw_car |= actor.car_visible
+                                    && actor.car_model != 0
+                                    && actor.current.driving;
+                                self.appearance_saw_clothes |= actor.ped_visible
+                                    && actor.ped_model == 0
                                     && actor.current.clothes
                                         == if state.menu.player_name == "HostTest" {
                                             1
@@ -2817,10 +2877,10 @@ impl ApplicationHandler for App {
                                             2
                                         };
                             }
-                            if actor.current.driving {
+                            if actor.current.driving && actor.car_visible {
                                 self.network_saw_car = true;
                                 self.network_saw_car_motion |= actor.current.speed.abs() > 0.1;
-                            } else {
+                            } else if actor.ped_visible {
                                 self.network_saw_ped = true;
                                 self.network_saw_walk |= actor.current.moving;
                             }
@@ -3974,6 +4034,10 @@ fn main() -> Result<()> {
             .iter()
             .any(|a| a == "--smoke-network" || a == "--smoke-appearance"),
         smoke_join_failure: args.iter().any(|a| a == "--smoke-join-failure"),
+        shared_smoke: args
+            .iter()
+            .any(|a| a == "--smoke-shared-cars")
+            .then(shared_smoke::SharedSmoke::default),
         network_saw_ped: false,
         network_saw_walk: false,
         network_saw_car_motion: false,

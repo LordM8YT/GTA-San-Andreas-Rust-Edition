@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 pub mod passengers;
 pub mod relay;
 pub mod resources;
+pub mod vehicles;
 pub use passengers::{PassengerSeat, RideReply, RideRequest, RideResult};
 use std::{
     io::{self, Read, Write},
@@ -15,13 +16,17 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+pub use vehicles::{
+    DriverGrant, VehicleAction, VehicleMotion, VehicleRecord, VehicleReply, VehicleRequest,
+    VehicleResult,
+};
 
 pub const MAX_PLAYERS: usize = 20;
 pub const DEFAULT_PORT: u16 = 7777;
-pub const VERSION: u32 = 6;
+pub const VERSION: u32 = 7;
 const TICK: Duration = Duration::from_millis(50);
 const TIMEOUT: Duration = Duration::from_secs(10);
-const MAX_FRAME: usize = 16 * 1024;
+const MAX_FRAME: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Pose {
@@ -41,8 +46,8 @@ pub struct Pose {
     pub ped_model: u16,
     #[serde(default)]
     pub clothes: u16,
-    /// The peer's one personal car, independently of their walking pose.
-    /// Membership identity owns this record; no arbitrary vehicle IDs accepted.
+    /// Canonical current driver car, supplied by the server in snapshots.
+    /// Movement input is accepted only through vehicle_motion with its grant.
     #[serde(default)]
     pub vehicle: Option<VehiclePose>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -51,6 +56,14 @@ pub struct Pose {
     pub ride_request: Option<RideRequest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ride_reply: Option<RideReply>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub driver: Option<DriverGrant>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vehicle_request: Option<VehicleRequest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vehicle_reply: Option<VehicleReply>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vehicle_motion: Option<VehicleMotion>,
 }
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct VehiclePose {
@@ -81,6 +94,11 @@ impl Pose {
             && self.ped_model < 256
             && self.vehicle.is_none_or(VehiclePose::valid)
             && (!self.driving || self.vehicle.is_some())
+            && self
+                .driver
+                .is_none_or(|g| g.vehicle >= vehicles::FIRST_VEHICLE_ID && g.epoch != 0)
+            && self.vehicle_request.is_none_or(VehicleRequest::valid)
+            && self.vehicle_motion.is_none_or(VehicleMotion::valid)
             && self.ride.is_none_or(PassengerSeat::valid)
             && self
                 .ride_request
@@ -101,6 +119,7 @@ pub struct Report {
     pub connected: bool,
     pub local_id: u32,
     pub peers: Vec<Peer>,
+    pub vehicles: Vec<VehicleRecord>,
     pub revision: u64,
 }
 #[derive(Serialize, Deserialize)]
@@ -117,7 +136,10 @@ enum Message {
         id: u32,
     },
     Pose(Pose),
-    Snapshot(Vec<Peer>),
+    Snapshot {
+        peers: Vec<Peer>,
+        vehicles: Vec<VehicleRecord>,
+    },
     Reject(String),
     ResourceQuery {
         version: u32,
@@ -133,6 +155,80 @@ enum Message {
         done: bool,
     },
 }
+fn valid_vehicles(peers: &[Peer], cars: &[VehicleRecord]) -> bool {
+    if cars.len() > vehicles::MAX_VEHICLES {
+        return false;
+    }
+    let mut occupied = std::collections::HashSet::new();
+    for (index, car) in cars.iter().enumerate() {
+        if !car.valid() || cars[..index].iter().any(|other| other.id == car.id) {
+            return false;
+        }
+        for player in car
+            .driver
+            .into_iter()
+            .chain(car.passengers.into_iter().flatten())
+        {
+            if !peers.iter().any(|p| p.id == player) || !occupied.insert(player) {
+                return false;
+            }
+        }
+    }
+    for car in cars {
+        if let Some(driver) = car.driver {
+            if !peers.iter().any(|p| {
+                p.id == driver
+                    && p.pose.driver
+                        == Some(DriverGrant {
+                            vehicle: car.id,
+                            epoch: car.epoch,
+                        })
+            }) {
+                return false;
+            }
+        }
+        for (index, passenger) in car.passengers.iter().enumerate() {
+            if let Some(player) = passenger {
+                if !peers.iter().any(|p| {
+                    p.id == *player
+                        && p.pose.ride
+                            == Some(PassengerSeat {
+                                owner: car.id,
+                                seat: index as u8 + 1,
+                            })
+                }) {
+                    return false;
+                }
+            }
+        }
+    }
+    for peer in peers {
+        if peer.pose.driving != peer.pose.driver.is_some()
+            || (peer.pose.driver.is_some() && peer.pose.ride.is_some())
+            || (peer.pose.driver.is_none() && peer.pose.vehicle.is_some())
+        {
+            return false;
+        }
+        if let Some(grant) = peer.pose.driver {
+            if !cars.iter().any(|c| {
+                c.id == grant.vehicle && c.epoch == grant.epoch && c.driver == Some(peer.id)
+            }) {
+                return false;
+            }
+        }
+        if let Some(seat) = peer.pose.ride {
+            if !seat.valid()
+                || !cars.iter().any(|c| {
+                    c.id == seat.owner && c.passengers[seat.seat as usize - 1] == Some(peer.id)
+                })
+            {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 fn safe_name(name: &str) -> String {
     let name: String = name.chars().filter(|c| !c.is_control()).take(24).collect();
     if name.trim().is_empty() {
@@ -307,7 +403,7 @@ impl Session {
                     }
                     Err(e) => format!("Connection ended: {e}"),
                 };
-                publish(&report, &status, false, 0, Vec::new());
+                publish(&report, &status, false, 0, Vec::new(), Vec::new());
             })?;
         Ok(session)
     }
@@ -341,7 +437,14 @@ impl Drop for Session {
         self.stop.store(true, Ordering::Relaxed);
     }
 }
-fn publish(report: &Mutex<Report>, status: &str, connected: bool, id: u32, peers: Vec<Peer>) {
+fn publish(
+    report: &Mutex<Report>,
+    status: &str,
+    connected: bool,
+    id: u32,
+    peers: Vec<Peer>,
+    vehicles: Vec<VehicleRecord>,
+) {
     let mut r = report.lock().unwrap();
     r.status = status.into();
     r.connected = connected;
@@ -350,6 +453,7 @@ fn publish(report: &Mutex<Report>, status: &str, connected: bool, id: u32, peers
     }
     r.local_id = id;
     r.peers = peers;
+    r.vehicles = vehicles;
     r.revision = r.revision.wrapping_add(1);
 }
 struct Guest {
@@ -359,6 +463,8 @@ struct Guest {
     hello: bool,
     assets: bool,
     transfer: Option<(String, Arc<[u8]>, usize)>,
+    rate_start: Instant,
+    rate_messages: usize,
 }
 fn host_worker(
     listener: TcpListener,
@@ -374,7 +480,7 @@ fn host_worker(
         .fingerprint()
         .expect("validated host inventory");
     let mut guests: Vec<Guest> = Vec::new();
-    let mut seats = passengers::SeatBook::default();
+    let mut seats = vehicles::VehicleWorld::default();
     let mut next_id = 1_u32;
     let mut next_tick = Instant::now();
     let status = format!("Hosting {}", listener.local_addr().unwrap());
@@ -386,7 +492,7 @@ fn host_worker(
             let Ok(mut wire) = Wire::new(stream) else {
                 continue;
             };
-            if guests.len() >= MAX_PLAYERS * 2 {
+            if guests.len() >= MAX_PLAYERS * 2 || next_id >= vehicles::FIRST_VEHICLE_ID {
                 let _ = wire.queue(&Message::Reject("Session full (20 players)".into()));
                 let _ = wire.flush();
                 continue;
@@ -402,8 +508,10 @@ fn host_worker(
                 hello: false,
                 assets: false,
                 transfer: None,
+                rate_start: Instant::now(),
+                rate_messages: 0,
             });
-            next_id = next_id.wrapping_add(1).max(1);
+            next_id += 1;
         }
         let mut source = Vec::new();
         if host_player {
@@ -414,7 +522,7 @@ fn host_worker(
             });
         }
         source.extend(guests.iter().filter(|g| g.ready).map(|g| g.peer.clone()));
-        seats.reconcile(&source);
+        seats.reconcile(&source, Instant::now());
         let mut admitted = guests.iter().filter(|g| g.hello).count();
         guests.retain_mut(|guest| {
             if guest.wire.last.elapsed() > TIMEOUT {
@@ -423,6 +531,13 @@ fn host_worker(
             let Ok(messages) = guest.wire.read() else {
                 return false;
             };
+            if guest.rate_start.elapsed() >= Duration::from_secs(1) {
+                guest.rate_start=Instant::now();guest.rate_messages=0;
+            }
+            guest.rate_messages += messages.len();
+            // Gameplay normally sends 21 messages/s. Preflight can request many
+            // small files, but both modes have a fixed per-connection ceiling.
+            if guest.rate_messages > if guest.assets {1024} else {200} {return false;}
             for message in messages {
                 match message {
                     Message::ResourceQuery { version } if !guest.hello && !guest.assets && version == VERSION => {
@@ -472,7 +587,7 @@ fn host_worker(
                         if guest.wire.queue(&Message::Pong(nonce)).is_err(){return false;}
                     }
                     Message::Pose(pose) if guest.hello && pose.valid() => {
-                        guest.peer.pose = seats.apply(guest.peer.id, pose, &source);
+                        guest.peer.pose = seats.apply(guest.peer.id, pose, Instant::now());
                         guest.ready = true;
                     }
                     _ => return false,
@@ -502,24 +617,24 @@ fn host_worker(
                 });
             }
             peers.extend(guests.iter().filter(|g| g.ready).map(|g| g.peer.clone()));
-            seats.reconcile(&peers);
-            let source = peers.clone();
+            seats.reconcile(&peers, Instant::now());
             for peer in &mut peers {
                 peer.pose = if host_player && peer.id == 0 {
-                    seats.apply(peer.id, peer.pose, &source)
+                    seats.apply(peer.id, peer.pose, Instant::now())
                 } else {
-                    seats.decorate(peer.id, peer.pose, &source)
+                    seats.decorate(peer.id, peer.pose)
                 };
             }
-            publish(&report, &status, true, 0, peers.clone());
-            let snapshot = Message::Snapshot(peers);
+            let vehicles = seats.snapshot();
+            publish(&report, &status, true, 0, peers.clone(), vehicles.clone());
+            let snapshot = Message::Snapshot { peers, vehicles };
             guests.retain_mut(|guest| {
                 !guest.ready || (guest.wire.queue(&snapshot).is_ok() && guest.wire.flush().is_ok())
             });
         }
         thread::sleep(Duration::from_millis(5));
     }
-    publish(&report, "Disconnected", false, 0, Vec::new());
+    publish(&report, "Disconnected", false, 0, Vec::new(), Vec::new());
 }
 fn client_stream(
     stream: TcpStream,
@@ -550,9 +665,10 @@ fn client_stream(
                 Message::Welcome { id: assigned } if id.is_none() && assigned != 0 => {
                     id = Some(assigned)
                 }
-                Message::Snapshot(peers) if id.is_some() => {
+                Message::Snapshot { peers, vehicles } if id.is_some() => {
                     let local_id = id.unwrap();
-                    if peers.len() > MAX_PLAYERS
+                    if !valid_vehicles(&peers, &vehicles)
+                        || peers.len() > MAX_PLAYERS
                         || peers.is_empty()
                         || !peers.iter().any(|p| p.id == local_id)
                         || peers.iter().any(|p| !p.pose.valid() || p.name.len() > 96)
@@ -569,6 +685,7 @@ fn client_stream(
                         true,
                         local_id,
                         peers,
+                        vehicles,
                     );
                 }
                 Message::Pong(reply) if id.is_some() => {
@@ -670,7 +787,7 @@ mod tests {
         wait(|| wire.read().is_err());
         let (_, mut wire) = pair();
         let message = Message::Reject("x".repeat(8000));
-        for _ in 0..8 {
+        for _ in 0..32 {
             wire.queue(&message).unwrap();
         }
         assert!(wire.queue(&message).is_err());
@@ -740,7 +857,13 @@ mod tests {
         let host = Session::host(address(), "Driver").unwrap();
         let guest = Session::join(host.address, "Passenger").unwrap();
         let mut driver = Pose {
-            vehicle: Some(VehiclePose::default()),
+            vehicle_request: Some(VehicleRequest {
+                sequence: 1,
+                action: VehicleAction::Spawn {
+                    model: 0,
+                    pose: VehiclePose::default(),
+                },
+            }),
             ..Pose::default()
         };
         wait(|| {
@@ -758,7 +881,7 @@ mod tests {
         let mut rider = Pose {
             ride_request: Some(RideRequest {
                 sequence: 1,
-                owner: Some(0),
+                owner: Some(vehicles::FIRST_VEHICLE_ID),
             }),
             ..Pose::default()
         };
@@ -774,8 +897,17 @@ mod tests {
                 .iter()
                 .any(|p| p.name == "Passenger" && p.pose.ride.is_some())
         });
-        driver.vehicle.as_mut().unwrap().position = [10.0, 0.0, 0.0];
-        driver.vehicle.as_mut().unwrap().speed = 10.0;
+        driver.vehicle_request = None;
+        driver.vehicle_motion = Some(VehicleMotion {
+            vehicle: vehicles::FIRST_VEHICLE_ID,
+            epoch: 1,
+            sequence: 1,
+            pose: VehiclePose {
+                position: [10.0, 0.0, 0.0],
+                speed: 10.0,
+                ..VehiclePose::default()
+            },
+        });
         wait(|| {
             host.update(driver);
             guest.update(rider);
@@ -806,7 +938,7 @@ mod tests {
         });
         rider.ride_request = Some(RideRequest {
             sequence: 3,
-            owner: Some(0),
+            owner: Some(vehicles::FIRST_VEHICLE_ID),
         });
         wait(|| {
             guest.update(rider);
@@ -856,7 +988,24 @@ mod tests {
                 pose,
             })
             .collect();
-        assert!(serde_json::to_vec(&Message::Snapshot(peers)).unwrap().len() < MAX_FRAME);
+        assert!(
+            serde_json::to_vec(&Message::Snapshot {
+                peers,
+                vehicles: (0..vehicles::MAX_VEHICLES)
+                    .map(|id| VehicleRecord {
+                        id: vehicles::FIRST_VEHICLE_ID + id as u32,
+                        model: 255,
+                        pose: pose.vehicle.unwrap(),
+                        driver: None,
+                        epoch: u32::MAX,
+                        passengers: [None; 3],
+                    })
+                    .collect()
+            })
+            .unwrap()
+            .len()
+                < MAX_FRAME
+        );
     }
     #[test]
     fn twenty_players_relay_poses_reject_overflow_and_reuse_a_departed_slot() {
@@ -869,13 +1018,8 @@ mod tests {
             car_model: 7,
             ped_model: 3,
             clothes: 0b101,
-            driving: true,
+            driving: false,
             speed: 20.0,
-            vehicle: Some(VehiclePose {
-                position: [12.0, 3.0, -4.0],
-                speed: 20.0,
-                ..VehiclePose::default()
-            }),
             ..Pose::default()
         };
         wait(|| {
@@ -896,10 +1040,6 @@ mod tests {
             driving: false,
             position: [400.0, 3.0, -4.0],
             speed: 0.0,
-            vehicle: Some(VehiclePose {
-                speed: 0.0,
-                ..pose.vehicle.unwrap()
-            }),
             ..pose
         };
         wait(|| {
@@ -946,7 +1086,12 @@ mod tests {
         let client = Session::join(host.address, "Good").unwrap();
         wait(|| report(&client).connected);
         let mut intruder = Wire::new(TcpStream::connect(host.address).unwrap()).unwrap();
-        intruder.queue(&Message::Snapshot(vec![])).unwrap();
+        intruder
+            .queue(&Message::Snapshot {
+                peers: vec![],
+                vehicles: vec![],
+            })
+            .unwrap();
         intruder.flush().unwrap();
         wait(|| intruder.read().is_err());
         assert!(report(&host).connected);
@@ -977,5 +1122,253 @@ mod tests {
         wait(|| report(&replacement).connected && report(&server).peers.len() == MAX_PLAYERS);
         drop(server);
         wait(|| !report(&replacement).connected);
+    }
+    #[test]
+    fn dedicated_shared_car_transfer_late_join_disconnect_and_rejoin() {
+        let server =
+            Session::dedicated_resources(address(), "Shared", resources::Share::default()).unwrap();
+        let alice = Session::join(server.address, "Alice").unwrap();
+        let bob = Session::join(server.address, "Bob").unwrap();
+        wait(|| report(&alice).connected && report(&bob).connected);
+        let alice_id = alice.report.lock().unwrap().local_id;
+        let bob_id = bob.report.lock().unwrap().local_id;
+        let observe = |s: &Session| s.report.lock().unwrap().clone();
+        let mut alice_pose = Pose {
+            vehicle_request: Some(VehicleRequest {
+                sequence: 1,
+                action: VehicleAction::Spawn {
+                    model: 0,
+                    pose: VehiclePose::default(),
+                },
+            }),
+            ..Pose::default()
+        };
+        wait(|| {
+            alice.update(alice_pose);
+            observe(&server).vehicles.len() == 1
+        });
+        let car = observe(&server).vehicles[0];
+        assert_ne!(car.id, alice_id);
+        assert_eq!(car.driver, Some(alice_id));
+        alice_pose.vehicle_request = Some(VehicleRequest {
+            sequence: 2,
+            action: VehicleAction::Leave,
+        });
+        wait(|| {
+            alice.update(alice_pose);
+            observe(&server).vehicles[0].driver.is_none()
+        });
+        let mut bob_pose = Pose {
+            vehicle_request: Some(VehicleRequest {
+                sequence: 1,
+                action: VehicleAction::Enter { vehicle: car.id },
+            }),
+            ..Pose::default()
+        };
+        wait(|| {
+            bob.update(bob_pose);
+            observe(&server).vehicles[0].driver == Some(bob_id)
+        });
+        alice_pose.vehicle_request = None;
+        alice_pose.ride_request = Some(RideRequest {
+            sequence: 1,
+            owner: Some(car.id),
+        });
+        wait(|| {
+            alice.update(alice_pose);
+            observe(&server).vehicles[0].passengers[0] == Some(alice_id)
+        });
+        let late = Session::join(server.address, "Late").unwrap();
+        wait(|| {
+            let r = report(&late);
+            r.vehicles.len() == 1
+                && r.vehicles[0].passengers[0] == Some(alice_id)
+                && r.peers.len() == 3
+        });
+        let grant = observe(&bob)
+            .peers
+            .iter()
+            .find(|p| p.id == bob_id)
+            .and_then(|p| p.pose.driver)
+            .unwrap();
+        bob_pose.vehicle_request = None;
+        bob_pose.vehicle_motion = Some(VehicleMotion {
+            vehicle: car.id,
+            epoch: grant.epoch,
+            sequence: 1,
+            pose: VehiclePose {
+                position: [1., 0., 0.],
+                speed: 3.,
+                ..VehiclePose::default()
+            },
+        });
+        wait(|| {
+            bob.update(bob_pose);
+            observe(&server).vehicles[0].pose.position[0] == 1.
+        });
+        drop(bob);
+        wait(|| {
+            let r = observe(&server);
+            r.peers.len() == 2 && r.vehicles[0].driver.is_none() && r.vehicles[0].pose.speed == 0.
+        });
+        assert_eq!(observe(&server).vehicles[0].pose.position[0], 1.);
+        assert_eq!(observe(&server).vehicles[0].passengers[0], Some(alice_id));
+        let rejoined = Session::join(server.address, "Bob").unwrap();
+        wait(|| report(&rejoined).connected);
+        let r = observe(&rejoined);
+        assert_ne!(r.local_id, bob_id);
+        assert!(r
+            .peers
+            .iter()
+            .find(|p| p.id == r.local_id)
+            .unwrap()
+            .pose
+            .driver
+            .is_none());
+        rejoined.update(bob_pose); // Replayed old driver's epoch is never authority.
+        wait(|| observe(&rejoined).revision > r.revision);
+        assert_eq!(observe(&server).vehicles[0].pose.position[0], 1.);
+        assert!(observe(&server).vehicles[0].driver.is_none());
+    }
+
+    #[test]
+    fn simultaneous_tcp_driver_requests_have_only_one_winner() {
+        let host = Session::host(address(), "Host").unwrap();
+        let a = Session::join(host.address, "A").unwrap();
+        let b = Session::join(host.address, "B").unwrap();
+        let observe = |s: &Session| s.report.lock().unwrap().clone();
+        let spawn = Pose {
+            vehicle_request: Some(VehicleRequest {
+                sequence: 1,
+                action: VehicleAction::Spawn {
+                    model: 0,
+                    pose: VehiclePose::default(),
+                },
+            }),
+            ..Pose::default()
+        };
+        wait(|| {
+            host.update(spawn);
+            a.update(Pose::default());
+            b.update(Pose::default());
+            observe(&host).vehicles.len() == 1 && observe(&host).peers.len() == 3
+        });
+        let id = observe(&host).vehicles[0].id;
+        let leave = Pose {
+            vehicle_request: Some(VehicleRequest {
+                sequence: 2,
+                action: VehicleAction::Leave,
+            }),
+            ..Pose::default()
+        };
+        wait(|| {
+            host.update(leave);
+            observe(&host).vehicles[0].driver.is_none()
+        });
+        let enter = Pose {
+            vehicle_request: Some(VehicleRequest {
+                sequence: 1,
+                action: VehicleAction::Enter { vehicle: id },
+            }),
+            ..Pose::default()
+        };
+        let barrier = std::sync::Barrier::new(3);
+        thread::scope(|scope| {
+            scope.spawn(|| {
+                barrier.wait();
+                a.update(enter);
+            });
+            scope.spawn(|| {
+                barrier.wait();
+                b.update(enter);
+            });
+            barrier.wait();
+        });
+        wait(|| {
+            let r = observe(&host);
+            r.peers
+                .iter()
+                .filter(|p| p.id != 0)
+                .all(|p| p.pose.vehicle_reply.is_some())
+        });
+        let r = observe(&host);
+        assert_eq!(
+            r.peers.iter().filter(|p| p.pose.driver.is_some()).count(),
+            1
+        );
+        assert_eq!(
+            r.peers
+                .iter()
+                .filter(|p| p
+                    .pose
+                    .vehicle_reply
+                    .is_some_and(|r| r.result == VehicleResult::Full))
+                .count(),
+            1
+        );
+        assert!(r.vehicles[0].driver.is_some());
+    }
+    #[test]
+    fn gameplay_message_flood_disconnects_only_offender() {
+        let host = Session::host(address(), "Host").unwrap();
+        let good = Session::join(host.address, "Good").unwrap();
+        wait(|| report(&good).connected);
+        let mut flood = Wire::new(TcpStream::connect(host.address).unwrap()).unwrap();
+        flood
+            .queue(&Message::Hello {
+                version: VERSION,
+                name: "Flood".into(),
+                resources: None,
+            })
+            .unwrap();
+        flood.flush().unwrap();
+        let mut welcomed = false;
+        wait(|| {
+            for message in flood.read().unwrap() {
+                welcomed |= matches!(message, Message::Welcome { .. });
+            }
+            welcomed
+        });
+        for _ in 0..220 {
+            flood.queue(&Message::Pose(Pose::default())).unwrap();
+        }
+        flood.flush().unwrap();
+        wait(|| {
+            let _ = flood.flush();
+            flood.read().is_err()
+        });
+        assert!(report(&host).connected && report(&good).connected);
+    }
+
+    #[test]
+    fn snapshot_rejects_duplicate_ids_invented_occupants_and_forged_grants() {
+        let mut peers = vec![Peer {
+            id: 1,
+            name: "P".into(),
+            pose: Pose::default(),
+        }];
+        let mut car = VehicleRecord {
+            id: vehicles::FIRST_VEHICLE_ID,
+            model: 0,
+            pose: VehiclePose::default(),
+            driver: None,
+            epoch: 1,
+            passengers: [None; 3],
+        };
+        assert!(valid_vehicles(&peers, &[car]));
+        assert!(!valid_vehicles(&peers, &[car, car]));
+        car.driver = Some(9);
+        assert!(!valid_vehicles(&peers, &[car]));
+        car.driver = Some(1);
+        assert!(!valid_vehicles(&peers, &[car]));
+        peers[0].pose.driver = Some(DriverGrant {
+            vehicle: car.id,
+            epoch: 1,
+        });
+        peers[0].pose.driving = true;
+        peers[0].pose.vehicle = Some(car.pose);
+        assert!(valid_vehicles(&peers, &[car]));
+        car.passengers[0] = Some(1);
+        assert!(!valid_vehicles(&peers, &[car]));
     }
 }

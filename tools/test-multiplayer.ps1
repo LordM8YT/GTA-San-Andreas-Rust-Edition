@@ -6,12 +6,15 @@ param(
     [switch]$Passenger,
     [switch]$Audio,
     [switch]$AutoPlay,
+    [switch]$SharedVehicles,
     [string]$HostModsDir,
     [string]$ClientModsDir,
     [string]$CacheDirectory,
     [string]$BinaryDirectory
 )
 $ErrorActionPreference = 'Stop'
+if ($SharedVehicles -and -not $Dedicated) { throw 'SharedVehicles smoke requires -Dedicated.' }
+if ($SharedVehicles -and ($Passenger -or $Appearance)) { throw 'Run SharedVehicles and the legacy Appearance/Passenger choreography separately.' }
 $mpRepo = Split-Path -Parent $PSScriptRoot
 if (-not $BinaryDirectory) { $BinaryDirectory = Join-Path $mpRepo 'native\target\release' }
 $mpSource = Join-Path $BinaryDirectory 'sa-runtime.exe'
@@ -29,6 +32,14 @@ if ($Appearance -and -not $HostModsDir) {
         [System.IO.File]::WriteAllText($mpDemoManifest, ($mpManifestData | ConvertTo-Json -Depth 16), [System.Text.UTF8Encoding]::new($false))
     }
 }
+foreach ($mpResourceVariable in @('HostModsDir','ClientModsDir')) {
+    $mpResourceValue = Get-Variable -Name $mpResourceVariable -ValueOnly
+    if ($mpResourceValue) {
+        $mpResourceResolved = [System.IO.Path]::GetFullPath($mpResourceValue)
+        if (-not (Test-Path -LiteralPath $mpResourceResolved -PathType Container)) { throw "$mpResourceVariable does not exist: $mpResourceResolved" }
+        Set-Variable -Name $mpResourceVariable -Value $mpResourceResolved
+    }
+}
 $mpExe = Join-Path $mpResults 'sa-runtime-mp.exe'
 Copy-Item -LiteralPath $mpSource -Destination $mpExe
 $mpPortProbe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
@@ -41,6 +52,7 @@ $mpRelay = $null
 $mpServer = $null
 try {
     $mpCommon = @('--game-dir', ('"' + $GameDir + '"'), '--renderer', 'vulkan', '--smoke-network')
+    if ($SharedVehicles) { $mpCommon += @('--smoke-shared-cars','--play') }
     if ($AutoPlay) { $mpCommon += '--play' }
     if ($Appearance) { $mpCommon += '--smoke-appearance' }
     if ($Passenger) { $mpCommon += '--smoke-passenger' }
@@ -117,7 +129,7 @@ try {
     $mpClient = Start-Process -WindowStyle Hidden -FilePath $mpExe -WorkingDirectory $mpRepo -PassThru `
         -ArgumentList ($mpCommon + $mpClientResources + $mpJoinArgs + @('--name', 'ClientTest', '--capture-dir', ('"' + (Join-Path $mpResults 'client') + '"'))) `
         -RedirectStandardOutput (Join-Path $mpResults 'client.log') -RedirectStandardError (Join-Path $mpResults 'client-errors.log')
-    if (-not $mpHost.WaitForExit(60000)) { throw 'Host smoke test timed out.' }
+    if (-not $mpHost.WaitForExit($(if ($SharedVehicles) { 120000 } else { 60000 }))) { throw 'Host smoke test timed out.' }
     if (-not $mpClient.WaitForExit(30000)) { throw 'Client smoke test timed out.' }
     foreach ($mpRole in @('host', 'client')) {
         $mpLog = Get-Content (Join-Path $mpResults ($mpRole + '.log')) -Raw
@@ -126,10 +138,12 @@ try {
             $mpErrors = Get-Content (Join-Path $mpResults ($mpRole + '-errors.log')) -Raw
             if ($mpErrors -notmatch 'Launcher join entered prepared session') { throw "$mpRole launcher auto-entry did not run." }
         }
+        if ($SharedVehicles -and $mpLog -notmatch 'GPU shared vehicle smoke passed') { throw "$mpRole shared vehicle flow failed. Inspect logs." }
         if ($Appearance -and $mpLog -notmatch 'GPU appearance smoke passed') { throw "$mpRole appearance replication failed. Inspect logs." }
         if ($Passenger -and $mpLog -notmatch 'GPU passenger smoke passed') { throw "$mpRole passenger replication failed. Inspect logs." }
         if ($Audio -and $mpLog -notmatch 'Gameplay audio smoke passed') { throw "$mpRole gameplay audio failed. Inspect logs." }
-        if (-not (Test-Path -LiteralPath (Join-Path $mpResults ($mpRole + '\multiplayer-world.png')))) { throw "$mpRole capture missing." }
+        $mpCaptureName = if ($SharedVehicles) { 'shared-rejoined.png' } else { 'multiplayer-world.png' }
+        if (-not (Test-Path -LiteralPath (Join-Path $mpResults ($mpRole + '\' + $mpCaptureName)))) { throw "$mpRole capture missing." }
     }
     Write-Output "Two-instance Vulkan multiplayer smoke passed. Results: $mpResults"
 } finally {

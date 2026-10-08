@@ -131,42 +131,46 @@ restores and renders the offline world. Separate-PC/internet tests remain pendin
   and within 300 metres are rendered. Remote animation uploads are capped at
   approximately 30 Hz.
 
-Vehicles are currently personal: one car per connected player. After you
-spawn/use it, other players see it while driving and after you exit. Its pose
-is independent of your walking position/interior; a nearby parked car remains
-visible even if its owner moves beyond the avatar rendering range. Both are
-culled independently at 300 metres in their own interior. Stationary car meshes
-are not uploaded repeatedly. Selecting another car replaces your personal car;
-disconnecting removes it. Parked cars are frozen, not independently simulated.
+## Shared vehicles and riding together
 
-Exchanging vehicles, vehicle/player collisions,
-damage, weapons, NPCs spawned through `/peds` and time/weather are
-**not synchronized**. Each client simulates their own
-movement and collisions. Remote actors have no physical collision. This is a
-freeroam connection/replication prototype, not a complete shared simulation.
+Vehicles have stable session IDs in a separate namespace from players. Use F7
+or `/cars` to request a new car; the server grants its driver seat before local
+physics starts. Parked cars keep their last accepted position after exit or
+owner disconnect. **F** / controller Y requests the nearest free driver seat;
+when its driver seat is occupied, it requests a passenger seat instead. **G**
+requests a passenger seat explicitly. F/G leave a passenger seat; F leaves a
+driver seat if collision data provides a safe supported exit.
 
-## Riding together
+The server is the authority for seats and lifetime. It checks distance, interior,
+boarding speed (at most 5 m/s), occupancy and monotonically sequenced requests.
+Only the current driver may submit movement for the matching vehicle ID and
+ownership epoch, with a fresh motion sequence, finite/bounded values and a
+bounded displacement. Leaving/disconnecting advances the epoch and freezes
+speed at zero. Delayed messages from a previous driver cannot move the car.
+A passenger reservation survives driver disconnect and another player may take
+the free driver seat. Rejoining gives a new membership ID and no inherited seat.
 
-Press **G** within 6 metres of another player's personal car to request a
-passenger seat. **F** chooses the nearer car (your own car to drive, another
-player's car to ride) and leaves a granted passenger seat. Controller Y uses
-the same nearest-car action. Leave your own driver seat before boarding.
+There are at most **40 shared cars** per session, with at most one occupied seat
+per player. Spawning is limited to once per second per connected player. Empty
+cars expire after five minutes; occupied cars are never expired by that rule.
+IDs are not reused during the server lifetime. Vehicles/seats are included in
+late-join snapshots. Server restart does not persist the world. At capacity a
+spawn is denied; there is no client delete/admin capability. Spawn positions are
+bounded and checked against the requesting player's reported position/interior;
+the server does not load original collision data. This is not movement anti-cheat.
 
-The host reserves up to three passenger places per personal car. It checks
-availability, distance, matching interiors and speed (at most 5 m/s). Replies
-appear in the multiplayer HUD; a denied request keeps you connected. Requests
-have sequence numbers so repeated or stale packets cannot reserve a seat again.
-Passengers follow the driver's interpolated car and keep their own parked car.
-F/G exits seek a supported clear spot without passing through a wall. Spawning
-a car, travelling, changing to free-fly or disconnecting cancels the reservation.
-A missing owner/car, model change, interior change or vehicle teleport over
-30 metres ends the ride; recovery uses the last known vehicle position.
+Client driving physics remains local. Remote cars interpolate and cull separately
+from avatars at 300 metres; stationary meshes skip redundant uploads. A large
+local divergence is corrected to the last accepted server pose, allowing for
+measured RTT. Model indices refer to the inventory-checked session catalog;
+unknown render models use the existing fallback, and a client declines a driver
+grant for a missing model rather than simulating a different one.
 
-This first version uses three fixed passenger offsets for every model, without
-model-specific seat counts or visible seated characters. Driver and passengers
-are hidden inside the car, as drivers already were. It does not implement
-vehicle theft, ownership transfer, animated doors or shared collision physics.
-The host controls reservations; vehicle motion remains client-authoritative.
+The current fallback uses three fixed passenger offsets for every model. Visible
+seated characters and model-specific seat metadata are still pending. Driver and
+passengers remain hidden inside the car. NPCs, damage, weapons, doors, time/weather
+and mutual dynamic vehicle/player collision are not synchronized. Dynamic shared
+collisions remain disabled until ownership and simulation correction are resolved.
 
 ## Transport and hosting architecture
 
@@ -185,6 +189,8 @@ run on a background thread. Render-thread communication uses bounded,
 latest-only mailboxes. Length-prefixed messages support partial TCP reads and
 writes; frame sizes, pending connections, output buffers and work per peer are
 bounded. Version, identity, name and finite/bounded position checks are applied.
+Frames are capped at 64 KiB, pending output at 256 KiB per connection;
+gameplay input is capped at 200 messages/s (resource preflight: 1024/s).
 Inactive connections time out after ten seconds. Host identities are assigned
 by the host; guests cannot submit another player's ID or a world snapshot.
 
@@ -211,8 +217,12 @@ logs/captures under `native/target/mp-smoke-<timestamp>`. Add `-Appearance`
 to test different outfits and model changes using copies of our own demo
 resources; add `-Passenger` to board, ride in and exit another player's car;
 add `-Relay` and/or `-Dedicated` for those hosting modes.
+Run `-SharedVehicles -Dedicated -Relay` separately for spawn/drive/park/driver
+transfer/passenger streaming/driver disconnect/rejoin/offline restoration.
+`-BinaryDirectory` selects an isolated release build without disturbing a running
+user game. See [integration verification](freeroam-integration.md).
 
-Appearance replication uses network protocol **6**. Update the runtime,
+Shared vehicle replication uses network protocol **7**. Update the runtime,
 dedicated server and relay together; older protocol versions are rejected.
 
 For a GPU integration check, launch two runtime instances with `--smoke-network`
@@ -253,7 +263,8 @@ The native launcher selects direct IP or a relay browser/join code and starts th
 runtime with `--play`. The runtime still performs resource preflight, verification,
 model upload and inventory-pinned admission before entering gameplay. Direct
 runtime starts can use the same flags. Update runtime, headless server and relay
-together: protocol 6 adds matched Ping/Pong messages. The displayed RTT measures
+together: protocol 7 adds shared vehicle IDs, seat ownership and motion epochs;
+matched Ping/Pong messages introduced in protocol 6 remain supported. The displayed RTT measures
 the gameplay connection, including relay hops and host scheduling; it is not a
 one-way delay or the directory request duration. Hosting locally has no remote RTT.
 

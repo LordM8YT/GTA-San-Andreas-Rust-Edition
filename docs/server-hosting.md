@@ -4,8 +4,9 @@
 a window, graphics device, Steam installation or original San Andreas files.
 It accepts **20 actual clients**, with no placeholder host avatar. This is a
 headless version of the current multiplayer prototype: movement and collisions
-are still simulated by clients, and exchanging cars, passengers and NPCs are
-not an authoritative shared world yet.
+are still simulated by clients. The server owns shared vehicle IDs, driver and
+passenger seats, accepted movement and disconnect parking. NPCs and mutual
+dynamic vehicle collisions are not synchronized.
 
 ## Start
 
@@ -70,7 +71,7 @@ their cache next time; supported formats and limits are in
 
 The server distributes map assets and catalogs. Selected car, ped and clothing
 choices synchronize between clients. The runtime, server and relay must all
-use network protocol 6; incompatible versions are rejected.
+use network protocol 7; incompatible versions are rejected.
 
 ## Verification
 

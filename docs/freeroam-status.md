@@ -32,9 +32,10 @@ overskriver ikke det siste trygge checkpointet. Et krasj kan miste fremdrift sid
 En spiller hoster, og opptil 19 andre kobler til med IP og port. Åpne Multiplayer
 fra hoved-/pausemenyen, F5 eller /mp. Spillerposisjoner og bilbevegelse deles;
 valgte biler, peds og opptil 16 klesvalg per ped synkroniseres også fra
-sesjonens felles ressursliste. Personlige biler vises også etter utstigning,
-med separat synlighet for bilen og eieren. Passasjerplasser reserveres av hosten: G ber om plass i en annen spillers
-bil, og F går ut igjen. NPC-er, bilbytte og felles bilkollisjoner er ikke synkronisert.
+sesjonens felles ressursliste. Biler har stabile sesjons-ID-er og blir st?ende
+etter utstigning/frakobling. F ber om ledig f?rerplass, G om passasjerplass;
+serveren validerer seter og bevegelsesautoritet. NPC-er og felles dynamiske
+bilkollisjoner er ikke synkronisert.
 Se [oppsett og begrensninger](multiplayer.md). Direkte internett-hosting krever
 videresendt TCP-port (standard 7777); automatisk NAT-traversering er ikke lagt inn.
 Relay-modus har serverbrowser, offentlige/private rom og joincode. Begge parter

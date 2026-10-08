@@ -245,7 +245,7 @@ impl Session {
                     Ok(()) => "Disconnected".into(),
                     Err(e) => format!("Session ended: {e}"),
                 };
-                publish(&report, &status, false, 0, Vec::new());
+                publish(&report, &status, false, 0, Vec::new(), Vec::new());
             })?;
         Ok(session)
     }
@@ -668,13 +668,7 @@ mod tests {
             car_model: 4,
             ped_model: 2,
             clothes: 0b1001,
-            driving: true,
-            vehicle: Some(crate::VehiclePose {
-                position: [120.0, 14.0, -35.0],
-                yaw: 0.9,
-                pitch: 0.12,
-                ..crate::VehiclePose::default()
-            }),
+            driving: false,
             yaw: 0.9,
             pitch: 0.12,
             ..Pose::default()

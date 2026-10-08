@@ -82,7 +82,7 @@ impl State {
         }
         if active {
             for actor in &self.remote_actors {
-                if !actor.current.driving {
+                if actor.id < sa_net::vehicles::FIRST_VEHICLE_ID || !actor.current.driving {
                     continue;
                 }
                 let Some(car) = actor.current.vehicle else {

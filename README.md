@@ -11,7 +11,7 @@ Play together. Direct runtime startup remains supported.
 The launcher shares settings and launch contracts with the runtime, saves favorites,
 shows installation errors, previews unused cache cleanup and creates reviewable
 local diagnostic reports. Runtime joins prepare and verify server resources before
-automatically entering gameplay. All multiplayer binaries now need **protocol 6**;
+automatically entering gameplay. All multiplayer binaries now need **protocol 7**;
 round-trip time is measured on the gameplay connection. F3 shows frame/CPU timings
 and resident memory. GPU timestamp profiling is not implemented.
 
@@ -49,13 +49,14 @@ For a server that stays running without a player's game, run **start-server.cmd*
 The headless server supports 20 clients, direct IP or relay/browser hosting,
 and native mod distribution. See [server setup](docs/server-hosting.md).
 Required native mods download and cache before joining; disconnect restores
-your offline world and local mods. Personal cars remain visible after their
-owner exits. Hosts also reserve up to three passenger seats so players can
-ride together. NPCs, shared vehicle collisions and exchanging cars are not
-yet replicated. See [multiplayer setup and limits](docs/multiplayer.md).
+your offline world and local mods. Shared cars retain stable IDs after exit and
+disconnect. F enters a free driver seat, G requests a passenger seat, and another
+player can take over a parked car. The server reserves seats and accepts movement
+only from the current driver/ownership epoch. Up to 40 cars are retained; empty
+cars expire after five minutes. Dynamic shared collisions and visible seated
+characters remain pending. See [multiplayer setup and limits](docs/multiplayer.md).
 
-Personal cars and passenger rides are implemented; exchanging car ownership and
-shared collisions remain planned. See the [roadmap](docs/roadmap.md) for priorities.
+See the [roadmap](docs/roadmap.md) for later priorities.
 
 ## Menus, HUD, and settings
 
