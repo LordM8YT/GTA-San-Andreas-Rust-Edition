@@ -399,6 +399,7 @@ impl State {
         std::mem::swap(&mut self.menu.peds, &mut world.peds);
         std::mem::swap(&mut self.menu.clothes, &mut world.clothes);
         self.keys.clear();
+        self.car_render_pose = None;
         self.ped_clip = "idle_stance";
         self.ped_seconds = 0.0;
         self.ped_visible = false;

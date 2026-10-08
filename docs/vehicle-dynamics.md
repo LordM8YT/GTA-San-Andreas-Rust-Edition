@@ -101,3 +101,18 @@ provides a starting point. Server guests receive only its resource manifest and
 load the models from their own installations. Disconnecting restores their
 local car/tuning setup. Profiles are native values; original handling.cfg and
 FiveM handling.meta are not automatically translated.
+
+## Stationary mesh updates
+
+The local car now reuses its transformed GPU geometry while its position and
+body angles remain unchanged, including parked and paused frames. Movement,
+rotation and model/resource changes still update the buffers. The same pose
+change test is used for remote parked cars. Switching/restoring session worlds
+invalidates the local cache so different car meshes cannot reuse stale geometry.
+
+A Vulkan check with the locally imported Skyline measured 30 redundant updates
+(54.01 MiB) over 30 parked frames before the change and zero afterwards. Driving,
+braking, exit/re-entry and multiplayer model changes/offline restoration were
+checked separately. This measures avoided CPU/GPU work, not a guaranteed FPS.
+Use `--smoke-car --smoke-idle-car` to run the route and assert parked updates
+remain zero. Third-party models are kept outside the repository.

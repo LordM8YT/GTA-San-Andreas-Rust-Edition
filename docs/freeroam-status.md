@@ -133,6 +133,10 @@ feilmelding vises i menyen.
   med følgekamera, terrengkontakt, veggkollisjon og inn/ut.
   `--smoke-car` kontrollerer kjøring, bremsing, utstigning og ny innstigning.
   Bilens dynamiske geometri beholdes når nabolag byttes.
+  Parkerings- og pauseframes gjenbruker nå bilens GPU-geometri til den flytter
+  eller roterer; modell- og sesjonsbytte tvinger ny oppdatering. Skyline-testen
+  gikk fra 54,01 MiB til 0 MiB med gjentatte bilmesh-opplastinger over 30
+  parkerte frames. Dette måler fjernet arbeid, ikke en bestemt FPS-økning.
 - Bakkekontakt måles fra hvert hjuls forventede høyde på den skrå bilen.
   Fjæringen følger også veiens høydeendring under kjøring, slik at den lave
   akslingen ikke alene trekker bilen ned i veien. Oppover-/nedoverbakker,

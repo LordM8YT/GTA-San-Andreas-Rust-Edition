@@ -156,7 +156,7 @@ fn blend_angle(a: f32, b: f32, t: f32) -> f32 {
     let delta = (b - a).sin().atan2((b - a).cos());
     a + delta * t
 }
-fn car_changed(previous: Option<VehiclePose>, current: VehiclePose) -> bool {
+pub(super) fn car_changed(previous: Option<VehiclePose>, current: VehiclePose) -> bool {
     previous.is_none_or(|previous| {
         previous.interior != current.interior
             || Vec3::from_array(previous.position)

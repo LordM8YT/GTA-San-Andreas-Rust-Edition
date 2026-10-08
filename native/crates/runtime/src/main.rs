@@ -93,6 +93,9 @@ struct State {
     persist_settings: bool,
     quit_requested: bool,
     car: Option<(sa_scene::vehicle::Car, Vec<GpuBatch>)>,
+    car_uploads: u64,
+    car_uploaded_bytes: u64,
+    car_render_pose: Option<sa_net::VehiclePose>,
     driving: bool,
     car_catalog: Vec<Option<(sa_scene::vehicle::Car, Vec<GpuBatch>)>>,
     ped_catalog: Vec<Option<(sa_scene::ped::Ped, Vec<GpuBatch>)>>,
@@ -165,6 +168,7 @@ impl State {
             sa_scene::vehicle::Car::new(Vec3::ZERO, clearance).with_handling(handling),
             batches,
         ));
+        self.car_render_pose = None;
         self.place_car();
         self.driving = false;
         Ok(())
@@ -184,6 +188,7 @@ impl State {
                 sa_scene::vehicle::Car::spawn_near(world, origin, self.yaw, car.clearance)
             {
                 *car = placed.with_handling(car.handling);
+                self.car_render_pose = None;
                 self.driving = true;
                 self.network_car_spawned = true;
                 self.keys.clear();
@@ -486,6 +491,9 @@ impl State {
             persist_settings: true,
             quit_requested: false,
             car: None,
+            car_uploads: 0,
+            car_uploaded_bytes: 0,
+            car_render_pose: None,
             driving: false,
             car_catalog: vec![None],
             ped_catalog: vec![None],
@@ -1031,17 +1039,29 @@ impl State {
             }
         }
         if let Some((car, batches)) = &self.car {
-            let rotation = sa_scene::vehicle::model_rotation(car.yaw, car.pitch, car.roll);
-            for batch in batches {
-                let mut raw = batch.base.clone();
-                for v in raw.as_chunks_mut::<9>().0.iter_mut() {
-                    let point = rotation * Vec3::new(v[0], v[1], v[2]) + car.position;
-                    v[0] = point.x;
-                    v[1] = point.y;
-                    v[2] = point.z;
+            let pose = sa_net::VehiclePose {
+                position: car.position.to_array(),
+                yaw: car.yaw,
+                pitch: car.pitch,
+                roll: car.roll,
+                ..sa_net::VehiclePose::default()
+            };
+            if multiplayer::car_changed(self.car_render_pose, pose) {
+                self.car_uploads += 1;
+                let rotation = sa_scene::vehicle::model_rotation(car.yaw, car.pitch, car.roll);
+                for batch in batches {
+                    let mut raw = batch.base.clone();
+                    for v in raw.as_chunks_mut::<9>().0.iter_mut() {
+                        let point = rotation * Vec3::new(v[0], v[1], v[2]) + car.position;
+                        v[0] = point.x;
+                        v[1] = point.y;
+                        v[2] = point.z;
+                    }
+                    self.queue
+                        .write_buffer(&batch.buffer, 0, bytemuck::cast_slice(&raw));
+                    self.car_uploaded_bytes += (raw.len() * std::mem::size_of::<f32>()) as u64;
                 }
-                self.queue
-                    .write_buffer(&batch.buffer, 0, bytemuck::cast_slice(&raw));
+                self.car_render_pose = Some(pose);
             }
         }
         if self.streamer.is_some() {
@@ -1375,6 +1395,7 @@ impl State {
                     if let Some((car, _)) = &mut self.car {
                         *car = placed;
                     }
+                    self.car_render_pose = None;
                     self.driving = true;
                     if self.driving {
                         self.menu.has_played = true;
@@ -1710,6 +1731,8 @@ struct App {
     smoke_graphics: bool,
     smoke_stream: bool,
     smoke_car: bool,
+    smoke_idle_car: bool,
+    idle_car_start: Option<(u64, u64)>,
     smoke_signs: bool,
     smoke_neon: bool,
     smoke_network: bool,
@@ -2245,8 +2268,21 @@ impl ApplicationHandler for App {
                     if self.smoke_frames == 240 {
                         state.keys.clear();
                         state.toggle_car();
+                        self.idle_car_start = Some((state.car_uploads, state.car_uploaded_bytes));
                     }
                     if self.smoke_frames == 270 {
+                        if let Some((uploads, bytes)) = self.idle_car_start {
+                            let updates = state.car_uploads - uploads;
+                            let written = state.car_uploaded_bytes - bytes;
+                            println!("GPU parked local car: {updates} mesh updates / {:.2} MiB over 30 frames", written as f64 / 1048576.0);
+                            if self.smoke_idle_car {
+                                assert_eq!(
+                                    (updates, written),
+                                    (0, 0),
+                                    "parked car meshes were uploaded repeatedly"
+                                );
+                            }
+                        }
                         state.toggle_car();
                     }
                 }
@@ -3491,6 +3527,8 @@ fn main() -> Result<()> {
         smoke_graphics: args.iter().any(|a| a == "--smoke-graphics"),
         smoke_stream: args.iter().any(|a| a == "--smoke-stream"),
         smoke_car: args.iter().any(|a| a == "--smoke-car"),
+        smoke_idle_car: args.iter().any(|a| a == "--smoke-idle-car"),
+        idle_car_start: None,
         smoke_signs: args.iter().any(|a| a == "--smoke-signs"),
         smoke_neon: args.iter().any(|a| a == "--smoke-neon"),
         smoke_network: args
