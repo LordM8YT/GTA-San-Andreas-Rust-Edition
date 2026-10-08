@@ -54,9 +54,10 @@ does not substitute a fabricated map. The local-resource menu
 lists detected enabled and disabled resources; edit `enabled` in each `resource.json` or `mod.json`
 and restart to change their state.
 
-Original menu sound effects now load directly from the installation. The audio
-backend also supports ordinary music files and spatial effects. Footstep/engine
-events and original radio archives are still pending; see
+Original menu cues, basic spatial engine loops and local grounded footsteps
+now load directly from the installation. Nearby multiplayer cars emit engine
+sound too. Surface-specific steps, collision sounds and original radio
+archives are still pending; see
 [native audio](docs/native-audio.md). Press **I** to visit the three available
 interiors and **R** or a map destination to return outside.
 

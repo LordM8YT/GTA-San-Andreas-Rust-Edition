@@ -7,6 +7,7 @@ use sa_scene::{
 use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Instant};
 mod capture;
 mod controller;
+mod gameplay_audio;
 mod menu;
 mod multiplayer;
 mod postprocess;
@@ -43,6 +44,7 @@ struct SpawnedPed {
 struct State {
     audio: Option<sa_audio::AudioEngine>,
     frontend_sounds: Option<sa_audio::FrontendSounds>,
+    gameplay_audio: gameplay_audio::GameplayAudio,
     window: Arc<Window>,
     instance: wgpu::Instance,
     surface: wgpu::Surface<'static>,
@@ -425,6 +427,7 @@ impl State {
             egui_wgpu::Renderer::new(&device, format, egui_wgpu::RendererOptions::default());
         let mut state = Self {
             audio: None,
+            gameplay_audio: gameplay_audio::GameplayAudio::default(),
             frontend_sounds: None,
             window,
             instance,
@@ -1121,6 +1124,7 @@ impl State {
                 eprintln!("Audio listener update failed: {error:#}");
             }
         }
+        self.update_gameplay_audio(dt);
         let target = camera_time
             .map(|(_, target, _)| target)
             .or_else(|| {
@@ -1707,6 +1711,7 @@ impl State {
     }
 }
 struct App {
+    smoke_audio: bool,
     frontend_sounds: Option<sa_audio::FrontendSounds>,
     car_scene: Option<Scene>,
     initial_models: (String, String),
@@ -2093,6 +2098,13 @@ impl ApplicationHandler for App {
                         state.audio = Some(audio);
                         state.apply_audio_settings();
                         eprintln!("Audio output initialized (F10 plays a test tone)");
+                        match sa_audio::gameplay::GameplaySounds::load(&state.resource_game_dir) {
+                            Ok(sounds) => {
+                                state.gameplay_audio.sounds = Some(sounds);
+                                eprintln!("Original engine loops and footsteps loaded");
+                            }
+                            Err(error) => eprintln!("Gameplay audio unavailable: {error:#}"),
+                        }
                     }
                     Err(error) => {
                         eprintln!("Audio output unavailable; continuing silently: {error:#}")
@@ -2479,6 +2491,20 @@ impl ApplicationHandler for App {
                 }
                 if self.smoke_network {
                     if self.network_restored && rendered {
+                        if self.smoke_audio {
+                            assert!(
+                                state.gameplay_audio.engine_starts > 0,
+                                "no multiplayer engine emitter started"
+                            );
+                            assert!(
+                                state.gameplay_audio.footsteps > 0,
+                                "no multiplayer walking footsteps played"
+                            );
+                            println!(
+                                "Gameplay audio smoke passed: {} engine emitters, {} footsteps",
+                                state.gameplay_audio.engine_starts, state.gameplay_audio.footsteps
+                            );
+                        }
                         println!("GPU multiplayer smoke passed: remote walking ped and moving car rendered, {} players seen; offline resources restored and rendered", self.network_players_seen);
                         event_loop.exit();
                         return;
@@ -2703,6 +2729,16 @@ impl ApplicationHandler for App {
                     }
                     if self.smoke_frames >= 302 {
                         let player = state.player.as_ref().expect("player missing");
+                        if self.smoke_audio {
+                            assert!(
+                                state.gameplay_audio.footsteps > 0,
+                                "no footsteps played during walking"
+                            );
+                            println!(
+                                "Footstep audio smoke passed: {} steps",
+                                state.gameplay_audio.footsteps
+                            );
+                        }
                         assert!(
                             player.feet.is_finite() && player.grounded && state.third_person,
                             "invalid final ped state"
@@ -2745,6 +2781,16 @@ impl ApplicationHandler for App {
                             "car did not move"
                         );
                         println!("GPU car smoke passed: driving, braking, exit and re-entry; car {:?}, speed {:.1}",car.position,car.speed);
+                        if self.smoke_audio {
+                            assert!(
+                                state.gameplay_audio.engine_starts >= 2,
+                                "engine failed to restart after re-entry"
+                            );
+                            println!(
+                                "Engine audio smoke passed: {} starts",
+                                state.gameplay_audio.engine_starts
+                            );
+                        }
                         self.smoke_car = false;
                         self.smoke = false;
                         event_loop.exit();
@@ -3182,6 +3228,7 @@ fn main() -> Result<()> {
                 .sum::<usize>();
         }
         sa_audio::FrontendSounds::load(&game)?;
+        sa_audio::gameplay::GameplaySounds::load(&game)?;
         println!("Original SFX probe passed: {} indexed banks; {count} sounds / {samples} PCM samples checked in banks 0..143; three stereo menu cues loaded", archive.bank_count());
         return Ok(());
     }
@@ -3416,6 +3463,7 @@ fn main() -> Result<()> {
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = App {
+        smoke_audio: args.iter().any(|arg| arg == "--smoke-audio"),
         frontend_sounds: match sa_audio::FrontendSounds::load(&game) {
             Ok(sounds) => {
                 eprintln!("Original San Andreas frontend sounds loaded");

@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use kira::{
     listener::ListenerHandle,
     sound::{
-        static_sound::StaticSoundData,
+        static_sound::{StaticSoundData, StaticSoundHandle},
         streaming::{StreamingSoundData, StreamingSoundHandle},
     },
     track::{SpatialTrackBuilder, SpatialTrackHandle, TrackBuilder, TrackHandle},
@@ -13,6 +13,70 @@ use kira::{
 };
 use std::path::{Path, PathBuf};
 pub mod archive;
+pub mod gameplay;
+
+/// Two original looping samples on an effects-bus spatial child. Dropping the
+/// emitter stops both voices and releases its mixer track.
+pub struct EngineEmitter {
+    track: SpatialTrackHandle,
+    idle: StaticSoundHandle,
+    rev: StaticSoundHandle,
+}
+
+impl EngineEmitter {
+    fn new(
+        effects: &mut TrackHandle,
+        listener: &ListenerHandle,
+        sounds: &gameplay::EngineSounds,
+        position: [f32; 3],
+    ) -> Result<Self> {
+        validate_position(position, "engine")?;
+        let mut track = effects.add_spatial_sub_track(
+            listener,
+            glam::Vec3::from_array(position),
+            SpatialTrackBuilder::new()
+                .distances((3.0, 65.0))
+                .sound_capacity(2),
+        )?;
+        let idle = track.play(sounds.idle.data.volume(-14.0))?;
+        let rev = track.play(sounds.rev.data.volume(Decibels::SILENCE))?;
+        Ok(Self { track, idle, rev })
+    }
+
+    /// Native speed/throttle approximation, not the original game's gearbox.
+    pub fn update(&mut self, position: [f32; 3], speed: f32, throttle: f32) -> Result<()> {
+        validate_position(position, "engine")?;
+        anyhow::ensure!(
+            speed.is_finite() && throttle.is_finite(),
+            "engine inputs must be finite"
+        );
+        let motion = (speed.abs() / 48.0).clamp(0.0, 1.0);
+        let load = throttle.abs().clamp(0.0, 1.0);
+        let blend = (motion * 0.75 + load * 0.45).clamp(0.0, 1.0);
+        let tween = Tween {
+            duration: std::time::Duration::from_millis(80),
+            ..Tween::default()
+        };
+        let gain = |amplitude: f32| Decibels::from(20.0 * amplitude.max(0.001).log10());
+        self.track
+            .set_position(glam::Vec3::from_array(position), Tween::default());
+        self.idle
+            .set_volume(gain(0.20 * (1.0 - blend * 0.8)), tween);
+        self.rev.set_volume(gain(0.20 * blend), tween);
+        self.idle
+            .set_playback_rate(f64::from(0.9 + motion * 0.35 + load * 0.1), tween);
+        self.rev
+            .set_playback_rate(f64::from(0.8 + motion * 0.65 + load * 0.25), tween);
+        Ok(())
+    }
+}
+
+impl Drop for EngineEmitter {
+    fn drop(&mut self) {
+        self.idle.stop(Tween::default());
+        self.rev.stop(Tween::default());
+    }
+}
 
 /// In-memory sound used for overlapping short effects.
 #[derive(Clone, Debug)]
@@ -168,6 +232,13 @@ pub struct AudioEngine {
 }
 
 impl AudioEngine {
+    pub fn engine_emitter(
+        &mut self,
+        sounds: &gameplay::EngineSounds,
+        position: [f32; 3],
+    ) -> Result<EngineEmitter> {
+        EngineEmitter::new(&mut self.effects, &self.listener, sounds, position)
+    }
     /// Opens the operating system's default output device.
     pub fn new() -> Result<Self> {
         let mut manager = AudioManager::<DefaultBackend>::new(AudioManagerSettings::default())
@@ -266,7 +337,7 @@ impl AudioEngine {
         self.spatial.retain(|track| track.num_sounds() > 0);
         anyhow::ensure!(self.spatial.len() < 64, "too many active spatial emitters");
         let mut emitter = self
-            .manager
+            .effects
             .add_spatial_sub_track(
                 &self.listener,
                 glam::Vec3::from_array(position),
@@ -436,5 +507,88 @@ mod tests {
     fn world_positions_must_be_finite() {
         assert!(validate_position([0.0, f32::INFINITY, 0.0], "sound").is_err());
         assert!(validate_position([0.0, 1.0, 0.0], "sound").is_ok());
+    }
+
+    // Capture actual mixer output: this checks parent-bus mute and release of
+    // looping emitters without relying on an operating-system audio device.
+    struct CaptureBackend {
+        renderer: Option<kira::backend::Renderer>,
+        buffer: Vec<f32>,
+    }
+    impl kira::backend::Backend for CaptureBackend {
+        type Settings = ();
+        type Error = ();
+        fn setup(_: (), frames: usize) -> std::result::Result<(Self, u32), ()> {
+            Ok((
+                Self {
+                    renderer: None,
+                    buffer: vec![0.0; frames * 2],
+                },
+                48_000,
+            ))
+        }
+        fn start(&mut self, renderer: kira::backend::Renderer) -> std::result::Result<(), ()> {
+            self.renderer = Some(renderer);
+            Ok(())
+        }
+    }
+    impl CaptureBackend {
+        fn energy(&mut self, blocks: usize) -> f32 {
+            let renderer = self.renderer.as_mut().unwrap();
+            let mut energy = 0.0;
+            for _ in 0..blocks {
+                renderer.on_start_processing();
+                renderer.process(&mut self.buffer, 2);
+                energy += self
+                    .buffer
+                    .iter()
+                    .map(|sample| sample * sample)
+                    .sum::<f32>();
+            }
+            energy
+        }
+    }
+    #[test]
+    fn engine_loops_follow_effects_mute_and_release_on_drop() {
+        let mut manager = AudioManager::<CaptureBackend>::new(AudioManagerSettings {
+            backend_settings: (),
+            ..AudioManagerSettings::default()
+        })
+        .unwrap();
+        let mut effects = manager.add_sub_track(TrackBuilder::new()).unwrap();
+        let listener = manager
+            .add_listener(glam::Vec3::ZERO, glam::Quat::IDENTITY)
+            .unwrap();
+        let sample = SoundEffect {
+            data: tone(220.0, 960).loop_region(..),
+        };
+        let sounds = gameplay::EngineSounds {
+            idle: sample.clone(),
+            rev: sample,
+        };
+        let mut engine =
+            EngineEmitter::new(&mut effects, &listener, &sounds, [0.0, 0.0, -2.0]).unwrap();
+        engine.update([0.0, 0.0, -2.0], 20.0, 1.0).unwrap();
+        assert!(engine.update([f32::NAN, 0.0, 0.0], 0.0, 0.0).is_err());
+        assert!(engine.update([0.0; 3], f32::INFINITY, 0.0).is_err());
+        assert!(
+            manager.backend_mut().energy(100) > 0.01,
+            "loops must survive past sample end"
+        );
+        effects.set_volume(Decibels::SILENCE, Tween::default());
+        manager.backend_mut().energy(30);
+        assert!(
+            manager.backend_mut().energy(30) < 1e-10,
+            "engine bypassed effects mute"
+        );
+        effects.set_volume(0.0, Tween::default());
+        manager.backend_mut().energy(30);
+        assert!(manager.backend_mut().energy(30) > 0.01);
+        drop(engine);
+        manager.backend_mut().energy(30);
+        assert!(
+            manager.backend_mut().energy(30) < 1e-10,
+            "dropped engine kept looping"
+        );
     }
 }

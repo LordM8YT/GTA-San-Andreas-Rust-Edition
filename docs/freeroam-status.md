@@ -233,6 +233,11 @@ Grafikkmenyen har egne kategorier, kvalitetsprofiler og fungerende FSR 1.
 Se [grafikkstatus](graphics.md) og [Linux/Vulkan](linux.md). DLSS og temporal
 FSR er fortsatt ikke integrert.
 
+Original motorlyd og lokale fottrinn er koblet inn. Motorer høres også fra
+nærliggende multiplayer-biler, inkludert bilen man sitter i som passasjer.
+Voluminnstillingene gjelder disse lydene. Kollisjonslyd, materialavhengige
+fottrinn og originalradio gjenstår; se [lydstatus](native-audio.md).
+
 Bilfysikken bruker akselbaserte dekkrefter, delt grep for bremsing/svinging,
 fire bakkekontakter og dempet fjæring/karosseribevegelse. Styreretningen med
 tastatur og kontroller er rettet. Skade, bevegelige hjul og full

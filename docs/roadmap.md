@@ -10,9 +10,9 @@ planlagt arbeid; [multiplayer-status](multiplayer.md) og
 | Prioritet | Arbeid | Kriterium for milepælen |
 | --- | --- | --- |
 | 1 | Multiplayer på forskjellige PC-er og nettverk | To faktiske PC-er kan koble til, kjøre mellom streamede områder, koble fra og koble til igjen. Test både LAN og internett; samme-PC-testen dekker ikke dette. |
-| 2 | Felles biler og passasjerer | Personlige biler vises nå etter utstigning. Neste del er bilbytte og at to spillere kan kjøre sammen med én fører. Verten avgjør hvem som eier førersetet. |
+| 2 | Felles biler og passasjerer – implementert første versjon | Personlige biler vises etter utstigning, og verten reserverer tre passasjerplasser. Bilbytte, modellspesifikt seteantall og felles kollisjonsrespons gjenstår. |
 | 3 | Bil, ped, antrekk og ressursversjoner – implementert første versjon | Valgte modeller og klesvalg deles fra en kontrollert ressursliste. Test videre på forskjellige PC-er med større modpakker. |
-| 4 | Motorlyd, fottrinn og kollisjonslyd | Lydene følger faktiske hendelser, plassering og fart. Originale menylyder og en lydmotor finnes allerede. |
+| 4 | Lyd – motorer og lokale fottrinn implementert | Originale motorloops følger fart og plassering, også i multiplayer. Lokale fottrinn følger bevegelse på bakken. Kollisjonslyd, materialvalg og fjernstyrte fottrinn gjenstår. |
 | 5 | Trafikk og gående NPC-er | Start i ett nabolag med et begrenset antall aktører; mål ytelse og definer hvem som simulerer dem i multiplayer. |
 | 6 | Lagring av posisjon, bilvalg og antrekk | En ny spilløkt gjenoppretter gyldige valg med reservevalg hvis ressurser er fjernet. Innstillinger lagres allerede. |
 | 7 | Døgnsyklus, vær og Classic/Enhanced-profiler | Sammenhengende lys/vær og valgbare uttrykk, med samme tid/vær for deltakere i en session. Dagens grafikkprofiler er ikke en ferdig døgn-/værsimulering. |

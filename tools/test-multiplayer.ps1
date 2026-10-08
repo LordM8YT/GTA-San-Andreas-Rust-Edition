@@ -4,6 +4,7 @@ param(
     [switch]$Dedicated,
     [switch]$Appearance,
     [switch]$Passenger,
+    [switch]$Audio,
     [string]$HostModsDir,
     [string]$ClientModsDir,
     [string]$CacheDirectory
@@ -39,6 +40,7 @@ try {
     $mpCommon = @('--game-dir', ('"' + $GameDir + '"'), '--renderer', 'vulkan', '--smoke-network')
     if ($Appearance) { $mpCommon += '--smoke-appearance' }
     if ($Passenger) { $mpCommon += '--smoke-passenger' }
+    if ($Audio) { $mpCommon += '--smoke-audio' }
     $mpHostResources = @('--no-mods')
     $mpClientResources = @('--no-mods')
     if ($HostModsDir) { $mpHostResources = @('--mods-dir', ('"' + $HostModsDir + '"')) }
@@ -118,6 +120,7 @@ try {
         if ($mpLog -notmatch 'GPU multiplayer smoke passed:.*2 players seen') { throw "$mpRole failed. Inspect logs in $mpResults" }
         if ($Appearance -and $mpLog -notmatch 'GPU appearance smoke passed') { throw "$mpRole appearance replication failed. Inspect logs." }
         if ($Passenger -and $mpLog -notmatch 'GPU passenger smoke passed') { throw "$mpRole passenger replication failed. Inspect logs." }
+        if ($Audio -and $mpLog -notmatch 'Gameplay audio smoke passed') { throw "$mpRole gameplay audio failed. Inspect logs." }
         if (-not (Test-Path -LiteralPath (Join-Path $mpResults ($mpRole + '\multiplayer-world.png')))) { throw "$mpRole capture missing." }
     }
     Write-Output "Two-instance Vulkan multiplayer smoke passed. Results: $mpResults"
