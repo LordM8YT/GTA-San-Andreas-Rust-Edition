@@ -112,3 +112,5 @@ DLSS and temporal FSR are not integrated yet.
 An offline [texture-upscaling tool](docs/texture-upscaling.md) produces optional
 native PNG overrides. Generated textures stay local; original game files are
 not modified or included in this repository.
+
+Current runtime/server work and two-PC acceptance testing: [freeroam integration milestones](docs/freeroam-integration.md).

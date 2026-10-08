@@ -308,10 +308,17 @@ impl State {
     }
     pub(super) fn network_action(&mut self, host: bool) {
         if let Err(error) = self.prepare_network(host) {
-            self.menu.message = format!("Could not prepare multiplayer: {error:#}");
+            self.fail_network(format!("Could not prepare multiplayer: {error:#}"));
         }
     }
+    pub(super) fn fail_network(&mut self, reason: String) {
+        eprintln!("Multiplayer ended: {reason}");
+        self.disconnect_network();
+        self.menu.message = sa_client::diagnostics::explain(&reason);
+        self.menu.open(crate::menu::Page::Network);
+    }
     pub(super) fn disconnect_network(&mut self) {
+        self.auto_enter = false;
         self.leave_passenger();
         self.ride_request = None;
         self.ride_reply = None;
@@ -552,9 +559,7 @@ impl State {
             }
             if !report.connected && report.revision > 0 {
                 let status = report.status.clone();
-                self.disconnect_network();
-                self.menu.message = status;
-                self.menu.open(crate::menu::Page::Network);
+                self.fail_network(status);
                 return;
             }
             self.menu.network_status = match report.round_trip {

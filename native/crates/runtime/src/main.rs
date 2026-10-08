@@ -132,6 +132,7 @@ struct State {
     next_autosave: Instant,
     resource_job: Option<session_resources::Job>,
     resource_installing: Option<session_resources::Installing>,
+    resource_connecting: Option<session_resources::Connecting>,
     offline_world: Option<session_resources::World>,
     remote_actors: Vec<multiplayer::RemoteActor>,
     network_revision: u64,
@@ -566,6 +567,7 @@ impl State {
             next_autosave: Instant::now() + std::time::Duration::from_secs(60),
             resource_job: None,
             resource_installing: None,
+            resource_connecting: None,
             offline_world: None,
             remote_actors: Vec::new(),
             network_revision: 0,
@@ -1843,6 +1845,7 @@ struct App {
     smoke_signs: bool,
     smoke_neon: bool,
     smoke_network: bool,
+    smoke_join_failure: bool,
     network_saw_ped: bool,
     network_saw_walk: bool,
     network_saw_car_motion: bool,
@@ -2624,6 +2627,54 @@ impl ApplicationHandler for App {
                 }
                 let previous_position = state.position;
                 let rendered = state.render();
+                if self.smoke_join_failure {
+                    assert!(
+                        self.smoke_started.elapsed().as_secs() < 90,
+                        "failed join smoke timed out"
+                    );
+                    assert!(
+                        state.offline_world.is_none(),
+                        "failed join replaced the offline world before handshake"
+                    );
+                    assert_eq!(
+                        state.menu.mods, self.mod_names,
+                        "failed join changed local mods"
+                    );
+                    assert_eq!(
+                        state.car.as_ref().map(|(car, _)| car.handling),
+                        self.offline_car_handling
+                    );
+                    if !state.menu.network_active && rendered {
+                        assert!(
+                            state.network_session.is_none() && state.network_publication.is_none()
+                        );
+                        assert!(
+                            state.resource_job.is_none()
+                                && state.resource_installing.is_none()
+                                && state.resource_connecting.is_none()
+                        );
+                        assert!(!state.auto_enter && !state.menu.network_ready);
+                        if self.smoke_frames == 0 {
+                            assert!(
+                                !state.menu.message.is_empty(),
+                                "join failure was not explained"
+                            );
+                            eprintln!("Failed join smoke: {}", state.menu.message);
+                            state.apply_menu_action(Some(menu::Action::Play));
+                            if let Some(directory) = &self.capture_dir {
+                                state.capture_next =
+                                    Some(directory.join("failed-join-offline.png"));
+                            }
+                            self.smoke_frames = 1;
+                        } else if state.capture_next.is_none() {
+                            assert!(state.menu.page.is_none() && state.walking);
+                            println!("GPU failed join smoke passed: offline world and local mods retained, automatic entry cleared, offline play rendered");
+                            event_loop.exit();
+                        }
+                    }
+                    state.window.request_redraw();
+                    return;
+                }
                 if self.smoke_neon {
                     if rendered {
                         self.smoke_frames += 1;
@@ -3878,7 +3929,8 @@ fn main() -> Result<()> {
         first_model,
         streamer: loader.map(Streamer::new),
         smoke: args.iter().any(|a| {
-            a == "--smoke-save"
+            a == "--smoke-join-failure"
+                || a == "--smoke-save"
                 || a == "--smoke-tour"
                 || a == "--smoke-menus"
                 || a == "--smoke-spawner"
@@ -3921,6 +3973,7 @@ fn main() -> Result<()> {
         smoke_network: args
             .iter()
             .any(|a| a == "--smoke-network" || a == "--smoke-appearance"),
+        smoke_join_failure: args.iter().any(|a| a == "--smoke-join-failure"),
         network_saw_ped: false,
         network_saw_walk: false,
         network_saw_car_motion: false,

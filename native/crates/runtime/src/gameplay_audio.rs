@@ -60,7 +60,10 @@ impl State {
         let sounds = &mut self.gameplay_audio;
         let Some(bank) = &sounds.sounds else { return };
         // Menus/preparation mute gameplay voices while menu cues keep working.
-        let active = dt > 0.0 && self.animation.is_none() && self.resource_installing.is_none();
+        let active = dt > 0.0
+            && self.animation.is_none()
+            && self.resource_installing.is_none()
+            && self.resource_connecting.is_none();
         let mut cars = Vec::with_capacity(21);
         if active && self.driving {
             if let Some((car, _)) = &self.car {

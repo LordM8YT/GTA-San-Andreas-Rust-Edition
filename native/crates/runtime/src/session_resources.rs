@@ -46,6 +46,62 @@ impl Endpoint {
         }
     }
 }
+type Started = std::io::Result<(sa_net::Session, Option<sa_net::relay::Publication>)>;
+
+// Keep the uploaded world separate until the gameplay handshake (and relay
+// publication for hosts) succeeds. Cancellation discards any late result.
+pub(super) struct Connecting {
+    world: World,
+    joining: bool,
+    ticket: ConnectionTicket,
+}
+struct ConnectionTicket {
+    result: mpsc::Receiver<Started>,
+    cancel: Arc<AtomicBool>,
+}
+impl Drop for ConnectionTicket {
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+}
+fn start_connection(
+    endpoint: Endpoint,
+    name: String,
+    fingerprint: String,
+    share: Share,
+    pose: sa_net::Pose,
+) -> std::io::Result<ConnectionTicket> {
+    let (sender, result) = mpsc::sync_channel(1);
+    let cancel = Arc::new(AtomicBool::new(false));
+    let worker_cancel = cancel.clone();
+    std::thread::Builder::new()
+        .name("session-connect".into())
+        .spawn(move || {
+            let started = (|| {
+                let (session, publication) = endpoint.start(&name, fingerprint, share)?;
+                loop {
+                    if worker_cancel.load(Ordering::Relaxed) {
+                        return Err(std::io::Error::other("Join cancelled"));
+                    }
+                    if let Some(report) = session.update(pose) {
+                        if report.revision > 0 && !report.connected {
+                            return Err(std::io::Error::other(report.status));
+                        }
+                        let published = publication
+                            .as_ref()
+                            .is_none_or(|p| !p.report().code.is_empty());
+                        if report.connected && published {
+                            return Ok((session, publication));
+                        }
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+            })();
+            let _ = sender.send(started);
+        })?;
+    Ok(ConnectionTicket { result, cancel })
+}
+
 pub(super) struct Job {
     cancel: Arc<AtomicBool>,
     progress: Arc<Mutex<String>>,
@@ -422,6 +478,7 @@ impl State {
     pub(super) fn clear_session_resources(&mut self) {
         self.resource_job = None;
         self.resource_installing = None;
+        self.resource_connecting = None;
         if let Some(world) = self.offline_world.take() {
             let _ = self.swap_session_world(world);
             crate::metrics::session_memory("offline restored");
@@ -433,7 +490,8 @@ impl State {
         anyhow::ensure!(
             self.network_session.is_none()
                 && self.resource_job.is_none()
-                && self.resource_installing.is_none(),
+                && self.resource_installing.is_none()
+                && self.resource_connecting.is_none(),
             "Disconnect from the current session first."
         );
         self.checkpoint_progress();
@@ -509,17 +567,10 @@ impl State {
                     self.resource_job = None;
                 }
                 Ok(Err(error)) => {
-                    self.resource_job = None;
-                    self.menu.message = sa_client::diagnostics::explain(&format!(
-                        "Could not prepare server resources: {error:#}"
-                    ));
-                    self.menu.network_status = "Offline".into();
-                    self.menu.network_active = false;
+                    self.fail_network(format!("Could not prepare server resources: {error:#}"));
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    self.resource_job = None;
-                    self.menu.network_active = false;
-                    self.menu.message = "Resource worker stopped.".into();
+                    self.fail_network("Resource worker stopped.".into());
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
             }
@@ -529,44 +580,134 @@ impl State {
             match installing.advance(self) {
                 Ok(false) => self.resource_installing = Some(installing),
                 Ok(true) => {
-                    let (world, endpoint, share, fingerprint) = installing.world();
-                    let joining = !endpoint.is_host();
-                    self.offline_world = Some(self.swap_session_world(world));
-                    // Use the known street spawn, rather than the streaming
-                    // center whose highest surface can be a garage/roof.
-                    if let Some(collision) = &self.collision {
-                        let player = Player::spawn(collision, self.position);
-                        self.position = player.eye();
-                        self.player = Some(player);
+                    let (mut world, endpoint, share, fingerprint) = installing.world();
+                    if let Some(collision) = &world.collision {
+                        let player = Player::spawn(collision, world.position);
+                        world.position = player.eye();
+                        world.player = Some(player);
                     }
-                    self.place_car();
-                    self.driving = false;
-                    match endpoint.start(&self.menu.player_name, fingerprint, share) {
-                        Ok((session, publication)) => {
-                            eprintln!(
-                                "Multiplayer {}: {}",
-                                if joining { "joining" } else { "host listening" },
-                                session.address
-                            );
-                            self.network_session = Some(session);
-                            self.network_publication = publication;
-                            self.network_revision = 0;
+                    let initial_pose = sa_net::Pose {
+                        position: world
+                            .player
+                            .as_ref()
+                            .map_or(world.position - Vec3::Y * 1.6, |p| p.feet)
+                            .to_array(),
+                        ..sa_net::Pose::default()
+                    };
+                    let joining = !endpoint.is_host();
+                    match start_connection(
+                        endpoint,
+                        self.menu.player_name.clone(),
+                        fingerprint,
+                        share,
+                        initial_pose,
+                    ) {
+                        Ok(ticket) => {
+                            self.resource_connecting = Some(Connecting {
+                                world,
+                                joining,
+                                ticket,
+                            });
+                            self.menu.network_status = if joining {
+                                "Connecting to session..."
+                            } else {
+                                "Starting session..."
+                            }
+                            .into();
                         }
                         Err(error) => {
-                            self.clear_session_resources();
-                            self.menu.network_active = false;
-                            self.menu.message = sa_client::diagnostics::explain(&format!(
-                                "Could not start session: {error}"
-                            ));
+                            self.fail_network(format!("Could not start session: {error}"))
                         }
                     }
                 }
                 Err(error) => {
-                    self.menu.network_active = false;
-                    self.menu.network_status = "Offline".into();
-                    self.menu.message = format!("Could not display server resources: {error:#}");
+                    self.fail_network(format!("Could not display server resources: {error:#}"));
                 }
             }
         }
+        if let Some(connecting) = self.resource_connecting.take() {
+            match connecting.ticket.result.try_recv() {
+                Ok(Ok((session, publication))) => {
+                    eprintln!(
+                        "Multiplayer {}: {}",
+                        if connecting.joining {
+                            "joining"
+                        } else {
+                            "host listening"
+                        },
+                        session.address
+                    );
+                    self.offline_world = Some(self.swap_session_world(connecting.world));
+                    self.place_car();
+                    self.driving = false;
+                    self.network_session = Some(session);
+                    self.network_publication = publication;
+                    self.network_revision = 0;
+                    self.menu.message.clear();
+                }
+                Ok(Err(error)) => self.fail_network(format!("Could not start session: {error}")),
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.fail_network("Connection worker stopped.".into())
+                }
+                Err(mpsc::TryRecvError::Empty) => self.resource_connecting = Some(connecting),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::TcpListener;
+    use std::time::Duration;
+
+    #[test]
+    fn slow_relay_does_not_block_caller_and_cancel_discards_late_result() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (accepted_tx, accepted_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let relay = std::thread::spawn(move || {
+            let (socket, _) = listener.accept().unwrap();
+            accepted_tx.send(()).unwrap();
+            release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            drop(socket);
+        });
+        let result = start_connection(
+            Endpoint::RelayHost(address, false),
+            "Test".into(),
+            String::new(),
+            Share::default(),
+            sa_net::Pose::default(),
+        )
+        .unwrap();
+        // Waiting for acceptance proves the worker reached the blocking relay
+        // handshake while the calling thread remains able to inspect/cancel it.
+        accepted_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(matches!(
+            result.result.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        drop(result);
+        release_tx.send(()).unwrap();
+        relay.join().unwrap();
+    }
+
+    #[test]
+    fn failed_host_bind_is_delivered_as_a_result() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let result = start_connection(
+            Endpoint::Host(listener.local_addr().unwrap()),
+            "Test".into(),
+            String::new(),
+            Share::default(),
+            sa_net::Pose::default(),
+        )
+        .unwrap();
+        assert!(result
+            .result
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .is_err());
     }
 }

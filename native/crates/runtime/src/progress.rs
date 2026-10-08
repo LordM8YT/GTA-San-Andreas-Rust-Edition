@@ -21,6 +21,7 @@ impl crate::State {
             || self.offline_world.is_some()
             || self.resource_job.is_some()
             || self.resource_installing.is_some()
+            || self.resource_connecting.is_some()
             || self.destination.is_some()
             || self.loading()
         {

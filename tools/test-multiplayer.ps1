@@ -8,11 +8,13 @@ param(
     [switch]$AutoPlay,
     [string]$HostModsDir,
     [string]$ClientModsDir,
-    [string]$CacheDirectory
+    [string]$CacheDirectory,
+    [string]$BinaryDirectory
 )
 $ErrorActionPreference = 'Stop'
 $mpRepo = Split-Path -Parent $PSScriptRoot
-$mpSource = Join-Path $mpRepo 'native\target\release\sa-runtime.exe'
+if (-not $BinaryDirectory) { $BinaryDirectory = Join-Path $mpRepo 'native\target\release' }
+$mpSource = Join-Path $BinaryDirectory 'sa-runtime.exe'
 if (-not (Test-Path -LiteralPath $mpSource)) { throw 'Build the release runtime first.' }
 $mpResults = Join-Path $mpRepo ('native\target\mp-smoke-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 New-Item -ItemType Directory -Path $mpResults -Force | Out-Null
@@ -53,7 +55,7 @@ try {
     $mpHostArgs = @('--host', $mpEndpoint)
     $mpJoinArgs = @('--join', $mpEndpoint)
     if ($Relay) {
-        $mpRelaySource = Join-Path $mpRepo 'native\target\release\sa-relay.exe'
+        $mpRelaySource = Join-Path $BinaryDirectory 'sa-relay.exe'
         if (-not (Test-Path -LiteralPath $mpRelaySource)) { throw 'Build sa-relay in release mode first.' }
         $mpRelayExe = Join-Path $mpResults 'sa-relay-test.exe'
         Copy-Item -LiteralPath $mpRelaySource -Destination $mpRelayExe
@@ -68,7 +70,7 @@ try {
         $mpHostArgs = @('--relay-address', $mpEndpoint, '--relay-host', '--public-session')
     }
     if ($Dedicated) {
-        $mpServerSource = Join-Path $mpRepo 'native\target\release\sa-server.exe'
+        $mpServerSource = Join-Path $BinaryDirectory 'sa-server.exe'
         if (-not (Test-Path -LiteralPath $mpServerSource)) { throw 'Build sa-server in release mode first.' }
         $mpServerExe = Join-Path $mpResults 'sa-server-test.exe'
         Copy-Item -LiteralPath $mpServerSource -Destination $mpServerExe
