@@ -21,6 +21,18 @@ class ClientPackageTests(unittest.TestCase):
             target.mkdir()
             for name in ['sa-launcher.exe','sa-runtime.exe','sa-server.exe','sa-relay.exe','gta3.img','settings.json','private.log','cache.bin']:
                 (target / name).write_bytes(b'owned test fixture')
+            # Neither project-owned examples nor private imports belong in an
+            # installation ZIP, even if they sit beside the binaries.
+            mod_payload = b'PRIVATE MOD PAYLOAD - MUST NEVER BE DISTRIBUTED'
+            for parent in [root, target]:
+                for path in ['mods/native-car-demo/car.dff',
+                             'mods/local-fivem-test/imported.yft',
+                             'mods/local-upscaled-textures/road.png',
+                             'private-assets/original.txd',
+                             'server-cache/session/resource.json']:
+                    fixture = parent / path
+                    fixture.parent.mkdir(parents=True, exist_ok=True)
+                    fixture.write_bytes(mod_payload)
             with patch.object(package_client, 'REPO', root), patch.object(package_client.subprocess, 'check_output', return_value=b'{"packages":[]}'):
                 output = package_client.package(target, root / 'output', 'windows')
             with zipfile.ZipFile(output) as archive:
@@ -28,6 +40,8 @@ class ClientPackageTests(unittest.TestCase):
                 self.assertEqual({name for name in names if name.endswith('.exe')}, {'sa-launcher.exe','sa-runtime.exe','sa-server.exe','sa-relay.exe'})
                 for forbidden in ['gta3.img','settings.json','private.log','cache.bin']:
                     self.assertNotIn(forbidden, names)
+                self.assertFalse(any(name.split('/')[0] in {'mods', 'private-assets', 'server-cache'} for name in names))
+                self.assertFalse(any(mod_payload in archive.read(name) for name in names))
                 self.assertIn('START-HERE.md', names)
                 self.assertIn('THIRD-PARTY-NOTICES.txt', names)
                 import json, hashlib

@@ -77,3 +77,5 @@ restarted/captured the launcher, retained settings/local mods, and refused to
 replace files while the runtime profile was locked. All installed file hashes
 matched after both cases. GitHub publication and Linux packaging are checked
 separately by the workflow.
+
+Client release ZIPs contain no mods, including project-owned examples. Server resources are separate opt-in downloads; updates preserve user-installed mods and cache. See [installation contents](client-package.md).

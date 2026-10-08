@@ -23,7 +23,17 @@ Settings, logs, checkpoints and server cache are outside the original installati
 Windows `%LOCALAPPDATA%/SAFreeroam`; Linux `$XDG_CONFIG_HOME/sa-freeroam`
 (or `~/.config/sa-freeroam`), with cache under `$XDG_CACHE_HOME/sa-freeroam`
 (or `~/.cache/sa-freeroam`). `SARE_CONFIG_DIR` isolates a test profile and cache.
-The package's optional `mods/` folder is for local native resources.
+The installation ZIP ships **without mods**, including the project-owned demo
+resources. To use a local native mod, create a `mods/` folder beside the client
+and add a resource you are allowed to use. Source-repository examples are for
+development/testing and are disabled by default. Private imports and generated
+texture packs remain local; they are not included in releases.
+
+Joining a modded server is a separate, optional download into the server cache;
+those resources are not part of the SARE installation. Server operators must
+have permission to distribute their resources. Hash validation checks integrity,
+not ownership or permission. Updates preserve existing user mods and cache;
+they do not add demo packs or remove a user's installed mods.
 
 Use Resources to preview cache cleanup; active sessions/downloads prevent deletion.
 Use Help to preview and save a redacted local diagnostic report. Reports are never
