@@ -66,6 +66,64 @@ def collision_xml(path, nested=False, polygon='Triangle', kind='Geometry'):
 
 
 class FiveMImportTests(unittest.TestCase):
+    def test_native_handling_is_selected_hashed_and_embedded_without_source_file(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp); root = resource(temp / 'input')
+            mesh(root / 'stream/car.yft.xml', vehicle=True)
+            mesh(root / 'stream/other.yft.xml', vehicle=True)
+            tuning = root / 'native-tuning.json'
+            values = {'acceleration': 8.5, 'brake_deceleration': 12, 'tire_grip': 5,
+                      'steering_lock': 0.6, 'suspension_spring': 160}
+            tuning.write_text(json.dumps(values), encoding='utf-8')
+            report = f.import_resource(root, temp / 'native', 'vehicles',
+                                       native_handling=['stream/car.yft.xml=native-tuning.json'])
+            manifest = json.loads((temp / 'native/resource.json').read_text())
+            self.assertEqual(manifest['vehicles'][0]['handling'], values)
+            self.assertNotIn('handling', manifest['vehicles'][1])
+            self.assertEqual(report['native_handling']['profiles']['stream/car.yft.xml'], values)
+            self.assertEqual(report['source_sha256']['native-tuning.json'], f.hashlib.sha256(tuning.read_bytes()).hexdigest())
+            self.assertFalse((temp / 'native/native-tuning.json').exists())
+            self.assertEqual(json.loads(tuning.read_text()), values)
+
+    def test_native_handling_rejects_invalid_profiles_atomically(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp); root = resource(temp / 'input')
+            mesh(root / 'stream/car.yft.xml', vehicle=True)
+            tuning = root / 'native-tuning.json'
+            for text in ('{}', '[]', '{"fMass":1500}', '{"acceleration":true}',
+                         '{"acceleration":"8"}', '{"acceleration":NaN}',
+                         '{"acceleration":1e999}', '{"top_speed":91}',
+                         '{"acceleration":8,"acceleration":9}', 'not json',
+                         '{"steering_lock":0.01}', '{"tire_grip":' + '9'*200 + '}'):
+                with self.subTest(profile=text[:80]):
+                    tuning.write_text(text, encoding='utf-8')
+                    with self.assertRaises(ValueError):
+                        f.import_resource(root, temp / 'bad', 'vehicles',
+                                          native_handling=['stream/car.yft.xml=native-tuning.json'])
+                    self.assertFalse((temp / 'bad').exists())
+            tuning.write_bytes(b' ' * (16 * 1024 + 1))
+            with self.assertRaisesRegex(ValueError, '16 KiB'):
+                f.import_resource(root, temp / 'bad', 'vehicles',
+                                  native_handling=['stream/car.yft.xml=native-tuning.json'])
+
+    def test_native_handling_rejects_external_wrong_kind_and_unselected_models(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp); root = resource(temp / 'input')
+            mesh(root / 'stream/car.yft.xml', vehicle=True)
+            mesh(root / 'stream/prop.ydr.xml')
+            (root / 'tuning.json').write_text('{"acceleration":8}')
+            (temp / 'outside.json').write_text('{"acceleration":9}')
+            for pairs in (['stream/car.yft.xml=../outside.json'],
+                          ['stream/car.yft.xml=tuning.json'] * 2,
+                          ['stream/missing.yft=tuning.json'],
+                          ['stream/car.yft.xml=fxmanifest.lua']):
+                with self.assertRaises(ValueError):
+                    f.import_resource(root, temp / 'bad', 'vehicles', native_handling=pairs)
+            with self.assertRaisesRegex(ValueError, '--kind vehicles'):
+                f.import_resource(root, temp / 'bad', 'props', position=[0,0,0],
+                                  native_handling=['stream/prop.ydr.xml=tuning.json'])
+            self.assertFalse((temp / 'bad').exists())
+
     def test_vehicle_metadata_resolves_shared_dictionary_and_snapshots_hash(self):
         with tempfile.TemporaryDirectory() as temp:
             temp = Path(temp); root = resource(temp / 'input')

@@ -72,7 +72,9 @@ load the same car setup along with its model. Editing it changes the resource
 fingerprint; restart the host/server to publish the updated pack. This remains
 client-simulated driving, without server authority or shared collision impulses.
 The importer does not translate GTA V/FiveM `handling.meta`: its physical units
-and underlying model differ. Add the native values after asset conversion.
+and underlying model differ. Add the native values after asset conversion, or
+select an explicit native JSON profile during [FiveM folder import](gta5-conversion.md)
+with `--native-handling MODEL=JSON`.
 
 To tune installed original models without redistributing their assets, use a
 manifest-only resource:

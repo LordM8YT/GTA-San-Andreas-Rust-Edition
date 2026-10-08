@@ -45,6 +45,32 @@ native textures are shared with players. GTA V handling, seats, audio, flags,
 tuning and GXT display labels are not applied. Parent texture relationships
 are not merged; include a self-contained dictionary or use an explicit override.
 
+To tune a converted car for this engine, add a native JSON profile inside the
+source resource and select it explicitly:
+
+```json
+{"acceleration":8.5,"brake_deceleration":12,"tire_grip":5,"steering_lock":0.6,"suspension_spring":160}
+```
+
+```powershell
+python tools/import-fivem.py C:/Downloads/my-car-pack --native-handling stream/car.yft=native-tuning.json --out "mods/[vehicles]/my-car-pack" --enable
+```
+
+Repeat `--native-handling MODEL=JSON` for selected cars; one profile can be shared
+by several models. Each file is limited to 16 KiB. The reader rejects duplicate
+or unknown fields, nonnumeric/nonfinite values and values outside the native
+engine's limits. Omitted fields keep native defaults. The snapshot hash and
+selected values are recorded in the import report; the values become the car's
+`handling` object in `resource.json`, so server downloads and cached packs retain
+them. Source JSON files themselves are not distributed.
+
+These are native tuning values, with speed in metres per second, acceleration
+and braking in metres per second squared, and steering angles in radians.
+Spring, damping, grip and drag use this engine's model. This option does not
+translate GTA V `handling.meta`, its mass, gearbox or suspension units. See
+[native vehicle tuning](vehicle-dynamics.md) for fields and limits. The community
+can adjust the emitted `resource.json` afterwards and restart to load changes.
+
 For props, specify a preview location in original San Andreas world coordinates:
 
 ```powershell

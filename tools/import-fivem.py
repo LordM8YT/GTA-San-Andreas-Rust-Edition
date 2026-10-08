@@ -24,6 +24,9 @@ map_spec.loader.exec_module(map_converter)
 collision_spec = importlib.util.spec_from_file_location('fivem_collision', Path(__file__).with_name('fivem_collision.py'))
 collision_converter = importlib.util.module_from_spec(collision_spec)
 collision_spec.loader.exec_module(collision_converter)
+handling_spec = importlib.util.spec_from_file_location('fivem_handling', Path(__file__).with_name('fivem_handling.py'))
+handling_converter = importlib.util.module_from_spec(handling_spec)
+handling_spec.loader.exec_module(handling_converter)
 MAX_BYTES = 512 * 1024 * 1024
 MAX_FILES = 4096
 ASSET_EXTENSIONS = ('.yft', '.ydr', '.ydd', '.ytd', '.ymap', '.ytyp', '.ybn')
@@ -165,7 +168,7 @@ def vehicle_dictionaries(paths, names):
 
 def import_resource(root, output, kind, requested=(), position=None, model_id=30000, enable=False,
                     ymap=None, offset=(0., 0., 0.), ytyp=(), base_player=None, base_ifp=None,
-                    base_txd=None, bone_map=None, skeleton=None, texture_map=(), collision_map=(), world_collision=(), vehicles_meta=()):
+                    base_txd=None, bone_map=None, skeleton=None, texture_map=(), collision_map=(), world_collision=(), vehicles_meta=(), native_handling=()):
     root = root.absolute()
     output = output.absolute()
     require(not output.exists(), 'Output already exists; choose a new directory')
@@ -192,6 +195,17 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
                 'Vehicle metadata must be an exact relative .meta or .meta.xml path inside the resource')
         require((root / path).stat().st_size <= 1024 * 1024, 'Vehicle metadata exceeds 1 MiB')
     chosen = select_models(root, files, kind, requested)
+    require(not native_handling or kind == 'vehicles', '--native-handling requires --kind vehicles')
+    require(len(native_handling) <= 32, 'Select at most 32 native handling profiles')
+    handling_choices = {}
+    for item in native_handling:
+        model, separator, tuning = item.partition('=')
+        require(separator and model not in handling_choices, '--native-handling requires distinct MODEL=JSON pairs')
+        require(any(p.relative_to(root).as_posix() == model for p in chosen), '--native-handling model must be selected')
+        require(any(p.relative_to(root).as_posix() == tuning and p.suffix.lower() == '.json' for p in files),
+                '--native-handling must reference an exact relative JSON path inside the resource')
+        require((root / tuning).stat().st_size <= 16 * 1024, 'Native handling profile exceeds 16 KiB')
+        handling_choices[model] = tuning
     skinned = kind in ('player', 'clothing')
     require(not skinned or (base_player and base_ifp and bone_map),
             'Player/clothing import needs --base-player native.dff, --base-ifp native.ifp and --bone-map map.json')
@@ -238,7 +252,7 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
         fingerprints = {}
         snapshot_bytes = 0
         for path in files:
-            if asset_name(path)[1] in ('.yft', '.ydr', '.ydd', '.ytd', '.ymap', '.ytyp', '.ybn') or path.suffix.lower() == '.dds' or path.relative_to(root).as_posix() in vehicles_meta:
+            if asset_name(path)[1] in ('.yft', '.ydr', '.ydd', '.ytd', '.ymap', '.ytyp', '.ybn') or path.suffix.lower() == '.dds' or path.relative_to(root).as_posix() in vehicles_meta or path.relative_to(root).as_posix() in handling_choices.values():
                 require(not path.is_symlink() and path.resolve().is_relative_to(root.resolve()), 'Source changed during import')
                 data = converter.read(path, 128 * 1024 * 1024)
                 snapshot_bytes += len(data)
@@ -287,7 +301,12 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
             dictionaries = {model_id + index: map_converter.jenkins(associations[name])
                             for index, name in enumerate(names)}
             report['vehicle_metadata'] = dict(sources=list(vehicles_meta), texture_dictionaries=associations)
-            report['warnings'].append('vehicles.meta supplies only modelName/txdName pairing; handling, GXT labels, seats, audio, flags and tuning remain native defaults.')
+            report['warnings'].append('vehicles.meta supplies only modelName/txdName pairing; handling, GXT labels, seats, audio, flags and tuning are not imported from this metadata.')
+        handling_profiles = {model: handling_converter.profile(source / path, converter.read)
+                             for model, path in handling_choices.items()}
+        if handling_profiles:
+            report['native_handling'] = dict(sources=handling_choices, profiles=handling_profiles)
+            report['warnings'].append('Explicit native handling profiles use SA Rust physics and units; GTA V handling.meta is not converted.')
         for index, original in enumerate(chosen):
             model = source / original.relative_to(root)
             stem = asset_name(model)[0]
@@ -334,6 +353,8 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
                 manifest['player']['clothes'].append(dict(entry, name=label, enabled=True))
             elif kind == 'vehicles':
                 entry['name'] = ''.join(ch for ch in stem if ch.isprintable())[:48].strip() or 'Custom car'
+                if original.relative_to(root).as_posix() in handling_profiles:
+                    entry['handling'] = handling_profiles[original.relative_to(root).as_posix()]
                 manifest['vehicles'].append(entry)
             else:
                 entry['id'] = model_id + index
@@ -412,6 +433,7 @@ def main():
     parser.add_argument('--skeleton', help='Exact relative CodeWalker source skeleton XML inside this resource')
     parser.add_argument('--texture', action='append', default=[], help='Exact relative MODEL=YTD texture pairing; repeat')
     parser.add_argument('--vehicles-meta', action='append', default=[], help='Exact relative vehicles.meta XML; use modelName/txdName for vehicle texture pairing, repeat')
+    parser.add_argument('--native-handling', action='append', default=[], help='Exact relative MODEL=JSON tuning in native SA Rust units; does not convert GTA V handling.meta, repeat')
     parser.add_argument('--collision', action='append', default=[], help='Explicit model-local MODEL=YBN pair; props/map only, repeat')
     parser.add_argument('--world-collision', action='append', default=[], help='Explicit world-space YBN or YBN XML path; map only, translated by --offset')
     parser.add_argument('--ymap', help='Exact relative Legacy .ymap or CodeWalker .ymap.xml path for static map placements')
@@ -426,7 +448,7 @@ def main():
         if args.out:
             report = import_resource(args.input, args.out, args.kind, args.model, args.position, args.model_id, args.enable,
                                      args.ymap, args.offset, args.ytyp, args.base_player, args.base_ifp, args.base_txd,
-                                     args.bone_map, args.skeleton, args.texture, args.collision, args.world_collision, args.vehicles_meta)
+                                     args.bone_map, args.skeleton, args.texture, args.collision, args.world_collision, args.vehicles_meta, args.native_handling)
         else:
             _, report = inspect_resource(args.input)
         print(json.dumps(report, indent=2))
