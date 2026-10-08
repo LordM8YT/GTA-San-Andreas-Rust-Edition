@@ -200,6 +200,7 @@ pub struct Menu {
     pub network_active: bool,
     pub network_ready: bool,
     pub has_played: bool,
+    pub has_checkpoint: bool,
     selected: usize,
     pub message: String,
     settings_tab: SettingsTab,
@@ -513,6 +514,7 @@ impl Menu {
             network_active: false,
             network_ready: false,
             has_played: false,
+            has_checkpoint: false,
             selected: 0,
             message: String::new(),
             settings_tab: SettingsTab::Display,
@@ -888,7 +890,7 @@ impl Menu {
             painter.text(Pos2::new(left,footer),egui::Align2::LEFT_CENTER,"D-pad / arrows  Move     A / Enter  Select     B / Esc  Back",FontId::proportional(14.0*scale),MUTED);
             painter.text(Pos2::new(screen.right()-40.0*scale,footer),egui::Align2::RIGHT_CENTER,"SA Runtime  •  Free Roam",FontId::proportional(14.0*scale),MUTED);
             if matches!(page,Page::Main|Page::Pause) {
-                let labels=if page==Page::Main{["Explore San Andreas","Map & destinations","Settings","Controls","Mods","Wardrobe","Interiors","Cars","Peds","Quit","Multiplayer"]}else{["Resume","Map & destinations","Settings","Controls","Mods","Wardrobe","Interiors","Cars","Peds","Main menu","Multiplayer"]};
+                let labels=if page==Page::Main{[if self.has_checkpoint { "Continue free roam" } else { "Explore San Andreas" },"Map & destinations","Settings","Controls","Mods","Wardrobe","Interiors","Cars","Peds","Quit","Multiplayer"]}else{["Resume","Map & destinations","Settings","Controls","Mods","Wardrobe","Interiors","Cars","Peds","Main menu","Multiplayer"]};
                 if ctx.input(|i|i.key_pressed(egui::Key::ArrowDown)){self.selected=(self.selected+1)%labels.len();}
                 if ctx.input(|i|i.key_pressed(egui::Key::ArrowUp)){self.selected=(self.selected+labels.len()-1)%labels.len();}
                 for (index,label) in labels.iter().enumerate() {

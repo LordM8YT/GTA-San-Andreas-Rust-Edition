@@ -14,7 +14,7 @@ planlagt arbeid; [multiplayer-status](multiplayer.md) og
 | 3 | Bil, ped, antrekk og ressursversjoner – implementert første versjon | Valgte modeller og klesvalg deles fra en kontrollert ressursliste. Test videre på forskjellige PC-er med større modpakker. |
 | 4 | Lyd – motorer og lokale fottrinn implementert | Originale motorloops følger fart og plassering, også i multiplayer. Lokale fottrinn følger bevegelse på bakken. Kollisjonslyd, materialvalg og fjernstyrte fottrinn gjenstår. |
 | 5 | Trafikk og gående NPC-er | Start i ett nabolag med et begrenset antall aktører; mål ytelse og definer hvem som simulerer dem i multiplayer. |
-| 6 | Lagring av posisjon, bilvalg og antrekk | En ny spilløkt gjenoppretter gyldige valg med reservevalg hvis ressurser er fjernet. Innstillinger lagres allerede. |
+| 6 | Lokal offline-lagring – implementert første versjon | Trygg utendørsposisjon, kamera, bil, ped og antrekk gjenopptas. Innendørs, serverfremdrift, kontinuerlig autosave og nøyaktig bilparkering gjenstår. |
 | 7 | Døgnsyklus, vær og Classic/Enhanced-profiler | Sammenhengende lys/vær og valgbare uttrykk, med samme tid/vær for deltakere i en session. Dagens grafikkprofiler er ikke en ferdig døgn-/værsimulering. |
 
 Streaming, ytelse og bilfysikk må fortsatt tunes. Fjæring, pitch/roll og

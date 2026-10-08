@@ -141,7 +141,7 @@ impl Settings {
             defaults.fly_speed
         };
     }
-    fn path() -> PathBuf {
+    pub(super) fn path() -> PathBuf {
         if cfg!(target_os = "windows") {
             std::env::var_os("LOCALAPPDATA")
                 .map(PathBuf::from)

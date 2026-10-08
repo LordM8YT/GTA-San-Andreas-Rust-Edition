@@ -1,4 +1,4 @@
-# Native freeroam – arbeidsstatus 7. oktober 2026
+# Native freeroam – arbeidsstatus 8. oktober 2026
 
 Målet er freeroam på originalkartet med lokale custom ressurser. Missions er
 ikke prioritert. Originalinstallasjonen leses; gta_sa.exe kjøres ikke.
@@ -6,6 +6,21 @@ ikke prioritert. Originalinstallasjonen leses; gta_sa.exe kjøres ikke.
 Custom vehicle resources can supply bounded native handling values for engine,
 brakes, grip, steering and suspension. Server packs include this tuning and
 respawning preserves it; see [vehicle dynamics](vehicle-dynamics.md).
+
+## Lokal lagring
+
+Offline-posisjon, kamera, bilvalg, ped og antrekk lagres når du åpner en meny,
+ved normal avslutning og før du starter multiplayer. Hovedmenyen viser
+«Continue free roam» når et gyldig checkpoint er lastet. Neste oppstart laster
+området rundt posisjonen og sjekker gulv, vegger og hodeplass før gjenopptak.
+Hvis stedet mangler trygg grunn, starter du ved Grove Street. Fjernede eller
+flertydige modellnavn bruker dagens standardvalg; klesvalg gjelder bare samme ped.
+
+Dette lagrer én lokal offline-økt, uten missions eller serverfremdrift. Du
+starter til fots, og valgt bil plasseres i ledig rom i nærheten; fart og nøyaktig
+parkering lagres ikke. Innendørs, flykamera, hopp, streaming og multiplayer
+overskriver ikke det siste trygge checkpointet. Et krasj mellom menybesøk kan
+miste nyere fremdrift. Se [lagring og testing](progress.md).
 
 ## Multiplayer-prototype
 

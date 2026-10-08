@@ -12,6 +12,7 @@ mod menu;
 mod mipmaps;
 mod multiplayer;
 mod postprocess;
+mod progress;
 mod session_resources;
 mod settings;
 mod streaming;
@@ -95,6 +96,9 @@ struct State {
     menu: menu::Menu,
     applied_settings: settings::Settings,
     persist_settings: bool,
+    progress_path: Option<PathBuf>,
+    last_progress: Option<progress::Save>,
+    progress_retry: Option<Instant>,
     quit_requested: bool,
     car: Option<(sa_scene::vehicle::Car, Vec<GpuBatch>)>,
     car_uploads: u64,
@@ -508,6 +512,9 @@ impl State {
             menu,
             applied_settings,
             persist_settings: true,
+            progress_path: None,
+            last_progress: None,
+            progress_retry: None,
             quit_requested: false,
             car: None,
             car_uploads: 0,
@@ -1728,6 +1735,9 @@ impl State {
     }
 }
 struct App {
+    initial_progress: Option<progress::Save>,
+    progress_path: Option<PathBuf>,
+    smoke_save: bool,
     smoke_audio: bool,
     frontend_sounds: Option<sa_audio::FrontendSounds>,
     car_scene: Option<Scene>,
@@ -1885,6 +1895,12 @@ impl App {
     }
 }
 impl ApplicationHandler for App {
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(state) = &mut self.state {
+            state.checkpoint_progress();
+        }
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.state.is_some() {
             return;
@@ -2030,6 +2046,41 @@ impl ApplicationHandler for App {
                     }
                 }
                 state.driving = false;
+                state.progress_path = self.progress_path.take();
+                if let Some(save) = self.initial_progress.take() {
+                    let restored = state.restore_progress(&save);
+                    if self.smoke_save {
+                        assert!(restored, "prevalidated checkpoint lost its support");
+                        assert!(
+                            state.player.as_ref().unwrap().feet.distance(
+                                save.player(state.collision.as_ref().unwrap()).unwrap().feet
+                            ) < 0.01
+                        );
+                        if progress::unique_index(&state.menu.cars, &save.car).is_some() {
+                            assert_eq!(state.menu.cars[state.active_car], save.car);
+                        }
+                        if progress::unique_index(&state.menu.peds, &save.ped).is_some() {
+                            assert_eq!(state.menu.peds[state.active_ped], save.ped);
+                            for (name, enabled) in &save.clothes {
+                                let names: Vec<_> = state
+                                    .menu
+                                    .clothes
+                                    .iter()
+                                    .map(|(name, _)| name.clone())
+                                    .collect();
+                                if let Some(index) = progress::unique_index(&names, name) {
+                                    assert_eq!(state.menu.clothes[index].1, *enabled);
+                                }
+                            }
+                        }
+                    } else if !restored {
+                        state.region = save.center();
+                        state.respawn();
+                        eprintln!(
+                            "Checkpoint support changed during startup; recovered on loaded ground"
+                        );
+                    }
+                }
                 self.offline_car_handling = state.car.as_ref().map(|(car, _)| car.handling);
                 let launch_args: Vec<_> = std::env::args().collect();
                 state.resource_game_dir = self.game_dir.clone();
@@ -2332,6 +2383,7 @@ impl ApplicationHandler for App {
                     && !self.smoke_car
                     && !self.smoke_ped
                     && !self.smoke_network
+                    && !self.smoke_save
                     && self.smoke_frames == 3
                     && state.destination.is_none()
                     && !state.loading()
@@ -2501,6 +2553,52 @@ impl ApplicationHandler for App {
                             println!("GPU original sign text rendered at {:?}", state.position);
                             event_loop.exit();
                         }
+                    }
+                    state.window.request_redraw();
+                    return;
+                }
+                if self.smoke_save && rendered {
+                    self.smoke_frames += 1;
+                    if self.smoke_frames == 1 {
+                        if !state.menu.has_checkpoint {
+                            let ped_index = usize::from(state.menu.clothes.is_empty());
+                            state.apply_menu_action(Some(menu::Action::Ped(ped_index)));
+                            state.apply_menu_action(Some(menu::Action::Car(1)));
+                            assert_eq!(
+                                state.active_car, 1,
+                                "save test could not select a second car"
+                            );
+                            state.toggle_car();
+                            if !state.menu.clothes.is_empty() {
+                                state.apply_menu_action(Some(menu::Action::Clothing(0, false)));
+                            }
+                            state.yaw = 0.7;
+                            state.pitch = 0.1;
+                        }
+                        state.menu.has_played = true;
+                    }
+                    if self.smoke_frames == 10 {
+                        state.checkpoint_progress();
+                        let expected = state
+                            .last_progress
+                            .as_ref()
+                            .expect("save test needs supported player");
+                        assert_eq!(
+                            progress::Save::load(state.progress_path.as_ref().unwrap())
+                                .unwrap()
+                                .as_ref(),
+                            Some(expected)
+                        );
+                        if let Some(directory) = &self.capture_dir {
+                            state.capture_next = Some(directory.join("checkpoint.png"));
+                        }
+                    }
+                    if self.smoke_frames >= 12 {
+                        println!(
+                            "GPU offline checkpoint smoke passed: {:?}",
+                            state.last_progress
+                        );
+                        event_loop.exit();
                     }
                     state.window.request_redraw();
                     return;
@@ -3195,6 +3293,11 @@ impl ApplicationHandler for App {
                 }
             }
         }
+        if let Some(state) = &mut self.state {
+            if state.menu.page.is_some() {
+                state.checkpoint_progress();
+            }
+        }
         if self.smoke {
             if let Some(state) = &self.state {
                 let id = state.window.id();
@@ -3373,6 +3476,53 @@ fn main() -> Result<()> {
     let cuttest = args.iter().any(|a| a == "--cuttest");
     let prologue = args.iter().any(|a| a == "--prologue");
     let probe = args.iter().any(|a| a == "--probe");
+    let smoke_save = args.iter().any(|arg| arg == "--smoke-save");
+    let save_override = args.windows(2).find(|pair| pair[0] == "--save-file");
+    anyhow::ensure!(
+        !smoke_save || save_override.is_some(),
+        "--smoke-save requires an isolated --save-file path"
+    );
+    anyhow::ensure!(
+        !smoke_save
+            || (!first_model
+                && !cuttest
+                && !prologue
+                && !args.iter().any(|arg| arg == "--no-save"
+                    || arg.starts_with("--probe")
+                    || arg.starts_with("--inspect")
+                    || arg == "--host"
+                    || arg == "--join"
+                    || arg == "--relay-host"
+                    || arg == "--join-code"
+                    || (arg.starts_with("--smoke") && arg != "--smoke-save"))),
+        "Save smoke must run in isolated offline free roam"
+    );
+    let progress_path = if !first_model
+        && !cuttest
+        && !prologue
+        && !args.iter().any(|arg| {
+            arg == "--no-save" || arg.starts_with("--probe") || arg.starts_with("--inspect")
+        })
+        && (smoke_save || !args.iter().any(|arg| arg.starts_with("--smoke")))
+    {
+        Some(if let Some(pair) = save_override {
+            std::env::current_dir()?.join(&pair[1])
+        } else {
+            settings::Settings::path().with_file_name("progress.json")
+        })
+    } else {
+        None
+    };
+    let mut initial_progress =
+        progress_path
+            .as_ref()
+            .and_then(|path| match progress::Save::load(path) {
+                Ok(save) => save,
+                Err(error) => {
+                    eprintln!("Ignoring invalid free-roam checkpoint: {error:#}");
+                    None
+                }
+            });
     let mut loader = if !first_model && !cuttest && !prologue {
         Some(sa_scene::WorldLoader::open(&game)?)
     } else {
@@ -3388,7 +3538,7 @@ fn main() -> Result<()> {
             loader.enable_mods(&directory)?;
         }
     }
-    let scene = if prologue {
+    let mut scene = if prologue {
         sa_scene::load_prologue(&game)?
     } else if cuttest {
         sa_scene::load_cuttest(&game)?
@@ -3399,12 +3549,30 @@ fn main() -> Result<()> {
             if args.iter().any(|a| a == "--smoke-neon") {
                 [2000.0, 2300.0]
             } else {
-                ORIGIN
+                initial_progress
+                    .as_ref()
+                    .map_or(ORIGIN, progress::Save::center)
             },
             ORIGIN,
             RADIUS,
         )?
     };
+    if initial_progress.as_ref().is_some_and(|save| {
+        scene
+            .collision
+            .as_ref()
+            .and_then(|world| save.player(world))
+            .is_none()
+    }) {
+        eprintln!(
+            "Saved location has no safe support in the current map; starting at Grove Street"
+        );
+        initial_progress = None;
+        scene = loader
+            .as_mut()
+            .context("checkpoint world missing")?
+            .load(ORIGIN, ORIGIN, RADIUS)?;
+    }
     println!(
         "{} placements, {} triangles, {} texture batches",
         scene.placements,
@@ -3496,6 +3664,9 @@ fn main() -> Result<()> {
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = App {
+        initial_progress,
+        progress_path,
+        smoke_save,
         smoke_audio: args.iter().any(|arg| arg == "--smoke-audio"),
         frontend_sounds: match sa_audio::FrontendSounds::load(&game) {
             Ok(sounds) => {
@@ -3576,7 +3747,8 @@ fn main() -> Result<()> {
         first_model,
         streamer: loader.map(Streamer::new),
         smoke: args.iter().any(|a| {
-            a == "--smoke-tour"
+            a == "--smoke-save"
+                || a == "--smoke-tour"
                 || a == "--smoke-menus"
                 || a == "--smoke-spawner"
                 || a == "--smoke-graphics"

@@ -1,6 +1,6 @@
 # SA Runtime — Grove Street Test
 
-## Latest free-roam build — October 7, 2026
+## Latest free-roam build — October 8, 2026
 
 Run **start-freeroam.cmd** to launch the native version. It starts in walk mode
 and streams nearby neighborhoods as you move. Use **1–9** to travel to Grove
@@ -45,6 +45,12 @@ The main and pause menus provide destination selection, controls, wardrobe,
 interiors, local-resource status, and settings. HUD options include a custom
 radar/minimap and an in-car speedometer. Display, mouse, movement, and vehicle
 handling settings are saved under `%LOCALAPPDATA%/SAFreeroam/settings.json`.
+
+Offline free roam now remembers a safe outdoor position, camera, selected car,
+ped and clothing when opening a menu, quitting normally or preparing multiplayer.
+The next launch offers **Continue free roam**. Removed models fall back to
+current defaults; unsafe locations fall back to Grove Street. Multiplayer
+progress remains separate. See [local checkpoints](docs/progress.md).
 
 The radar and overview map use the original `radar00.txd`–`radar143.txd` tiles
 from `models/gta3.img` in the selected San Andreas
