@@ -28,14 +28,20 @@ enum Page {
 }
 enum Work {
     Validation(PathBuf, sa_client::install::Validation),
-    Browser(String, Vec<sa_net::relay::Listing>, Duration),
     Cache(sa_net::resources::CachePlan),
     Mods(Vec<local_mods::Entry>),
     Cleared(u64),
+    Artwork(PathBuf, egui::ColorImage),
 }
+type BrowserReply = (
+    String,
+    Result<Vec<sa_net::relay::Listing>, String>,
+    Duration,
+);
 struct Launcher {
     config: LauncherConfig,
     hero: Option<egui::TextureHandle>,
+    pending_artwork: Option<egui::ColorImage>,
     updates: updater::Updates,
     settings: Settings,
     page: Page,
@@ -44,6 +50,19 @@ struct Launcher {
     worker: Option<mpsc::Receiver<Result<Work, String>>>,
     servers: Vec<sa_net::relay::Listing>,
     browser_time: Option<Duration>,
+    browser_worker: Option<mpsc::Receiver<BrowserReply>>,
+    browser_error: Option<String>,
+    connection_error: Option<String>,
+    browser_initialized: bool,
+    search: String,
+    favorites_only: bool,
+    direct_open: bool,
+    resource_tab: usize,
+    mods_inspected: bool,
+    resource_error: Option<String>,
+    work_scope: Page,
+    details: String,
+    settings_message: Option<String>,
     code: String,
     direct: String,
     relay_mode: bool,
@@ -126,9 +145,6 @@ impl Launcher {
         if config.player.is_empty() {
             config.player = "Player".into();
         }
-        if config.relay.is_empty() {
-            config.relay = "127.0.0.1:7778".into();
-        }
         if detect && config.game_dir.as_os_str().is_empty() {
             config.game_dir = sa_client::install::candidates()
                 .into_iter()
@@ -143,6 +159,7 @@ impl Launcher {
         let mut app = Self {
             config,
             hero,
+            pending_artwork: None,
             updates: updater::Updates::new(
                 detect && std::env::var_os("SARE_SCREENSHOT_TO").is_none(),
             ),
@@ -153,6 +170,19 @@ impl Launcher {
             worker: None,
             servers: Vec::new(),
             browser_time: None,
+            browser_worker: None,
+            browser_error: None,
+            connection_error: None,
+            browser_initialized: false,
+            search: String::new(),
+            favorites_only: false,
+            direct_open: false,
+            resource_tab: 0,
+            mods_inspected: false,
+            resource_error: None,
+            work_scope: Page::Home,
+            details: String::new(),
+            settings_message: None,
             code: String::new(),
             direct: "127.0.0.1:7777".into(),
             relay_mode: true,
@@ -181,6 +211,13 @@ impl Launcher {
                 "help" => Page::Help,
                 _ => Page::Home,
             };
+            app.resource_tab = std::env::var("SARE_PREVIEW_RESOURCE_TAB")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0)
+                .min(2);
+            app.direct_open = std::env::var_os("SARE_PREVIEW_DIRECT").is_some();
+            app.favorites_only = std::env::var_os("SARE_PREVIEW_FAVORITES").is_some();
             if let Ok(scale) = std::env::var("SARE_PREVIEW_SCALE")
                 .unwrap_or_default()
                 .parse::<f32>()
@@ -200,6 +237,8 @@ impl Launcher {
         }
         let (tx, rx) = mpsc::channel();
         self.worker = Some(rx);
+        self.work_scope = self.page;
+        self.resource_error = None;
         std::thread::spawn(move || {
             let result = job().map_err(|e| format!("{e:#}"));
             let _ = tx.send(result);
@@ -226,6 +265,34 @@ impl Launcher {
             && !self.updates.recovery_blocked
     }
     fn poll(&mut self) {
+        if let Some(worker) = &self.browser_worker {
+            match worker.try_recv() {
+                Ok((address, result, elapsed)) => {
+                    self.browser_worker = None;
+                    if address == self.config.relay {
+                        match result {
+                            Ok(servers) => {
+                                self.servers = servers;
+                                self.browser_time = Some(elapsed);
+                                self.browser_error = None;
+                            }
+                            Err(error) => {
+                                log_error(&error);
+                                self.servers.clear();
+                                self.browser_time = None;
+                                self.browser_error = Some(error);
+                            }
+                        }
+                    }
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.browser_worker = None;
+                    self.browser_error =
+                        Some("Directory background task stopped. Retry the request.".into());
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
         if let Some(worker) = &self.worker {
             match worker.try_recv() {
                 Ok(result) => {
@@ -250,18 +317,6 @@ impl Launcher {
                             }
                             self.validation = Some((path, result));
                         }
-                        Ok(Work::Browser(address, _, _))
-                            if address != self.config.relay || !self.relay_mode =>
-                        {
-                            self.servers.clear();
-                            self.browser_time = None;
-                            self.message="Relay selection changed. Refresh the browser for the selected relay.".into();
-                        }
-                        Ok(Work::Browser(_, servers, elapsed)) => {
-                            self.servers = servers;
-                            self.browser_time = Some(elapsed);
-                            self.message = format!("{} public sessions found.", self.servers.len());
-                        }
                         Ok(Work::Cache(plan)) => {
                             self.cache = Some(plan);
                             self.message =
@@ -269,6 +324,7 @@ impl Launcher {
                         }
                         Ok(Work::Mods(entries)) => {
                             self.mods = entries;
+                            self.mods_inspected = true;
                             self.message = "Local resources inspected.".into();
                         }
                         Ok(Work::Cleared(bytes)) => {
@@ -278,7 +334,22 @@ impl Launcher {
                                 bytes as f64 / 1048576.
                             );
                         }
-                        Err(error) => self.message = sa_client::diagnostics::explain(&error),
+                        Ok(Work::Artwork(path, image)) => {
+                            self.pending_artwork = Some(image);
+                            self.config.hero_image = Some(path);
+                            self.message = match self.config.save() {
+                                Ok(()) => "Home artwork saved.".into(),
+                                Err(e) => format!("Could not save artwork setting: {e}"),
+                            };
+                        }
+                        Err(error) => {
+                            log_error(&error);
+                            self.details = error.clone();
+                            if self.work_scope == Page::Resources {
+                                self.resource_error = Some(error);
+                            }
+                            self.message = "Background check failed. See Details in Help.".into();
+                        }
                     }
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
@@ -324,6 +395,7 @@ impl Launcher {
         );
     }
     fn start(&mut self, session: Session) {
+        let network = !matches!(session, Session::Offline);
         if !self.ready() {
             self.message =
                 "Choose and validate the installation, and close any running game first.".into();
@@ -393,6 +465,9 @@ impl Launcher {
         })();
         match result {
             Ok((child, log)) => {
+                if network {
+                    self.connection_error = None;
+                }
                 self.child = Some(child);
                 self.log = Some(log);
                 if recent.is_some() {
@@ -404,7 +479,16 @@ impl Launcher {
                 self.message =
                     "Starting the native game. Map loading continues in the game window.".into();
             }
-            Err(error) => self.message = format!("Could not start SARE: {error:#}"),
+            Err(error) => {
+                let error = format!("Could not start SARE: {error:#}");
+                log_error(&error);
+                if network {
+                    self.connection_error = Some(error);
+                } else {
+                    self.details = error;
+                    self.message = "Could not start SARE. See Details in Help.".into();
+                }
+            }
         }
     }
     fn favorite(&mut self, name: String) {
@@ -430,16 +514,51 @@ impl Launcher {
         if !self.config.favorites.contains(&item) {
             self.config.favorites.push(item);
         }
+        self.connection_error = None;
         if let Err(error) = self.config.save() {
-            self.message = format!("Could not save favorites: {error}");
+            let error = format!("Could not save favorites: {error}");
+            log_error(&error);
+            self.connection_error = Some(error);
         }
     }
     fn browse(&mut self) {
-        let address = self.config.relay.clone();
-        self.message = "Contacting the relay directory...".into();
+        self.browser_initialized = true;
+        if self.browser_worker.is_some() {
+            return;
+        }
+        self.browser_error = None;
         self.servers.clear();
         self.browser_time = None;
-        self.work(move||{let selected=address.clone();let address=address.parse().map_err(|_|anyhow::anyhow!("Enter the relay IP and port, for example 192.168.1.10:7778."))?;let start=Instant::now();let servers=sa_net::relay::browse(address).map_err(|e|anyhow::anyhow!("Cannot reach the relay directory: {e}. Check the relay address and ask the host to start it."))?;Ok(Work::Browser(selected,servers,start.elapsed()))});
+        if self.config.relay.trim().is_empty() {
+            return;
+        }
+        let address = self.config.relay.clone();
+        let (tx, rx) = mpsc::channel();
+        self.browser_worker = Some(rx);
+        std::thread::spawn(move || {
+            let start = Instant::now();
+            let result = address
+                .parse()
+                .map_err(|_| "Enter a relay IP and port in Direct connect.".to_owned())
+                .and_then(|parsed| {
+                    sa_net::relay::browse(parsed)
+                        .map_err(|e| format!("Cannot reach the relay directory: {e}"))
+                });
+            let _ = tx.send((address, result, start.elapsed()));
+        });
+    }
+    fn connection_valid(&self) -> bool {
+        let address = if self.relay_mode {
+            &self.config.relay
+        } else {
+            &self.direct
+        };
+        address
+            .parse::<std::net::SocketAddr>()
+            .is_ok_and(|a| a.port() != 0)
+            && (!self.relay_mode
+                || (self.code.trim().len() == 12
+                    && self.code.trim().bytes().all(|b| b.is_ascii_hexdigit())))
     }
     fn controller_events(&mut self, raw: &mut egui::RawInput) {
         if let Some(gilrs) = &mut self.gilrs {
@@ -618,6 +737,7 @@ impl Launcher {
                                 .clicked()
                             {
                                 self.page = Page::Multiplayer;
+                                self.favorites_only = !self.config.favorites.is_empty();
                             }
                         }
                     }
@@ -625,283 +745,452 @@ impl Launcher {
         });
     }
     fn multiplayer(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Servers");
-        ui.label("Up to 20 players. Use a trusted LAN/VPN for this prototype.");
-        ui.horizontal_wrapped(|ui| {
-            ui.label("Player name");
-            ui.add(egui::TextEdit::singleline(&mut self.config.player).char_limit(24));
-        });
-        ui.horizontal_wrapped(|ui| {
-            ui.selectable_value(&mut self.relay_mode, true, "Relay / join code");
-            ui.selectable_value(&mut self.relay_mode, false, "Direct IP");
-        });
-        if self.relay_mode {
-            ui.label("Relay address (IP:port)");
-            if ui.text_edit_singleline(&mut self.config.relay).changed() {
-                self.servers.clear();
-                self.browser_time = None;
+        if !self.browser_initialized {
+            self.browser_initialized = true;
+            if !self.config.relay.trim().is_empty() {
+                self.browse();
             }
-            ui.label("Join code");
-            ui.add(egui::TextEdit::singleline(&mut self.code).char_limit(12));
-        } else {
-            ui.label("Host address (IP:port)");
-            ui.text_edit_singleline(&mut self.direct);
         }
-        ui.checkbox(
-            &mut self.settings.auto_mod_downloads,
-            "Automatically download required server mods",
+        ui.heading("Servers");
+        ui.label(
+            RichText::new("Find a session, or connect directly to a host you trust.").color(MUTED),
         );
         ui.horizontal_wrapped(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.search)
+                    .hint_text("Search servers")
+                    .desired_width(260.)
+                    .margin(egui::vec2(12., 11.)),
+            );
             if ui
-                .add_enabled(self.ready(), egui::Button::new("Join session"))
+                .add_enabled(
+                    self.browser_worker.is_none() && !self.config.relay.trim().is_empty(),
+                    egui::Button::new("Refresh"),
+                )
                 .clicked()
-            {
-                let session = if self.relay_mode {
-                    Session::Relay {
-                        address: self.config.relay.clone(),
-                        code: self.code.clone(),
-                    }
-                } else {
-                    Session::Direct(self.direct.clone())
-                };
-                self.start(session);
-            }
-            if ui.button("Save favorite").clicked() {
-                self.favorite(if self.relay_mode {
-                    "Saved relay session".into()
-                } else {
-                    self.direct.clone()
-                });
-            }
-            if self.relay_mode
-                && ui
-                    .add_enabled(
-                        self.worker.is_none(),
-                        egui::Button::new("Refresh server browser"),
-                    )
-                    .clicked()
             {
                 self.browse();
             }
+            ui.selectable_value(&mut self.favorites_only, false, "All");
+            ui.selectable_value(&mut self.favorites_only, true, "Favorites");
         });
-        if let Some(time) = self.browser_time {
-            ui.label(format!(
-                "Directory request: {:.0} ms (includes connecting; not gameplay ping)",
-                time.as_secs_f64() * 1000.
-            ));
-        }
-        for server in self.servers.clone() {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(format!(
-                    "{}   {} / {} players",
-                    server.name, server.players, server.capacity
-                ));
-                let compatible = server.version == sa_net::VERSION;
-                ui.label(if compatible {
-                    "Compatible"
-                } else {
-                    "Different protocol ? update both clients and server"
-                });
-                if ui
-                    .add_enabled(
-                        compatible && server.players < server.capacity && self.ready(),
-                        egui::Button::new("Join"),
-                    )
-                    .clicked()
-                {
-                    self.code = server.code;
-                    self.start(Session::Relay {
-                        address: self.config.relay.clone(),
-                        code: self.code.clone(),
-                    });
-                }
+        ui.add_space(8.);
+        if self.browser_worker.is_some() {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Loading server directory...");
             });
-        }
-        ui.separator();
-        ui.heading("Favorites");
-        if self.config.favorites.is_empty() {
-            ui.label("Save a direct address or relay session above. Room codes may change after a host restarts.");
-        }
-        let mut remove = None;
-        for (index, favorite) in self.config.favorites.clone().into_iter().enumerate() {
-            ui.horizontal_wrapped(|ui| {
-                if ui.button(&favorite.name).clicked() {
-                    self.relay_mode = favorite.relay;
-                    if favorite.relay {
-                        self.config.relay = favorite.address;
-                        self.code = favorite.code;
-                    } else {
-                        self.direct = favorite.address;
+        } else if let Some(error) = self.browser_error.clone() {
+            surface(ui, |ui| {
+                ui.colored_label(
+                    GOLD,
+                    "Server directory unavailable. Offline free roam is still available.",
+                );
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Retry").clicked() {
+                        self.browse();
                     }
-                }
-                if ui.small_button("Remove").clicked() {
-                    remove = Some(index);
-                }
+                    if ui.button("Configure connection").clicked() {
+                        self.direct_open = true;
+                    }
+                });
+                ui.collapsing("Details", |ui| {ui.label(error); ui.small("Check the relay address and ask the host whether the relay is running. Technical errors are recorded in the launcher log.");});
+            });
+        } else if self.config.relay.trim().is_empty() && self.direct_open {
+            ui.label("No relay configured. Enter a host or relay below.");
+        } else if self.config.relay.trim().is_empty() {
+            surface(ui, |ui| {
+                ui.label(RichText::new("No relay configured").strong());
+                ui.label("Enter a relay supplied by your host to browse its public sessions. Direct IP connections also work without a directory.");
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Configure connection").clicked() {
+                        self.relay_mode = true;
+                        self.direct_open = true;
+                    }
+                    if ui.button("Direct connect").clicked() {
+                        self.relay_mode = false;
+                        self.direct_open = true;
+                    }
+                });
+            });
+        } else if self.browser_time.is_none() {
+            ui.label("Refresh to load sessions from your configured relay.");
+        } else if self.servers.is_empty() {
+            surface(ui, |ui| {
+                ui.label("No public sessions on this relay yet.");
+                ui.small("A host can publish a session from Multiplayer inside the game, or share a private join code.");
             });
         }
-        if let Some(index) = remove {
-            self.config.favorites.remove(index);
-            if let Err(error) = self.config.save() {
-                self.message = error.to_string();
+        if let Some(error) = self.connection_error.clone() {
+            surface(ui, |ui| {
+                ui.colored_label(GOLD, "The connection action could not be completed.");
+                if ui.button("Review connection").clicked() {
+                    self.direct_open = true;
+                }
+                ui.collapsing("Connection details", |ui| {
+                    ui.label(error);
+                });
+            });
+        }
+        if self
+            .config
+            .relay
+            .parse::<std::net::SocketAddr>()
+            .is_ok_and(|a| a.ip().is_loopback())
+        {
+            ui.small("Local relay: this address connects only to a service on this PC.");
+        }
+        let visible: Vec<_> = self
+            .servers
+            .iter()
+            .filter(|server| {
+                server
+                    .name
+                    .to_lowercase()
+                    .contains(&self.search.to_lowercase())
+                    && (!self.favorites_only
+                        || self.config.favorites.iter().any(|f| {
+                            f.relay && f.address == self.config.relay && f.code == server.code
+                        }))
+            })
+            .cloned()
+            .collect();
+        if !self.servers.is_empty() && visible.is_empty() {
+            ui.label("No servers match this search or filter.");
+        }
+        for server in visible {
+            surface(ui, |ui| {
+                ui.label(RichText::new(&server.name).strong().size(20.));
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(format!("{} / {} players", server.players, server.capacity));
+                    let compatible = server.version == sa_net::VERSION;
+                    ui.label(if compatible {
+                        "Compatible"
+                    } else {
+                        "Protocol mismatch"
+                    });
+                    if ui
+                        .add_enabled(
+                            compatible && server.players < server.capacity && self.ready(),
+                            primary("Join"),
+                        )
+                        .clicked()
+                    {
+                        self.start(Session::Relay {
+                            address: self.config.relay.clone(),
+                            code: server.code.clone(),
+                        });
+                    }
+                    let saved = self.config.favorites.iter().any(|f| {
+                        f.relay && f.address == self.config.relay && f.code == server.code
+                    });
+                    if ui
+                        .add_enabled(
+                            !saved,
+                            egui::Button::new(if saved { "Saved" } else { "Save favorite" }),
+                        )
+                        .clicked()
+                    {
+                        self.relay_mode = true;
+                        self.code = server.code.clone();
+                        self.favorite(server.name.clone());
+                    }
+                });
+            });
+        }
+        if self.favorites_only {
+            ui.add_space(8.);
+            ui.label(RichText::new("Saved connections").strong());
+            if self.config.favorites.is_empty() {
+                ui.label("No favorites yet. Save a server or a direct connection.");
+            }
+            let mut remove = None;
+            let search = self.search.to_lowercase();
+            for (index, favorite) in self
+                .config
+                .favorites
+                .clone()
+                .into_iter()
+                .enumerate()
+                .filter(|(_, f)| f.name.to_lowercase().contains(&search))
+            {
+                surface(ui, |ui| {
+                    ui.label(&favorite.name);
+                    ui.small("Saved connection; availability and player count are not checked.");
+                    ui.horizontal_wrapped(|ui| {
+                        if ui
+                            .add_enabled(self.ready(), egui::Button::new("Join saved connection"))
+                            .clicked()
+                        {
+                            self.start(if favorite.relay {
+                                Session::Relay {
+                                    address: favorite.address.clone(),
+                                    code: favorite.code.clone(),
+                                }
+                            } else {
+                                Session::Direct(favorite.address.clone())
+                            });
+                        }
+                        if ui.button("Edit connection").clicked() {
+                            self.relay_mode = favorite.relay;
+                            if favorite.relay {
+                                self.config.relay = favorite.address.clone();
+                                self.code = favorite.code.clone();
+                                self.servers.clear();
+                                self.browser_time = None;
+                                self.browser_error = None;
+                            } else {
+                                self.direct = favorite.address.clone();
+                            }
+                            self.direct_open = true;
+                        }
+                        if ui.button("Remove").clicked() {
+                            remove = Some(index);
+                        }
+                    });
+                });
+            }
+            if let Some(index) = remove {
+                self.config.favorites.remove(index);
+                if let Err(e) = self.config.save() {
+                    let error = format!("Could not save favorites: {e}");
+                    log_error(&error);
+                    self.connection_error = Some(error);
+                }
             }
         }
-        ui.separator();
-        ui.label("No public relay or Steam service is configured. Hosts can still create sessions from Multiplayer inside the game.");
+        ui.add_space(14.);
+        let panel = egui::CollapsingHeader::new("Direct connect")
+            .open(Some(self.direct_open))
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 8.;
+                ui.label("Player name");
+                input_limit(ui, &mut self.config.player, "Player", 24);
+                ui.horizontal_wrapped(|ui| {
+                    ui.selectable_value(&mut self.relay_mode, true, "Relay / join code");
+                    ui.selectable_value(&mut self.relay_mode, false, "Direct IP");
+                });
+                if self.relay_mode {
+                    ui.label("Relay address (IP:port)");
+                    if input(ui, &mut self.config.relay, "Relay supplied by your host").changed() {
+                        self.servers.clear(); self.browser_time = None; self.browser_error = None;
+                    }
+                    ui.label("Join code");
+                    input_limit(ui, &mut self.code, "12-character code", 12);
+                } else {
+                    ui.label("Host address (IP:port)");
+                    input(ui, &mut self.direct, "Host supplied by your friend");
+                }
+                ui.horizontal_wrapped(|ui| {
+                    if ui.add_enabled(self.ready() && self.connection_valid(), primary("Join session")).clicked() {
+                        self.start(if self.relay_mode { Session::Relay {address: self.config.relay.clone(), code: self.code.clone()} } else { Session::Direct(self.direct.clone()) });
+                    }
+                    if ui.add_enabled(self.connection_valid(), egui::Button::new("Save favorite")).clicked() {
+                        self.favorite(if self.relay_mode { "Saved relay session".into() } else { self.direct.clone() });
+                    }
+                    if ui.button("Save connection").clicked() {
+                        match self.config.save() {
+                            Ok(()) => {self.connection_error = None; self.message = "Connection saved.".into();}
+                            Err(e) => {let error = format!("Could not save connection: {e}");log_error(&error);self.connection_error = Some(error);},
+                        }
+                    }
+                });
+                ui.small("Host sessions from Multiplayer inside the game. No public relay or Steam service is bundled.");
+            });
+        if panel.header_response.clicked() {
+            self.direct_open = !self.direct_open;
+        }
     }
     fn resources(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Your resources");
-        ui.label("Local mods, the current server's resources and downloaded cache are separate.");
+        ui.heading("Resources");
+        ui.label(RichText::new("Inspect your mods and downloaded resources.").color(MUTED));
         ui.horizontal_wrapped(|ui| {
-            if ui
-                .add_enabled(
-                    self.worker.is_none(),
-                    egui::Button::new("Inspect local mods"),
-                )
-                .clicked()
+            for (index, label) in ["Local mods", "Server resources", "Download cache"]
+                .iter()
+                .enumerate()
             {
-                let root = local_mods::root();
-                self.work(move || Ok(Work::Mods(local_mods::inspect(&root)?)));
-            }
-            if ui
-                .add_enabled(
-                    self.worker.is_none(),
-                    egui::Button::new("Preview cached downloads"),
-                )
-                .clicked()
-            {
-                self.work(move || {
-                    Ok(Work::Cache(sa_net::resources::inspect_cache(
-                        &sa_client::cache_dir(),
-                    )?))
-                });
+                ui.selectable_value(&mut self.resource_tab, index, *label);
             }
         });
-        for entry in &self.mods {
-            ui.label(format!(
-                "{} / {} / {:.1} MiB",
-                entry.name,
-                entry.status,
-                entry.bytes as f64 / 1048576.
-            ));
-            if let Some(error) = &entry.error {
-                ui.colored_label(Color32::LIGHT_RED, error);
+        ui.separator();
+        if let Some(error) = &self.resource_error {
+            ui.colored_label(
+                GOLD,
+                "Resource inspection failed. Retry after reviewing Details.",
+            );
+            ui.collapsing("Details", |ui| {
+                ui.label(error);
+            });
+        }
+        let inspect = ui
+            .add_enabled(
+                self.worker.is_none() && self.resource_tab != 1,
+                egui::Button::new("Refresh resources"),
+            )
+            .clicked();
+        if self.worker.is_none()
+            && (inspect
+                || (self.resource_error.is_none()
+                    && ((self.resource_tab == 0 && !self.mods_inspected)
+                        || (self.resource_tab == 2 && self.cache.is_none()))))
+        {
+            match self.resource_tab {
+                0 => {
+                    let root = local_mods::root();
+                    self.work(move || Ok(Work::Mods(local_mods::inspect(&root)?)));
+                }
+                2 => {
+                    self.work(move || {
+                        Ok(Work::Cache(sa_net::resources::inspect_cache(
+                            &sa_client::cache_dir(),
+                        )?))
+                    });
+                }
+                _ => {}
             }
         }
-        ui.separator();
-        ui.heading("Server resources");
-        ui.label(if self.child.is_some(){"Open /mods in the game for the current session's resource list and download progress."}else{"No game was started by this launcher. The runtime restores local mods when you disconnect."});
-        if let Some(plan) = self.cache.clone() {
-            ui.separator();
-            ui.heading("Cache cleanup preview");
-            ui.label(format!(
-                "{} cached sessions; {:.1} MiB total including reusable blobs.",
-                plan.packs.len(),
-                plan.bytes as f64 / 1048576.
-            ));
-            for pack in &plan.packs {
-                ui.label(format!(
-                    "{} / {:.1} MiB / {}",
-                    if pack.names.is_empty() {
-                        pack.fingerprint[..12].into()
-                    } else {
-                        pack.names.join(", ")
-                    },
-                    pack.bytes as f64 / 1048576.,
-                    if pack.complete {
-                        "Inventory recorded"
-                    } else {
-                        "Incomplete or invalid inventory"
-                    }
-                ));
+        if self.worker.is_some() {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Inspecting resources...");
+            });
+        }
+        match self.resource_tab {
+            0 => {
+                if self.mods_inspected && self.mods.is_empty() {
+                    surface(ui, |ui| {
+                        ui.label("No local native mods found.");
+                        ui.small(
+                            "Add compatible resources to the client's mods folder, then refresh.",
+                        );
+                    });
+                }
+                for entry in &self.mods {
+                    surface(ui, |ui| {
+                        ui.label(RichText::new(&entry.name).strong());
+                        ui.label(format!(
+                            "{} / {} / {}",
+                            entry.kind,
+                            entry.status,
+                            entry
+                                .bytes
+                                .map(|bytes| format!("{:.2} MiB", bytes as f64 / 1048576.))
+                                .unwrap_or_else(|| "Size unavailable".into())
+                        ));
+                        if let Some(error) = &entry.error {
+                            ui.collapsing("Inspection error", |ui| {
+                                ui.colored_label(Color32::LIGHT_RED, error);
+                            });
+                        }
+                    });
+                }
+                ui.small("Manifest status is shown here. Asset compatibility is validated by the game when it loads a resource.");
             }
-            ui.label("Delete removes these cached session folders and reusable blobs. Original files and your local mods are preserved. Required mods download again next time.");
-            if plan.busy {
-                ui.colored_label(GOLD,"A game session is using the cache. Close all multiplayer sessions before cleanup.");
-            }
-            if ui
-                .add_enabled(
-                    !plan.busy && self.worker.is_none() && self.child.is_none(),
-                    egui::Button::new("Delete the previewed cached downloads"),
-                )
-                .clicked()
-            {
-                self.work(move || {
-                    Ok(Work::Cleared(sa_net::resources::cleanup_cache(
-                        &sa_client::cache_dir(),
-                        &plan,
-                    )?))
+            1 => {
+                surface(ui, |ui| {
+                    ui.label(if self.child.is_some() {
+                        "Session resource details are available in the game."
+                    } else {
+                        "No active session started by this launcher."
+                    });
+                    ui.small("The runtime does not export its active resource inventory to the launcher. Open /mods in the game to inspect names, types, validation errors and download progress.");
                 });
+            }
+            _ => {
+                if let Some(plan) = self.cache.clone() {
+                    ui.label(
+                        RichText::new(format!(
+                            "{:.2} MiB total cache usage",
+                            plan.bytes as f64 / 1048576.
+                        ))
+                        .strong(),
+                    );
+                    ui.small("Includes reusable download blobs and cached session resources.");
+                    if plan.packs.is_empty() {
+                        ui.label("No cached session inventories found.");
+                    }
+                    for pack in &plan.packs {
+                        surface(ui, |ui| {
+                            ui.label(
+                                RichText::new(if pack.names.is_empty() {
+                                    pack.fingerprint.chars().take(12).collect()
+                                } else {
+                                    pack.names.join(", ")
+                                })
+                                .strong(),
+                            );
+                            ui.label(format!(
+                                "Native server resource cache / {:.2} MiB / {}",
+                                pack.bytes as f64 / 1048576.,
+                                if pack.complete {
+                                    "Inventory recorded"
+                                } else {
+                                    "Incomplete or invalid inventory"
+                                }
+                            ));
+                            ui.collapsing("Version details", |ui| {ui.label(&pack.fingerprint);ui.small("A recorded inventory does not indicate that this resource is currently active.");});
+                        });
+                    }
+                    ui.separator();
+                    ui.label("Cleanup removes only the previewed download cache. Required resources download again next time.");
+                    if plan.busy || self.child.is_some() {
+                        ui.colored_label(GOLD, "Close all game sessions before cleanup. Active resources are protected.");
+                    }
+                    if ui
+                        .add_enabled(
+                            !plan.busy
+                                && self.worker.is_none()
+                                && self.child.is_none()
+                                && plan.bytes > 0,
+                            egui::Button::new("Delete previewed cached downloads"),
+                        )
+                        .clicked()
+                    {
+                        self.work(move || {
+                            Ok(Work::Cleared(sa_net::resources::cleanup_cache(
+                                &sa_client::cache_dir(),
+                                &plan,
+                            )?))
+                        });
+                    }
+                    ui.small("Local mods and original game files are preserved.");
+                }
             }
         }
     }
     fn settings_ui(&mut self, ui: &mut egui::Ui) {
-        ui.spacing_mut().item_spacing.y = 8.;
+        let before = serde_json::to_value((&self.settings, &self.config)).ok();
         ui.heading("Settings");
-        ui.collapsing("Client updates", |ui| {
-            let mut automatic = !self.config.disable_auto_updates;
-            if ui
-                .checkbox(
-                    &mut automatic,
-                    "Automatically update this client from GitHub",
-                )
-                .changed()
-            {
-                self.config.disable_auto_updates = !automatic;
-                if let Err(error) = self.config.save() {
-                    self.message = format!("Could not save update preference: {error}");
-                }
-            }
-            self.updates_ui(ui);
-        });
-        ui.label("Home artwork");
         ui.label(
-            RichText::new(
-                "Choose your own gameplay screenshot (PNG). Optional and stored only on this PC.",
-            )
-            .color(MUTED),
+            RichText::new("Changes to game settings apply on the next game launch.").color(MUTED),
         );
-        ui.horizontal_wrapped(|ui| {
-            if ui.button("Choose image...").clicked() {
-                if let Some(path) = rfd::FileDialog::new()
-                    .add_filter("PNG image", &["png"])
-                    .pick_file()
-                {
-                    match artwork::load(&path) {
-                        Ok(image) => {
-                            self.hero = Some(ui.ctx().load_texture(
-                                "hero",
-                                image,
-                                egui::TextureOptions::LINEAR,
-                            ));
-                            self.config.hero_image = Some(path);
-                            self.message = match self.config.save() {
-                                Ok(()) => "Home artwork saved.".into(),
-                                Err(e) => format!("Could not save artwork setting: {e}"),
-                            };
-                        }
-                        Err(e) => self.message = format!("Could not load artwork: {e}"),
-                    }
-                }
-            }
-            if self.config.hero_image.is_some() && ui.button("Use default background").clicked() {
-                self.config.hero_image = None;
-                self.hero = None;
-                self.message = match self.config.save() {
-                    Ok(()) => "Default background restored.".into(),
-                    Err(e) => format!("Could not save artwork setting: {e}"),
+        ui.add_enabled_ui(self.child.is_none(), |ui| {
+            if ui.add(primary("Save client settings")).clicked() {
+                let result = (|| -> anyhow::Result<()> {
+                    let _guard = sa_client::launch::RuntimeGuard::acquire()?;
+                    self.config.save()?;
+                    self.settings.sanitize();
+                    self.settings.save()
+                })();
+                self.message = match result {
+                    Ok(()) => "Client settings saved.".into(),
+                    Err(e) => format!("Could not save settings: {e}"),
                 };
+                self.settings_message = Some(self.message.clone());
             }
         });
-        if self.config.hero_image.is_some() && self.hero.is_none() {
-            ui.colored_label(GOLD,"Artwork unavailable. Using the default background; choose the image again to restore it.");
+        if let Some(message) = &self.settings_message {
+            ui.label(message);
         }
-        ui.separator();
-        ui.heading("Installation & client");
+        ui.add_space(8.);
+        ui.label(RichText::new("Installation").strong().size(21.));
         ui.label("Original PC San Andreas folder");
         let mut text = self.config.game_dir.to_string_lossy().into_owned();
         if ui
             .add(
-                egui::TextEdit::singleline(&mut text).desired_width(ui.available_width().min(720.)),
+                egui::TextEdit::singleline(&mut text)
+                    .desired_width(ui.available_width().min(720.))
+                    .margin(egui::vec2(12., 11.)),
             )
             .changed()
         {
@@ -931,7 +1220,10 @@ impl Launcher {
                 self.validate();
             }
         });
-        if let Some((_, report)) = &self.validation {
+        if let Some((path, report)) = &self.validation {
+            if path == &self.config.game_dir && report.ready() {
+                ui.colored_label(GOLD, "Installation validated. Ready to play.");
+            }
             for error in &report.errors {
                 ui.colored_label(Color32::LIGHT_RED, error);
             }
@@ -940,6 +1232,7 @@ impl Launcher {
             }
         }
         ui.separator();
+        ui.label(RichText::new("Display").strong().size(21.));
         ui.add_enabled_ui(self.child.is_none(), |ui| {
             ui.label("Renderer (game restart required)");
             egui::ComboBox::from_id_salt("renderer")
@@ -953,17 +1246,16 @@ impl Launcher {
                 });
             ui.checkbox(&mut self.settings.fullscreen, "Fullscreen");
             ui.checkbox(&mut self.settings.vsync, "VSync");
-            ui.checkbox(
-                &mut self.settings.auto_mod_downloads,
-                "Automatically download required server mods",
-            );
             ui.label("Graphics profile");
             ui.horizontal_wrapped(|ui| {
                 for (index, name) in ["Performance", "Balanced", "Quality", "Ultra"]
                     .iter()
                     .enumerate()
                 {
-                    if ui.button(*name).clicked() {
+                    if ui
+                        .add(egui::Button::new(*name).selected(self.settings.preset() == *name))
+                        .clicked()
+                    {
                         self.settings.apply_preset(index);
                     }
                 }
@@ -972,19 +1264,67 @@ impl Launcher {
                 .on_hover_text(
                     "More graphics, audio and gameplay controls are available in the game.",
                 );
-            if ui.button("Save client settings").clicked() {
-                let result = (|| -> anyhow::Result<()> {
-                    let _guard = sa_client::launch::RuntimeGuard::acquire()?;
-                    self.config.save()?;
-                    self.settings.sanitize();
-                    self.settings.save()
-                })();
-                self.message = match result {
-                    Ok(()) => "Client settings saved.".into(),
-                    Err(e) => format!("Could not save settings: {e}"),
+        });
+        ui.separator();
+        ui.label(RichText::new("Downloads").strong().size(21.));
+        ui.add_enabled_ui(self.child.is_none(), |ui| {
+            ui.checkbox(
+                &mut self.settings.auto_mod_downloads,
+                "Automatically download required server mods",
+            );
+        });
+        ui.collapsing("Client updates", |ui| {
+            let mut automatic = !self.config.disable_auto_updates;
+            if ui
+                .checkbox(
+                    &mut automatic,
+                    "Automatically update this client from GitHub",
+                )
+                .changed()
+            {
+                self.config.disable_auto_updates = !automatic;
+                if let Err(error) = self.config.save() {
+                    self.message = format!("Could not save update preference: {error}");
+                }
+            }
+            self.updates_ui(ui);
+        });
+        ui.separator();
+        ui.label(RichText::new("Appearance").strong().size(21.));
+        ui.label("Home artwork");
+        ui.label(
+            RichText::new(
+                "Choose your own gameplay screenshot (PNG). Optional and stored only on this PC.",
+            )
+            .color(MUTED),
+        );
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .add_enabled(self.worker.is_none(), egui::Button::new("Choose image..."))
+                .clicked()
+            {
+                if let Some(path) = rfd::FileDialog::new()
+                    .add_filter("PNG image", &["png"])
+                    .pick_file()
+                {
+                    self.work(move || Ok(Work::Artwork(path.clone(), artwork::load(&path)?)));
+                }
+            }
+            if self.config.hero_image.is_some() && ui.button("Use default background").clicked() {
+                self.config.hero_image = None;
+                self.hero = None;
+                self.message = match self.config.save() {
+                    Ok(()) => "Default background restored.".into(),
+                    Err(e) => format!("Could not save artwork setting: {e}"),
                 };
             }
         });
+        if self.config.hero_image.is_some() && self.hero.is_none() {
+            ui.colored_label(GOLD,"Artwork unavailable. Using the default background; choose the image again to restore it.");
+        }
+        if before != serde_json::to_value((&self.settings, &self.config)).ok() {
+            self.settings_message = None;
+        }
     }
     fn flush_update_settings(&mut self) -> bool {
         if !self.updates.has_staged() {
@@ -1026,18 +1366,21 @@ impl Launcher {
         ui.small("Updates replace client program files after the game closes. Local mods, settings, saves and the original game are kept.");
     }
     fn help(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Help & diagnostics");
-        ui.label(format!(
-            "SARE {} / build {} / network protocol {}",
-            sa_client::VERSION,
-            sa_client::BUILD_ID,
-            sa_net::VERSION
-        ));
-        self.updates_ui(ui);
+        ui.heading("Help");
+        ui.label(RichText::new("Controls").strong().size(21.));
         ui.label("Tab / D-pad: focus. Enter / A: choose. Esc / B: back to Home.");
         ui.label("In game: F7 cars, F8 characters, F6 wardrobe. More controls in Pause.");
+        ui.separator();
+        ui.label(RichText::new("Diagnostics").strong().size(21.));
         ui.label("Offline play needs no account. Saved positions are checked when the game loads.");
         ui.label("Reports use the last observed runtime GPU and renderer.");
+        ui.collapsing("System details", |ui| {
+            if self.details.is_empty() {
+                ui.label("No launcher background errors recorded this session.");
+            } else {
+                ui.label(&self.details);
+            }
+        });
         ui.horizontal_wrapped(|ui| {
             if ui.button("Preview diagnostic report").clicked() {
                 self.update_report();
@@ -1082,11 +1425,62 @@ impl Launcher {
             );
         }
         ui.separator();
+        ui.label(RichText::new("About").strong().size(21.));
+        ui.label(format!(
+            "SARE {} / build {} / network protocol {}",
+            sa_client::VERSION,
+            sa_client::BUILD_ID,
+            sa_net::VERSION
+        ));
+        self.updates_ui(ui);
         ui.label("Use a complete client package containing both launcher and runtime. Packaged clients update from tested GitHub releases; source builds use Git/Cargo.");
         ui.hyperlink_to(
             "Project and download information",
             "https://github.com/LordM8YT/GTA-San-Andreas-Rust-Edition",
         );
+    }
+}
+fn input(ui: &mut egui::Ui, value: &mut String, hint: &str) -> egui::Response {
+    input_limit(ui, value, hint, 1024)
+}
+fn input_limit(ui: &mut egui::Ui, value: &mut String, hint: &str, limit: usize) -> egui::Response {
+    ui.add(
+        egui::TextEdit::singleline(value)
+            .hint_text(hint)
+            .desired_width(ui.available_width().min(720.))
+            .margin(egui::vec2(12., 11.))
+            .char_limit(limit),
+    )
+}
+fn primary(label: &str) -> egui::Button<'_> {
+    egui::Button::new(RichText::new(label).color(BACKGROUND))
+        .fill(GOLD)
+        .min_size(egui::vec2(100., 40.))
+}
+fn surface(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::new()
+        .fill(SURFACE)
+        .corner_radius(10)
+        .inner_margin(20)
+        .show(ui, |ui| {
+            ui.set_min_width((ui.available_width() - 1.).max(0.));
+            content(ui);
+        });
+}
+fn log_error(error: &str) {
+    if cfg!(test) {
+        return;
+    } // Unit tests must not append to the user profile.
+    use std::io::Write;
+    let directory = sa_client::config_dir().join("logs");
+    if std::fs::create_dir_all(&directory).is_ok() {
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(directory.join("launcher.log"))
+        {
+            let _ = writeln!(file, "{:?}: {error}", std::time::SystemTime::now());
+        }
     }
 }
 fn open_folder(path: PathBuf, message: &mut String) {
@@ -1126,13 +1520,25 @@ impl Launcher {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             self.preview_frames = self.preview_frames.saturating_add(1);
-            if self.preview_frames >= 6 && self.worker.is_none() && !self.preview_requested {
+            if self.preview_frames >= 6
+                && self.worker.is_none()
+                && self.browser_worker.is_none()
+                && (self.page != Page::Resources
+                    || (self.resource_tab == 0 && self.mods_inspected)
+                    || self.resource_tab == 1
+                    || (self.resource_tab == 2 && self.cache.is_some())
+                    || self.resource_error.is_some())
+                && !self.preview_requested
+            {
                 self.preview_requested = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
             }
             ctx.request_repaint();
         }
         self.poll();
+        if let Some(image) = self.pending_artwork.take() {
+            self.hero = Some(ctx.load_texture("hero", image, egui::TextureOptions::LINEAR));
+        }
         let postpone_update = self.child.is_some() || !self.flush_update_settings();
         self.updates
             .poll(!self.config.disable_auto_updates, postpone_update, &ctx);
@@ -1168,7 +1574,9 @@ impl Launcher {
                     } else {
                         &self.message
                     };
-                    ui.label(RichText::new(status).small());
+                    let compact: String = status.chars().take(100).collect();
+                    ui.label(RichText::new(compact).small())
+                        .on_hover_text(status);
                     if self.updates.busy() || self.updates.has_staged() {
                         ui.separator();
                         ui.label(RichText::new(&self.updates.status).small().color(GOLD));
@@ -1272,6 +1680,7 @@ impl Launcher {
                     });
             });
         if self.worker.is_some()
+            || self.browser_worker.is_some()
             || self.child.is_some()
             || self.gilrs.is_some()
             || self.updates.available()
@@ -1440,6 +1849,164 @@ fn main() -> eframe::Result {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn wait_browser(app: &mut Launcher) {
+        let start = Instant::now();
+        while app.browser_worker.is_some() {
+            app.poll();
+            assert!(start.elapsed() < Duration::from_secs(8));
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    #[test]
+    fn browser_setup_errors_empty_directory_and_real_join_are_independent() {
+        let context = egui::Context::default();
+        let mut app = Launcher::configured(
+            &context,
+            LauncherConfig::default(),
+            Settings::default(),
+            false,
+        );
+        assert!(app.config.relay.is_empty());
+        assert!(!app.connection_valid());
+        app.config.relay = "127.0.0.1:7778".into();
+        app.code = "ABCDEF123456".into();
+        assert!(app.connection_valid());
+        app.code = "invalid".into();
+        assert!(!app.connection_valid());
+        app.code.clear();
+        app.config.relay.clear();
+        app.browse();
+        assert!(app.browser_worker.is_none());
+        assert!(app.browser_error.is_none());
+        app.config.relay = "not an IP address".into();
+        let previous_message = app.message.clone();
+        app.browse();
+        wait_browser(&mut app);
+        assert!(app.browser_error.is_some());
+        assert_eq!(
+            app.message, previous_message,
+            "Browser failure must not become a global status error"
+        );
+        let unavailable = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = unavailable.local_addr().unwrap();
+        drop(unavailable);
+        app.config.relay = address.to_string();
+        app.browse();
+        wait_browser(&mut app);
+        assert!(app.browser_error.as_ref().unwrap().contains("Cannot reach"));
+        let relay = sa_net::relay::Relay::start("127.0.0.1:0".parse().unwrap()).unwrap();
+        app.config.relay = relay.address.to_string();
+        app.browse();
+        assert!(
+            app.browser_error.is_none(),
+            "Retry clears old errors immediately"
+        );
+        wait_browser(&mut app);
+        assert!(app.browser_error.is_none());
+        assert!(app.servers.is_empty());
+        assert!(app.browser_time.is_some());
+        let (_host, publication) =
+            sa_net::Session::host_relay(relay.address, "Launcher test host", true).unwrap();
+        let start = Instant::now();
+        while publication.report().code.is_empty() {
+            assert!(start.elapsed() < Duration::from_secs(8));
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        app.browse();
+        wait_browser(&mut app);
+        assert_eq!(app.servers.len(), 1);
+        assert_eq!(app.servers[0].name, "Launcher test host");
+        let guest =
+            sa_net::Session::join_relay(relay.address, &app.servers[0].code, "Launcher test guest")
+                .unwrap();
+        let start = Instant::now();
+        while !guest
+            .update(sa_net::Pose::default())
+            .is_some_and(|r| r.connected)
+        {
+            assert!(start.elapsed() < Duration::from_secs(8));
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(app.browser_error.is_none());
+    }
+    #[test]
+    fn slow_directory_does_not_block_native_rendering_or_offline_readiness() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (accepted_tx, accepted_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let service = std::thread::spawn(move || {
+            let (_socket, _) = listener.accept().unwrap();
+            accepted_tx.send(()).unwrap();
+            let _ = release_rx.recv_timeout(Duration::from_secs(5));
+        });
+        let context = egui::Context::default();
+        let mut app = Launcher::configured(
+            &context,
+            LauncherConfig::default(),
+            Settings::default(),
+            false,
+        );
+        app.config.relay = address.to_string();
+        app.validation = Some((app.config.game_dir.clone(), Default::default()));
+        let start = Instant::now();
+        app.browse();
+        accepted_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(app.ready(), "Directory work must not disable offline play");
+        app.page = Page::Multiplayer;
+        let mut output = context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1280., 720.),
+                )),
+                ..Default::default()
+            },
+            |ui| app.content(ui),
+        );
+        output.textures_delta.clear();
+        assert!(app.browser_worker.is_some());
+        assert!(
+            start.elapsed() < Duration::from_secs(1),
+            "UI waited for an unresponsive relay"
+        );
+        release_tx.send(()).unwrap();
+        service.join().unwrap();
+        wait_browser(&mut app);
+        assert!(app.browser_error.is_some());
+        assert!(app.ready());
+    }
+    #[test]
+    fn settings_fields_have_desktop_height_and_keyboard_focus() {
+        let context = egui::Context::default();
+        let _app = Launcher::configured(
+            &context,
+            LauncherConfig::default(),
+            Settings::default(),
+            false,
+        );
+        let mut value = "Installation path".to_owned();
+        let mut output = context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1280., 720.),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                let response = input(ui, &mut value, "Path");
+                assert!(
+                    (40. ..=44.).contains(&response.rect.height()),
+                    "Field height: {}",
+                    response.rect.height()
+                );
+                response.request_focus();
+                assert!(response.has_focus());
+            },
+        );
+        output.textures_delta.clear();
+    }
     #[test]
     fn desktop_sidebar_is_reachable_by_keyboard_and_controller() {
         let context = egui::Context::default();
@@ -1508,18 +2075,18 @@ mod tests {
         assert!(!app.ready());
         assert!(app.message.contains("changed"));
         let (tx, rx) = mpsc::channel();
-        app.worker = Some(rx);
-        tx.send(Ok(Work::Browser(
+        app.browser_worker = Some(rx);
+        tx.send((
             "different relay".into(),
-            vec![sa_net::relay::Listing {
+            Ok(vec![sa_net::relay::Listing {
                 name: "Stale server".into(),
                 code: "ABCDEF123456".into(),
                 players: 1,
                 capacity: 20,
                 version: sa_net::VERSION,
-            }],
+            }]),
             Duration::from_millis(2),
-        )))
+        ))
         .unwrap();
         app.poll();
         assert!(app.servers.is_empty());

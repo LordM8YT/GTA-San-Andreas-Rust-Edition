@@ -1,7 +1,7 @@
 # SARE native launcher
 
 The forest-green desktop redesign adds a sidebar and optional local PNG gameplay
-artwork under Settings → Home artwork. See [design and validation](launcher-redesign.md).
+artwork under Settings > Appearance > Home artwork. See [design and validation](launcher-redesign.md).
 
 Build from the repository: `cargo build --release --workspace --manifest-path native/Cargo.toml`.
 Start `start-sare.cmd`, or run `native/target/release/sa-launcher` directly.
@@ -55,7 +55,7 @@ The existing safe-ground validation and multiplayer separation are preserved.
 
 Packaged clients automatically check and download tested GitHub releases, then
 replace program files and restart once the game closes. Disable this under
-Settings > Client updates, or use the manual download/install controls there or
+Settings > Downloads > Client updates, or use the manual download/install controls there or
 under Help. Source builds do not overwrite the checkout. See [update pipeline,
 verification and recovery](client-updates.md).
 
@@ -68,4 +68,5 @@ Developer screenshot capture uses `SARE_SCREENSHOT_TO` inside an isolated
 optional `SARE_PREVIEW_COMPACT=1` and `SARE_PREVIEW_SCALE=2`. It uses wgpu viewport
 capture and exits after saving; destination files must not already exist.
 
-See [validation results and remaining tests](launcher-validation.md).
+See [current launcher polish and verification](launcher-polish.md), and
+[initial validation results](launcher-validation.md).

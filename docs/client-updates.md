@@ -7,7 +7,7 @@ They download and verify updates in the background, save client settings, wait
 until the game closes, install and restart. An offline/check failure leaves the
 current client playable. No account or GitHub token is needed on clients.
 
-Settings → Client updates can disable automatic checks/downloads/restarts.
+Settings > Downloads > Client updates can disable automatic checks/downloads/restarts.
 Help and that settings section also provide manual check/download and install
 controls. With automatic updates disabled, press Install after a manual download.
 Source/Cargo builds do not self-update; use Git/Cargo for development.
