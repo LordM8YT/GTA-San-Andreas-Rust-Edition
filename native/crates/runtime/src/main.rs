@@ -10,6 +10,7 @@ mod controller;
 mod culling;
 mod gameplay_audio;
 mod menu;
+mod metrics;
 mod mipmaps;
 mod multiplayer;
 mod postprocess;
@@ -125,6 +126,10 @@ struct State {
     resource_game_dir: PathBuf,
     resource_local_mods: Option<PathBuf>,
     resource_cache_dir: PathBuf,
+    cache_lease: Option<Arc<std::fs::File>>,
+    metrics: metrics::Metrics,
+    auto_enter: bool,
+    next_autosave: Instant,
     resource_job: Option<session_resources::Job>,
     resource_installing: Option<session_resources::Installing>,
     offline_world: Option<session_resources::World>,
@@ -427,6 +432,18 @@ impl State {
         let gpu = adapter.get_info();
         menu.graphics_device = format!("{} / {:?}", gpu.name, gpu.backend);
         println!("Renderer: {}", menu.graphics_device);
+        if !args
+            .iter()
+            .any(|a| a.starts_with("--smoke") || a.starts_with("--probe"))
+        {
+            let _ = sa_client::atomic_json(
+                &sa_client::config_dir().join("runtime-status.json"),
+                &sa_client::diagnostics::Hardware {
+                    gpu: gpu.name.clone(),
+                    renderer: format!("{:?}", gpu.backend),
+                },
+            );
+        }
         let postprocess = postprocess::PostProcess::new(
             &device,
             format,
@@ -543,6 +560,10 @@ impl State {
             resource_game_dir: PathBuf::new(),
             resource_local_mods: None,
             resource_cache_dir: session_resources::cache_directory(),
+            cache_lease: None,
+            metrics: Default::default(),
+            auto_enter: false,
+            next_autosave: Instant::now() + std::time::Duration::from_secs(60),
             resource_job: None,
             resource_installing: None,
             offline_world: None,
@@ -841,7 +862,9 @@ impl State {
                 .min(if self.driving { 0.25 } else { 0.05 })
         };
         self.last = now;
+        let stream_started = Instant::now();
         self.stream_world();
+        self.metrics.stream_ms = stream_started.elapsed().as_secs_f64() * 1000.;
         if let Some(ref cut) = self.animation {
             let duration = cut
                 .camera_keys
@@ -1520,7 +1543,9 @@ impl State {
         );
         if self.persist_settings {
             if let Err(error) = self.menu.settings.save() {
-                self.menu.message = format!("Kunne ikke lagre innstillinger: {error}");
+                self.menu.message = format!(
+                    "Could not save settings: {error}. Check write access to the settings folder."
+                );
             }
         }
         self.apply_audio_settings();
@@ -1534,7 +1559,11 @@ impl State {
         if self.size.width == 0 || self.size.height == 0 {
             return false;
         }
+        self.metrics.frame();
+        let update_started = Instant::now();
         self.update();
+        self.metrics.update_ms = update_started.elapsed().as_secs_f64() * 1000.;
+        let render_started = Instant::now();
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) => f,
             wgpu::CurrentSurfaceTexture::Suboptimal(f) => {
@@ -1604,7 +1633,25 @@ impl State {
             "{} x {} render / {} x {} display",
             self.postprocess.size[0], self.postprocess.size[1], self.size.width, self.size.height
         );
+        let debug = self.metrics.visible.then(|| {
+            self.metrics.text(
+                self.batches.len(),
+                loading,
+                self.cache_lease.is_some(),
+                self.offline_world.is_some(),
+            )
+        });
         let mut output = context.run_ui(raw_input, |ui| {
+            if let Some(text) = &debug {
+                egui::Area::new("performance".into())
+                    .anchor(egui::Align2::RIGHT_TOP, [-12., 12.])
+                    .interactable(false)
+                    .show(ui.ctx(), |ui| {
+                        egui::Frame::popup(ui.style()).show(ui, |ui| {
+                            ui.monospace(text);
+                        });
+                    });
+            }
             action = self.menu.draw(
                 ui.ctx(),
                 coordinates,
@@ -1744,6 +1791,7 @@ impl State {
         if action.is_none() {
             self.menu_feedback(menu_before, false);
         }
+        self.metrics.render_ms = render_started.elapsed().as_secs_f64() * 1000.;
         self.apply_menu_action(action);
         self.apply_settings();
         if let (Some(texture), Some(path)) = (capture_texture, capture_path) {
@@ -2110,6 +2158,7 @@ impl ApplicationHandler for App {
                 }
                 self.offline_car_handling = state.car.as_ref().map(|(car, _)| car.handling);
                 let launch_args: Vec<_> = std::env::args().collect();
+                state.auto_enter = launch_args.iter().any(|a| a == "--play");
                 state.culling_enabled = !launch_args.iter().any(|arg| arg == "--no-culling");
                 if launch_args.iter().any(|arg| arg == "--smoke-culling") {
                     // Omit egui area fade-in from exact world-image comparisons.
@@ -2157,6 +2206,17 @@ impl ApplicationHandler for App {
                     state.menu.join_address = pair[1].clone();
                     state.menu.open(menu::Page::Network);
                     state.network_action(false);
+                }
+                if state.auto_enter
+                    && !launch_args.iter().any(|a| {
+                        matches!(
+                            a.as_str(),
+                            "--join" | "--join-code" | "--host" | "--relay-host"
+                        )
+                    })
+                {
+                    state.apply_menu_action(Some(menu::Action::Play));
+                    state.auto_enter = false;
                 }
                 if self.smoke && !self.smoke_menus && !self.smoke_graphics {
                     state.menu.page = None;
@@ -2619,6 +2679,10 @@ impl ApplicationHandler for App {
                         state.menu.has_played = true;
                     }
                     if self.smoke_frames == 10 {
+                        assert!(sa_client::progress::autosave_due(
+                            &mut state.next_autosave,
+                            Instant::now() + std::time::Duration::from_secs(61)
+                        ));
                         state.checkpoint_progress();
                         let expected = state
                             .last_progress
@@ -3189,6 +3253,9 @@ impl ApplicationHandler for App {
                     if event.state == ElementState::Pressed {
                         match code {
                             KeyCode::Escape => state.capture(false),
+                            KeyCode::F3 if !event.repeat => {
+                                state.metrics.visible = !state.metrics.visible;
+                            }
                             KeyCode::F9 if !event.repeat => {
                                 state.place_car();
                             }
@@ -3335,7 +3402,10 @@ impl ApplicationHandler for App {
             }
         }
         if let Some(state) = &mut self.state {
-            if state.menu.page.is_some() {
+            if state.menu.page.is_some()
+                || (!self.smoke
+                    && sa_client::progress::autosave_due(&mut state.next_autosave, Instant::now()))
+            {
                 state.checkpoint_progress();
             }
         }
@@ -3370,6 +3440,8 @@ impl ApplicationHandler for App {
     }
 }
 fn main() -> Result<()> {
+    let _session_intent =
+        sa_client::launch::Session::from_args(&std::env::args().collect::<Vec<_>>())?;
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.iter().any(|arg| arg == "--probe-mipmaps") {
         let renderer = args
@@ -3395,6 +3467,14 @@ fn main() -> Result<()> {
             "--smoke-culling-angle requires --smoke-culling and a quarter-turn index 0..3"
         );
     }
+    let _runtime_guard = if args
+        .iter()
+        .any(|a| a.starts_with("--smoke") || a.starts_with("--probe") || a.starts_with("--inspect"))
+    {
+        None
+    } else {
+        Some(sa_client::launch::RuntimeGuard::acquire()?)
+    };
     let game = args
         .windows(2)
         .find(|w| w[0] == "--game-dir")

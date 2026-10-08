@@ -193,7 +193,8 @@ with people you trust. Movement remains client-authoritative.
 
 ## Launch options and verification
 
-Optional arguments to `start-freeroam.cmd`:
+For direct runtime startup, pass these optional arguments to
+`native/target/release/sa-runtime.exe` (the launcher also provides host/join controls):
 
 ```text
 --host 0.0.0.0:7777 --name Host
@@ -211,7 +212,7 @@ to test different outfits and model changes using copies of our own demo
 resources; add `-Passenger` to board, ride in and exit another player's car;
 add `-Relay` and/or `-Dedicated` for those hosting modes.
 
-Appearance replication uses network protocol **5**. Update the runtime,
+Appearance replication uses network protocol **6**. Update the runtime,
 dedicated server and relay together; older protocol versions are rejected.
 
 For a GPU integration check, launch two runtime instances with `--smoke-network`
@@ -245,3 +246,17 @@ primary model is present, the original Taxi/Grove Street choice remains
 available alongside it. Both offline and server preparation use the same catalog
 ordering. Protocol 5 rejects older catalog numbering to prevent a selected
 vehicle or character from appearing as a different model on another client.
+
+## Launcher and measured connection latency
+
+The native launcher selects direct IP or a relay browser/join code and starts the
+runtime with `--play`. The runtime still performs resource preflight, verification,
+model upload and inventory-pinned admission before entering gameplay. Direct
+runtime starts can use the same flags. Update runtime, headless server and relay
+together: protocol 6 adds matched Ping/Pong messages. The displayed RTT measures
+the gameplay connection, including relay hops and host scheduling; it is not a
+one-way delay or the directory request duration. Hosting locally has no remote RTT.
+
+Cache cleanup holds the cache writer lock and an exclusive session lease. Every
+prepared/active server world retains a shared lease, including while restoring the
+offline world. The preview becomes invalid if files change before deletion.

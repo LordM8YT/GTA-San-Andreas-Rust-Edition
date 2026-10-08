@@ -10,14 +10,14 @@ New-Item -ItemType Directory -Path $saveMods | Out-Null
 foreach ($saveDemo in @('native-car-demo','native-clothing-demo')) {
     Copy-Item -LiteralPath (Join-Path $saveRepo ('mods/' + $saveDemo)) -Destination $saveMods -Recurse
     $saveManifest = Join-Path $saveMods ($saveDemo + '/mod.json')
-    $saveData = Get-Content -LiteralPath $saveManifest -Raw | ConvertFrom-Json
+    $saveData = Get-Content -LiteralPath $saveManifest -Raw -Encoding UTF8 | ConvertFrom-Json
     $saveData.enabled = $true
     [System.IO.File]::WriteAllText($saveManifest, ($saveData | ConvertTo-Json -Depth 16), [System.Text.UTF8Encoding]::new($false))
 }
 $saveFile = Join-Path $saveResults progress.json
 foreach ($saveStage in @('first','restored','without-mods','unsafe')) {
     if ($saveStage -eq 'unsafe') {
-        $saveData = Get-Content -LiteralPath $saveFile -Raw | ConvertFrom-Json
+        $saveData = Get-Content -LiteralPath $saveFile -Raw -Encoding UTF8 | ConvertFrom-Json
         $saveData.position[2] = 1999.0
         [System.IO.File]::WriteAllText($saveFile, ($saveData | ConvertTo-Json -Depth 16), [System.Text.UTF8Encoding]::new($false))
     }
@@ -29,6 +29,7 @@ foreach ($saveStage in @('first','restored','without-mods','unsafe')) {
     else { $saveArgs += '--no-mods' }
     $saveProcess = Start-Process -WindowStyle Hidden -FilePath $saveExe -WorkingDirectory $saveResults -ArgumentList $saveArgs -PassThru `
         -RedirectStandardOutput (Join-Path $saveResults ($saveStage+'.log')) -RedirectStandardError (Join-Path $saveResults ($saveStage+'-errors.log'))
+    $saveProcessHandle=$saveProcess.Handle
     try {
         if (-not $saveProcess.WaitForExit(60000)) { throw "Checkpoint test timed out: $saveStage" }
         if ($saveProcess.ExitCode -ne 0) { throw "Checkpoint test failed: $saveStage ($($saveProcess.ExitCode))" }

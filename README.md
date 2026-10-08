@@ -1,8 +1,26 @@
-# SA Runtime — Grove Street Test
+# SARE - San Andreas Rust Edition
+
+## Native launcher (local review build)
+
+Build developers: `cargo build --release --workspace --manifest-path native/Cargo.toml`.
+Run **start-sare.cmd**, or **native/target/release/sa-launcher.exe**. Packaged users
+run `sa-launcher.exe` (Linux: `./sa-launcher`); Cargo is not needed. Select and
+validate your original PC installation, then Play / Continue or join through
+Play together. Direct runtime startup remains supported.
+
+The launcher shares settings and launch contracts with the runtime, saves favorites,
+shows installation errors, previews unused cache cleanup and creates reviewable
+local diagnostic reports. Runtime joins prepare and verify server resources before
+automatically entering gameplay. All multiplayer binaries now need **protocol 6**;
+round-trip time is measured on the gameplay connection. F3 shows frame/CPU timings
+and resident memory. GPU timestamp profiling is not implemented.
+
+See [launcher setup and limits](docs/launcher.md) and [package instructions](docs/client-package.md).
+CI defines Windows/Linux review ZIP artifacts; no release is published by this change.
 
 ## Latest free-roam build — October 8, 2026
 
-Run **start-freeroam.cmd** to launch the native version. It starts in walk mode
+Run **start-sare.cmd**, then choose **Play** to enter free roam in walk mode
 and streams nearby neighborhoods as you move. Use **1–9** to travel to Grove
 Street, downtown Los Santos, the beach, the airport, the countryside, San
 Fierro, Las Venturas, the desert, and Mount Chiliad. Press **P** to toggle
@@ -34,10 +52,8 @@ owner exits. Hosts also reserve up to three passenger seats so players can
 ride together. NPCs, shared vehicle collisions and exchanging cars are not
 yet replicated. See [multiplayer setup and limits](docs/multiplayer.md).
 
-The next milestone is driving together with friends in shared vehicles.
-See the [roadmap](docs/roadmap.md) for priorities, direct P2P plans
-and hosting plans. Shared vehicles remain planned; native resource download,
-version checks and caching are implemented.
+Personal cars and passenger rides are implemented; exchanging car ownership and
+shared collisions remain planned. See the [roadmap](docs/roadmap.md) for priorities.
 
 ## Menus, HUD, and settings
 
@@ -47,7 +63,8 @@ radar/minimap and an in-car speedometer. Display, mouse, movement, and vehicle
 handling settings are saved under `%LOCALAPPDATA%/SAFreeroam/settings.json`.
 
 Offline free roam now remembers a safe outdoor position, camera, selected car,
-ped and clothing when opening a menu, quitting normally or preparing multiplayer.
+ped and clothing every 60 seconds at a safe offline position, when opening a menu,
+quitting normally or preparing multiplayer.
 The next launch offers **Continue free roam**. Removed models fall back to
 current defaults; unsafe locations fall back to Grove Street. Multiplayer
 progress remains separate. See [local checkpoints](docs/progress.md).

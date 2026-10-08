@@ -18,7 +18,7 @@ use std::{
 
 pub const MAX_PLAYERS: usize = 20;
 pub const DEFAULT_PORT: u16 = 7777;
-const VERSION: u32 = 5;
+pub const VERSION: u32 = 6;
 const TICK: Duration = Duration::from_millis(50);
 const TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_FRAME: usize = 16 * 1024;
@@ -95,6 +95,8 @@ pub struct Peer {
 }
 #[derive(Clone, Debug, Default)]
 pub struct Report {
+    /// Round trip through the gameplay connection, including relay and host processing.
+    pub round_trip: Option<Duration>,
     pub status: String,
     pub connected: bool,
     pub local_id: u32,
@@ -103,6 +105,8 @@ pub struct Report {
 }
 #[derive(Serialize, Deserialize)]
 enum Message {
+    Ping(u64),
+    Pong(u64),
     Hello {
         version: u32,
         name: String,
@@ -341,6 +345,9 @@ fn publish(report: &Mutex<Report>, status: &str, connected: bool, id: u32, peers
     let mut r = report.lock().unwrap();
     r.status = status.into();
     r.connected = connected;
+    if !connected {
+        r.round_trip = None;
+    }
     r.local_id = id;
     r.peers = peers;
     r.revision = r.revision.wrapping_add(1);
@@ -422,6 +429,9 @@ fn host_worker(
                         guest.assets = true;
                         if guest.wire.queue(&Message::ResourceManifest(share.manifest.clone())).is_err() { return false; }
                     }
+                    Message::ResourceQuery { .. } if !guest.hello && !guest.assets => {
+                        let _=guest.wire.queue(&Message::Reject("Incompatible multiplayer version. Update client and host to the same build.".into()));let _=guest.wire.flush();return false;
+                    }
                     Message::ResourceFile { sha256 } if guest.assets && guest.transfer.is_none() => {
                         let Some(data) = share.blob(&sha256) else { return false; };
                         guest.transfer = Some((sha256, data, 0));
@@ -457,6 +467,9 @@ fn host_worker(
                         {
                             return false;
                         }
+                    }
+                    Message::Ping(nonce) if guest.hello => {
+                        if guest.wire.queue(&Message::Pong(nonce)).is_err(){return false;}
                     }
                     Message::Pose(pose) if guest.hello && pose.valid() => {
                         guest.peer.pose = seats.apply(guest.peer.id, pose, &source);
@@ -525,6 +538,9 @@ fn client_stream(
     })?;
     let mut id = None;
     let mut next_tick = Instant::now();
+    let mut next_ping = Instant::now();
+    let mut ping: Option<(u64, Instant)> = None;
+    let mut nonce = 0u64;
     while !stop.load(Ordering::Relaxed) {
         if wire.last.elapsed() > TIMEOUT {
             return Err(io::ErrorKind::TimedOut.into());
@@ -555,6 +571,18 @@ fn client_stream(
                         peers,
                     );
                 }
+                Message::Pong(reply) if id.is_some() => {
+                    if let Some((expected, sent)) = ping {
+                        if expected == reply {
+                            report.lock().unwrap().round_trip = Some(sent.elapsed());
+                            ping = None;
+                        } else {
+                            return Err(invalid());
+                        }
+                    } else {
+                        return Err(invalid());
+                    }
+                }
                 Message::Reject(reason) => return Err(io::Error::other(reason)),
                 _ => return Err(invalid()),
             }
@@ -562,6 +590,12 @@ fn client_stream(
         if id.is_some() && Instant::now() >= next_tick {
             next_tick = Instant::now() + TICK;
             wire.queue(&Message::Pose(*local.lock().unwrap()))?;
+        }
+        if id.is_some() && ping.is_none() && Instant::now() >= next_ping {
+            nonce = nonce.wrapping_add(1);
+            ping = Some((nonce, Instant::now()));
+            next_ping = Instant::now() + Duration::from_secs(1);
+            wire.queue(&Message::Ping(nonce))?;
         }
         wire.flush()?;
         thread::sleep(Duration::from_millis(5));
@@ -572,6 +606,18 @@ fn client_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn gameplay_round_trip_is_measured_on_the_active_connection() {
+        let host = Session::host(address(), "Host").unwrap();
+        let guest = Session::join(host.address, "Guest").unwrap();
+        wait(|| {
+            host.update(Pose::default());
+            guest.update(Pose::default());
+            report(&guest).round_trip.is_some()
+        });
+        let measured = report(&guest).round_trip.unwrap();
+        assert!(measured > Duration::ZERO && measured < TIMEOUT);
+    }
     fn address() -> SocketAddr {
         "127.0.0.1:0".parse().unwrap()
     }

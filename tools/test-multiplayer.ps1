@@ -5,6 +5,7 @@ param(
     [switch]$Appearance,
     [switch]$Passenger,
     [switch]$Audio,
+    [switch]$AutoPlay,
     [string]$HostModsDir,
     [string]$ClientModsDir,
     [string]$CacheDirectory
@@ -21,7 +22,7 @@ if ($Appearance -and -not $HostModsDir) {
     foreach ($mpDemo in @('native-car-demo','native-clothing-demo')) {
         Copy-Item -LiteralPath (Join-Path $mpRepo ('mods\' + $mpDemo)) -Destination $HostModsDir -Recurse
         $mpDemoManifest = Join-Path $HostModsDir ($mpDemo + '\mod.json')
-        $mpManifestData = Get-Content -LiteralPath $mpDemoManifest -Raw | ConvertFrom-Json
+        $mpManifestData = Get-Content -LiteralPath $mpDemoManifest -Raw -Encoding UTF8 | ConvertFrom-Json
         $mpManifestData.enabled = $true
         [System.IO.File]::WriteAllText($mpDemoManifest, ($mpManifestData | ConvertTo-Json -Depth 16), [System.Text.UTF8Encoding]::new($false))
     }
@@ -38,6 +39,7 @@ $mpRelay = $null
 $mpServer = $null
 try {
     $mpCommon = @('--game-dir', ('"' + $GameDir + '"'), '--renderer', 'vulkan', '--smoke-network')
+    if ($AutoPlay) { $mpCommon += '--play' }
     if ($Appearance) { $mpCommon += '--smoke-appearance' }
     if ($Passenger) { $mpCommon += '--smoke-passenger' }
     if ($Audio) { $mpCommon += '--smoke-audio' }
@@ -118,6 +120,10 @@ try {
     foreach ($mpRole in @('host', 'client')) {
         $mpLog = Get-Content (Join-Path $mpResults ($mpRole + '.log')) -Raw
         if ($mpLog -notmatch 'GPU multiplayer smoke passed:.*2 players seen') { throw "$mpRole failed. Inspect logs in $mpResults" }
+        if ($AutoPlay) {
+            $mpErrors = Get-Content (Join-Path $mpResults ($mpRole + '-errors.log')) -Raw
+            if ($mpErrors -notmatch 'Launcher join entered prepared session') { throw "$mpRole launcher auto-entry did not run." }
+        }
         if ($Appearance -and $mpLog -notmatch 'GPU appearance smoke passed') { throw "$mpRole appearance replication failed. Inspect logs." }
         if ($Passenger -and $mpLog -notmatch 'GPU passenger smoke passed') { throw "$mpRole passenger replication failed. Inspect logs." }
         if ($Audio -and $mpLog -notmatch 'Gameplay audio smoke passed') { throw "$mpRole gameplay audio failed. Inspect logs." }

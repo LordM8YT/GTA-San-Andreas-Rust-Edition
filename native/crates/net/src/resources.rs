@@ -9,6 +9,10 @@ use std::{
     sync::Arc,
 };
 
+#[path = "cache_admin.rs"]
+mod admin;
+pub use admin::{cleanup_cache, inspect_cache, CachePack, CachePlan};
+
 pub const MAX_FILE_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_PACK_BYTES: usize = 128 * 1024 * 1024;
 pub const MAX_MANIFEST_BYTES: usize = 12 * 1024;
@@ -346,6 +350,8 @@ fn recover_staging(path: &Path, root: &Path, usage: &mut u64) -> io::Result<()> 
 }
 #[derive(Debug)]
 pub struct Cached {
+    pub manifest: Manifest,
+    pub lease: Arc<fs::File>,
     pub mods: PathBuf,
     pub fingerprint: String,
     pub downloaded_bytes: usize,
@@ -488,6 +494,7 @@ pub fn cache(
             "Cache is being prepared by another instance; retry when it finishes ({e})"
         ))
     })?;
+    let lease = admin::active_lease(&root)?;
     let mut usage = disk_usage(&root)?;
     let blobs = directory(&root, Path::new("blobs"))?;
     let pack = directory(&root, &PathBuf::from("packs").join(&fingerprint))?;
@@ -503,7 +510,6 @@ pub fn cache(
             return Err(error("Invalid cache inventory marker"));
         }
         fs::remove_file(&inventory)?;
-        usage = usage.saturating_sub(metadata.len());
         usage = usage.saturating_sub(metadata.len());
     }
     let (mut downloaded_bytes, mut reused_files, mut processed) = (0, 0, 0);
@@ -587,6 +593,8 @@ pub fn cache(
     check_tree(&mods, &mods, &expected_files, &expected_dirs)?;
     write_checked(&inventory, &serde_json::to_vec(manifest)?, &mut usage)?;
     Ok(Cached {
+        manifest: manifest.clone(),
+        lease,
         mods,
         fingerprint,
         downloaded_bytes,
@@ -597,9 +605,9 @@ pub fn cache(
 #[cfg(test)]
 mod tests {
     use super::*;
-    struct Temp(PathBuf);
+    pub(super) struct Temp(pub(super) PathBuf);
     impl Temp {
-        fn new() -> Self {
+        pub(super) fn new() -> Self {
             let mut random = [0; 12];
             getrandom::fill(&mut random).unwrap();
             let path =
@@ -616,7 +624,7 @@ mod tests {
             let _ = fs::remove_dir_all(&self.0);
         }
     }
-    fn share(data: &[u8]) -> Share {
+    pub(super) fn share(data: &[u8]) -> Share {
         Share::build(vec![Input {
             name: "Test car".into(),
             files: vec![

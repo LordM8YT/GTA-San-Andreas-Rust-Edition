@@ -6,8 +6,9 @@ Python, nettleser, WebView eller original `gta_sa.exe`.
 
 ## Kjøring
 
-Fra prosjektmappen: dobbeltklikk `start-native.cmd`. Første gang bygges exe med
-Rust/Cargo; senere starter den ferdige filen. Alternativt:
+Fra prosjektmappen: bygg med `cargo build --release --workspace --manifest-path native/Cargo.toml`,
+og dobbeltklikk `start-sare.cmd`. Velg installasjonen i launcheren og trykk Play.
+For direkte oppstart og utviklerverktøy:
 
 ```powershell
 cd native

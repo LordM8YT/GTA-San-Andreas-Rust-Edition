@@ -7,10 +7,16 @@ Custom vehicle resources can supply bounded native handling values for engine,
 brakes, grip, steering and suspension. Server packs include this tuning and
 respawning preserves it; see [vehicle dynamics](vehicle-dynamics.md).
 
+## Launcher (local review change)
+
+Native `sa-launcher` now provides installation validation, offline start/Continue,
+relay browser/join codes, favorites, shared settings, log/report access and safe
+unused-cache cleanup. Runtime remains independently launchable. See [launcher](launcher.md).
+
 ## Lokal lagring
 
 Offline-posisjon, kamera, bilvalg, ped og antrekk lagres når du åpner en meny,
-ved normal avslutning og før du starter multiplayer. Hovedmenyen viser
+hvert 60. sekund ved trygg posisjon, ved normal avslutning og før multiplayer. Hovedmenyen viser
 «Continue free roam» når et gyldig checkpoint er lastet. Neste oppstart laster
 området rundt posisjonen og sjekker gulv, vegger og hodeplass før gjenopptak.
 Hvis stedet mangler trygg grunn, starter du ved Grove Street. Fjernede eller
@@ -19,8 +25,7 @@ flertydige modellnavn bruker dagens standardvalg; klesvalg gjelder bare samme pe
 Dette lagrer én lokal offline-økt, uten missions eller serverfremdrift. Du
 starter til fots, og valgt bil plasseres i ledig rom i nærheten; fart og nøyaktig
 parkering lagres ikke. Innendørs, flykamera, hopp, streaming og multiplayer
-overskriver ikke det siste trygge checkpointet. Et krasj mellom menybesøk kan
-miste nyere fremdrift. Se [lagring og testing](progress.md).
+overskriver ikke det siste trygge checkpointet. Et krasj kan miste fremdrift siden siste trygge lagring. Se [lagring og testing](progress.md).
 
 ## Multiplayer-prototype
 
@@ -40,9 +45,9 @@ og gjenoppretting av lokale ressurser etter frakobling. Se [veikartet](roadmap.m
 
 ## Start og kontroller
 
-Dobbeltklikk `start-freeroam.cmd` (eller `start-native.cmd`). Skriptet starter
-en ny Windows-exe med Rust/Cargo når Cargo er installert, ellers brukes eksisterende exe.
-Exe-en ligger i `native/target/release/sa-runtime.exe`.
+Dobbeltklikk `start-sare.cmd`, velg installasjonen og trykk Play i launcheren.
+Utviklere bygger først med `cargo build --release --workspace --manifest-path native/Cargo.toml`.
+Direkte oppstart støttes også via `native/target/release/sa-runtime.exe`.
 
 - WASD: gå. Shift: løp. Space: hopp. Klikk i vinduet for musestyring.
 - Xbox-kontroller (standardmapping): venstre stikke går/styrer, høyre stikke ser rundt;

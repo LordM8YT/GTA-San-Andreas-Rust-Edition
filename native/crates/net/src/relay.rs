@@ -124,7 +124,7 @@ pub fn browse(address: SocketAddr) -> io::Result<Vec<Listing>> {
                         && r.name.len() <= 96
                         && r.players <= MAX_PLAYERS
                         && r.capacity == MAX_PLAYERS
-                        && r.version == VERSION
+                        && r.version > 0
                 }) =>
         {
             Ok(rooms)
@@ -627,6 +627,30 @@ mod tests {
         session.report.lock().unwrap().clone()
     }
 
+    #[test]
+    fn browser_keeps_incompatible_rooms_for_explicit_ui_status() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let worker = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            assert!(matches!(receive(&mut stream).unwrap(), Control::List));
+            send(
+                &mut stream,
+                &Control::Listings(vec![Listing {
+                    code: "ABCDEF123456".into(),
+                    name: "Different build".into(),
+                    players: 1,
+                    capacity: MAX_PLAYERS,
+                    version: VERSION + 1,
+                }]),
+            )
+            .unwrap();
+        });
+        let rooms = browse(address).unwrap();
+        worker.join().unwrap();
+        assert_eq!(rooms.len(), 1);
+        assert_ne!(rooms[0].version, VERSION);
+    }
     #[test]
     fn public_browser_and_private_code_relay_actual_game_poses() {
         let relay = relay();

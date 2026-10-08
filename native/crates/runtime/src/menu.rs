@@ -1038,7 +1038,8 @@ impl Menu {
                                 ui.label(&self.browser_status);
                                 if self.server_list.is_empty() {ui.label("Refresh to find public sessions. For a private session, use your friend's join code.");}
                                 for server in &self.server_list {
-                                    if ui.add_enabled(!self.network_active && server.players < server.capacity, egui::Button::new(format!("Join {} — {} / {}", server.name, server.players, server.capacity))).clicked() {
+                                    if server.version!=sa_net::VERSION {ui.label(format!("{}: incompatible protocol {}; client {}. Update to the same build.",server.name,server.version,sa_net::VERSION));}
+                                    if ui.add_enabled(!self.network_active && server.players < server.capacity && server.version==sa_net::VERSION, egui::Button::new(format!("Join {} — {} / {}", server.name, server.players, server.capacity))).clicked() {
                                         self.join_code = server.code.clone();
                                         action = Some(Action::Join);
                                     }
@@ -1093,7 +1094,7 @@ impl Menu {
                             ui.label(RichText::new("Supports documented custom models, textures, buildings, cars, player characters, and skinned clothing. Scripts, DLL plugins, and arbitrary GTA/FiveM mods are not executed. Choose clothes in the wardrobe (F6).").color(MUTED));
                         },
                         Page::Quit=>{
-                            ui.label("You can start free roam again from start-freeroam.cmd.");
+                            ui.label("You can return to free roam from the SARE launcher or start the runtime directly.");
                             ui.horizontal(|ui|{if ui.button("Quit game").clicked(){action=Some(Action::Quit);}
                                 if ui.button("Stay here").clicked(){self.back();}});
                         },_=>{}

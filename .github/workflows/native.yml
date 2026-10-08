@@ -38,4 +38,12 @@ jobs:
       - name: Conversion tests
         working-directory: .
         run: python -m unittest discover -s tools/tests -v
-      - run: cargo build --release -p sa-runtime
+      - run: cargo build --release --workspace
+      - name: Package review client
+        working-directory: .
+        run: python tools/package-client.py --platform ${{ runner.os == 'Windows' && 'windows' || 'linux' }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SARE-${{ runner.os }}-test
+          path: native/target/packages/*.zip
+          if-no-files-found: error

@@ -57,6 +57,7 @@ impl Drop for Job {
     }
 }
 struct Prepared {
+    cache_lease: Arc<std::fs::File>,
     endpoint: Endpoint,
     share: Share,
     fingerprint: String,
@@ -67,15 +68,7 @@ struct Prepared {
     names: Vec<String>,
 }
 pub(super) fn cache_directory() -> PathBuf {
-    if let Ok(directory) = std::env::var("LOCALAPPDATA") {
-        PathBuf::from(directory).join("SAFreeroam/server-cache")
-    } else if let Ok(directory) = std::env::var("XDG_CACHE_HOME") {
-        PathBuf::from(directory).join("sa-freeroam/server-cache")
-    } else if let Ok(directory) = std::env::var("HOME") {
-        PathBuf::from(directory).join(".cache/sa-freeroam/server-cache")
-    } else {
-        std::env::temp_dir().join("sa-freeroam-server-cache")
-    }
+    sa_client::cache_dir()
 }
 fn cancelled(cancel: &AtomicBool) -> Result<()> {
     anyhow::ensure!(!cancel.load(Ordering::Relaxed), "Join cancelled");
@@ -141,7 +134,19 @@ fn prepare(
     *progress.lock().unwrap() = "Loading the server's world and models...".into();
     let mut loader = sa_scene::WorldLoader::open(game)?;
     loader.enable_mods(&cached.mods)?;
-    let names = loader.mod_names().to_vec();
+    let names = cached
+        .manifest
+        .resources
+        .iter()
+        .map(|r| {
+            format!(
+                "{} - verified for session - {:.2} MiB ({} files)",
+                r.name,
+                r.files.iter().map(|f| f.bytes).sum::<usize>() as f64 / 1048576.,
+                r.files.len()
+            )
+        })
+        .collect();
     let models = loader.model_names();
     let scene = loader.load(ORIGIN, ORIGIN, RADIUS)?;
     let mut cars = vec![(
@@ -170,6 +175,7 @@ fn prepare(
     }
     cancelled(cancel)?;
     Ok(Prepared {
+        cache_lease: cached.lease,
         endpoint,
         share,
         fingerprint: cached.fingerprint,
@@ -188,6 +194,7 @@ enum Model {
 type CarMesh = (sa_scene::vehicle::Car, Vec<GpuBatch>);
 type PedMesh = (sa_scene::ped::Ped, Vec<GpuBatch>);
 pub(super) struct Installing {
+    cache_lease: Arc<std::fs::File>,
     endpoint: Endpoint,
     share: Share,
     fingerprint: String,
@@ -204,6 +211,7 @@ pub(super) struct Installing {
 impl Installing {
     fn new(prepared: Prepared) -> Self {
         Self {
+            cache_lease: prepared.cache_lease,
             endpoint: prepared.endpoint,
             share: prepared.share,
             fingerprint: prepared.fingerprint,
@@ -305,6 +313,7 @@ impl Installing {
         let ped = peds[0].take();
         let clothes = ped.as_ref().unwrap().0.clothing_options();
         let world = World {
+            cache_lease: Some(self.cache_lease),
             batches,
             collision: scene.collision.take(),
             water: scene.water.take(),
@@ -338,6 +347,7 @@ impl Installing {
     }
 }
 pub(super) struct World {
+    cache_lease: Option<Arc<std::fs::File>>,
     batches: Vec<GpuBatch>,
     collision: Option<CollisionWorld>,
     water: Option<Arc<sa_scene::water::WaterMap>>,
@@ -371,6 +381,7 @@ impl State {
     fn swap_session_world(&mut self, mut world: World) -> World {
         macro_rules! swap { ($($field:ident),*) => {$(std::mem::swap(&mut self.$field, &mut world.$field);)*}; }
         swap!(
+            cache_lease,
             batches,
             collision,
             water,
@@ -400,6 +411,7 @@ impl State {
         std::mem::swap(&mut self.menu.cars, &mut world.cars);
         std::mem::swap(&mut self.menu.peds, &mut world.peds);
         std::mem::swap(&mut self.menu.clothes, &mut world.clothes);
+        crate::metrics::session_memory("world swap");
         self.keys.clear();
         self.car_render_pose = None;
         self.ped_clip = "idle_stance";
@@ -412,6 +424,7 @@ impl State {
         self.resource_installing = None;
         if let Some(world) = self.offline_world.take() {
             let _ = self.swap_session_world(world);
+            crate::metrics::session_memory("offline restored");
             eprintln!("Restored offline world and local resources");
         }
         self.menu.network_ready = false;
@@ -424,6 +437,7 @@ impl State {
             "Disconnect from the current session first."
         );
         self.checkpoint_progress();
+        crate::metrics::session_memory("before preparation");
         self.network_car_spawned = false;
         let endpoint = if self.menu.relay_mode {
             let address = self
@@ -496,7 +510,9 @@ impl State {
                 }
                 Ok(Err(error)) => {
                     self.resource_job = None;
-                    self.menu.message = format!("Could not prepare server resources: {error:#}");
+                    self.menu.message = sa_client::diagnostics::explain(&format!(
+                        "Could not prepare server resources: {error:#}"
+                    ));
                     self.menu.network_status = "Offline".into();
                     self.menu.network_active = false;
                 }
@@ -539,7 +555,9 @@ impl State {
                         Err(error) => {
                             self.clear_session_resources();
                             self.menu.network_active = false;
-                            self.menu.message = format!("Could not start session: {error}");
+                            self.menu.message = sa_client::diagnostics::explain(&format!(
+                                "Could not start session: {error}"
+                            ));
                         }
                     }
                 }

@@ -545,6 +545,11 @@ impl State {
                 self.spread_network_spawn(&report);
             }
             self.menu.network_ready = ready;
+            if ready && self.auto_enter {
+                self.auto_enter = false;
+                self.apply_menu_action(Some(crate::menu::Action::Play));
+                eprintln!("Launcher join entered prepared session");
+            }
             if !report.connected && report.revision > 0 {
                 let status = report.status.clone();
                 self.disconnect_network();
@@ -552,14 +557,22 @@ impl State {
                 self.menu.open(crate::menu::Page::Network);
                 return;
             }
-            self.menu.network_status = report.status.clone();
+            self.menu.network_status = match report.round_trip {
+                Some(rtt) => format!(
+                    "{} | RTT {:.0} ms",
+                    report.status,
+                    rtt.as_secs_f64() * 1000.
+                ),
+                None => report.status.clone(),
+            };
             if let Some(publication) = &self.network_publication {
                 let published = publication.report();
                 if !published.code.is_empty() && self.menu.session_code != published.code {
                     eprintln!("Multiplayer join code: {}", published.code);
                 }
                 self.menu.session_code = published.code;
-                self.menu.network_status = format!("{} | {}", report.status, published.status);
+                self.menu.network_status =
+                    format!("{} | {}", self.menu.network_status, published.status);
             }
             self.menu.network_active = true;
             self.menu.network_players = report

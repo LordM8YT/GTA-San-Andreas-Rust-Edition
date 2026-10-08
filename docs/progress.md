@@ -1,7 +1,7 @@
 # Offline free-roam checkpoints
 
-Normal free roam saves one local checkpoint on menu visits, normal exit and
-before multiplayer preparation. It stores outdoor feet position in original
+Normal free roam saves one local checkpoint every 60 seconds when a safe offline
+position is available, on menu visits, normal exit and before multiplayer preparation. It stores outdoor feet position in original
 SA coordinates, camera angles, selected car/ped names and up to 16 wardrobe
 toggles. Main-menu **Continue free roam** resumes this checkpoint on the next
 launch. You resume on foot; the selected car is placed nearby if there is safe
@@ -18,16 +18,17 @@ identical mod content after an author updates a pack.
 Interior visits, free-fly mode, airborne players, loading destinations and
 multiplayer leave the previous checkpoint intact. Joining records the offline
 state first; server resources and positions do not overwrite it. Opening menus
-and quitting are the checkpoints, rather than continuous background autosaves.
-An abrupt crash can lose play since the last checkpoint.
+and quitting also checkpoint immediately. An abrupt crash can lose play since the
+last successful safe checkpoint; unsafe intervals do not overwrite it.
 
 Windows: `%LOCALAPPDATA%/SAFreeroam/progress.json`. Other platforms use the
 settings directory (`$XDG_CONFIG_HOME/sa-freeroam` or `~/.config/sa-freeroam`).
-Linux runtime validation is still pending. Files are bounded to 16 KiB, checked
+Linux runtime validation is still pending. `SARE_CONFIG_DIR` isolates settings,
+checkpoint, logs and cache for tests. Files are bounded to 16 KiB, checked
 for supported schema/finite values and replaced through a synced temporary
 file in the same directory. Invalid files are ignored on load. Failed writes
-show a message and retain the previous file; retries are throttled. Multiple
-normal instances using one profile can still replace each other's checkpoints.
+show a message and retain the previous file; retries are throttled. An OS file lock
+prevents simultaneous normal runtime instances in the same client profile.
 
 Use `--no-save` to disable reading and writing checkpoints for a run, or
 `--save-file C:/MyProfiles/freeroam.json` for a separate local profile. These
