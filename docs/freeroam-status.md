@@ -54,6 +54,7 @@ Exe-en ligger i `native/target/release/sa-runtime.exe`.
 - P: gåmodus/flykamera. Q/E: ned/opp i flykamera. Esc: pausemeny.
 - M: kartmeny. Mus, piltaster/Enter eller Xbox D-pad/A brukes i menyene.
 - /cars eller F7: velg og spawn bil. /peds eller F8: bytt spillerfigur.
+  /mods viser ressurslisten, med serverens liste mens du er tilkoblet.
   Trykk /, skriv kommandoen og Enter. Menyene finnes ogsaa i pausemenyen.
   Velg Spawn nearby eller S i peds-menyen for en figur i verden (maks aatte),
   med idle-animasjon uten kamp-/gang-AI.

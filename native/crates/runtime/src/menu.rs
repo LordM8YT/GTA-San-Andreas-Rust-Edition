@@ -532,7 +532,8 @@ impl Menu {
             "/cars" => self.open(Page::Cars),
             "/peds" => self.open(Page::Peds),
             "/mp" => self.open(Page::Network),
-            _ => self.message = "Unknown command. Use /cars, /peds or /mp.".into(),
+            "/mods" => self.open(Page::Mods),
+            _ => self.message = "Unknown command. Use /cars, /peds, /mp or /mods.".into(),
         }
     }
     pub fn open(&mut self, page: Page) {
@@ -884,7 +885,7 @@ impl Menu {
             let top=screen.top()+screen.height()*0.12;
             painter.text(Pos2::new(left,top),egui::Align2::LEFT_TOP,"San Andreas",FontId::new(80.0*scale,FontFamily::Name("street".into())),WHITE);
             painter.text(Pos2::new(left+3.0,top+91.0*scale),egui::Align2::LEFT_TOP,"Freeroam",FontId::new(27.0*scale,FontFamily::Name("menu".into())),GOLD);
-            let heading=match page{Page::Main=>"The whole state. Your way.",Page::Pause=>"Take a breath",Page::Map=>"Choose a destination",Page::Settings=>"Settings",Page::Controls=>"Controls",Page::Wardrobe=>"Wardrobe",Page::Interiors=>"Interiors",Page::Mods=>"Local resources",Page::Cars=>"Spawn a vehicle",Page::Peds=>"Choose your player",Page::Commands=>"Commands",Page::Network=>"Multiplayer",Page::Quit=>"Leave free roam?"};
+            let heading=match page{Page::Main=>"The whole state. Your way.",Page::Pause=>"Take a breath",Page::Map=>"Choose a destination",Page::Settings=>"Settings",Page::Controls=>"Controls",Page::Wardrobe=>"Wardrobe",Page::Interiors=>"Interiors",Page::Mods=>if self.network_active {"Server resources"} else {"Local resources"},Page::Cars=>"Spawn a vehicle",Page::Peds=>"Choose your player",Page::Commands=>"Commands",Page::Network=>"Multiplayer",Page::Quit=>"Leave free roam?"};
             painter.text(Pos2::new(left,top+150.0*scale),egui::Align2::LEFT_TOP,heading,FontId::proportional(18.0*scale),MUTED);
             let footer=screen.bottom()-48.0*scale;
             painter.text(Pos2::new(left,footer),egui::Align2::LEFT_CENTER,"D-pad / arrows  Move     A / Enter  Select     B / Esc  Back",FontId::proportional(14.0*scale),MUTED);
@@ -1048,11 +1049,11 @@ impl Menu {
                             for name in &self.network_players{ui.label(name);}
                             ui.add_space(12.0);
                             ui.label(if self.relay_mode {"Both players connect out to the relay. The game host needs no port forwarding. A reachable relay service is required; no public relay is configured by default. Prototype: use a trusted network."} else {"For LAN, join the host's local IP. Over the internet, direct hosting requires TCP port forwarding."});
-                            ui.label("Prototype: other players use the Grove Street ped and Taxi. Custom appearance, spawned NPCs and shared vehicle collisions are not synchronized yet.");
+                            ui.label("Players, chosen vehicles and outfits are shared. Cars remain visible after parking; press G to ride with someone. Spawned NPCs and vehicle collisions are local.");
                             });
                         }
                         Page::Commands=>{
-                            ui.label("/cars - vehicles    /peds - player models    /mp - multiplayer");
+                            ui.label("/cars - vehicles    /peds - player models    /mp - multiplayer    /mods - resource list");
                             let enter=ctx.input(|i|i.key_pressed(egui::Key::Enter));
                             let response=ui.text_edit_singleline(&mut self.command);
                             if !ctx.memory(|m|m.has_focus(response.id)) {response.request_focus();}
@@ -1081,10 +1082,14 @@ impl Menu {
                             if names.is_empty(){ui.label("No models are available.");}
                         },
                         Page::Mods=>{
-                            ui.label(RichText::new("Detected local resources").size(23.0).color(GOLD).strong());
-                            if self.mods.is_empty(){ui.label("No mod resources were detected. Place each resource in its own folder under mods/.");}else{for name in &self.mods{ui.label(format!("•  {name}"));}}
+                            ui.label(RichText::new(if self.network_active {"Session resources"} else {"Installed resources"}).size(23.0).color(GOLD).strong());
+                            if self.mods.is_empty(){ui.label("No mod resources were found.");}else{for name in &self.mods{ui.label(format!("•  {name}"));}}
                             ui.add_space(18.0);
-                            ui.label("To enable or disable a resource, set enabled in its resource.json or mod.json, then restart.");
+                            if self.network_active {
+                                ui.label("These resources belong to this session. Downloaded files are verified and cached for your next visit. Disconnect to return to your local setup.");
+                            } else {
+                                ui.label("Place each resource in its own folder under mods/. To enable or disable it, set enabled in resource.json or mod.json, then restart.");
+                            }
                             ui.label(RichText::new("Supports documented custom models, textures, buildings, cars, player characters, and skinned clothing. Scripts, DLL plugins, and arbitrary GTA/FiveM mods are not executed. Choose clothes in the wardrobe (F6).").color(MUTED));
                         },
                         Page::Quit=>{
