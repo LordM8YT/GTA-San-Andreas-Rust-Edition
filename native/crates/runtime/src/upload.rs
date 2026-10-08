@@ -23,6 +23,7 @@ struct BufferUpload {
     batch: Batch,
     buffer: wgpu::Buffer,
     offset: usize,
+    bounds: crate::culling::Bounds,
 }
 pub struct Upload {
     pub scene: Scene,
@@ -180,6 +181,7 @@ impl Upload {
                         batch,
                         buffer,
                         offset: 0,
+                        bounds: crate::culling::Bounds::default(),
                     });
                 } else {
                     done = true;
@@ -196,12 +198,23 @@ impl Upload {
                         &raw[buffer.offset..end],
                     );
                 }
+                if !buffer.batch.animated {
+                    let stride = std::mem::size_of::<sa_scene::Vertex>();
+                    let first = buffer.offset / stride;
+                    let last = end.div_ceil(stride).min(buffer.batch.vertices.len());
+                    buffer.bounds.include(&buffer.batch.vertices[first..last]);
+                }
                 bytes += end - buffer.offset;
                 buffer.offset = end;
                 if end == raw.len() {
                     let buffer = self.current_buffer.take().unwrap();
                     let batch = buffer.batch;
                     self.ready.push(GpuBatch {
+                        bounds: if batch.animated {
+                            None
+                        } else {
+                            buffer.bounds.finish()
+                        },
                         texture_key: batch.key.clone(),
                         buffer: buffer.buffer,
                         count: batch.vertices.len() as u32,

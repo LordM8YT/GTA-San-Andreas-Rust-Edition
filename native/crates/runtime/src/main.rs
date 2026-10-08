@@ -7,6 +7,7 @@ use sa_scene::{
 use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Instant};
 mod capture;
 mod controller;
+mod culling;
 mod gameplay_audio;
 mod menu;
 mod mipmaps;
@@ -28,6 +29,7 @@ use winit::{
 };
 
 struct GpuBatch {
+    bounds: Option<culling::Bounds>,
     texture_key: String,
     buffer: wgpu::Buffer,
     count: u32,
@@ -56,6 +58,8 @@ struct State {
     size: winit::dpi::PhysicalSize<u32>,
     postprocess: postprocess::PostProcess,
     camera: wgpu::Buffer,
+    frustum: culling::Frustum,
+    culling_enabled: bool,
     camera_group: wgpu::BindGroup,
     opaque: wgpu::RenderPipeline,
     blended: wgpu::RenderPipeline,
@@ -457,6 +461,8 @@ impl State {
             size,
             postprocess,
             camera,
+            frustum: culling::Frustum::default(),
+            culling_enabled: true,
             camera_group,
             opaque,
             blended,
@@ -622,6 +628,11 @@ impl State {
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             });
             batches.push(GpuBatch {
+                bounds: if batch.animated {
+                    None
+                } else {
+                    culling::Bounds::from_vertices(&batch.vertices)
+                },
                 texture_key: batch.key.clone(),
                 buffer,
                 count: batch.vertices.len() as u32,
@@ -1206,10 +1217,12 @@ impl State {
             0.1,
             3500.0,
         );
+        let camera_matrix = projection * view;
+        self.frustum = culling::Frustum::new(camera_matrix);
         self.queue.write_buffer(
             &self.camera,
             0,
-            bytemuck::cast_slice(&(projection * view).to_cols_array()),
+            bytemuck::cast_slice(&camera_matrix.to_cols_array()),
         );
         self.queue.write_buffer(
             &self.camera,
@@ -1306,6 +1319,7 @@ impl State {
                         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                     });
                 GpuBatch {
+                    bounds: None,
                     texture_key: batch.texture_key.clone(),
                     buffer,
                     count: batch.count,
@@ -1543,6 +1557,18 @@ impl State {
             _ => return false,
         };
         let capture_path = self.capture_next.take();
+        if capture_path.is_some() {
+            let visible = self
+                .batches
+                .iter()
+                .filter(|b| !self.culling_enabled || self.frustum.visible(b.bounds))
+                .count();
+            eprintln!(
+                "GPU static map visibility: {visible}/{} batches; culling {}",
+                self.batches.len(),
+                self.culling_enabled
+            );
+        }
         let capture_texture = capture_path.as_ref().map(|_| {
             self.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("verification capture"),
@@ -1649,6 +1675,7 @@ impl State {
             for b in self
                 .batches
                 .iter()
+                .filter(|batch| !self.culling_enabled || self.frustum.visible(batch.bounds))
                 .chain(self.car.iter().flat_map(|(_, b)| b))
                 .chain(self.spawned_peds.iter().flat_map(|p| &p.batches))
                 .chain(
@@ -2083,6 +2110,11 @@ impl ApplicationHandler for App {
                 }
                 self.offline_car_handling = state.car.as_ref().map(|(car, _)| car.handling);
                 let launch_args: Vec<_> = std::env::args().collect();
+                state.culling_enabled = !launch_args.iter().any(|arg| arg == "--no-culling");
+                if launch_args.iter().any(|arg| arg == "--smoke-culling") {
+                    // Omit egui area fade-in from exact world-image comparisons.
+                    state.menu.settings.show_hud = false;
+                }
                 state.resource_game_dir = self.game_dir.clone();
                 state.resource_local_mods = if launch_args.iter().any(|a| a == "--no-mods") {
                     None
@@ -2160,6 +2192,15 @@ impl ApplicationHandler for App {
                     state.third_person = false;
                     state.position = eye;
                     state.yaw = forward.x.atan2(forward.z);
+                    if launch_args.iter().any(|arg| arg == "--smoke-culling") {
+                        if let Some(pair) = launch_args
+                            .windows(2)
+                            .find(|pair| pair[0] == "--smoke-culling-angle")
+                        {
+                            state.yaw += pair[1].parse::<u32>().unwrap() as f32
+                                * std::f32::consts::FRAC_PI_2;
+                        }
+                    }
                     state.pitch = forward.y.asin();
                     self.smoke_started = Instant::now();
                 }
@@ -3344,6 +3385,16 @@ fn main() -> Result<()> {
         };
         return pollster::block_on(mipmaps::probe(backends));
     }
+    if let Some(pair) = args
+        .windows(2)
+        .find(|pair| pair[0] == "--smoke-culling-angle")
+    {
+        anyhow::ensure!(
+            args.iter().any(|arg| arg == "--smoke-culling")
+                && pair[1].parse::<u32>().is_ok_and(|angle| angle < 4),
+            "--smoke-culling-angle requires --smoke-culling and a quarter-turn index 0..3"
+        );
+    }
     let game = args
         .windows(2)
         .find(|w| w[0] == "--game-dir")
@@ -3755,6 +3806,7 @@ fn main() -> Result<()> {
                 || a == "--smoke-stream"
                 || a == "--smoke-car"
                 || a == "--smoke-signs"
+                || a == "--smoke-culling"
                 || a == "--smoke-neon"
                 || a == "--smoke-network"
                 || a == "--smoke-appearance"
@@ -3782,7 +3834,9 @@ fn main() -> Result<()> {
         smoke_car: args.iter().any(|a| a == "--smoke-car"),
         smoke_idle_car: args.iter().any(|a| a == "--smoke-idle-car"),
         idle_car_start: None,
-        smoke_signs: args.iter().any(|a| a == "--smoke-signs"),
+        smoke_signs: args
+            .iter()
+            .any(|a| a == "--smoke-signs" || a == "--smoke-culling"),
         smoke_neon: args.iter().any(|a| a == "--smoke-neon"),
         smoke_network: args
             .iter()

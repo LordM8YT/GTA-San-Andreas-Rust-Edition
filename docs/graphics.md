@@ -81,6 +81,26 @@ textures (more for very narrow images), and have an initial generation cost.
 This is a texture-quality improvement, not a measured FPS gain or a guarantee
 of hitch-free streaming.
 
+## Static map visibility
+
+Static map batches now carry conservative bounds and are skipped when entirely
+outside the actual camera's view frustum. The bounds are accumulated during
+streamed vertex uploads, avoiding a second whole-batch scan when a region finishes.
+Animated geometry and moving cars, players and NPCs keep their existing drawing
+paths. Invalid bounds retain the batch. This does not hide geometry behind walls
+or split large batches into smaller objects.
+
+On the local RTX 3070, four camera orientations around an original road sign
+produced pixel-identical world captures with culling enabled and disabled on
+both Vulkan and DirectX 12. Static map draw calls fell from 3,446 to 449, 1,068,
+1,815 and 881 respectively. These counts are not an FPS benchmark.
+
+`--no-culling` disables this optimization for diagnosis.
+`--smoke-culling --smoke-culling-angle 0 --capture-dir <directory>` captures the
+same sign-area camera without HUD timing differences; angles 0 through 3 are
+quarter turns. Run each angle with and without `--no-culling`, on each backend,
+to compare decoded image pixels. Capture logs include visible/total map batches.
+
 ## Settings navigation
 
 Settings use a fixed category sidebar, a scrolling list of controls, and a
