@@ -135,6 +135,26 @@ class ConversionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'BC7/DX10'):
             c.native_texture('fixture',header+bytes(8))
 
+    def test_dds_padded_rows_keep_pixels_and_reject_nonflat_surfaces(self):
+        header = bytearray(128); header[:4] = b'DDS '
+        S.pack_into('<I', header, 8, 8)
+        S.pack_into('<II', header, 12, 2, 1)
+        S.pack_into('<I', header, 20, 8)
+        S.pack_into('<7I', header, 80, 0x41, 0, 32, 0xff, 0xff00, 0xff0000, 0xff000000)
+        data = header + bytes([1,2,3,4,99,99,99,99,5,6,7,8,88,88,88,88])
+        texture = c.native_texture('fixture', data)
+        self.assertEqual(c.one(c.one(texture,21),1)[92:], bytes([3,2,1,4,7,6,5,8]))
+        for caps in (0x200, 0x400, 0x8000, 0xfe00, 0x200000):
+            malformed = bytearray(data); S.pack_into('<I', malformed, 112, caps)
+            with self.assertRaisesRegex(ValueError, 'cubemaps and volume'):
+                c.native_texture('fixture', malformed)
+        for pitch in (0, 3, 999999):
+            malformed = bytearray(data); S.pack_into('<I', malformed, 20, pitch)
+            with self.assertRaisesRegex(ValueError, 'row pitch'):
+                c.native_texture('fixture', malformed)
+        with self.assertRaisesRegex(ValueError, 'Truncated DDS'):
+            c.native_texture('fixture', data[:-1])
+
     def test_xml_entities_and_cycles(self):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'bad.xml';path.write_text('<!DOCTYPE x [<!ENTITY a "b">]><Drawable/>')

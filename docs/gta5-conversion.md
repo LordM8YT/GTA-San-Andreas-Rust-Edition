@@ -287,6 +287,10 @@ GTA V paint, reflection, dirt, normal-map and other shaders are approximated.
 Missing shared textures receive an explicit neutral material colour. Supply a
 DDS folder with the shared textures through `--textures` to improve the result.
 DXT1/3/5 and 32-bit RGB DDS are supported; BC7/DX10 must be converted first.
+Uncompressed DDS row padding is removed using its declared pitch. Cubemaps and
+volume textures are rejected instead of silently using the first face or slice
+as diffuse color. Surface and pitch declarations follow Microsoft's
+[DDS header specification](https://learn.microsoft.com/en-us/windows/win32/direct3ddds/dds-header).
 `data/conversion-report.json` lists counts, missing textures, limitations, and
 the source SHA-256. Each resulting DFF/TXD is limited to 16 MiB; reduce the model
 or textures in an editor if it exceeds this limit.

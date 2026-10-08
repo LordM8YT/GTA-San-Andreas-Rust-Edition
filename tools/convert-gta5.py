@@ -249,6 +249,10 @@ def native_texture(name, data):
     require(len(data) >= 128 and data[:4] == b'DDS ', 'Expected DDS texture')
     height, width = S.unpack_from('<II', data, 12)
     require(0 < width <= 4096 and 0 < height <= 4096, 'DDS dimensions exceed native limits')
+    header_flags = S.unpack_from('<I', data, 8)[0]
+    caps2 = S.unpack_from('<I', data, 112)[0]
+    require(not caps2 & 0x20fe00 and not header_flags & 0x800000,
+            'DDS cubemaps and volume textures cannot become a flat diffuse texture')
     flags, fourcc, bits, r, g, b, a = S.unpack_from('<7I', data, 80)
     if flags & 4:
         require(fourcc in [int.from_bytes(f, 'little') for f in (b'DXT1', b'DXT3', b'DXT5')], 'DDS requires DXT1/3/5 or 32-bit RGB; convert BC7/DX10 first')
@@ -258,9 +262,12 @@ def native_texture(name, data):
     else:
         require(bits == 32, 'Only 32-bit uncompressed DDS is supported')
         require((r,g,b,a) in [(0xff0000,0xff00,0xff,0xff000000), (0xff,0xff00,0xff0000,0xff000000), (0xff0000,0xff00,0xff,0)], 'Unsupported DDS channel masks')
+        pitch = S.unpack_from('<I', data, 20)[0] if header_flags & 8 else width * 4
+        require(width * 4 <= pitch <= width * 4 + 4096, 'Invalid DDS row pitch')
+        require(len(data) >= 128 + pitch * height, 'Truncated DDS pixels')
+        pixels = b''.join(data[128 + row * pitch:128 + row * pitch + width * 4]
+                          for row in range(height))
         size = width * height * 4
-        pixels = data[128:128 + size]
-        require(len(pixels) == size, 'Truncated DDS pixels')
         if r == 0xff:
             pixels = bytes(c for i in range(0,len(pixels),4) for c in (pixels[i+2],pixels[i+1],pixels[i],pixels[i+3]))
         format_ = 21 if a else 22
