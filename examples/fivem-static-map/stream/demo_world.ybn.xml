@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- An invisible audit ramp west of the blocks. Collision-only test fixture. -->
+<BoundsFile>
+  <Bounds type="Geometry">
+    <BoxMin x="2456" y="-1675" z="18"/>
+    <BoxMax x="2464" y="-1665" z="20"/>
+    <BoxCenter x="2460" y="-1670" z="19"/>
+    <SphereCenter x="2460" y="-1670" z="19"/>
+    <SphereRadius value="7"/>
+    <Margin value="0"/>
+    <GeometryCenter x="2460" y="-1670" z="19"/>
+    <Vertices>
+      -4, -5, -1
+       4, -5, -1
+       4,  5,  1
+      -4,  5,  1
+    </Vertices>
+    <Polygons>
+      <Triangle m="0" v1="0" v2="1" v3="2" f1="0" f2="0" f3="0"/>
+      <Triangle m="0" v1="0" v2="2" v3="3" f1="0" f2="0" f3="0"/>
+    </Polygons>
+    <Materials><Item><Type value="0"/><Flags>NONE</Flags></Item></Materials>
+  </Bounds>
+</BoundsFile>

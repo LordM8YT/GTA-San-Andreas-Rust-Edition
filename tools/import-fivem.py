@@ -21,6 +21,9 @@ spec.loader.exec_module(converter)
 map_spec = importlib.util.spec_from_file_location('fivem_map', Path(__file__).with_name('fivem_map.py'))
 map_converter = importlib.util.module_from_spec(map_spec)
 map_spec.loader.exec_module(map_converter)
+collision_spec = importlib.util.spec_from_file_location('fivem_collision', Path(__file__).with_name('fivem_collision.py'))
+collision_converter = importlib.util.module_from_spec(collision_spec)
+collision_spec.loader.exec_module(collision_converter)
 MAX_BYTES = 512 * 1024 * 1024
 MAX_FILES = 4096
 ASSET_EXTENSIONS = ('.yft', '.ydr', '.ydd', '.ytd', '.ymap', '.ytyp', '.ybn')
@@ -98,7 +101,7 @@ def inspect_resource(root):
     if re.search(r'\b(ui_page|loadscreen)\b', text):
         notices.append('NUI/HUD web pages and loading screens are not imported.')
     if any(asset_name(p)[1] in ('.ymap', '.ytyp', '.ybn') for p in assets):
-        notices.append('YMAP placements, static YTYP aliases require map conversion; MLO rooms/portals and YBN collision remain unsupported.')
+        notices.append('YMAP/YTYP require map conversion; YBN requires explicit --collision or --world-collision selection. MLO rooms/portals remain unsupported.')
     if any(asset_name(p)[1] == '.ydd' for p in assets):
         notices.append('YDD peds/clothes require --kind player/clothing and explicit native target rig/bone mapping.')
     metadata = [relative(p) for p in files if p.suffix.lower() == '.meta']
@@ -132,7 +135,7 @@ def select_models(root, files, kind, requested=()):
 
 def import_resource(root, output, kind, requested=(), position=None, model_id=30000, enable=False,
                     ymap=None, offset=(0., 0., 0.), ytyp=(), base_player=None, base_ifp=None,
-                    base_txd=None, bone_map=None, skeleton=None, texture_map=()):
+                    base_txd=None, bone_map=None, skeleton=None, texture_map=(), collision_map=(), world_collision=()):
     root = root.absolute()
     output = output.absolute()
     require(not output.exists(), 'Output already exists; choose a new directory')
@@ -169,6 +172,25 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
         require(any(p.relative_to(root).as_posix() == texture and asset_name(p)[1] == '.ytd' for p in files),
                 '--texture must reference an exact relative YTD or YTD XML path inside the resource')
         texture_choices[model] = texture
+    require(not (collision_map or world_collision) or kind in ('props', 'map'),
+            'YBN collision import requires --kind props or map')
+    require(not world_collision or kind == 'map', '--world-collision requires --kind map')
+    require(len(world_collision) <= 16 and len(set(world_collision)) == len(world_collision),
+            'Select at most 16 distinct world collision files')
+    require(model_id + len(chosen) + len(world_collision) - 1 <= 2147483647, 'Collision model IDs exceed native range')
+    collision_choices = {}
+    def collision_path(path):
+        require(any(p.relative_to(root).as_posix() == path and asset_name(p)[1] == '.ybn' for p in files),
+                'Collision must reference an exact relative YBN or YBN XML path inside the resource')
+    for item in collision_map:
+        model, separator, collision = item.partition('=')
+        require(separator and model not in collision_choices, '--collision requires distinct MODEL=YBN pairs')
+        require(any(p.relative_to(root).as_posix() == model for p in chosen), '--collision model must be selected')
+        collision_path(collision)
+        collision_choices[model] = collision
+    for path in world_collision:
+        collision_path(path)
+        require(path not in collision_choices.values(), 'One YBN cannot be both model-local and world collision')
     output.parent.mkdir(parents=True, exist_ok=True)
     # Snapshot only data into an isolated tree. XML texture discovery cannot
     # wander through the source package or follow a changed source link.
@@ -178,7 +200,7 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
         fingerprints = {}
         snapshot_bytes = 0
         for path in files:
-            if asset_name(path)[1] in ('.yft', '.ydr', '.ydd', '.ytd', '.ymap', '.ytyp') or path.suffix.lower() == '.dds':
+            if asset_name(path)[1] in ('.yft', '.ydr', '.ydd', '.ytd', '.ymap', '.ytyp', '.ybn') or path.suffix.lower() == '.dds':
                 require(not path.is_symlink() and path.resolve().is_relative_to(root.resolve()), 'Source changed during import')
                 data = converter.read(path, 128 * 1024 * 1024)
                 snapshot_bytes += len(data)
@@ -214,6 +236,7 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
                 manifest['player'] = dict(dff='stream/rig/base.dff', ifp='stream/rig/base.ifp', clothes=[])
                 if base_txd: manifest['player']['txd'] = 'stream/rig/base.txd'
         report['converted'] = []
+        report['collisions'] = []
         report['source_sha256'] = fingerprints
         aliases, dictionaries = {}, {}
         if ytyp:
@@ -269,6 +292,15 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
                 manifest['vehicles'].append(entry)
             else:
                 entry['id'] = model_id + index
+                selected_collision = collision_choices.get(original.relative_to(root).as_posix())
+                if selected_collision:
+                    xml = converter.extract(source / selected_collision, work / f'collision-{index:03}')
+                    faces = collision_converter.triangles(xml, converter.parse_xml)
+                    data, _, _ = collision_converter.col(faces)
+                    (package / folder / 'converted.col').write_bytes(data)
+                    entry['col'] = f'{folder}/converted.col'
+                    report['collisions'].append(dict(source=selected_collision, model=original.relative_to(root).as_posix(),
+                                                     space='model-local', triangles=len(faces)))
                 manifest['models'].append(entry)
                 if kind == 'props':
                     point = list(position); point[0] += 3 * (index % 8); point[1] += 3 * (index // 8)
@@ -283,8 +315,34 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
                 map_source, [p.relative_to(root) for p in chosen], model_id, offset, converter.parse_xml, aliases)
             require(len(manifest['placements']) <= 2000, 'Map exceeds native 2000 placement resource budget')
             report['map'] = dict(source=ymap, offset=list(offset), placements=len(manifest['placements']), skipped_lods=skipped, ytyp=list(ytyp), archetype_aliases=len(aliases))
-            report['warnings'] = [warning for warning in report['warnings'] if not warning.startswith('YMAP placements,')]
-            report['warnings'].append('Only HD static CEntityDef placements imported; MLO/portal/collision metadata remains unsupported.')
+            report['warnings'] = [warning for warning in report['warnings'] if not warning.startswith('YMAP/YTYP require')]
+            report['warnings'].append('Only HD static CEntityDef placements imported; MLO/portal behavior remains unsupported. YBN collision is imported only when explicitly selected.')
+            for index, collision in enumerate(world_collision):
+                xml = converter.extract(source / collision, work / f'world-collision-{index:03}')
+                faces = collision_converter.triangles(xml, converter.parse_xml)
+                # Rebase world-space vertices around their bounds. An identity
+                # placement at world zero would be culled by the native region
+                # prefilter even when its actual collision is near the player.
+                center = [(min(p[a] for face in faces for p in face) + max(p[a] for face in faces for p in face))/2
+                          for a in range(3)]
+                half_extents = [max(abs(p[a]-center[a]) for face in faces for p in face) for a in range(2)]
+                require(sum(v*v for v in half_extents) <= 1600.0**2,
+                        'World collision extends beyond native region prefilter; split into smaller YBN files')
+                placement = [a+b for a,b in zip(center, offset)]
+                require(all(math.isfinite(v) and abs(v) < 10000 for v in placement), 'Translated collision placement exceeds native coordinate budget')
+                faces = [[tuple(v-c for v,c in zip(point,center)) for point in face] for face in faces]
+                data, low, high = collision_converter.col(faces)
+                folder = f'stream/collision-{index:03}'
+                (package / folder).mkdir()
+                (package / folder / 'world.col').write_bytes(data)
+                (package / folder / 'bounds.dff').write_bytes(collision_converter.invisible_dff(low, high, converter))
+                id_ = model_id + len(chosen) + index
+                manifest['models'].append(dict(id=id_, dff=f'{folder}/bounds.dff', col=f'{folder}/world.col'))
+                manifest['placements'].append(dict(model_id=id_, position=placement))
+                report['collisions'].append(dict(source=collision, space='world', triangles=len(faces), offset=list(offset), origin=center))
+            require(len(manifest['placements']) <= 2000, 'Map including collision bounds exceeds native 2000 placement resource budget')
+        if report['collisions']:
+            report['warnings'].append('YBN triangles/boxes baked into native COL; GTA V materials, flags, BVH, margins and dynamic physics semantics are not retained.')
         require(sum(p.stat().st_size for p in package.rglob('*') if p.is_file()) <= 128 * 1024 * 1024,
                 'Converted pack exceeds 128 MiB server resource budget')
         require(sum(1 for p in package.rglob('*') if p.is_file()) + 1 <= 64,
@@ -308,6 +366,8 @@ def main():
     parser.add_argument('--bone-map', type=Path, help='Explicit source bone names/tags to native HAnim IDs')
     parser.add_argument('--skeleton', help='Exact relative CodeWalker source skeleton XML inside this resource')
     parser.add_argument('--texture', action='append', default=[], help='Exact relative MODEL=YTD texture pairing; repeat')
+    parser.add_argument('--collision', action='append', default=[], help='Explicit model-local MODEL=YBN pair; props/map only, repeat')
+    parser.add_argument('--world-collision', action='append', default=[], help='Explicit world-space YBN or YBN XML path; map only, translated by --offset')
     parser.add_argument('--ymap', help='Exact relative Legacy .ymap or CodeWalker .ymap.xml path for static map placements')
     parser.add_argument('--ytyp', action='append', default=[], help='Exact relative static Legacy .ytyp or .ytyp.xml path; repeat for aliases/dictionaries')
     parser.add_argument('--offset', type=float, nargs=3, default=[0., 0., 0.], help='Translate imported map in SA world coordinates')
@@ -320,7 +380,7 @@ def main():
         if args.out:
             report = import_resource(args.input, args.out, args.kind, args.model, args.position, args.model_id, args.enable,
                                      args.ymap, args.offset, args.ytyp, args.base_player, args.base_ifp, args.base_txd,
-                                     args.bone_map, args.skeleton, args.texture)
+                                     args.bone_map, args.skeleton, args.texture, args.collision, args.world_collision)
         else:
             _, report = inspect_resource(args.input)
         print(json.dumps(report, indent=2))

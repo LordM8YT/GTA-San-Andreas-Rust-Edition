@@ -46,9 +46,10 @@ partial resource. Native file/model/server-sharing limits also apply: at most
 the manifest and 128 MiB total assets. Select fewer models if those limits are hit.
 
 `data/fivem-import-report.json` records source hashes, converted geometry and
-missing textures. Lua/JS/C# scripts, NUI/HUD pages, handling/vehicle metadata,
-YBN collision and YTYP/MLO rooms/portals are reported or listed
-but never imported. Manifest inspection is text-based and cannot interpret
+missing textures. Lua/JS/C# scripts, NUI/HUD pages, handling/vehicle metadata
+and MLO rooms/portals are reported or listed but never imported. A limited
+YBN collision subset can be explicitly selected as described below.
+Manifest inspection is text-based and cannot interpret
 dynamic declarations. Peds and clothes use the explicit rig/mapping
 workflow below, now also available through folder import. This is an asset import path, not a FiveM runtime.
 
@@ -118,8 +119,9 @@ aliases are supported as described below.
 Only unencrypted Legacy RSC7 maps are accepted; Gen9/Enhanced, RPF and escrow
 remain unsupported. Bake scale into the mesh before import. Rooms, portals,
 entity sets, light/audio metadata, navigation,
-doors, YBN collision and LOD streaming relationships are not recreated.
-The existing native loader derives static collision from the converted mesh.
+doors and LOD streaming relationships are not recreated.
+The native loader derives static collision from the converted mesh unless an
+explicit model-local collision file is selected.
 
 Add `--ytyp stream/types.ytyp` or `--ytyp stream/types.ytyp.xml` when
 archetype names differ from their drawable filenames. Repeat the option for
@@ -143,6 +145,50 @@ extractor; XML-only imports need no .NET runtime.
 Static archetype format reference: [CodeWalker YtypFile](https://github.com/dexyfex/CodeWalker/blob/master/CodeWalker.Core/GameFiles/FileTypes/YtypFile.cs).
 Owned tests cover XML/name hashes, binary YTYP round trips, a YTD with a different
 basename, and atomic rejection of unsupported definitions/missing dictionaries.
+
+### Explicit YBN collision
+
+The folder importer accepts unencrypted Legacy `.ybn` and CodeWalker
+`.ybn.xml`. Only `Composite`, `Geometry`/`GeometryBVH` containing `Triangle`
+polygons, and standalone `Box` bounds are supported. Unsupported spheres,
+capsules, cylinder/disc/cloth bounds and non-triangle geometry polygons reject
+the entire import. Convert unsupported shapes to triangle meshes in your
+modelling workflow first. GTA V materials, flags, margins, BVH acceleration
+and dynamic collision behavior are not reproduced.
+
+For a collision file authored **in the model's local coordinates**, pair it
+with a selected drawable. The resulting native COL follows that model's
+YMAP rotation and translation. This works for `--kind map` and `--kind props`:
+
+```powershell
+python tools/import-fivem.py examples/fivem-static-map --kind map --ymap stream/demo.ymap.xml --collision stream/demo_block.ydr.xml=stream/demo_block.ybn.xml --out "mods/[maps]/collision-demo" --enable
+```
+
+Repeat `--collision MODEL=YBN` for distinct selected models. There is no
+filename-based guess: a standalone map YBN often already contains **world
+coordinates**, and attaching it to a drawable would incorrectly transform it
+again. For those files use `--world-collision stream/world.ybn` with
+`--kind map`; repeat for up to 16 files. The importer bakes geometry centers
+and nested child transforms, rebases each file around its bounds, and creates
+an invisible native bounds model/COL placement. `--offset` translates it
+once, alongside the map. Reusing one YBN in both modes is refused.
+
+Each collision file is limited to 65,535 triangles and 65,536 output vertices;
+composite depth is limited to 16 and nodes to 4,096. World collision's
+horizontal half-bounds diagonal must be at most 1,600 m to remain compatible
+with native region selection; split wider files. Native file/pack/placement
+budgets also apply. No scripts or original collision archives are bundled.
+The import report records each collision's space, triangle count and world
+origin/offset. Review alignment before enabling a converted pack.
+
+Owned tests check raw YBN round trips, nested transforms, native COL decoding,
+box placement/rotation, unsupported-shape rejection and atomic failure. The
+owned world-ramp audit checks actual streamed support under a standing player
+and all four vehicle contact points. See the additional fixture commands in
+the [map example](../examples/fivem-static-map/README.md).
+
+Format references: [CodeWalker YbnFile](https://github.com/dexyfex/CodeWalker/blob/master/CodeWalker.Core/GameFiles/FileTypes/YbnFile.cs)
+and [bound/transform XML structures](https://github.com/dexyfex/CodeWalker/blob/master/CodeWalker.Core/GameFiles/Resources/Bounds.cs).
 
 Rotation convention reference: [CodeWalker YmapEntityDef](https://github.com/dexyfex/CodeWalker/blob/master/CodeWalker.Core/GameFiles/FileTypes/YmapFile.cs).
 Tests cover translated positions, rotated placements, hash lookup, skipped LODs

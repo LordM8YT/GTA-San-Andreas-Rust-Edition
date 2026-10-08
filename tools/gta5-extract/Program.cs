@@ -2,7 +2,7 @@ using CodeWalker.GameFiles;
 using System.Xml.Linq;
 
 if (args.Length != 2) {
-    Console.Error.WriteLine("Usage: gta5-extract <model.yft|model.ydd|model.ydr|textures.ytd|map.ymap|types.ytyp> <new-output-directory>");
+    Console.Error.WriteLine("Usage: gta5-extract <model.yft|model.ydd|model.ydr|textures.ytd|map.ymap|types.ytyp|collision.ybn> <new-output-directory>");
     return 2;
 }
 try {
@@ -31,6 +31,7 @@ try {
         case ".ytd": var ytd = new YtdFile(); ytd.Load(data); export = dir => YtdXml.GetXml(ytd, dir); break;
         case ".ymap": var ymap = new YmapFile(); ymap.Load(data); export = dir => MetaXml.GetXml(ymap, out _); break;
         case ".ytyp": var ytyp = new YtypFile(); ytyp.Load(data); export = dir => MetaXml.GetXml(ytyp, out _); break;
+        case ".ybn": var ybn = new YbnFile(); ybn.Load(data); export = dir => YbnXml.GetXml(ybn); break;
         default: throw new InvalidDataException("Unsupported extension.");
     }
     var preview = XDocument.Parse(export(""));

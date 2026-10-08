@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<BoundsFile>
+  <Bounds type="Composite">
+    <Children>
+      <Item type="Box">
+        <BoxMin x="-1" y="-2" z="0"/>
+        <BoxMax x="1" y="2" z="2"/>
+        <CompositeTransform>
+          1 0 0 0
+          0 1 0 0
+          0 0 1 0
+          0 0 0 1
+        </CompositeTransform>
+      </Item>
+    </Children>
+  </Bounds>
+</BoundsFile>

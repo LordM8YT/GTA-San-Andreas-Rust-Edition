@@ -15,6 +15,7 @@ try {
     byte[] data = document.DocumentElement?.Name switch {
         "CMapData" or "CMapTypes" => XmlMeta.GetRSCData(document),
         "DrawableDictionary" => XmlYdd.GetYdd(document, Path.GetDirectoryName(input)!).Save(),
+        "BoundsFile" => XmlYbn.GetYbn(document).Save(),
         _ => throw new InvalidDataException("Expected owned map or DrawableDictionary fixture.")
     };
     if (data == null || data.Length < 16) throw new InvalidDataException("Fixture did not encode.");

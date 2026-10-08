@@ -46,7 +46,152 @@ def map_xml(path, archetype='prop', rotation='0 0 0 1', scale='1', kind='CEntity
     return path
 
 
+def collision_xml(path, nested=False, polygon='Triangle', kind='Geometry'):
+    geometry = f'''<Bounds type="{kind}"><BoxMin x="8" y="17" z="29"/>
+    <BoxMax x="12" y="23" z="31"/><BoxCenter x="10" y="20" z="30"/>
+    <SphereCenter x="10" y="20" z="30"/><SphereRadius value="4"/><Margin value="0"/>
+    <GeometryCenter x="10" y="20" z="30"/><Vertices>
+    0, 0, 0
+    2, 0, 0
+    0, 3, 0
+    </Vertices><Polygons><{polygon} m="0" v1="0" v2="1" v3="2" f1="0" f2="0" f3="0"/></Polygons>
+    <Materials><Item><Type value="0"/><ProceduralID value="0"/><RoomID value="0"/><PedDensity value="0"/>
+    <MaterialColourIndex value="0"/><Flags>0</Flags></Item></Materials></Bounds>'''
+    if nested:
+        geometry = geometry.replace('<Bounds ', '<Item ', 1).replace('</Bounds>', '</Item>')
+        geometry = geometry.replace('<GeometryCenter ', '<CompositeTransform>2 0 0 0\n0 3 0 0\n0 0 4 0\n1 2 3 1</CompositeTransform><GeometryCenter ', 1)
+        geometry = '<Bounds type="Composite"><Children><Item type="Composite"><CompositeTransform>0 1 0 0\n-1 0 0 0\n0 0 1 0\n2 3 4 1</CompositeTransform><Children>' + geometry + '</Children></Item></Children></Bounds>'
+    path.write_text('<BoundsFile>' + geometry + '</BoundsFile>', encoding='utf-8')
+    return path
+
+
 class FiveMImportTests(unittest.TestCase):
+    def test_model_local_collision_bakes_geometry_center_and_nested_transforms(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp=Path(temp); root=resource(temp/'input')
+            mesh(root/'stream/prop.ydr.xml')
+            collision_xml(root/'stream/prop.ybn.xml', nested=True)
+            output=temp/'native'
+            report=f.import_resource(root, output, 'props', position=[10.,20.,3.],
+                                     collision_map=['stream/prop.ydr.xml=stream/prop.ybn.xml'])
+            manifest=json.loads((output/'resource.json').read_text())
+            col=output/manifest['models'][0]['col']
+            self.assertEqual(report['collisions'][0]['space'], 'model-local')
+            if AUDIT.exists():
+                result=subprocess.run([str(AUDIT),str(col),'--col','--points'], capture_output=True,text=True)
+                self.assertEqual(result.returncode,0,result.stderr)
+                summary, points=[json.loads(line) for line in result.stdout.splitlines()]
+                self.assertEqual(summary,dict(min=[-69.,24.,127.],max=[-60.,28.,127.],triangles=1))
+                self.assertEqual(points,[[[-60.,24.,127.],[-60.,28.,127.],[-69.,24.,127.]]])
+
+    def test_world_collision_has_its_own_invisible_bounds_and_offset_once(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp=Path(temp); root=resource(temp/'input')
+            mesh(root/'stream/prop.ydr.xml'); map_xml(root/'stream/map.ymap.xml')
+            collision_xml(root/'stream/world.ybn.xml')
+            output=temp/'native'
+            report=f.import_resource(root,output,'map',ymap='stream/map.ymap.xml',offset=[100.,-20.,5.],
+                                     world_collision=['stream/world.ybn.xml'])
+            manifest=json.loads((output/'resource.json').read_text())
+            self.assertEqual(len(manifest['models']),2)
+            self.assertEqual(manifest['placements'][0]['position'],[110.,0.,8.])
+            self.assertEqual(manifest['placements'][1],dict(model_id=30001,position=[111.,1.5,35.]))
+            self.assertEqual(report['collisions'][0]['space'],'world')
+            if AUDIT.exists():
+                for flag, key in [('--col','col'), ('','dff')]:
+                    result=subprocess.run([str(AUDIT),str(output/manifest['models'][1][key]),*([flag] if flag else [])],capture_output=True,text=True)
+                    self.assertEqual(result.returncode,0,result.stderr)
+
+    def test_collision_unsupported_types_indices_and_paths_never_publish_partial_pack(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp=Path(temp); root=resource(temp/'input')
+            mesh(root/'stream/prop.ydr.xml')
+            path=root/'stream/prop.ybn.xml'
+            for index, options in enumerate([dict(polygon='Sphere'),dict(kind='Cloth')]):
+                collision_xml(path,**options)
+                output=temp/f'bad-{index}'
+                with self.assertRaisesRegex(ValueError,'Unsupported YBN'):
+                    f.import_resource(root,output,'props',position=[0.,0.,0.],collision_map=['stream/prop.ydr.xml=stream/prop.ybn.xml'])
+                self.assertFalse(output.exists())
+            collision_xml(path)
+            path.write_text(path.read_text().replace('v3="2"','v3="50"'))
+            with self.assertRaisesRegex(ValueError,'out of bounds'):
+                f.import_resource(root,temp/'bad-index','props',position=[0.,0.,0.],collision_map=['stream/prop.ydr.xml=stream/prop.ybn.xml'])
+            with self.assertRaisesRegex(ValueError,'exact relative'):
+                f.import_resource(root,temp/'bad-path','props',position=[0.,0.,0.],collision_map=['stream/prop.ydr.xml=../escape.ybn'])
+            with self.assertRaisesRegex(ValueError,'requires --kind map'):
+                f.import_resource(root,temp/'bad-space','props',position=[0.,0.,0.],world_collision=['stream/prop.ybn.xml'])
+
+    @unittest.skipUnless((ROOT/'tools/tests/map-fixture/bin/Release/net9.0/MapFixture.dll').exists(), 'Build MapFixture')
+    def test_owned_raw_legacy_ybn_roundtrip_matches_native_xml_collision(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp=Path(temp); root=resource(temp/'input')
+            mesh(root/'stream/prop.ydr.xml')
+            source=collision_xml(root/'stream/source.ybn.xml',nested=True)
+            binary=root/'stream/prop.ybn'
+            helper=ROOT/'tools/tests/map-fixture/bin/Release/net9.0/MapFixture.dll'
+            result=subprocess.run(['dotnet',str(helper),str(source),str(binary)],capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual(binary.read_bytes()[:4],b'RSC7')
+            native=[]
+            for name in ('source.ybn.xml','prop.ybn'):
+                output=temp/name
+                f.import_resource(root,output,'props',position=[0.,0.,0.],collision_map=[f'stream/prop.ydr.xml=stream/{name}'])
+                manifest=json.loads((output/'resource.json').read_text())
+                native.append((output/manifest['models'][0]['col']).read_bytes())
+            # RSC quantization can change float coordinates slightly. Decode
+            # through the production native reader rather than comparing bytes.
+            if AUDIT.exists():
+                points=[]
+                for index,data in enumerate(native):
+                    path=temp/f'compare-{index}.col'; path.write_bytes(data)
+                    result=subprocess.run([str(AUDIT),str(path),'--col','--points'],capture_output=True,text=True)
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    points.append(json.loads(result.stdout.splitlines()[-1]))
+                for raw, xml in zip(points[1][0],points[0][0]):
+                    for a,b in zip(raw,xml): self.assertAlmostEqual(a,b,places=3)
+
+    def test_collision_rejects_singular_nonfinite_duplicate_and_oversized_world_bounds(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp=Path(temp); root=resource(temp/'input')
+            mesh(root/'stream/prop.ydr.xml'); map_xml(root/'stream/map.ymap.xml')
+            path=root/'stream/prop.ybn.xml'
+            for index, transform in enumerate(['0 0 0 0\n0 3 0 0\n0 0 4 0\n1 2 3 1',
+                                                'nan 0 0 0\n0 3 0 0\n0 0 4 0\n1 2 3 1']):
+                collision_xml(path,nested=True)
+                path.write_text(path.read_text().replace('2 0 0 0\n0 3 0 0\n0 0 4 0\n1 2 3 1',transform))
+                output=temp/f'invalid-{index}'
+                with self.assertRaisesRegex(ValueError,'collision transform'):
+                    f.import_resource(root,output,'props',position=[0.,0.,0.],collision_map=['stream/prop.ydr.xml=stream/prop.ybn.xml'])
+                self.assertFalse(output.exists())
+            collision_xml(path)
+            with self.assertRaisesRegex(ValueError,'distinct MODEL'):
+                f.import_resource(root,temp/'duplicate','props',position=[0.,0.,0.],collision_map=['stream/prop.ydr.xml=stream/prop.ybn.xml']*2)
+            path.write_text(path.read_text().replace('2, 0, 0','4000, 0, 0').replace('0, 3, 0','0, 4000, 0'))
+            with self.assertRaisesRegex(ValueError,'split into smaller'):
+                f.import_resource(root,temp/'too-wide','map',ymap='stream/map.ymap.xml',world_collision=['stream/prop.ybn.xml'])
+            self.assertFalse((temp/'too-wide').exists())
+
+    @unittest.skipUnless((ROOT/'tools/tests/map-fixture/bin/Release/net9.0/MapFixture.dll').exists(), 'Build MapFixture')
+    def test_owned_raw_box_and_geometry_bvh_become_native_contacts(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp=Path(temp); root=resource(temp/'input')
+            mesh(root/'stream/prop.ydr.xml')
+            for kind, count in [('Box',12),('GeometryBVH',1)]:
+                source=collision_xml(root/f'stream/{kind}.ybn.xml',kind=kind)
+                binary=root/f'stream/{kind}.ybn'
+                helper=ROOT/'tools/tests/map-fixture/bin/Release/net9.0/MapFixture.dll'
+                result=subprocess.run(['dotnet',str(helper),str(source),str(binary)],capture_output=True,text=True)
+                self.assertEqual(result.returncode,0,result.stderr)
+                output=temp/kind
+                report=f.import_resource(root,output,'props',position=[0.,0.,0.],collision_map=[f'stream/prop.ydr.xml=stream/{kind}.ybn'])
+                self.assertEqual(report['collisions'][0]['triangles'],count)
+                if AUDIT.exists():
+                    manifest=json.loads((output/'resource.json').read_text())
+                    result=subprocess.run([str(AUDIT),str(output/manifest['models'][0]['col']),'--col'],capture_output=True,text=True)
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    self.assertEqual(json.loads(result.stdout)['triangles'],count)
+
     def rig(self, mapping, **extra):
         return dict(base_player=ROOT/'mods/native-ped-demo/ped.dff',
                     base_ifp=ROOT/'mods/native-ped-demo/ped.ifp', bone_map=mapping, **extra)

@@ -113,7 +113,7 @@ impl CollisionWorld {
         let feet = Vec3::new(position.x, ground, position.z);
         if self.resolve_walls(feet).distance_squared(feet) > 0.0001
             || self
-                .ceiling_above(feet, ground + 0.01)
+                .ceiling_without_support(feet, ground + 0.01, Some(ground))
                 .is_some_and(|y| y < ground + HEIGHT)
         {
             return None;
@@ -174,6 +174,9 @@ impl CollisionWorld {
     /// Lowest surface crossed by the player's head during upward movement.
     /// Samples include the body rim so a partial overhang can block a jump.
     pub fn ceiling_above(&self, pos: Vec3, min_y: f32) -> Option<f32> {
+        self.ceiling_without_support(pos, min_y, None)
+    }
+    fn ceiling_without_support(&self, pos: Vec3, min_y: f32, support: Option<f32>) -> Option<f32> {
         let mut best = None;
         let candidates = self.nearby(pos, RADIUS);
         for offset in [
@@ -188,6 +191,17 @@ impl CollisionWorld {
                 let t = self.triangles[i];
                 if t.normal.y.abs() < 0.1 {
                     continue;
+                }
+                if let Some(ground) = support.filter(|_| t.normal.y.abs() >= 0.55) {
+                    // The uphill body-rim sample can lie above the center feet.
+                    // A walkable plane supporting those feet is still ground,
+                    // while a separate low roof must retain its clearance test.
+                    let center_y = t.a.y
+                        - ((pos.x - t.a.x) * t.normal.x + (pos.z - t.a.z) * t.normal.z)
+                            / t.normal.y;
+                    if (center_y - ground).abs() <= 0.01 {
+                        continue;
+                    }
                 }
                 let ab = t.b - t.a;
                 let ac = t.c - t.a;
@@ -479,6 +493,47 @@ mod tests {
         assert!(fast.feet.x < 0.75);
         player.step(&world, Vec3::ZERO, true, 1.0 / 60.0);
         assert!(player.feet.y > 0.0);
+    }
+    #[test]
+    fn standing_and_vehicle_exit_on_slopes_ignore_support_but_keep_low_roofs() {
+        for grade in [-0.5, -0.2, 0.2, 0.5] {
+            for reverse in [false, true] {
+                let ramp = |height: f32| {
+                    let mut points = [
+                        [-5.0, height - 5.0 * grade, -5.0],
+                        [5.0, height - 5.0 * grade, -5.0],
+                        [5.0, height + 5.0 * grade, 5.0],
+                        [-5.0, height - 5.0 * grade, -5.0],
+                        [5.0, height + 5.0 * grade, 5.0],
+                        [-5.0, height + 5.0 * grade, 5.0],
+                    ];
+                    if reverse {
+                        points.swap(0, 1);
+                        points.swap(3, 4);
+                    }
+                    batch(&points)
+                };
+                let open = CollisionWorld::from_batches(&[ramp(0.0)]);
+                assert!(
+                    open.standing_at(Vec3::ZERO, 0.1).is_some(),
+                    "slope {grade} mistaken for a ceiling"
+                );
+                let car = crate::vehicle::Car::new(Vec3::Y * 0.6, 0.6);
+                assert!(
+                    car.exit_player(&open).is_some(),
+                    "vehicle exit blocked on slope"
+                );
+                let covered = CollisionWorld::from_batches(&[ramp(0.0), ramp(1.5)]);
+                assert!(
+                    covered.standing_at(Vec3::ZERO, 0.1).is_none(),
+                    "real low roof ignored"
+                );
+                assert!(
+                    car.exit_player(&covered).is_none(),
+                    "vehicle exit passed through a low roof"
+                );
+            }
+        }
     }
     #[test]
     fn interior_open_portal_keeps_player_on_floor_and_allows_jumping() {
