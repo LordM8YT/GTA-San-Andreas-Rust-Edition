@@ -41,6 +41,7 @@ pub struct Settings {
     pub fly_speed: f32,
     pub render_scale: u32,
     pub fxaa: bool,
+    pub texture_anisotropy: u16,
     pub sharpness: f32,
     pub bloom: f32,
     pub exposure: f32,
@@ -71,6 +72,7 @@ impl Default for Settings {
             fly_speed: 12.0,
             render_scale: 100,
             fxaa: true,
+            texture_anisotropy: 8,
             sharpness: 0.15,
             bloom: 0.12,
             exposure: 1.0,
@@ -91,6 +93,9 @@ impl Settings {
     pub fn sanitize(&mut self) {
         let defaults = Self::default();
         self.render_scale = self.render_scale.clamp(50, 150);
+        if ![1, 2, 4, 8, 16].contains(&self.texture_anisotropy) {
+            self.texture_anisotropy = defaults.texture_anisotropy;
+        }
         if ![0, 30, 60, 90, 120, 144, 165, 240].contains(&self.fps_limit) {
             self.fps_limit = 0;
         }
@@ -165,6 +170,7 @@ impl Settings {
         self.saturation = 1.05;
         self.vignette = 0.12;
         self.atmospheric_fog = true;
+        self.texture_anisotropy = [1, 4, 8, 16][index.min(3)];
     }
     pub fn preset(&self) -> &'static str {
         for (index, name) in ["Performance", "Balanced", "Quality", "Ultra"]
@@ -205,6 +211,13 @@ mod tests {
         assert_eq!(settings.fov, 110.0);
         assert_eq!(settings.sensitivity, 0.2);
         assert!(settings.vsync);
+        assert_eq!(
+            settings.texture_anisotropy, 8,
+            "older settings should gain the default filter"
+        );
+        settings.texture_anisotropy = 99;
+        settings.sanitize();
+        assert_eq!(settings.texture_anisotropy, 8);
         settings.minimap_zoom = f32::NAN;
         settings.sanitize();
         assert_eq!(settings.minimap_zoom, 1.0);
@@ -224,6 +237,7 @@ mod tests {
         };
         settings.apply_preset(0);
         assert_eq!(settings.preset(), "Performance");
+        assert_eq!(settings.texture_anisotropy, 1);
         assert_eq!(settings.render_size(1920, 1080), [1286, 723]);
         assert_eq!(settings.sensitivity, 2.0);
         assert!(settings.fullscreen);

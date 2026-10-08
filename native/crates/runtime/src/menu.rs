@@ -246,6 +246,7 @@ impl Menu {
                 ("Color saturation", format!("{:.0}%", s.saturation * 100.0), "Adjusts world color intensity. 100% preserves the source saturation."),
                 ("Vignette", format!("{:.0}%", s.vignette * 100.0), "Subtle shading at the edges of the image. Set to zero for a uniform frame."),
                 ("Atmospheric haze", on(s.atmospheric_fog), "Distant outdoor scenery fades into the horizon. Interiors stay clear."),
+                ("Texture filtering", if s.texture_anisotropy == 1 { "Trilinear".into() } else { format!("{}x anisotropic", s.texture_anisotropy) }, "Keeps road and building textures clearer at shallow angles. Mipmaps reduce distant texture shimmer. Requires restart."),
             ],
             SettingsTab::Gameplay => vec![
                 ("Look sensitivity", format!("{:.1}", s.sensitivity), "Adjusts mouse and right-stick camera movement."),
@@ -328,6 +329,15 @@ impl Menu {
             (SettingsTab::Graphics, 8) => s.saturation += delta * 0.05,
             (SettingsTab::Graphics, 9) => s.vignette += delta * 0.02,
             (SettingsTab::Graphics, 10) => s.atmospheric_fog = !s.atmospheric_fog,
+            (SettingsTab::Graphics, 11) => {
+                let values = [1, 2, 4, 8, 16];
+                let index = values
+                    .iter()
+                    .position(|v| *v == s.texture_anisotropy)
+                    .unwrap_or(3);
+                s.texture_anisotropy =
+                    values[(index + if left { values.len() - 1 } else { 1 }) % values.len()];
+            }
             (SettingsTab::Graphics, 2) => s.fsr1 = !s.fsr1,
             (SettingsTab::Display, 5) => {
                 let limits = [0, 30, 60, 90, 120, 144, 165, 240];

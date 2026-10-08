@@ -9,6 +9,7 @@ mod capture;
 mod controller;
 mod gameplay_audio;
 mod menu;
+mod mipmaps;
 mod multiplayer;
 mod postprocess;
 mod session_resources;
@@ -74,6 +75,7 @@ struct State {
     walking: bool,
     image_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
+    mipmaps: mipmaps::Generator,
     streamer: Option<Streamer>,
     uploading: Option<(streaming::Region, upload::Upload)>,
     retired: Vec<streaming::Retired>,
@@ -164,6 +166,7 @@ impl State {
             &self.queue,
             &self.image_layout,
             &self.sampler,
+            &self.mipmaps,
             scene,
         )?;
         self.car = Some((
@@ -372,12 +375,24 @@ impl State {
             address_mode_v: wgpu::AddressMode::Repeat,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            anisotropy_clamp: if adapter
+                .get_downlevel_capabilities()
+                .flags
+                .contains(wgpu::DownlevelFlags::ANISOTROPIC_FILTERING)
+            {
+                startup_settings.texture_anisotropy
+            } else {
+                1
+            },
             ..Default::default()
         });
         let animation = scene.animation.take();
         let collision = scene.collision.take();
         let water = scene.water.take();
-        let batches = Self::upload_scene(&device, &queue, &image_layout, &sampler, scene)?;
+        let mipmaps = mipmaps::Generator::new(&device);
+        let batches =
+            Self::upload_scene(&device, &queue, &image_layout, &sampler, &mipmaps, scene)?;
         let gui_context = egui::Context::default();
         let mut radar_texture_handles = Vec::with_capacity(radar_tiles.len());
         let radar_tiles = radar_tiles
@@ -473,6 +488,7 @@ impl State {
             walking: false,
             image_layout,
             sampler,
+            mipmaps,
             streamer: None,
             uploading: None,
             retired: Vec::new(),
@@ -546,25 +562,13 @@ impl State {
         queue: &wgpu::Queue,
         image_layout: &wgpu::BindGroupLayout,
         sampler: &wgpu::Sampler,
+        mipmaps: &mipmaps::Generator,
         scene: Scene,
     ) -> Result<Vec<GpuBatch>> {
         let upload_started = Instant::now();
         let mut images = std::collections::HashMap::new();
         for (key, image) in scene.textures {
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some(&key),
-                size: wgpu::Extent3d {
-                    width: image.width,
-                    height: image.height,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            });
+            let texture = mipmaps::texture(device, &key, image.width, image.height);
             queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &texture,
@@ -584,6 +588,7 @@ impl State {
                     depth_or_array_layers: 1,
                 },
             );
+            mipmaps.generate(device, queue, &texture);
             let view = texture.create_view(&Default::default());
             let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(&key),
@@ -700,7 +705,13 @@ impl State {
                 self.retired
                     .extend(streamer.retire(streaming::Retired::Upload(Box::new(upload))));
             } else {
-                match upload.advance(&self.device, &self.queue, &self.image_layout, &self.sampler) {
+                match upload.advance(
+                    &self.device,
+                    &self.queue,
+                    &self.image_layout,
+                    &self.sampler,
+                    &self.mipmaps,
+                ) {
                     Ok(false) => self.uploading = Some((region, upload)),
                     Ok(true) => {
                         let (batches, mut scene) = upload.finish();
@@ -1466,6 +1477,8 @@ impl State {
         if self.menu.settings == self.applied_settings {
             return;
         }
+        let needs_restart = self.menu.settings.renderer != self.applied_settings.renderer
+            || self.menu.settings.texture_anisotropy != self.applied_settings.texture_anisotropy;
         if self.menu.settings.fullscreen != self.applied_settings.fullscreen {
             self.window
                 .set_fullscreen(if self.menu.settings.fullscreen {
@@ -1490,6 +1503,10 @@ impl State {
             }
         }
         self.apply_audio_settings();
+        if needs_restart {
+            self.menu.message =
+                "Renderer / texture filtering changes apply after restarting the game.".into();
+        }
         self.applied_settings = self.menu.settings.clone();
     }
     fn render(&mut self) -> bool {
@@ -1965,6 +1982,7 @@ impl ApplicationHandler for App {
                             &state.queue,
                             &state.image_layout,
                             &state.sampler,
+                            &state.mipmaps,
                             scene,
                         )
                     }) {
@@ -2000,6 +2018,7 @@ impl ApplicationHandler for App {
                             &state.queue,
                             &state.image_layout,
                             &state.sampler,
+                            &state.mipmaps,
                             scene,
                         )
                     }) {
@@ -3208,6 +3227,20 @@ impl ApplicationHandler for App {
 }
 fn main() -> Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
+    if args.iter().any(|arg| arg == "--probe-mipmaps") {
+        let renderer = args
+            .windows(2)
+            .find(|pair| pair[0] == "--renderer")
+            .map(|pair| pair[1].as_str())
+            .unwrap_or("vulkan");
+        let backends = match renderer {
+            "vulkan" => wgpu::Backends::VULKAN,
+            "dx12" => wgpu::Backends::DX12,
+            "auto" => settings::Renderer::Auto.backends(),
+            _ => anyhow::bail!("Unknown renderer"),
+        };
+        return pollster::block_on(mipmaps::probe(backends));
+    }
     let game = args
         .windows(2)
         .find(|w| w[0] == "--game-dir")

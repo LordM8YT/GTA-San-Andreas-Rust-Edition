@@ -4,7 +4,7 @@ The graphics menu now has Display, Graphics, Gameplay, Interface and Audio
 categories. Mouse, keyboard and Xbox D-pad navigation use the same settings.
 Each row explains its effect; the system panel shows the actual adapter,
 graphics backend, scene resolution and display resolution. Preferences apply
-live and persist, except renderer changes which require restart.
+live and persist, except renderer and texture-filter changes which require restart.
 
 ## Working features
 
@@ -22,6 +22,10 @@ live and persist, except renderer changes which require restart.
   saturation, vignette and outdoor distance haze. Fog is disabled indoors.
 - A linear RGBA16F intermediate scene target and filmic display mapping.
   The final display remains SDR; this is not HDR monitor output.
+- GPU-generated texture mip chains, trilinear filtering and selectable
+  2x/4x/8x/16x anisotropic filtering. Texture filtering requires restart;
+  unsupported adapters fall back to trilinear. Performance/Balanced/Quality/
+  Ultra choose trilinear/4x/8x/16x respectively. Default is 8x.
 - Performance (67%), Balanced (83%), Quality (100%) and Ultra (150%) presets.
   These are project presets, not the standard FSR quality-mode names. Changing
   individual image controls labels the preset Custom. Gameplay, display and
@@ -57,6 +61,26 @@ The test runs the real GPU pipelines and verifies target dimensions. It does
 not establish image-quality parity with commercial games or temporal stability.
 Smoke tests do not overwrite the user's saved settings.
 
+`--probe-mipmaps --renderer vulkan` (or `dx12`) reads back GPU-generated owned
+color fixtures. It checks linear-light sRGB averaging, transparent edge color,
+odd dimensions, 1-pixel-wide chains and a 1x1 texture. Both backends passed on
+the local RTX 3070. The Vulkan multiplayer appearance/passenger test and the
+1.2 km streaming route also passed with texture mip chains and reuse enabled.
+
+Mip levels are regenerated from decoded base pixels with area weights in
+linear light and alpha-weighted color, avoiding dark transparent fringes.
+Non-power-of-two edges are included. They are generated on the GPU once when
+a texture finishes uploading; streamed chains advance one level per budgeted
+operation and share one command submission per upload slice. Cached textures
+retain their chains. CPU-to-GPU
+transfer still uploads only base pixels. The original road-sign glyph atlas
+keeps a single level to prevent neighboring characters bleeding together;
+egui/radar images and post-process targets retain their separate image paths.
+Mip chains consume additional GPU memory, roughly one-third for square
+textures (more for very narrow images), and have an initial generation cost.
+This is a texture-quality improvement, not a measured FPS gain or a guarantee
+of hitch-free streaming.
+
 ## Settings navigation
 
 Settings use a fixed category sidebar, a scrolling list of controls, and a
@@ -71,7 +95,7 @@ selects the category; left/right then switches categories.
 
 Map decoding and old-region cleanup run on the background world worker.
 Replacement textures and vertex buffers are uploaded incrementally, with
-256 KiB packets, at most 64 operations per frame, and a soft 2 ms / 4 MiB
+256 KiB packets, at most 256 operations per frame, and a soft 2 ms / 4 MiB
 per-frame budget. Individual driver calls can exceed the time budget. The
 previous region remains usable until the replacement's graphics, collision
 and water can be installed together. Static vertices upload directly from
@@ -80,13 +104,17 @@ their packed representation, without a temporary float copy.
 Initial startup still uploads its first region synchronously. This change
 targets streaming stalls, not overall rendering cost or draw-call reduction.
 Streaming still replaces whole neighbourhoods rather than retaining individual
-objects across smaller chunks. GPU texture/mesh reuse across overlapping
-regions is a future improvement.
+objects across smaller chunks. GPU texture reuse across overlapping regions
+is implemented within the same immutable world loader; session resource
+switches create fresh images. Static map meshes are still rebuilt per region.
 On the local RTX 3070/Vulkan nine-region smoke tour, the Desert upload changed
 from one 139.44 ms CPU upload to 87 slices with an 11.83 ms maximum CPU slice.
 Across all streamed destinations, the largest slice was 14.71 ms in the final
 tour; an earlier tuning run reached 27.15 ms. These are
 CPU upload timings, not total frame times or a guarantee of hitch-free play.
+With GPU mip chains enabled, the isolated RTX 3070/Vulkan continuous route
+completed seven swaps in 448 upload frames, with a maximum 19.72 ms CPU slice.
+This is additional quality work and does not eliminate driver stalls.
 `--smoke-stream` also exercises a continuous 1.2 km return route at a fixed
 speed, with no teleport and assertions against camera jumps.
 

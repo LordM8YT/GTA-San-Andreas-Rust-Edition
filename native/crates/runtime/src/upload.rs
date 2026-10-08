@@ -17,6 +17,7 @@ struct ImageUpload {
     image: Texture,
     texture: wgpu::Texture,
     row: u32,
+    mip: u32,
 }
 struct BufferUpload {
     batch: Batch,
@@ -75,10 +76,12 @@ impl Upload {
         queue: &wgpu::Queue,
         layout: &wgpu::BindGroupLayout,
         sampler: &wgpu::Sampler,
+        mipmaps: &crate::mipmaps::Generator,
     ) -> Result<bool> {
         let started = Instant::now();
         let mut bytes = 0;
         let mut done = false;
+        let mut mip_encoder = None;
         for _ in 0..256 {
             if bytes >= FRAME_BYTES || started.elapsed() >= FRAME_TIME {
                 break;
@@ -91,29 +94,47 @@ impl Upload {
                         // Drop CPU pixels gradually under the same frame budget.
                         continue;
                     }
-                    let texture = device.create_texture(&wgpu::TextureDescriptor {
-                        label: Some(&key),
-                        size: wgpu::Extent3d {
-                            width: image.width,
-                            height: image.height,
-                            depth_or_array_layers: 1,
-                        },
-                        mip_level_count: 1,
-                        sample_count: 1,
-                        dimension: wgpu::TextureDimension::D2,
-                        format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                        view_formats: &[],
-                    });
+                    let texture = crate::mipmaps::texture(device, &key, image.width, image.height);
                     self.current_image = Some(ImageUpload {
                         key,
                         image,
                         texture,
                         row: 0,
+                        mip: 1,
                     });
                 }
             }
             if let Some(image) = &mut self.current_image {
+                if image.row == image.image.height {
+                    if image.mip < image.texture.mip_level_count() {
+                        let encoder = mip_encoder.get_or_insert_with(|| {
+                            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                                label: Some("Streamed texture mip levels"),
+                            })
+                        });
+                        mipmaps.encode_level(device, encoder, &image.texture, image.mip);
+                        image.mip += 1;
+                        continue;
+                    }
+                    let image = self.current_image.take().unwrap();
+                    let view = image.texture.create_view(&Default::default());
+                    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some(&image.key),
+                        layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(&view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::Sampler(sampler),
+                            },
+                        ],
+                    });
+                    self.images.insert(image.key, group);
+                    continue;
+                }
                 let stride = image.image.width as usize * 4;
                 let rows =
                     ((PACKET_BYTES / stride).max(1) as u32).min(image.image.height - image.row);
@@ -144,25 +165,6 @@ impl Upload {
                 );
                 image.row += rows;
                 bytes += count;
-                if image.row == image.image.height {
-                    let image = self.current_image.take().unwrap();
-                    let view = image.texture.create_view(&Default::default());
-                    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some(&image.key),
-                        layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: wgpu::BindingResource::TextureView(&view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: wgpu::BindingResource::Sampler(sampler),
-                            },
-                        ],
-                    });
-                    self.images.insert(image.key, group);
-                }
                 continue;
             }
             if self.current_buffer.is_none() {
@@ -218,6 +220,9 @@ impl Upload {
                     });
                 }
             }
+        }
+        if let Some(encoder) = mip_encoder {
+            queue.submit([encoder.finish()]);
         }
         self.frames += 1;
         self.peak_ms = self.peak_ms.max(started.elapsed().as_secs_f64() * 1000.0);

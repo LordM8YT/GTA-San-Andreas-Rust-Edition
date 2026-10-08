@@ -225,6 +225,7 @@ impl Installing {
                 &state.queue,
                 &state.image_layout,
                 &state.sampler,
+                &state.mipmaps,
             )? {
                 self.world_ready = Some(upload.finish());
             } else {
@@ -258,6 +259,7 @@ impl Installing {
                 &state.queue,
                 &state.image_layout,
                 &state.sampler,
+                &state.mipmaps,
             )? {
                 let (batches, _) = upload.finish();
                 match model {

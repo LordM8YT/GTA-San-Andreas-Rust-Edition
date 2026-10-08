@@ -214,7 +214,7 @@ villa. Interiørmenyen (I) og retur via R/kart er GPU-kontrollert. Dørinnganger
 `native-interiors.md` for kontrollen og begrensningene.
 
 Kartet har detaljstreaming med foreløpig fjern-LOD. Bølger, dykking, tidsstyrte objekter,
-enkelte RenderWare-effekter, transparentsortering, mipmaps og mer
+enkelte RenderWare-effekter, transparentsortering og mer
 korrekt fysikk gjenstår. Modeller kan hoppes over med forklaring i konsollen,
 og noen materialer får reservefarge. COL-kuler bruker trekanttilnærming og
 kroppskollisjon bruker et begrenset antall prøver fremfor en full kapselsweep.
