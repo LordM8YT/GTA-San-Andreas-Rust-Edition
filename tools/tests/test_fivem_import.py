@@ -66,6 +66,65 @@ def collision_xml(path, nested=False, polygon='Triangle', kind='Geometry'):
 
 
 class FiveMImportTests(unittest.TestCase):
+    def test_vehicle_metadata_resolves_shared_dictionary_and_snapshots_hash(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp); root = resource(temp / 'input')
+            model = mesh(root / 'stream/car.yft.xml', vehicle=True)
+            tree = f.converter.parse_xml(model)
+            parameters = f.converter.ET.SubElement(tree.find('Drawable/ShaderGroup/Shaders/Item'), 'Parameters')
+            parameter = f.converter.ET.SubElement(parameters, 'Item', name='DiffuseSampler')
+            f.converter.ET.SubElement(parameter, 'Name').text = 'fixture'
+            f.converter.ET.ElementTree(tree).write(model)
+            (root / 'textures').mkdir()
+            (root / 'textures/shared.ytd.xml').write_text('<TextureDictionary/>')
+            header = bytearray(128); header[:4] = b'DDS '
+            f.converter.S.pack_into('<II', header, 12, 1, 1)
+            f.converter.S.pack_into('<7I', header, 80, 0x41, 0, 32, 0xff, 0xff00, 0xff0000, 0xff000000)
+            (root / 'textures/fixture.dds').write_bytes(header + bytes([12, 34, 56, 255]))
+            meta = root / 'vehicles.meta'
+            meta.write_text('<CVehicleModelInfo__InitDataList><InitDatas><item><modelName>CAR</modelName><txdName>SHARED</txdName><handlingId>FAST</handlingId></item></InitDatas></CVehicleModelInfo__InitDataList>')
+            report = f.import_resource(root, temp / 'native', 'vehicles', vehicles_meta=['vehicles.meta'])
+            self.assertEqual(report['vehicle_metadata']['texture_dictionaries'], {'car': 'shared'})
+            self.assertEqual(report['source_sha256']['vehicles.meta'], f.hashlib.sha256(meta.read_bytes()).hexdigest())
+            self.assertEqual(report['converted'][0]['textures'], 1)
+            manifest = json.loads((temp / 'native/resource.json').read_text())
+            self.assertNotIn('handling', manifest['vehicles'][0])
+            self.assertIn(bytes([56,34,12,255]), (temp / 'native' / manifest['vehicles'][0]['txd']).read_bytes())
+            self.assertFalse(list((temp / 'native').rglob('*.meta')))
+            # Missing external dictionary fails atomically, but an explicit local
+            # override may replace a base-game dependency the author cannot share.
+            meta.write_text(meta.read_text().replace('SHARED','EXTERNAL'))
+            with self.assertRaisesRegex(ValueError, 'Missing YTD'):
+                f.import_resource(root, temp / 'bad', 'vehicles', vehicles_meta=['vehicles.meta'])
+            self.assertFalse((temp / 'bad').exists())
+            f.import_resource(root, temp / 'override', 'vehicles', vehicles_meta=['vehicles.meta'],
+                              texture_map=['stream/car.yft.xml=textures/shared.ytd.xml'])
+
+    def test_vehicle_metadata_rejects_ambiguous_invalid_and_external_sources(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp=Path(temp); root=resource(temp/'input')
+            mesh(root/'stream/car.yft.xml',vehicle=True)
+            meta=root/'vehicles.meta'
+            entry='<Item><modelName>car</modelName><txdName>shared</txdName></Item>'
+            wrap=lambda entries: '<CVehicleModelInfo__InitDataList><InitDatas>'+entries+'</InitDatas></CVehicleModelInfo__InitDataList>'
+            for text in (wrap(entry*2),wrap(entry.replace('car','missing')),wrap(entry.replace('shared','../escape')),
+                         wrap(entry.replace('</txdName>','</txdName><txdName>other</txdName>')),
+                         '<!DOCTYPE x [<!ENTITY y "car">]>'+wrap(entry), '<wrong/>',wrap(entry*513),
+                         wrap(entry).replace('<InitDatas>','<InitDatas/><InitDatas>')):
+                meta.write_text(text)
+                with self.assertRaises(ValueError):
+                    f.import_resource(root,temp/'bad','vehicles',vehicles_meta=['vehicles.meta'])
+                self.assertFalse((temp/'bad').exists())
+            meta.write_text(wrap(entry))
+            for paths in (['../vehicles.meta'],['vehicles.meta']*2,['missing.meta']):
+                with self.assertRaises(ValueError):
+                    f.import_resource(root,temp/'bad','vehicles',vehicles_meta=paths)
+            with self.assertRaisesRegex(ValueError,'--kind vehicles'):
+                f.import_resource(root,temp/'bad','props',position=[0,0,0],vehicles_meta=['vehicles.meta'])
+            meta.write_bytes(b' '*(1024*1024+1))
+            with self.assertRaises(ValueError):
+                f.import_resource(root,temp/'bad','vehicles',vehicles_meta=['vehicles.meta'])
+
     def test_model_local_collision_bakes_geometry_center_and_nested_transforms(self):
         with tempfile.TemporaryDirectory() as temp:
             temp=Path(temp); root=resource(temp/'input')

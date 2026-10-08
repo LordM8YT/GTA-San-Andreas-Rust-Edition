@@ -106,7 +106,7 @@ def inspect_resource(root):
         notices.append('YDD peds/clothes require --kind player/clothing and explicit native target rig/bone mapping.')
     metadata = [relative(p) for p in files if p.suffix.lower() == '.meta']
     if metadata:
-        notices.append('GTA V handling, vehicle metadata, tuning and colours are not imported.')
+        notices.append('GTA V handling, tuning and colours are not imported; --vehicles-meta can resolve model-to-texture pairing only.')
     return files, dict(resource=root.name, manifest=relative(manifest),
                        assets=[relative(p) for p in assets], scripts=scripts,
                        metadata=metadata, warnings=notices)
@@ -133,9 +133,39 @@ def select_models(root, files, kind, requested=()):
     return sorted(chosen, key=lambda p: p.relative_to(root).as_posix().casefold())
 
 
+def vehicle_dictionaries(paths, names):
+    """Read only model-to-TXD associations; GTA V physics remains separate."""
+    records = {}
+    for path in paths:
+        data = converter.read(path, 1024 * 1024)
+        require(b'\0' not in data and b'<!DOCTYPE' not in data.upper() and b'<!ENTITY' not in data.upper(),
+                'Vehicle metadata requires UTF-8 XML without DTD/entities')
+        root = converter.ET.fromstring(data.decode('utf-8-sig'))
+        require(root.tag == 'CVehicleModelInfo__InitDataList', 'Expected vehicles.meta InitDataList')
+        groups = root.findall('InitDatas')
+        require(len(groups) == 1, 'Vehicle metadata requires one InitDatas list')
+        items = list(groups[0])
+        require(len(items) <= 512, 'Vehicle metadata exceeds 512 entries per file')
+        for item in items:
+            require(item.tag in ('Item', 'item'), 'Unsupported vehicle metadata entry')
+            record = {}
+            for field in ('modelName', 'txdName'):
+                nodes = item.findall(field)
+                require(len(nodes) == 1, f'Vehicle metadata needs one {field}')
+                value = (nodes[0].text or '').strip().lower()
+                require(re.fullmatch(r'[a-z0-9_]{1,64}', value) is not None,
+                        f'Invalid vehicle metadata {field}')
+                record[field] = value
+            name = record['modelName']
+            require(name not in records, 'Duplicate vehicle metadata modelName')
+            records[name] = record['txdName']
+    require(all(name in records for name in names), 'Selected vehicle missing from vehicles.meta')
+    return {name: records[name] for name in names}
+
+
 def import_resource(root, output, kind, requested=(), position=None, model_id=30000, enable=False,
                     ymap=None, offset=(0., 0., 0.), ytyp=(), base_player=None, base_ifp=None,
-                    base_txd=None, bone_map=None, skeleton=None, texture_map=(), collision_map=(), world_collision=()):
+                    base_txd=None, bone_map=None, skeleton=None, texture_map=(), collision_map=(), world_collision=(), vehicles_meta=()):
     root = root.absolute()
     output = output.absolute()
     require(not output.exists(), 'Output already exists; choose a new directory')
@@ -153,6 +183,14 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
     for path in ytyp:
         require(any(p.relative_to(root).as_posix() == path and asset_name(p)[1] == '.ytyp' for p in files),
                 'YTYP must be an exact relative .ytyp or .ytyp.xml path inside the resource')
+    require(not vehicles_meta or kind == 'vehicles', '--vehicles-meta requires --kind vehicles')
+    require(len(vehicles_meta) <= 16 and len(set(vehicles_meta)) == len(vehicles_meta),
+            'Select at most 16 distinct vehicles.meta files')
+    for path in vehicles_meta:
+        require(any(p.relative_to(root).as_posix() == path and
+                    p.name.lower().endswith(('.meta', '.meta.xml')) for p in files),
+                'Vehicle metadata must be an exact relative .meta or .meta.xml path inside the resource')
+        require((root / path).stat().st_size <= 1024 * 1024, 'Vehicle metadata exceeds 1 MiB')
     chosen = select_models(root, files, kind, requested)
     skinned = kind in ('player', 'clothing')
     require(not skinned or (base_player and base_ifp and bone_map),
@@ -200,7 +238,7 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
         fingerprints = {}
         snapshot_bytes = 0
         for path in files:
-            if asset_name(path)[1] in ('.yft', '.ydr', '.ydd', '.ytd', '.ymap', '.ytyp', '.ybn') or path.suffix.lower() == '.dds':
+            if asset_name(path)[1] in ('.yft', '.ydr', '.ydd', '.ytd', '.ymap', '.ytyp', '.ybn') or path.suffix.lower() == '.dds' or path.relative_to(root).as_posix() in vehicles_meta:
                 require(not path.is_symlink() and path.resolve().is_relative_to(root.resolve()), 'Source changed during import')
                 data = converter.read(path, 128 * 1024 * 1024)
                 snapshot_bytes += len(data)
@@ -243,6 +281,13 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
             type_sources = [converter.extract(source / path, work / f'ytyp-{index:03}') for index, path in enumerate(ytyp)]
             aliases, dictionaries = map_converter.static_archetypes(
                 type_sources, [p.relative_to(root) for p in chosen], model_id, converter.parse_xml)
+        if vehicles_meta:
+            names = [asset_name(p)[0].removesuffix('_hi') for p in chosen]
+            associations = vehicle_dictionaries([source / p for p in vehicles_meta], names)
+            dictionaries = {model_id + index: map_converter.jenkins(associations[name])
+                            for index, name in enumerate(names)}
+            report['vehicle_metadata'] = dict(sources=list(vehicles_meta), texture_dictionaries=associations)
+            report['warnings'].append('vehicles.meta supplies only modelName/txdName pairing; handling, GXT labels, seats, audio, flags and tuning remain native defaults.')
         for index, original in enumerate(chosen):
             model = source / original.relative_to(root)
             stem = asset_name(model)[0]
@@ -251,8 +296,8 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
                         asset_name(p)[1] == '.ytd' and
                         (asset_name(p)[0].isascii() and map_converter.jenkins(asset_name(p)[0]) == dictionaries[model_id + index]
                          if model_id + index in dictionaries else asset_name(p)[0] == texture_stem)]
-            require(model_id + index not in dictionaries or textures,
-                    f'Missing YTD dictionary declared by YTYP for {original.name}')
+            require(model_id + index not in dictionaries or textures or original.relative_to(root).as_posix() in texture_choices,
+                    f'Missing YTD dictionary declared by metadata for {original.name}')
             local = [p for p in textures if p.parent == model.parent]
             textures = local or textures
             if original.relative_to(root).as_posix() in texture_choices:
@@ -366,6 +411,7 @@ def main():
     parser.add_argument('--bone-map', type=Path, help='Explicit source bone names/tags to native HAnim IDs')
     parser.add_argument('--skeleton', help='Exact relative CodeWalker source skeleton XML inside this resource')
     parser.add_argument('--texture', action='append', default=[], help='Exact relative MODEL=YTD texture pairing; repeat')
+    parser.add_argument('--vehicles-meta', action='append', default=[], help='Exact relative vehicles.meta XML; use modelName/txdName for vehicle texture pairing, repeat')
     parser.add_argument('--collision', action='append', default=[], help='Explicit model-local MODEL=YBN pair; props/map only, repeat')
     parser.add_argument('--world-collision', action='append', default=[], help='Explicit world-space YBN or YBN XML path; map only, translated by --offset')
     parser.add_argument('--ymap', help='Exact relative Legacy .ymap or CodeWalker .ymap.xml path for static map placements')
@@ -380,7 +426,7 @@ def main():
         if args.out:
             report = import_resource(args.input, args.out, args.kind, args.model, args.position, args.model_id, args.enable,
                                      args.ymap, args.offset, args.ytyp, args.base_player, args.base_ifp, args.base_txd,
-                                     args.bone_map, args.skeleton, args.texture, args.collision, args.world_collision)
+                                     args.bone_map, args.skeleton, args.texture, args.collision, args.world_collision, args.vehicles_meta)
         else:
             _, report = inspect_resource(args.input)
         print(json.dumps(report, indent=2))

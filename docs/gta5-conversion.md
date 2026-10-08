@@ -26,6 +26,25 @@ preferred when its `_hi` variant is also present, preserving its fragment
 children; repeat `--model stream/name.yft` to choose exact relative model paths.
 Raw assets take precedence over adjacent XML exports of the same asset.
 
+For cars whose model and texture dictionary names differ, select their metadata:
+
+```powershell
+python tools/import-fivem.py C:/Downloads/my-car-pack --vehicles-meta data/vehicles.meta --out "mods/[vehicles]/my-car-pack" --enable
+```
+
+Repeat `--vehicles-meta` for up to 16 exact relative metadata paths. The reader
+uses `InitDatas/Item` (also lowercase `item`) and `modelName`/`txdName` associations,
+as represented by [CodeWalker's vehicle metadata reader](https://github.com/dexyfex/CodeWalker/blob/master/CodeWalker.Core/GameFiles/FileTypes/VehiclesFile.cs).
+Every selected YFT must have a matching model entry; duplicate names, missing
+local dictionaries and ambiguous dictionaries stop the import. Each XML file
+is limited to 1 MiB and 512 entries, with DTD/entities rejected. `_hi` fragments
+match the base model name. An explicit `--texture MODEL=YTD` pair takes precedence,
+including when replacing a dictionary dependency from the GTA V base game.
+Metadata is snapshotted and hashed for the report, then only the resolved
+native textures are shared with players. GTA V handling, seats, audio, flags,
+tuning and GXT display labels are not applied. Parent texture relationships
+are not merged; include a self-contained dictionary or use an explicit override.
+
 For props, specify a preview location in original San Andreas world coordinates:
 
 ```powershell
@@ -47,7 +66,8 @@ the manifest and 128 MiB total assets. Select fewer models if those limits are h
 
 `data/fivem-import-report.json` records source hashes, converted geometry and
 missing textures. Lua/JS/C# scripts, NUI/HUD pages, handling/vehicle metadata
-and MLO rooms/portals are reported or listed but never imported. A limited
+and MLO rooms/portals are reported or listed but never applied. Explicit
+`vehicles.meta` selection imports only the model-to-texture association above. A limited
 YBN collision subset can be explicitly selected as described below.
 Manifest inspection is text-based and cannot interpret
 dynamic declarations. Peds and clothes use the explicit rig/mapping
@@ -57,7 +77,10 @@ The folder importer was tested with owned multi-model XML fixtures, atomic
 failure/overwrite and Windows-junction rejection checks. The previously tested
 free Skyline's raw YFT/YTD files were also imported from an isolated resource
 folder and then downloaded, loaded, driven and restored through a dedicated
-relay session with two Vulkan clients. Third-party assets remain local.
+relay session with two Vulkan clients. The model-to-texture metadata reader was
+also tested with the same raw car, a renamed YTD and owned metadata: both
+clients downloaded the converted pack, drove/rode in the car and restored
+the offline world. Third-party assets remain local.
 
 ## Player and clothing resource folders
 
