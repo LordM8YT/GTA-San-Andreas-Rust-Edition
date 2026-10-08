@@ -6,11 +6,12 @@ needed by developers building from source. Choose your original **PC San Andreas
 installation in Settings, validate it, then Play or Continue free roam. The original
 executable is never launched and original files are never modified.
 
-For multiplayer, choose Play together, enter a host IP:port or a relay IP:port
+For multiplayer, choose Servers, enter a host IP:port or a relay IP:port
 and 12-character join code. A trusted relay's browser lists public rooms on that
 relay only. All participants, host and relay must use protocol 6. Required native
 mods are verified and cached before gameplay; downloads can be disabled in Settings.
-There is no configured public service, Steam relay, account requirement or automatic updater.
+There is no configured public multiplayer service, Steam relay or account requirement.
+The packaged launcher automatically checks GitHub client releases; see [updates](https://github.com/LordM8YT/GTA-San-Andreas-Rust-Edition/blob/main/docs/client-updates.md).
 Use trusted LAN/VPN peers: this prototype uses unencrypted TCP.
 
 Direct development startup remains available:
@@ -31,4 +32,4 @@ Tab/Shift-Tab and Enter navigate the launcher; D-pad/A/B provide corresponding c
 
 Original Rockstar assets, FiveM scripts, private logs and cached downloads are not
 included. Linux CI builds are supported; actual Linux GPU/controller behavior still
-needs testing. These are review artifacts, not a published production release.
+needs testing. These are experimental community clients, not signed production releases.

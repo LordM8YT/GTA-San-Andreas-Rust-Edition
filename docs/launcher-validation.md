@@ -1,5 +1,11 @@
 ﻿# Launcher validation - 8 October 2026
 
+This records the initial launcher validation. Later redesign and release/update
+work is documented in [launcher redesign](launcher-redesign.md) and
+[client updates](client-updates.md); their current publication behavior supersedes
+the initial local-only release limitations below.
+
+
 The initial validation was performed locally; the user subsequently authorized
 committing and pushing the complete project changes. No release, public relay or
 Steam integration is deployed by this change. Original game files were read only.

@@ -69,6 +69,9 @@ pub fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LauncherConfig {
+    pub disable_auto_updates: bool,
+    /// Optional user-owned local artwork; never included in resource downloads.
+    pub hero_image: Option<PathBuf>,
     pub last_session: Option<Favorite>,
     pub game_dir: PathBuf,
     pub player: String,

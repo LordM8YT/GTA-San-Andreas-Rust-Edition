@@ -30,6 +30,16 @@ class ClientPackageTests(unittest.TestCase):
                     self.assertNotIn(forbidden, names)
                 self.assertIn('START-HERE.md', names)
                 self.assertIn('THIRD-PARTY-NOTICES.txt', names)
+                import json, hashlib
+                manifest = json.loads(archive.read('sare-build.json'))
+                self.assertEqual(manifest['schema'], 1)
+                self.assertEqual(manifest['platform'], 'windows')
+                self.assertRegex(manifest['commit'], r'^[0-9a-f]{40}$')
+                self.assertEqual({entry['path'] for entry in manifest['files']}, names - {'sare-build.json'})
+                for entry in manifest['files']:
+                    data = archive.read(entry['path'])
+                    self.assertEqual(entry['size'], len(data))
+                    self.assertEqual(entry['sha256'], hashlib.sha256(data).hexdigest())
             self.assertEqual((target / 'gta3.img').read_bytes(), b'owned test fixture')
             previous = output.read_bytes()
             import json

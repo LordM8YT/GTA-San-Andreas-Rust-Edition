@@ -1,5 +1,8 @@
 # SARE native launcher
 
+The forest-green desktop redesign adds a sidebar and optional local PNG gameplay
+artwork under Settings → Home artwork. See [design and validation](launcher-redesign.md).
+
 Build from the repository: `cargo build --release --workspace --manifest-path native/Cargo.toml`.
 Start `start-sare.cmd`, or run `native/target/release/sa-launcher` directly.
 A complete review package contains compiled launcher/runtime/server/relay binaries;
@@ -50,13 +53,15 @@ reuse. No speculative streaming or physics rewrite is part of this change.
 Offline checkpoints now attempt every 60 seconds in addition to menu/exit/join.
 The existing safe-ground validation and multiplayer separation are preserved.
 
-`gh release list` found no releases during this work. The launcher links to the
-project; no release version check, arbitrary downloader or automatic updater is
-configured. CI defines Windows/Linux ZIP review artifacts containing allowlisted binaries,
-support/license notices and instructions. The packaging tool selects dependencies
-for the target platform, includes font notices and fetches missing license text
-only from the registry package's exact GitHub/GitLab source commit. Those texts
-are never executed. Missing notices fail packaging and preserve the previous ZIP.
+Packaged clients automatically check and download tested GitHub releases, then
+replace program files and restart once the game closes. Disable this under
+Settings > Client updates, or use the manual download/install controls there or
+under Help. Source builds do not overwrite the checkout. See [update pipeline,
+verification and recovery](client-updates.md).
+
+CI publishes a separate release per main-branch commit after both platforms pass.
+Packages contain allowlisted binaries, build/file hashes and legal notices, with
+no original game assets. Missing dependency notices fail packaging.
 
 Developer screenshot capture uses `SARE_SCREENSHOT_TO` inside an isolated
 `SARE_CONFIG_DIR`, with `SARE_PREVIEW_PAGE=settings|multiplayer|resources|help`,

@@ -8,6 +8,8 @@ import urllib.request
 import urllib.error
 import re
 import uuid
+import hashlib
+import os
 from concurrent.futures import ThreadPoolExecutor
 
 REPO = Path(__file__).resolve().parents[1]
@@ -104,6 +106,13 @@ def package(target: Path, destination: Path, platform: str) -> Path:
     if missing_notices:
         staging.unlink()
         raise ValueError("Required dependency notices unavailable: " + ", ".join(missing_notices))
+    commit = os.environ.get('GITHUB_SHA') or subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, check=True).stdout.strip()
+    if not re.fullmatch(r'[0-9a-f]{40}', commit):
+        staging.unlink()
+        raise ValueError('Invalid package commit')
+    with zipfile.ZipFile(staging, 'a', compression=zipfile.ZIP_DEFLATED) as archive:
+        files = [{'path': name, 'size': archive.getinfo(name).file_size, 'sha256': hashlib.sha256(archive.read(name)).hexdigest()} for name in archive.namelist()]
+        archive.writestr('sare-build.json', json.dumps({'schema': 1, 'commit': commit, 'platform': platform, 'files': files}, indent=2))
     staging.replace(output)
     return output
 

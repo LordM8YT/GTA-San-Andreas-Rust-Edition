@@ -4,6 +4,9 @@ on:
   pull_request:
 permissions:
   contents: read
+concurrency:
+  group: native-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   native:
     strategy:
@@ -47,3 +50,37 @@ jobs:
           name: SARE-${{ runner.os }}-test
           path: native/target/packages/*.zip
           if-no-files-found: error
+  publish-client:
+    needs: native
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: SARE-*-test
+          merge-multiple: true
+          path: client-packages
+      - name: Publish tested client packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          # Do not publish an older concurrent build after main has advanced.
+          test "$(gh api repos/$GITHUB_REPOSITORY/commits/main --jq .sha)" = "$GITHUB_SHA"
+          test -f client-packages/SARE-windows-test.zip
+          test -f client-packages/SARE-linux-test.zip
+          tag="client-$GITHUB_SHA"
+          # A rerun of an already-published commit must not mutate release assets.
+          existing=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null || true)
+          if [ "$existing" = "false" ]; then
+            echo "Client release already exists. Keeping its original packages."
+            exit 0
+          fi
+          if [ "$existing" != "true" ]; then
+            gh release create "$tag" --target "$GITHUB_SHA" --title "SARE client ${GITHUB_SHA:0:12}" --draft --notes-file docs/client-release-notes.md
+          fi
+          gh release upload "$tag" --clobber client-packages/SARE-windows-test.zip client-packages/SARE-linux-test.zip
+          gh release edit "$tag" --draft=false --latest
