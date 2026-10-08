@@ -40,6 +40,9 @@ fn main() -> Result<()> {
             "invalid posed vertex"
         );
         for material in &geometry.materials {
+            if args.iter().any(|arg| arg == "--materials") {
+                println!("{{\"color\":{:?}}}", material.color);
+            }
             if let Some(name) = &material.texture {
                 sa_assets::decode_txd(dictionary.as_deref().context("missing TXD")?, name)?;
             }

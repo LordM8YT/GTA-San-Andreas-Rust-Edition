@@ -85,6 +85,37 @@ def owned_clothing(directory, original=None):
 AUDIT = ROOT / 'native/target/debug/examples' / ('audit_resource.exe' if os.name == 'nt' else 'audit_resource')
 
 class ConversionTests(unittest.TestCase):
+    def test_glass_file_identifiers_preserve_transparency_in_native_decoder(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp=Path(temp)
+            for index, (name, bucket, expected) in enumerate([
+                    ('vehicle_vehglass.sps',1,128),('hash_B88DC892',1,128),
+                    ('vehicle_vehglass_inner.sps',0,128),('glass.sps',0,128),
+                    ('vehicle_lights.sps',1,255),('vehicle_paint3.sps',0,255),
+                    ('unknown.sps',2,128),('hash_NOTHEX',0,255)]):
+                source=temp/f'mesh-{index}.ydr.xml'
+                source.write_text(f"""<Drawable><ShaderGroup><Shaders><Item>
+                  <FileName>{name}</FileName><RenderBucket value="{bucket}"/>
+                  </Item></Shaders></ShaderGroup><DrawableModelsHigh><Item><Geometries><Item>
+                  <ShaderIndex value="0"/><VertexBuffer><Layout><Position/><Normal/></Layout>
+                  <Data>0 0 0 0 0 1\n1 0 0 0 0 1\n0 1 0 0 0 1</Data></VertexBuffer>
+                  <IndexBuffer><Data>0 1 2</Data></IndexBuffer>
+                  </Item></Geometries></Item></DrawableModelsHigh></Drawable>""")
+                output=temp/f'native-{index}'
+                with contextlib.redirect_stdout(io.StringIO()):
+                    c.convert(args(source,output))
+                geometry=c.one(c.one(c.one(c.read(output/'stream/converted.dff'),16),26),15)
+                material=c.one(c.one(geometry,8),7)
+                self.assertEqual(S.unpack_from('<I4B',c.one(material,1))[4],expected)
+                if AUDIT.exists():
+                    result=subprocess.run([str(AUDIT),str(output/'stream/converted.dff'),'--materials'],capture_output=True,text=True)
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    colors=[json.loads(line)['color'] for line in result.stdout.splitlines() if line.startswith('{')]
+                    self.assertEqual(colors,[[255,255,255,expected]])
+            for name, number in c.GLASS_SHADERS.items():
+                for text in (name, f'hash_{number:08X}'):
+                    self.assertTrue(c.is_glass(ET.fromstring(f'<Item><FileName>{text}</FileName></Item>')))
+
     def test_inverse_and_normal_under_nonuniform_scale(self):
         matrix = c.IDENTITY.copy(); matrix[0]=2.; matrix[5]=3.; matrix[12]=7.
         self.assertEqual(c.transform(c.inverse(matrix),c.transform(matrix,[1.,2.,3.])),[1.,2.,3.])

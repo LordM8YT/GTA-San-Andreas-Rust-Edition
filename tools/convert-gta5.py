@@ -270,6 +270,27 @@ def native_texture(name, data):
     return chunk(21, chunk(1, header + S.pack('<I',size) + pixels) + chunk(3,b''))
 
 
+# Shader file identifiers documented by CodeWalker's ShaderManager glass batches.
+# This is a native half-transparent approximation, not GTA V shading/refraction.
+GLASS_SHADERS = {
+    'glass.sps': 3928756789, 'glass_pv.sps': 4018753208,
+    'glass_pv_env.sps': 2800545026, 'glass_env.sps': 1263059426,
+    'glass_spec.sps': 3398951093, 'glass_reflect.sps': 1520288031,
+    'glass_emissive.sps': 3924045432, 'glass_emissivenight.sps': 837003310,
+    'glass_emissivenight_alpha.sps': 485710087, 'glass_breakable.sps': 1359281054,
+    'glass_breakable_screendooralpha.sps': 4237090538,
+    'glass_displacement.sps': 430314084, 'glass_normal_spec_reflect.sps': 2866652360,
+    'glass_emissive_alpha.sps': 2055615352,
+    'vehicle_vehglass.sps': 3096299666, 'vehicle_vehglass_inner.sps': 588619930,
+}
+
+GLASS_HASH_NAMES = {f'hash_{number:08x}' for number in GLASS_SHADERS.values()}
+
+def is_glass(shader):
+    name = (shader.findtext('FileName') or '').strip().lower()
+    return name in GLASS_SHADERS or name in GLASS_HASH_NAMES
+
+
 def parse_xml(path):
     data = read(path, 128 * 1024 * 1024)
     require(b'\0' not in data, 'Only UTF-8 CodeWalker XML is supported')
@@ -402,7 +423,10 @@ def convert(args):
                         else:
                             colour = (45,45,45) if any(part in key for part in ('black','plastic','carbon','glass')) else (160,160,160)
                             report['warnings'].append(f'Missing shared/diffuse texture {diffuse}; using neutral colour {colour}')
-                    alpha = 128 if value(shader,'RenderBucket') in (2,3) else 255
+                    glass = is_glass(shader)
+                    alpha = 128 if glass or value(shader,'RenderBucket') in (2,3) else 255
+                    if glass:
+                        report['warnings'].append('Known glass shader approximated with 50% native material alpha; no GTA V refraction/reflections.')
                     geometries.append(geometry(vertices,indices,texture,rig[:2] if rig else None,alpha,colour))
                     report['vertices'] += len(vertices); report['triangles'] += len(indices)//3
         payload = dff(geometries,frames)

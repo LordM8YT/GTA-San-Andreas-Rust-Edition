@@ -82,6 +82,20 @@ also tested with the same raw car, a renamed YTD and owned metadata: both
 clients downloaded the converted pack, drove/rode in the car and restored
 the offline world. Third-party assets remain local.
 
+## Material approximation
+
+Known glass shader file names, including hashed CodeWalker names, now become
+50% transparent native materials. This fixes vehicle glass being imported as
+opaque simply because its render bucket was 0 or 1. Ordinary bodywork and lights
+keep their previous opaque behavior; unknown shaders retain the existing bucket
+fallback. The identifiers follow [CodeWalker's glass shader classification](https://github.com/dexyfex/CodeWalker/blob/master/CodeWalker/Rendering/ShaderManager.cs).
+
+This is a fixed-opacity approximation. GTA V reflection, refraction, tint,
+breakage and lighting behavior are not reproduced. Alpha layers use the current
+native renderer and may still have sorting artifacts. Re-import existing packs
+to regenerate their materials; the changed assets produce a new server cache
+fingerprint. Original San Andreas materials are unaffected.
+
 ## Player and clothing resource folders
 
 `--kind player` imports one selected YDD character into a native player
