@@ -109,6 +109,8 @@ Vulkan is available on Windows; Linux startup and CI build checks are included,
 with Linux gameplay validation still pending: [Linux](docs/linux.md).
 DLSS and temporal FSR are not integrated yet.
 
+Join our discord here: https://discord.gg/F8KwXJqw6D
+
 An offline [texture-upscaling tool](docs/texture-upscaling.md) produces optional
 native PNG overrides. Generated textures stay local; original game files are
 not modified or included in this repository.
