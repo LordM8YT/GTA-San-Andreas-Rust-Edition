@@ -2011,6 +2011,14 @@ impl ApplicationHandler for App {
                 .create_window(
                     Window::default_attributes()
                         .with_title(title)
+                        .with_window_icon(
+                            winit::window::Icon::from_rgba(
+                                include_bytes!("../../../assets/icon-128.rgba").to_vec(),
+                                128,
+                                128,
+                            )
+                            .ok(),
+                        )
                         .with_visible(!self.smoke)
                         .with_inner_size(winit::dpi::LogicalSize::new(1440, 900)),
                 )
