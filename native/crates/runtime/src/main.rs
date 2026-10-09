@@ -1378,6 +1378,7 @@ impl State {
                     return;
                 }
                 self.menu.has_played = true;
+                self.menu.message.clear();
                 self.menu.page = None;
                 self.keys.clear();
                 self.last = Instant::now();
@@ -1456,16 +1457,13 @@ impl State {
                     }
                     self.car_render_pose = None;
                     self.driving = true;
-                    if self.driving {
-                        self.menu.has_played = true;
-                        self.menu.message.clear();
-                        self.menu.page = None;
-                        self.keys.clear();
-                        self.capture(true);
-                    } else {
-                        self.menu.message =
-                            "No clear supported space nearby. Move to an open road.".into();
-                    }
+                    // Same as F9 and F: peers keep seeing this car after its owner exits.
+                    self.network_car_spawned = true;
+                    self.menu.has_played = true;
+                    self.menu.message.clear();
+                    self.menu.page = None;
+                    self.keys.clear();
+                    self.capture(true);
                 }
             }
             Some(menu::Action::SpawnPed(index)) => match self.spawn_ped(index) {
@@ -2378,10 +2376,16 @@ impl ApplicationHandler for App {
                         event_loop.set_control_flow(ControlFlow::WaitUntil(state.next_frame));
                         return;
                     }
-                    state.next_frame = now
-                        + std::time::Duration::from_secs_f64(
-                            1.0 / state.menu.settings.fps_limit as f64,
-                        );
+                    let interval = std::time::Duration::from_secs_f64(
+                        1.0 / state.menu.settings.fps_limit as f64,
+                    );
+                    // Schedule from the previous deadline: wake-up latency must not
+                    // accumulate into fewer frames than the selected limit.
+                    state.next_frame = if now.duration_since(state.next_frame) > interval {
+                        now + interval
+                    } else {
+                        state.next_frame + interval
+                    };
                     event_loop.set_control_flow(ControlFlow::WaitUntil(state.next_frame));
                 } else {
                     event_loop.set_control_flow(ControlFlow::Poll);
@@ -3475,11 +3479,23 @@ fn main() -> Result<()> {
     } else {
         Some(sa_client::launch::RuntimeGuard::acquire()?)
     };
-    let game = args
+    // Without an explicit folder, use GTA_SA_DIR or a detected installation
+    // instead of one developer's drive layout.
+    let game = match args
         .windows(2)
         .find(|w| w[0] == "--game-dir")
         .map(|w| PathBuf::from(&w[1]))
-        .unwrap_or_else(|| PathBuf::from(r"E:\GTA San Andreas\Grand Theft Auto San Andreas"));
+    {
+        Some(path) => path,
+        None => sa_client::install::candidates()
+            .into_iter()
+            .find(|path| {
+                sa_assets::game_path::resolve(path, "models/gta3.img").is_ok_and(|p| p.is_file())
+            })
+            .context(
+                "No San Andreas installation found. Pass --game-dir <folder>, set GTA_SA_DIR, or start through sa-launcher.",
+            )?,
+    };
     if args.iter().any(|arg| arg == "--probe-audio") {
         let archive = sa_audio::archive::SfxArchive::open(&game)?;
         let mut count = 0;

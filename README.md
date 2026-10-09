@@ -1,5 +1,12 @@
 # SARE - San Andreas Rust Edition
 
+[![Join the SARE Discord](https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/F8KwXJqw6D)
+[![Build status](https://img.shields.io/github/actions/workflow/status/LordM8YT/GTA-San-Andreas-Rust-Edition/native.yml?branch=main&style=for-the-badge&label=build)](https://github.com/LordM8YT/GTA-San-Andreas-Rust-Edition/actions/workflows/native.yml)
+[![Latest client](https://img.shields.io/badge/Download-latest%20client-2ea44f?style=for-the-badge)](https://github.com/LordM8YT/GTA-San-Andreas-Rust-Edition/releases/latest)
+
+> **💬 Join the community on Discord: <https://discord.gg/F8KwXJqw6D>**
+> Get help, report bugs, find people to play with and follow development.
+
 ## Native launcher (local review build)
 
 Build developers: `cargo build --release --workspace --manifest-path native/Cargo.toml`.
@@ -108,8 +115,6 @@ quality presets, renderer selection and frame limits. See [graphics](docs/graphi
 Vulkan is available on Windows; Linux startup and CI build checks are included,
 with Linux gameplay validation still pending: [Linux](docs/linux.md).
 DLSS and temporal FSR are not integrated yet.
-
-Join our discord here: https://discord.gg/F8KwXJqw6D
 
 An offline [texture-upscaling tool](docs/texture-upscaling.md) produces optional
 native PNG overrides. Generated textures stay local; original game files are

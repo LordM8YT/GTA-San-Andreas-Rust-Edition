@@ -6,6 +6,8 @@ needed by developers building from source. Choose your original **PC San Andreas
 installation in Settings, validate it, then Play or Continue free roam. The original
 executable is never launched and original files are never modified.
 
+Questions, bug reports and people to play with: <https://discord.gg/F8KwXJqw6D>
+
 For multiplayer, choose Servers, enter a host IP:port or a relay IP:port
 and 12-character join code. A trusted relay's browser lists public rooms on that
 relay only. All participants, host and relay must use protocol 6. Required native
