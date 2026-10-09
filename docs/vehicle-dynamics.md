@@ -118,3 +118,7 @@ braking, exit/re-entry and multiplayer model changes/offline restoration were
 checked separately. This measures avoided CPU/GPU work, not a guaranteed FPS.
 Use `--smoke-car --smoke-idle-car` to run the route and assert parked updates
 remain zero. Third-party models are kept outside the repository.
+
+The chase camera eases toward the car's heading (about 0.2 s time constant)
+instead of copying every yaw correction, and the radar heading follows it while
+driving. Moving the mouse looks around; the view settles back behind the car.

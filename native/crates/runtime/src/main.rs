@@ -801,7 +801,17 @@ impl State {
                         .unwrap_or(0),
                 });
             } else if self.interior == 0 && streaming::distance(center, self.region) > 140.0 {
-                streamer.request(center);
+                // Centre the next region ahead of a moving car. Loading takes a
+                // few seconds; at speed the car otherwise reaches the edge of the
+                // old region first and reloads again almost immediately.
+                let ahead = self
+                    .car
+                    .as_ref()
+                    .filter(|_| self.driving)
+                    .map_or(Vec3::ZERO, |(car, _)| {
+                        car.forward() * (car.speed * 3.0).clamp(-120.0, 120.0)
+                    });
+                streamer.request([center[0] + ahead.x, center[1] - ahead.z]);
             }
         }
         self.streamer = Some(streamer);
@@ -978,9 +988,14 @@ impl State {
                     car.position = previous;
                     car.stop();
                 }
+                // Ease the chase camera and radar heading behind the car instead
+                // of locking them to every small yaw correction of the body.
+                let turn = car.yaw - self.yaw;
+                self.yaw += turn.sin().atan2(turn.cos()) * (1.0 - (-5.0 * dt).exp());
+                let behind = Vec3::new(self.yaw.sin(), 0.0, self.yaw.cos());
                 self.position = world.clip_camera(
                     car.position + Vec3::Y,
-                    car.position - car.forward() * 7.0 + Vec3::Y * 3.5,
+                    car.position - behind * 7.0 + Vec3::Y * 3.5,
                 );
             }
         } else if self.walking {

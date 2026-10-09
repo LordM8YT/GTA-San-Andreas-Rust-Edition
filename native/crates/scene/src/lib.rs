@@ -28,6 +28,8 @@ struct Placement {
     interior: i32,
     lod: i32,
     is_lod: bool,
+    /// Index of this row's distant stand-in in `WorldLoader::rows`.
+    parent: Option<usize>,
 }
 #[repr(C)]
 #[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -162,6 +164,7 @@ fn placement(id: i32, interior: i32, pos: [f32; 3], quat: [f32; 4]) -> Result<Pl
         quat,
         lod: -1,
         is_lod: false,
+        parent: None,
     })
 }
 fn binary_ipl(data: &[u8]) -> Result<Vec<Placement>> {
@@ -231,12 +234,7 @@ impl WorldArchive {
         }
     }
 }
-fn placements(
-    root: &Path,
-    img: &mut WorldArchive,
-    center: [f32; 2],
-    radius: f32,
-) -> Result<Vec<Placement>> {
+fn placements(root: &Path, img: &mut WorldArchive) -> Result<Vec<Placement>> {
     let mut out = Vec::new();
     let names: Vec<_> = img.names().cloned().collect();
     for path in registered(root, "IPL", ".ipl")? {
@@ -293,17 +291,18 @@ fn placements(
                 row.is_lod = true;
             }
         }
+        // LOD indices are local to one IPL; keep them valid in the merged list.
+        let (offset, count) = (out.len(), base.len());
+        for row in base.iter_mut().chain(children.iter_mut()) {
+            row.parent = usize::try_from(row.lod)
+                .ok()
+                .filter(|index| *index < count)
+                .map(|index| offset + index);
+        }
         out.extend(base);
         out.extend(children);
     }
-    Ok(out
-        .into_iter()
-        .filter(|r| {
-            let x = r.pos[0] - center[0];
-            let y = r.pos[1] - center[1];
-            x * x + y * y <= radius * radius
-        })
-        .collect())
+    Ok(out)
 }
 fn rotate(point: [f32; 3], q: [f32; 4]) -> [f32; 3] {
     let len = q.iter().map(|v| v * v).sum::<f32>().sqrt();
@@ -550,7 +549,7 @@ impl WorldLoader {
         for path in registered(&game, "IDE", ".ide")? {
             texture::add_parents(lines(&path)?, &mut texture_parents);
         }
-        let rows = placements(&game, &mut img, [0.0, 0.0], 20000.0)?;
+        let rows = placements(&game, &mut img)?;
         let mut collision_models = HashMap::new();
         let mut files: Vec<_> = img
             .names()
@@ -621,10 +620,11 @@ impl WorldLoader {
         let defs = &self.defs;
         // Padding includes large road/building meshes whose origin is outside
         // the visible neighbourhood. Geometry is never clipped at the edge.
-        let rows: Vec<_> = self
+        let mut rows: Vec<_> = self
             .rows
             .iter()
-            .filter(|r| {
+            .enumerate()
+            .filter(|(_, r)| {
                 if r.interior != interior {
                     return false;
                 }
@@ -636,6 +636,22 @@ impl WorldLoader {
                 x * x + y * y <= (range + 1600.0).powi(2)
             })
             .collect();
+        // Detailed placements first, nearest first. Stand-ins are then chosen
+        // from what was actually drawn, and a dense region sheds its farthest
+        // scenery instead of failing to load.
+        let order = |r: &Placement| {
+            let x = r.pos[0] - center[0];
+            let y = r.pos[1] - center[1];
+            (
+                r.is_lod || defs.get(&r.id).is_some_and(|d| d.model.starts_with("lod")),
+                x * x + y * y,
+            )
+        };
+        rows.sort_by(|a, b| {
+            let (a, b) = (order(a.1), order(b.1));
+            a.0.cmp(&b.0).then(a.1.total_cmp(&b.1))
+        });
+        let mut detailed_parents = std::collections::HashSet::new();
         let mut models: HashMap<String, Vec<Geometry>> = HashMap::new();
         let mut batches = HashMap::new();
         let mut physical = Batch {
@@ -650,7 +666,7 @@ impl WorldLoader {
         let mut lod_count = 0;
         let mut sign_models = std::collections::HashSet::new();
         let mut triangles = 0;
-        for r in rows {
+        for (index, r) in rows {
             if self.resources.excluded.contains(&r.id) {
                 continue;
             }
@@ -724,8 +740,23 @@ impl WorldLoader {
             let distance_squared: f32 = (0..2)
                 .map(|axis| (center[axis] - center[axis].clamp(min[axis], max[axis])).powi(2))
                 .sum();
-            if !visible_region(distance_squared, is_lod, radius) {
+            // One level of detail per linked pair: a drawn model keeps its
+            // siblings and hides their shared stand-in. Choosing each side by
+            // its own bounds left gaps and overlapping, flickering surfaces.
+            let shown = if r.is_lod {
+                distance_squared <= DISTANT_RADIUS.powi(2) && !detailed_parents.contains(&index)
+            } else if is_lod {
+                visible_region(distance_squared, true, radius)
+            } else {
+                visible_region(distance_squared, false, radius)
+                    || r.parent
+                        .is_some_and(|parent| detailed_parents.contains(&parent))
+            };
+            if !shown {
                 continue;
+            }
+            if let Some(parent) = r.parent.filter(|_| !is_lod) {
+                detailed_parents.insert(parent);
             }
             if !is_lod && !self.collision_models.contains_key(&def.model) {
                 add_model(&mut fallback, &models[&dff], r, origin, &def.txd)?;
@@ -736,10 +767,12 @@ impl WorldLoader {
             }
             count += 1;
             lod_count += usize::from(is_lod);
-            ensure!(
-                count <= 30_000 && triangles <= 4_000_000,
-                "streaming region exceeds geometry budget"
-            );
+            if count >= 30_000 || triangles >= 4_000_000 {
+                eprintln!(
+                    "Streaming region reached its geometry budget after {count} placements; farthest scenery omitted"
+                );
+                break;
+            }
         }
         ensure!(count > 0, "no detailed placements");
         let mut textures = HashMap::new();
@@ -882,6 +915,7 @@ pub fn load_first_model(game: &Path) -> Result<Scene> {
         interior: 0,
         lod: -1,
         is_lod: false,
+        parent: None,
         pos: [2500.0, -1670.0, 0.0],
         quat: [0.0, 0.0, 0.0, 1.0],
     };
@@ -922,6 +956,7 @@ pub fn load_cuttest(game: &Path) -> Result<Scene> {
         interior: 0,
         lod: -1,
         is_lod: false,
+        parent: None,
         pos: [0.0, 0.0, 0.0],
         quat: [0.0, 0.0, 0.0, 1.0],
     };
@@ -983,6 +1018,7 @@ pub fn load_prologue(game: &Path) -> Result<Scene> {
         interior: 0,
         lod: -1,
         is_lod: false,
+        parent: None,
         pos: [0.0; 3],
         quat: [0.0, 0.0, 0.0, 1.0],
     };

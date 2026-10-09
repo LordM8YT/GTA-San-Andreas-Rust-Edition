@@ -127,10 +127,15 @@ feilmelding vises i menyen.
   Dette er foreløpig uten bølger, dykking eller svømmeanimasjon.
 - `--probe-water` kontrollerer flyting med original kystgeometri.
 - Foreldre angitt via IPL LOD-lenker filtreres bort fra detaljvisningen.
-- Fjern-LOD vises opptil 2,5 km. LOD-modeller hvis grenser berører
-  detaljområdet holdes ute; fjernmodellene inngår aldri i gangkollisjon.
-  Kameraets fjernplan er 3,5 km. Overgangen kan fortsatt ha synlige hull
-  eller sprang for store grupper; dette er ikke full original LOD-styring.
+- Fjern-LOD vises opptil 2,5 km; fjernmodellene inngår aldri i gangkollisjon.
+  For lenkede par velges ett nivå: når en detaljmodell tegnes, tegnes også
+  søsknene med samme LOD-forelder, og forelderen skjules. Ellers vises
+  forelderen. Dette fjerner hull og overlappende flater i overgangen.
+  Kameraets fjernplan er 3,5 km. Dette er ikke full original LOD-styring.
+- Et område som når geometribudsjettet (30 000 plasseringer / 4 mill. trekanter)
+  lastes likevel: nærmeste detaljer først, fjerneste kulisser utelates.
+- Neste område sentreres foran en bil i fart (inntil 120 m), slik at bilen
+  ikke når kanten av det gamle området før det nye er klart.
 - Originale COL1/2/3/4-kollisjonscontainere dekodes. 8 255 originalmodeller
   ble indeksert. Trekanter brukes direkte; bokser og kuler trianguleres.
 - Visuell kollisjon brukes som reserve for modeller uten COL.
