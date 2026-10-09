@@ -79,6 +79,10 @@ pub struct Car {
     lateral_speed: f32,
     steering_angle: f32,
     yaw_rate: f32,
+    /// Grade of the last road surface under all four wheels.
+    ground_pitch: f32,
+    ground_roll: f32,
+    airborne: bool,
 }
 impl Car {
     pub fn new(position: Vec3, clearance: f32) -> Self {
@@ -94,6 +98,9 @@ impl Car {
             lateral_speed: 0.0,
             steering_angle: 0.0,
             yaw_rate: 0.0,
+            ground_pitch: 0.0,
+            ground_roll: 0.0,
+            airborne: false,
         }
     }
     pub fn with_handling(mut self, handling: Handling) -> Self {
@@ -221,31 +228,38 @@ impl Car {
             self.position.y - self.clearance + z * self.pitch.tan() + x * self.roll.tan()
         };
         // Four tire contact points avoid losing all traction at the centre of a ledge.
-        let contacts = [-0.72, 0.72]
+        let wheels = [-0.72_f32, 0.72]
             .into_iter()
-            .flat_map(|x| [-1.35, 1.35].map(move |z| (x, z)))
-            .map(|(x, z)| {
+            .flat_map(|x| [-1.35_f32, 1.35].map(move |z| (x, z)))
+            .collect::<Vec<_>>();
+        let contacts = wheels
+            .iter()
+            .map(|&(x, z)| {
                 world.ground_below(
                     self.position + side * x + self.forward() * z,
                     expected_height(x, z) + TRAVEL,
                 )
             })
             .collect::<Vec<_>>();
-        // A wheel past a ramp lip or ledge keeps the body's current plane. Using
-        // the ground far below it pitched the nose down and let the suspension
-        // damper cancel the climb, so the car dropped instead of jumping.
-        let (supports, heights): (Vec<_>, Vec<_>) = contacts
+        // Wheel offsets and ground heights of the wheels carrying the car.
+        let supports: Vec<(f32, f32, f32)> = wheels
             .iter()
-            .enumerate()
-            .map(|(i, ground)| {
-                let x = if i < 2 { -0.72 } else { 0.72 };
-                let z = if i % 2 == 0 { -1.35 } else { 1.35 };
-                let expected = expected_height(x, z);
-                let support = ground.filter(|g| expected - g <= TRAVEL);
-                (support, support.unwrap_or(expected))
+            .zip(&contacts)
+            .filter_map(|(&(x, z), ground)| {
+                ground
+                    .filter(|g| expected_height(x, z) - g <= TRAVEL)
+                    .map(|g| (x, z, g))
             })
-            .unzip();
-        let supports: Vec<f32> = supports.into_iter().flatten().collect();
+            .collect();
+        // Past a ramp lip or ledge the next surface is far below a wheel. Its
+        // height says nothing about the road the car is leaving: following it
+        // pitched the nose down and made the damper cancel the climb, so the
+        // car dropped at the lip instead of jumping.
+        const REACH: f32 = 1.0;
+        let over_air = wheels
+            .iter()
+            .zip(&contacts)
+            .any(|(&(x, z), ground)| ground.is_none_or(|g| expected_height(x, z) - g > REACH));
         let grounded = supports.len() >= 2;
         let grip = if grounded {
             supports.len() as f32 / 4.0
@@ -304,9 +318,22 @@ impl Car {
         let side = Vec3::new(self.yaw.cos(), 0.0, -self.yaw.sin());
         self.speed = velocity.dot(self.forward());
         self.lateral_speed = velocity.dot(side);
-        let height = |index: usize| heights[index];
-        let slope_pitch = (((height(1) + height(3)) - (height(0) + height(2))) * 0.5 / 2.7).atan();
-        let slope_roll = (((height(2) + height(3)) - (height(0) + height(1))) * 0.5 / 1.44).atan();
+        let height = |index: usize| contacts[index].unwrap_or(self.position.y - self.clearance);
+        let measured_pitch =
+            (((height(1) + height(3)) - (height(0) + height(2))) * 0.5 / 2.7).atan();
+        let measured_roll =
+            (((height(2) + height(3)) - (height(0) + height(1))) * 0.5 / 1.44).atan();
+        // With a wheel over open air keep the grade of the road being left; after
+        // a flight that grade is stale, so level out until all wheels find ground.
+        let (slope_pitch, slope_roll) = if !over_air {
+            (measured_pitch, measured_roll)
+        } else if self.airborne {
+            (0.0, 0.0)
+        } else {
+            (self.ground_pitch, self.ground_roll)
+        };
+        self.ground_pitch = slope_pitch;
+        self.ground_roll = slope_roll;
         let blend = 1.0 - (-8.0 * dt).exp();
         self.pitch +=
             ((slope_pitch + acceleration * grip * 0.012).clamp(-0.6, 0.6) - self.pitch) * blend;
@@ -338,7 +365,18 @@ impl Car {
             self.position = desired;
         }
         if grounded {
-            let ground = heights.iter().sum::<f32>() / heights.len() as f32;
+            // Extend the remembered road plane from the wheels still on it, so
+            // the body is not pulled down to the rear axle at a ramp lip.
+            let grade = if over_air {
+                (slope_pitch.tan(), slope_roll.tan())
+            } else {
+                (0.0, 0.0)
+            };
+            let ground = supports
+                .iter()
+                .map(|(x, z, ground)| ground - z * grade.0 - x * grade.1)
+                .sum::<f32>()
+                / supports.len() as f32;
             let moved = self.position - before_motion;
             let ground_velocity = (moved.dot(self.forward()) * slope_pitch.tan()
                 + moved.dot(side) * slope_roll.tan())
@@ -358,9 +396,13 @@ impl Car {
                 self.position.y = target;
                 self.vertical_speed = self.vertical_speed.max(ground_velocity);
             }
+            if !over_air {
+                self.airborne = false;
+            }
         } else {
             self.vertical_speed -= 9.81 * dt;
             self.position.y += self.vertical_speed * dt;
+            self.airborne = true;
         }
     }
 }
@@ -624,7 +666,7 @@ mod tests {
         car.speed = 20.0;
         let mut peak = f32::NEG_INFINITY;
         let mut airborne_distance = 0.0_f32;
-        for _ in 0..600 {
+        for _ in 0..720 {
             car.step(&world, 1.0, 0.0, false, 1.0, 1.0 / 120.0);
             assert!(car.position.is_finite());
             peak = peak.max(car.position.y - car.clearance);
@@ -643,6 +685,10 @@ mod tests {
             car.position.z > 60.0 && (car.position.y - 0.6).abs() < 0.2,
             "car did not land and continue: {:?}",
             car.position
+        );
+        assert!(
+            peak < 9.0,
+            "car was launched far above its climb rate: {peak}"
         );
     }
 
