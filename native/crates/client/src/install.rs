@@ -136,19 +136,34 @@ pub fn candidates() -> Vec<PathBuf> {
     if let Some(path) = std::env::var_os("GTA_SA_DIR") {
         paths.push(path.into());
     }
-    for drive in ["C:", "D:", "E:"] {
-        for suffix in [
-            "Program Files (x86)/Steam/steamapps/common/Grand Theft Auto San Andreas",
-            "Games/GTA San Andreas",
-            "GTA San Andreas/Grand Theft Auto San Andreas",
-        ] {
-            paths.push(PathBuf::from(format!("{drive}/{suffix}")));
+    if cfg!(windows) {
+        for drive in ["C:", "D:", "E:"] {
+            for suffix in [
+                "Program Files (x86)/Steam/steamapps/common/Grand Theft Auto San Andreas",
+                "Program Files (x86)/Rockstar Games/GTA San Andreas",
+                "Program Files/Rockstar Games/GTA San Andreas",
+                "SteamLibrary/steamapps/common/Grand Theft Auto San Andreas",
+                "Games/GTA San Andreas",
+                "GTA San Andreas/Grand Theft Auto San Andreas",
+            ] {
+                paths.push(PathBuf::from(format!("{drive}/{suffix}")));
+            }
         }
     }
     if let Some(home) = std::env::var_os("HOME") {
-        paths.push(
-            PathBuf::from(home).join(".steam/steam/steamapps/common/Grand Theft Auto San Andreas"),
-        );
+        // Native, Debian-style and Flatpak Steam libraries.
+        for steam in [
+            ".steam/steam",
+            ".local/share/Steam",
+            ".steam/debian-installation",
+            ".var/app/com.valvesoftware.Steam/.local/share/Steam",
+        ] {
+            paths.push(
+                PathBuf::from(&home)
+                    .join(steam)
+                    .join("steamapps/common/Grand Theft Auto San Andreas"),
+            );
+        }
     }
     paths
 }

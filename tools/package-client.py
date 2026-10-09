@@ -14,6 +14,23 @@ from concurrent.futures import ThreadPoolExecutor
 
 REPO = Path(__file__).resolve().parents[1]
 
+# Keep aligned with safe_path in native/crates/launcher/src/updater.rs: a package
+# containing any other name is rejected by every installed client's updater.
+DEVICES = {'CON', 'PRN', 'AUX', 'NUL'} | {f'{prefix}{index}' for prefix in ('COM', 'LPT') for index in range(1, 10)}
+
+def updater_part(part):
+    """Map one dependency notice name component onto the updater's path alphabet."""
+    part = re.sub(r'[^A-Za-z0-9._+ -]', '_', part).rstrip('. ') or '_'
+    if part in ('.', '..') or part.split('.')[0].upper() in DEVICES:
+        part = '_' + part
+    return part
+
+def updater_accepts(name):
+    return 0 < len(name) < 240 and all(
+        part and part not in ('.', '..') and part.split('.')[0].upper() not in DEVICES
+        and not part.endswith(('.', ' ')) and re.fullmatch(r'[A-Za-z0-9._+ -]+', part)
+        for part in name.split('/'))
+
 def upstream_notices(dependency, cache):
     """License text only, pinned to the registry package's source commit. Never executed."""
     root = Path(dependency['manifest_path']).parent
@@ -97,8 +114,13 @@ def package(target: Path, destination: Path, platform: str) -> Path:
                     notices.append('  Pinned notice source: ' + source)
             if dependency['name'] == 'epaint_default_fonts':
                 files.extend((root / 'fonts').glob('*.txt'))
+            written = set()
             for file in files:
-                archive.write(file, f'licenses/{identifier}/{file.name}')
+                name = f'licenses/{updater_part(identifier)}/{updater_part(file.name)}'
+                if name.lower() in written:
+                    continue
+                written.add(name.lower())
+                archive.write(file, name)
             if not files:
                 missing_notices.append(identifier)
                 notices.append('  No standalone notice in the registry package; consult the source license before public redistribution.')
@@ -111,6 +133,11 @@ def package(target: Path, destination: Path, platform: str) -> Path:
         staging.unlink()
         raise ValueError('Invalid package commit')
     with zipfile.ZipFile(staging, 'a', compression=zipfile.ZIP_DEFLATED) as archive:
+        rejected = [name for name in archive.namelist() if not updater_accepts(name)]
+        if rejected:
+            archive.close()
+            staging.unlink()
+            raise ValueError('Package paths the client updater would reject: ' + ', '.join(rejected[:8]))
         files = [{'path': name, 'size': archive.getinfo(name).file_size, 'sha256': hashlib.sha256(archive.read(name)).hexdigest()} for name in archive.namelist()]
         archive.writestr('sare-build.json', json.dumps({'schema': 1, 'commit': commit, 'platform': platform, 'files': files}, indent=2))
     staging.replace(output)

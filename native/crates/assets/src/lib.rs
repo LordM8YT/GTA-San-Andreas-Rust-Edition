@@ -643,7 +643,10 @@ pub fn decode_txd(data: &[u8], wanted: &str) -> Result<Texture> {
     ensure!(natives.len() == count, "TXD count mismatch");
     for native in natives {
         let s = one(native.body, 1)?;
-        let key = name(slice(s, 8, 32)?)?;
+        // A non-ASCII name on an unrelated texture must not hide the wanted one.
+        let Ok(key) = name(slice(s, 8, 32)?) else {
+            continue;
+        };
         if key != wanted.to_ascii_lowercase() {
             continue;
         }

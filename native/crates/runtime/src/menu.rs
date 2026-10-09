@@ -431,6 +431,11 @@ impl Menu {
                 ui.label(&self.graphics_resolution);
                 ui.add_space(16.0*scale);
                 ui.label(RichText::new("Changes are saved automatically. Renderer changes require restart.").size(14.0*scale).color(MUTED));
+                // Restart and save-failure notices are raised while this page is open.
+                if !self.message.is_empty() {
+                    ui.add_space(12.0*scale);
+                    ui.label(RichText::new(&self.message).color(GOLD));
+                }
             });
         });
     }
@@ -915,6 +920,10 @@ impl Menu {
                 }).map(|d|d.0).unwrap_or("San Andreas");
                 painter.text(Pos2::new(right,screen.bottom()-240.0*scale),egui::Align2::LEFT_TOP,location,FontId::new(32.0*scale,FontFamily::Name("street".into())),WHITE);
                 painter.text(Pos2::new(right,screen.bottom()-189.0*scale),egui::Align2::LEFT_TOP,"No missions. Just freedom.\nWalk, explore, and build on.",FontId::proportional(17.0*scale),MUTED);
+                // Checkpoint, map-loading and session notices also end on these pages.
+                if !self.message.is_empty() {
+                    painter.text(Pos2::new(left,footer-30.0*scale),egui::Align2::LEFT_CENTER,&self.message,FontId::proportional(15.0*scale),GOLD);
+                }
             } else {
                 let start=Pos2::new(left,top+210.0*scale);
                 let rect=Rect::from_min_max(start,Pos2::new(screen.right()-screen.width()*0.07,footer-36.0*scale));

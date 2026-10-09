@@ -9,7 +9,7 @@ not an authoritative shared world yet.
 
 ## Start
 
-On Windows, run `start-server.cmd`. It builds `sa-server` when Cargo is available,
+On Windows, run `start-server.cmd`; on Linux, `./start-server.sh`. It builds `sa-server` when Cargo is available,
 then creates `server.json` in the project directory on first run. Defaults bind
 only `127.0.0.1:7777`, with no relay. Type `quit`, edit the configuration and run
 again. `status`, `players`, `help` and `quit` are available in the console.

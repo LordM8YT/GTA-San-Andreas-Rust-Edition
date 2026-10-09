@@ -53,6 +53,37 @@ class ClientPackageTests(unittest.TestCase):
             self.assertEqual(list((root / 'output').glob('*.staging-*')), [])
 
 
+    def test_dependency_notice_names_stay_inside_the_updater_alphabet(self):
+        import json
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for path in ['LICENSE','docs/client-package.md','native/Cargo.lock','native/crates/runtime/assets/UnifrakturCook-OFL.txt','native/crates/runtime/vendor/fsr1/license.txt']:
+                file = root / path
+                file.parent.mkdir(parents=True, exist_ok=True)
+                file.write_text('owned test support file', encoding='utf-8')
+            target = root / 'build'
+            target.mkdir()
+            for name in ['sa-launcher','sa-runtime','sa-server','sa-relay']:
+                (target / name).write_bytes(b'owned test fixture')
+            dependency = root / 'dependency'
+            dependency.mkdir()
+            for name in ['LICENSE (MIT).txt', 'LICENSE_(MIT).txt', 'NOTICE.']:
+                try:
+                    (dependency / name).write_text('owned fixture notice ' + name, encoding='utf-8')
+                except OSError:
+                    pass  # Windows refuses the trailing dot itself.
+            metadata = {'packages': [{'name': 'odd', 'version': '1.0.0+build.2', 'source': 'registry+fixture', 'license': 'MIT', 'repository': None, 'manifest_path': str(dependency / 'Cargo.toml')}]}
+            with patch.object(package_client, 'REPO', root), patch.object(package_client.subprocess, 'check_output', return_value=json.dumps(metadata).encode()):
+                output = package_client.package(target, root / 'output', 'linux')
+            with zipfile.ZipFile(output) as archive:
+                names = archive.namelist()
+            self.assertTrue(all(package_client.updater_accepts(name) for name in names), names)
+            self.assertIn('licenses/odd-1.0.0+build.2/LICENSE _MIT_.txt', names)
+            self.assertEqual(len({name.lower() for name in names}), len(names))
+        for name in ['licenses/a/CON.txt', 'licenses/a/x.', 'licenses//x', 'licenses/../x', 'licenses/a/b(c)', 'x' * 240]:
+            self.assertFalse(package_client.updater_accepts(name), name)
+        self.assertEqual(package_client.updater_part('con.txt'), '_con.txt')
+
     def test_missing_runtime_rejects_incomplete_package(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

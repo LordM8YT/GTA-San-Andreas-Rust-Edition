@@ -1,0 +1,11 @@
+# Keep scripts runnable regardless of the contributor's core.autocrlf setting.
+*.sh   text eol=lf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+*.rs   text eol=lf
+*.wgsl text eol=lf
+*.py   text eol=lf
+*.dff  binary
+*.ifp  binary
+*.ttf  binary
+*.db   binary

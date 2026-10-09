@@ -11,7 +11,11 @@ sudo apt-get install pkg-config libasound2-dev libudev-dev libdbus-1-dev libxkbc
 bash start-freeroam.sh --game-dir "/path/to/Grand Theft Auto San Andreas"
 ```
 
-Alternatively set `GTA_SA_DIR` to the original installation directory.
+Alternatively set `GTA_SA_DIR` to the original installation directory. Without
+either, the runtime looks in the usual Steam library folders (`~/.steam/steam`,
+`~/.local/share/Steam`, the Flatpak Steam data folder) and stops with a clear
+message when no installation is found. `start-server.sh` and `start-relay.sh`
+are the Linux counterparts of the Windows `.cmd` starters.
 Original installation paths are resolved case-insensitively, including Windows
 path separators in GTA manifests. Use a Vulkan-capable GPU driver. Settings are stored in
 `$XDG_CONFIG_HOME/sa-freeroam/settings.json`, or
