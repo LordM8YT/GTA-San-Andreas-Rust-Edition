@@ -1,3 +1,5 @@
+<img src="native/assets/icon.png" alt="SARE icon" width="96" align="right">
+
 # SARE - San Andreas Rust Edition
 
 [![Join the SARE Discord](https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/F8KwXJqw6D)

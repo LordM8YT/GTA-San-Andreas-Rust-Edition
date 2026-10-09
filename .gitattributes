@@ -6,6 +6,10 @@
 *.wgsl text eol=lf
 *.py   text eol=lf
 *.dff  binary
+*.rgba binary
+*.res  binary
+*.ico  binary
+*.png  binary
 *.ifp  binary
 *.ttf  binary
 *.db   binary
