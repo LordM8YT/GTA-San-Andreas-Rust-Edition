@@ -30,7 +30,9 @@ Vinduet kan endre størrelse og bruker faktisk vindusformat, også ultrawide.
 ## Arkitektur og grenser
 
 - `sa-assets`: validert VER2-indeks og direkte lesing av IMG-entries, rigid DFF,
-  materialer/rammer, samt DXT1/3/5 og BGRA/XRGB fra originale TXD-filer.
+  materialer/rammer, samt DXT1/3/5, BGRA/XRGB, 8-bit palett, 16-bit (565/1555/4444) og
+  luminans fra originale TXD-filer, inkludert eldre D3D8-ordbøker og
+  RenderWare 3.3–3.5-filer.
 - `sa-scene`: IDE/IPL fra `data/default.dat` fulgt av `data/gta.dat` i registrert
   rekkefølge, inkludert binære IPL-streams. Uregistrerte filer ignoreres.
   Senere registrert IDE-definisjon med samme ID erstatter tidligere definisjon.
