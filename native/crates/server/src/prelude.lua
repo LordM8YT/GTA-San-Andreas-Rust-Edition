@@ -6,13 +6,138 @@ __sare = nil
 local threads, now = {}, 0
 local handlers, net_safe, next_handler = {}, {}, 0
 local cancelled = false
+local resource_name = GetCurrentResourceName()
 
+-- Function references. A function crossing a resource boundary (export
+-- arguments and results, local event arguments) becomes
+-- { __cfx_functionReference = 'resource:id' }; the receiver gets a callable
+-- proxy. The server frees references that no proxy holds.
+local refs, released = {}, {}
+local ref_meta = {}
+local function encode(value, depth)
+  local kind = type(value)
+  if kind == 'function' then
+    local key, id = native.ref_new()
+    refs[id] = value
+    return { __cfx_functionReference = key }
+  end
+  if kind ~= 'table' or depth > 32 then return value end
+  local ref = rawget(value, '__cfx_functionReference')
+  if ref then return { __cfx_functionReference = ref } end
+  local copy
+  for key, item in pairs(value) do
+    local encoded = encode(item, depth + 1)
+    if not rawequal(encoded, item) then
+      if not copy then
+        copy = {}
+        for k, v in pairs(value) do copy[k] = v end
+      end
+      copy[key] = encoded
+    end
+  end
+  return copy or value
+end
+-- Decodes in place: values from the server are always fresh copies.
+local function decode(value, depth)
+  if type(value) ~= 'table' or depth > 32 then return value end
+  local ref = rawget(value, '__cfx_functionReference')
+  if type(ref) == 'string' then
+    local owner, id = ref:match('^(.*):(%d+)$')
+    if owner == resource_name then
+      return refs[tonumber(id)] or function() error(('function reference %s no longer exists'):format(ref), 2) end
+    end
+    native.ref_retain(ref)
+    return setmetatable({ __cfx_functionReference = ref }, ref_meta)
+  end
+  for key, item in pairs(value) do value[key] = decode(item, depth + 1) end
+  return value
+end
+local function pack(...) return { n = select('#', ...), ... } end
+ref_meta.__call = function(self, ...)
+  local result = decode(native.call_ref(rawget(self, '__cfx_functionReference'), encode(pack(...), 0)), 0)
+  return table.unpack(result, 1, result.n or #result)
+end
+-- Finalizers only queue: the release reaches the server at the next tick.
+ref_meta.__gc = function(self) released[#released + 1] = rawget(self, '__cfx_functionReference') end
+function __sare_ref_call(id, args)
+  local fn = refs[tonumber(id)]
+  if not fn then error(('function reference %s:%s no longer exists'):format(resource_name, id)) end
+  args = decode(args, 0)
+  return encode(pack(fn(table.unpack(args, 1, args.n or #args))), 0)
+end
+function __sare_ref_free(id) refs[id] = nil end
+
+-- The safe standard library has no `debug`; errors keep their file:line.
+local traceback = debug and debug.traceback or function(_, message) return message end
 local function resume(co, ...)
   local ok, value = coroutine.resume(co, ...)
   if not ok then
-    native.error(debug.traceback(co, tostring(value)))
+    native.error(traceback(co, tostring(value)))
   elseif coroutine.status(co) ~= 'dead' then
     threads[#threads + 1] = { co = co, wake = now + math.max(0, tonumber(value) or 0) }
+  end
+end
+
+-- CfxLua syntax in chunks loaded at runtime (ox_lib loads its modules with
+-- LoadResourceFile + load); `a?.b` compiles to __cfx_safe(a, 'b').
+local raw_load = load
+function load(chunk, ...)
+  if type(chunk) == 'string' then chunk = native.cfxlua(chunk) end
+  return raw_load(chunk, ...)
+end
+function __cfx_safe(value, key)
+  if value == nil then return nil end
+  return value[key]
+end
+
+-- CfxLua library additions used by ox_lib and Qbox.
+function table.clone(t)
+  local copy = {}
+  for k, v in pairs(t) do copy[k] = v end
+  return setmetatable(copy, getmetatable(t))
+end
+function table.wipe(t)
+  for k in pairs(t) do t[k] = nil end
+  return t
+end
+function table.create() return {} end
+-- 'empty', 'array' (keys 1..n), 'hash' (no array keys) or 'mixed'.
+function table.type(t)
+  if type(t) ~= 'table' then return nil end
+  if next(t) == nil then return 'empty' end
+  local n, array, other = #t, 0, 0
+  for k in pairs(t) do
+    if math.type(k) == 'integer' and k >= 1 and k <= n then array = array + 1 else other = other + 1 end
+  end
+  if other == 0 then return 'array' end
+  return array == 0 and 'hash' or 'mixed'
+end
+-- string.strsplit(delimiter, text[, pieces]) returns the parts.
+function string.strsplit(delimiter, text, pieces)
+  local parts, at = {}, 1
+  while not pieces or #parts < pieces - 1 do
+    local from, to = text:find(delimiter, at, true)
+    if not from then break end
+    parts[#parts + 1] = text:sub(at, from - 1)
+    at = to + 1
+  end
+  parts[#parts + 1] = text:sub(at)
+  return table.unpack(parts)
+end
+function string.strjoin(delimiter, ...) return table.concat({ ... }, delimiter) end
+function string.strtrim(text, chars)
+  chars = chars and ('[' .. chars:gsub('[%]%^%-]', '%%%0') .. ']') or '%s'
+  return (text:gsub('^' .. chars .. '+', ''):gsub(chars .. '+$', ''))
+end
+if io then
+  function io.readdir(path)
+    local names = native.readdir(path)
+    if not names then return nil end
+    local i = 0
+    return {
+      lines = function() return function() i = i + 1 return names[i] end end,
+      close = function() end,
+    }
   end
 end
 
@@ -37,6 +162,11 @@ CreateThread, Wait, SetTimeout = Citizen.CreateThread, Citizen.Wait, Citizen.Set
 
 function __sare_tick(time)
   now = time
+  if #released > 0 then
+    local list = released
+    released = {}
+    native.ref_release(list)
+  end
   local ready, waiting = {}, {}
   for _, thread in ipairs(threads) do
     if thread.wake <= now then ready[#ready + 1] = thread else waiting[#waiting + 1] = thread end
@@ -77,6 +207,21 @@ function __sare_event(name, src, args, from_net)
   end
   local list = handlers[name]
   if not list then return false end
+  -- Clients cannot send function references.
+  if not from_net then args = decode(args, 0) end
+  local kick_reason
+  if name == 'playerConnecting' and not from_net then
+    -- The player is already in the session: a rejection drops them.
+    args = pack(args[1], function(reason) kick_reason = tostring(reason) end, {
+      defer = function() end,
+      update = function() end,
+      presentCard = function() end,
+      handover = function() end,
+      done = function(reason)
+        if reason then DropPlayer(src, tostring(reason)) end
+      end,
+    })
+  end
   cancelled = false
   local snapshot = { table.unpack(list) }
   for _, entry in ipairs(snapshot) do
@@ -87,11 +232,13 @@ function __sare_event(name, src, args, from_net)
   end
   local result = cancelled
   cancelled = false
+  if result and name == 'playerConnecting' and not from_net then
+    DropPlayer(src, kick_reason or 'Connection rejected by the server.')
+  end
   return result
 end
 
-local function pack(...) return { n = select('#', ...), ... } end
-function TriggerEvent(name, ...) native.trigger(name, pack(...)) end
+function TriggerEvent(name, ...) native.trigger(name, encode(pack(...), 0)) end
 function TriggerClientEvent(name, target, ...) native.trigger_client(name, tonumber(target) or -1, pack(...)) end
 function TriggerLatentClientEvent(name, target, _bps, ...) TriggerClientEvent(name, target, ...) end
 
@@ -109,8 +256,9 @@ end
 local own_exports = {}
 function __sare_export_call(name, args)
   local fn = own_exports[name]
-  if not fn then error(('No such export %s in resource %s'):format(name, GetCurrentResourceName())) end
-  return pack(fn(table.unpack(args, 1, args.n or #args)))
+  if not fn then error(('No such export %s in resource %s'):format(name, resource_name)) end
+  args = decode(args, 0)
+  return encode(pack(fn(table.unpack(args, 1, args.n or #args))), 0)
 end
 exports = setmetatable({}, {
   __call = function(_, name, fn)
@@ -121,11 +269,10 @@ exports = setmetatable({}, {
     local proxy = {}
     return setmetatable(proxy, {
       __index = function(_, name)
-        return function(first, ...)
-          -- Support both exports.res:name(...) and exports.res.name(...)
-          local args
-          if first == proxy then args = pack(...) else args = pack(first, ...) end
-          local result = native.call_export(resource, name, args)
+        -- As in FiveM the first argument is always dropped: call
+        -- exports.res:name(...) (ox_lib calls exports.res.name(nil, ...)).
+        return function(_, ...)
+          local result = decode(native.call_export(resource, name, encode(pack(...), 0)), 0)
           return table.unpack(result, 1, result.n or #result)
         end
       end,
@@ -184,3 +331,34 @@ function Citizen.Await(p)
   if p.err then error(p.err, 2) end
   return p.value
 end
+
+-- State bags (server side only; not replicated to clients yet).
+-- GlobalState.key, Player(src).state.key and Entity(handle).state:set(k, v, r).
+local bag_handlers, next_bag_handler = {}, 0
+function AddStateBagChangeHandler(key, bag, handler)
+  next_bag_handler = next_bag_handler + 1
+  bag_handlers[next_bag_handler] = { key = key, bag = bag, fn = handler }
+  return next_bag_handler
+end
+function RemoveStateBagChangeHandler(cookie) bag_handlers[cookie] = nil end
+-- Called before the new value is stored, as in FiveM.
+function __sare_bag_change(bag, key, value, replicated)
+  for _, h in pairs(bag_handlers) do
+    if (h.key == nil or h.key == '' or h.key == key) and (h.bag == nil or h.bag == '' or h.bag == bag) then
+      resume(coroutine.create(function() h.fn(bag, key, value, 0, replicated) end))
+    end
+  end
+end
+local function state_bag(name)
+  local function set(_, key, value, replicated) native.bag_set(name, key, value, replicated == true) end
+  return setmetatable({}, {
+    __index = function(_, key)
+      if key == 'set' then return set end
+      return native.bag_get(name, key)
+    end,
+    __newindex = function(_, key, value) native.bag_set(name, key, value, true) end,
+  })
+end
+GlobalState = state_bag('global')
+function Player(id) return { state = state_bag(('player:%s'):format(tonumber(id) or id)) } end
+function Entity(handle) return { state = state_bag(('entity:%s'):format(handle)) } end

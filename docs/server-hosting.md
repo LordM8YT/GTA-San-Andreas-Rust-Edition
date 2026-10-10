@@ -30,6 +30,7 @@ server-data/
     [managers]/spawnmanager/       moves joining players to a spawn point
     [gamemodes]/basic-gamemode/    freeroam game type, join/leave messages, /respawn
     [gamemodes]/[maps]/sare-map-grove/   Grove Street spawn points
+    [examples]/                    example framework (sare_lib, sare_core, sare_jobs), not started
     [local]/                       your own resources
 ```
 
@@ -85,14 +86,25 @@ Server scripts run in one Lua 5.4 state per resource, like FiveM. Supported:
 `exports.resource:fn(...)`, `GetPlayers`, `GetPlayerName`, `GetPlayerPed`,
 `GetEntityCoords`, `GetEntityHeading`, `SetEntityCoords`, `SetEntityHeading`,
 `DropPlayer`, `IsPlayerAceAllowed`, convars, resource metadata,
-`LoadResourceFile`/`SaveResourceFile`, `json`, `vector3` and `promise`.
-Events: `playerJoining`, `playerDropped`, `onResourceStart`/`Stop`,
-`chatMessage`. Coordinates are San Andreas world coordinates.
+`LoadResourceFile`/`SaveResourceFile`, `json`, `msgpack`, `vector3` and `promise`.
+Events: `playerConnecting` (with deferrals), `playerJoining`, `playerDropped`,
+`onResourceStart`/`Stop`, `chatMessage`. Coordinates are San Andreas world
+coordinates.
+
+For frameworks: `shared_script '@other/file.lua'` includes, `provide`,
+functions passed through exports and local events, server-side state bags
+(`GlobalState`, `Player(src).state`, `AddStateBagChangeHandler`), CfxLua syntax
+(`` `hash` ``, `+=`, `a?.b`) and its `table`/`string` additions, and the `debug`
+library. ox_lib 3.40.0 starts on the server. See
+[framework compatibility](framework-compatibility.md) for what Qbox still needs,
+the example framework in `resources/[examples]` and `tools/framework-check.py`.
 
 Not supported yet: client scripts (`client_script` entries are listed but not
-run), NUI pages, OneSync entities, routing buckets, `playerConnecting` deferrals,
-statebags, and `GetPlayerIdentifiers` beyond a session ID. FiveM resources that
-use GTA V natives must be adapted.
+run), NUI pages, OneSync entities, routing buckets, replicated state bags,
+databases (oxmysql is a Node.js resource), `PerformHttpRequest`, and identifiers
+beyond a session ID (`sare:<id>`). `playerConnecting` runs after the player has
+joined, so a rejection drops them. FiveM resources that use GTA V natives must
+be adapted.
 
 ## Native assets
 
@@ -122,5 +134,6 @@ has no Lua and relays plain chat itself.
 
 `cargo test -p sa-server` runs the shipped resources against a real client
 socket: spawn, chat, cancelled messages, player commands, ACL, exports, threads,
-live restart and kick. `tools/test-multiplayer.ps1 -Dedicated [-Relay]` starts a
+live restart and kick, plus the example framework (includes, `provide`, function
+references, state bags and deferrals) and CfxLua translation. `tools/test-multiplayer.ps1 -Dedicated [-Relay]` starts a
 server from a generated `server-data` plus two Vulkan game instances.

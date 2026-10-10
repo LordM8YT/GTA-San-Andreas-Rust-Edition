@@ -9,6 +9,7 @@ anyhow.workspace = true
 mlua = { version = "0.12.2", features = ["lua54", "vendored", "serde", "anyhow"] }
 sa-net = { path = "../net" }
 sa-scene = { path = "../scene" }
+rmp-serde = "1"
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10.9"
