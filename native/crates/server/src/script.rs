@@ -26,6 +26,8 @@ pub struct Resource {
     pub manifest: Manifest,
     pub started: bool,
     pub lua: Option<Lua>,
+    /// Names from `provide`, read at refresh and start: `provide 'qb-core'`.
+    pub provides: Vec<String>,
 }
 pub struct Command {
     pub resource: String,
@@ -51,6 +53,14 @@ pub struct State {
     pub invoking: Vec<String>,
     /// Set by `assets_locked` once clients have the boot-time asset snapshot.
     pub assets_locked: bool,
+    /// Function references by `resource:id`, with the number of live proxies
+    /// in other resources. Owners keep the functions themselves.
+    pub refs: BTreeMap<String, usize>,
+    pub next_ref: u64,
+    /// References to free at the next tick if nothing holds them by then.
+    pub ref_checks: Vec<String>,
+    /// Server-side state bags: `global`, `player:<id>`, `entity:<handle>`.
+    pub bags: BTreeMap<String, BTreeMap<String, Json>>,
 }
 impl State {
     pub fn new(resources_dir: PathBuf) -> Self {
@@ -70,6 +80,10 @@ impl State {
             capture: None,
             invoking: Vec::new(),
             assets_locked: false,
+            refs: BTreeMap::new(),
+            next_ref: 0,
+            ref_checks: Vec::new(),
+            bags: BTreeMap::new(),
         }
     }
     pub fn convar(&self, name: &str) -> Option<&str> {
@@ -151,7 +165,66 @@ pub fn dispatch(shared: &Shared, name: &str, source: u32, args: &[Json], from_ne
     cancelled
 }
 
+/// Set a state bag value; `null` removes the key. As in FiveM, change
+/// handlers run before the value is stored.
+pub fn set_bag(shared: &Shared, bag: &str, key: &str, value: Json, replicated: bool) {
+    for (resource, lua) in started_states(shared) {
+        let result = (|| -> mlua::Result<()> {
+            let handler: Function = lua.globals().get("__sare_bag_change")?;
+            let value = lua.to_value_with(&value, serialize())?;
+            handler.call((bag, key, value, replicated))
+        })();
+        if let Err(error) = result {
+            report_error(shared, &resource, error);
+        }
+    }
+    let mut state = shared.borrow_mut();
+    let entries = state.bags.entry(bag.to_string()).or_default();
+    if value.is_null() {
+        entries.remove(key);
+    } else {
+        entries.insert(key.to_string(), value);
+    }
+}
+
+/// Free function references that no other resource claimed: callbacks
+/// passed to an export or event that nobody kept.
+fn free_unclaimed_refs(shared: &Shared) {
+    let unclaimed: Vec<String> = {
+        let mut state = shared.borrow_mut();
+        let checks = std::mem::take(&mut state.ref_checks);
+        let unclaimed: Vec<String> = checks
+            .into_iter()
+            .filter(|key| state.refs.get(key) == Some(&0))
+            .collect();
+        for key in &unclaimed {
+            state.refs.remove(key);
+        }
+        unclaimed
+    };
+    for key in unclaimed {
+        let Some((owner, id)) = key.rsplit_once(':') else {
+            continue;
+        };
+        let lua = shared
+            .borrow()
+            .resources
+            .get(owner)
+            .and_then(|r| r.lua.clone());
+        if let (Some(lua), Ok(id)) = (lua, id.parse::<i64>()) {
+            let result = lua
+                .globals()
+                .get::<Function>("__sare_ref_free")
+                .and_then(|free| free.call::<()>(id));
+            if let Err(error) = result {
+                report_error(shared, owner, error);
+            }
+        }
+    }
+}
+
 pub fn tick(shared: &Shared) {
+    free_unclaimed_refs(shared);
     let now = shared.borrow().started.elapsed().as_millis() as i64;
     for (resource, lua) in started_states(shared) {
         let result = lua
@@ -201,8 +274,12 @@ pub fn refresh(shared: &Shared) -> Result<usize> {
     let mut state = shared.borrow_mut();
     let mut added = 0;
     for (name, path) in found {
+        let provides = provides(&path);
         if let Some(existing) = state.resources.get_mut(&name) {
             existing.path = path;
+            if !existing.started {
+                existing.provides = provides;
+            }
         } else {
             added += 1;
             state.resources.insert(
@@ -212,11 +289,36 @@ pub fn refresh(shared: &Shared) -> Result<usize> {
                     manifest: Manifest::default(),
                     started: false,
                     lua: None,
+                    provides,
                 },
             );
         }
     }
     Ok(added)
+}
+fn provides(folder: &std::path::Path) -> Vec<String> {
+    manifest::read(folder)
+        .map(|m| m.values("provide").map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
+/// A resource name, or the resource that `provide`s it (a started one first),
+/// as FiveM resolves `provide 'qb-core'` for dependencies and exports.
+pub fn resolve(shared: &Shared, name: &str) -> Option<String> {
+    let state = shared.borrow();
+    if state.resources.contains_key(name) {
+        return Some(name.to_string());
+    }
+    let providers = || {
+        state
+            .resources
+            .iter()
+            .filter(|(_, r)| r.provides.iter().any(|p| p == name))
+    };
+    providers()
+        .find(|(_, r)| r.started)
+        .or_else(|| providers().next())
+        .map(|(n, _)| n.clone())
 }
 
 pub fn start(shared: &Shared, name: &str) -> Result<()> {
@@ -243,7 +345,8 @@ fn start_depth(shared: &Shared, name: &str, depth: usize) -> Result<()> {
         if dependency.starts_with('/') {
             continue;
         }
-        start_depth(shared, dependency, depth + 1)
+        let target = resolve(shared, dependency).unwrap_or_else(|| dependency.to_string());
+        start_depth(shared, &target, depth + 1)
             .with_context(|| format!("{name} depends on {dependency}"))?;
     }
     let scripts: Vec<String> = manifest
@@ -260,26 +363,37 @@ fn start_depth(shared: &Shared, name: &str, depth: usize) -> Result<()> {
     {
         let mut state = shared.borrow_mut();
         let resource = state.resources.get_mut(name).unwrap();
+        resource.provides = manifest.values("provide").map(str::to_string).collect();
         resource.manifest = manifest;
         resource.started = true;
         resource.lua = lua.clone();
     }
     if let Some(lua) = &lua {
         for pattern in scripts {
-            if pattern.starts_with('@') {
-                out(
-                    shared,
-                    format!("{name}: cross-resource script {pattern} is not supported"),
-                );
-                continue;
-            }
-            for file in manifest::expand(&path, &pattern)? {
+            // `@other/file.lua` runs another resource's file in this state,
+            // as `@ox_lib/init.lua` and `@oxmysql/lib/MySQL.lua` expect.
+            let (owner, folder, pattern) = match pattern.strip_prefix('@') {
+                Some(include) => {
+                    let Some((other, file)) = include.split_once('/') else {
+                        bail!("{name}: invalid script include {pattern}");
+                    };
+                    let other = resolve(shared, other)
+                        .with_context(|| format!("{name}: missing resource for {pattern}"))?;
+                    let folder = shared.borrow().resources[&other].path.clone();
+                    (other, folder, file.to_string())
+                }
+                None => (name.to_string(), path.clone(), pattern),
+            };
+            for file in manifest::expand(&folder, &pattern)? {
                 let source = std::fs::read_to_string(&file)
                     .with_context(|| format!("Cannot read {}", file.display()))?;
                 let chunk_name = format!(
-                    "@{name}/{}",
-                    file.strip_prefix(&path).unwrap_or(&file).display()
+                    "@@{owner}/{}",
+                    file.strip_prefix(&folder).unwrap_or(&file).display()
                 );
+                // FiveM's CfxLua syntax (`hash`, +=, ?.) becomes plain Lua;
+                // on a translation error Lua reports the original syntax error.
+                let source = crate::cfxlua::translate(&source).unwrap_or(source);
                 if let Err(error) = lua.load(&source).set_name(chunk_name).exec() {
                     report_error(shared, name, error);
                 }
@@ -318,6 +432,9 @@ pub fn stop(shared: &Shared, name: &str) -> Result<()> {
     resource.lua = None;
     state.commands.retain(|_, c| c.resource != name);
     state.exports.retain(|(r, _)| r != name);
+    state
+        .refs
+        .retain(|key, _| key.rsplit_once(':').map(|(owner, _)| owner) != Some(name));
     drop(state);
     out(shared, format!("Stopping resource {name}"));
     Ok(())

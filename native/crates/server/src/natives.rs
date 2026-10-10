@@ -2,7 +2,7 @@
 //! ped handle is the same number, as in single-ped FiveM servers.
 use crate::script::{self, json_to_pack, out, pack_to_json, Shared};
 use anyhow::Result;
-use mlua::{Function, Lua, LuaSerdeExt, Table, Value};
+use mlua::{Function, Lua, LuaOptions, LuaSerdeExt, StdLib, Table, Value};
 use serde_json::Value as Json;
 use std::fs;
 
@@ -60,8 +60,36 @@ fn resource_file(shared: &Shared, resource: &str, file: &str) -> Option<std::pat
     Some(folder.join(file))
 }
 
+/// Call `entry(key, args)` in `target`'s Lua state on behalf of `caller`,
+/// for exports and function references. Arguments and results are copies.
+fn call_into(
+    shared: &Shared,
+    caller: &str,
+    target: &str,
+    entry: &str,
+    key: &str,
+    args: &[Json],
+) -> mlua::Result<Vec<Json>> {
+    let other = shared
+        .borrow()
+        .resources
+        .get(target)
+        .and_then(|r| r.lua.clone())
+        .ok_or_else(|| mlua::Error::runtime(format!("Resource {target} is not started")))?;
+    shared.borrow_mut().invoking.push(caller.to_string());
+    let result = (|| {
+        let call: Function = other.globals().get(entry)?;
+        let packed: Table = call.call((key, json_to_pack(&other, args)?))?;
+        pack_to_json(&other, &packed)
+    })();
+    shared.borrow_mut().invoking.pop();
+    result
+}
+
 pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
-    let lua = Lua::new();
+    // FiveM resources expect the `debug` library (ox_lib uses debug.getinfo).
+    // Server resources are trusted code installed by the server owner.
+    let lua = unsafe { Lua::unsafe_new_with(StdLib::ALL_SAFE | StdLib::DEBUG, LuaOptions::new()) };
     lua.set_memory_limit(256 * 1024 * 1024)?;
     let g = lua.globals();
     let native = lua.create_table()?;
@@ -149,26 +177,138 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
         String,
         Table
     )| {
+        // `exports['qb-core']` reaches the resource that provides it.
+        let target = script::resolve(&shared, &target).unwrap_or(target);
+        if !shared
+            .borrow()
+            .exports
+            .contains(&(target.clone(), export.clone()))
+        {
+            return Err(mlua::Error::runtime(format!(
+                "No such export {export} in resource {target}"
+            )));
+        }
         let args = pack_to_json(lua, &args)?;
-        let other = {
-            let state = shared.borrow();
-            if !state.exports.contains(&(target.clone(), export.clone())) {
-                return Err(mlua::Error::runtime(format!(
-                    "No such export {export} in resource {target}"
-                )));
+        let result = call_into(
+            &shared,
+            &name,
+            &target,
+            "__sare_export_call",
+            &export,
+            &args,
+        )?;
+        json_to_pack(lua, &result)
+    });
+    // Function references, see prelude.lua.
+    // IDs are unique for the server's lifetime, so a proxy kept across a
+    // restart of its owner never reaches a different function.
+    func!(native, "ref_new", shared, name, |_lua, (): ()| {
+        let mut state = shared.borrow_mut();
+        state.next_ref += 1;
+        let id = state.next_ref;
+        let key = format!("{name}:{id}");
+        state.refs.insert(key.clone(), 0);
+        state.ref_checks.push(key.clone());
+        Ok((key, id))
+    });
+    func!(native, "ref_retain", shared, name, |_lua, key: String| {
+        if let Some(count) = shared.borrow_mut().refs.get_mut(&key) {
+            *count += 1;
+        }
+        Ok(())
+    });
+    func!(
+        native,
+        "ref_release",
+        shared,
+        name,
+        |_lua, keys: Vec<String>| {
+            let mut state = shared.borrow_mut();
+            for key in keys {
+                if let Some(count) = state.refs.get_mut(&key) {
+                    *count = count.saturating_sub(1);
+                    if *count == 0 {
+                        state.ref_checks.push(key);
+                    }
+                }
             }
-            state.resources.get(&target).and_then(|r| r.lua.clone())
+            Ok(())
+        }
+    );
+    func!(native, "call_ref", shared, name, |lua,
+                                             (key, args): (
+        String,
+        Table
+    )| {
+        let Some((owner, id)) = key.rsplit_once(':') else {
+            return Err(mlua::Error::runtime(format!(
+                "Invalid function reference {key}"
+            )));
         };
-        let other = other
-            .ok_or_else(|| mlua::Error::runtime(format!("Resource {target} is not started")))?;
-        shared.borrow_mut().invoking.push(name.clone());
-        let result = (|| {
-            let call: Function = other.globals().get("__sare_export_call")?;
-            let packed: Table = call.call((export.as_str(), json_to_pack(&other, &args)?))?;
-            pack_to_json(&other, &packed)
-        })();
-        shared.borrow_mut().invoking.pop();
-        json_to_pack(lua, &result?)
+        if !shared.borrow().refs.contains_key(&key) {
+            return Err(mlua::Error::runtime(format!(
+                "Function reference {key} no longer exists"
+            )));
+        }
+        let args = pack_to_json(lua, &args)?;
+        let result = call_into(&shared, &name, owner, "__sare_ref_call", id, &args)?;
+        json_to_pack(lua, &result)
+    });
+    // State bags, see prelude.lua.
+    func!(native, "bag_get", shared, name, |lua,
+                                            (bag, key): (
+        String,
+        String
+    )| {
+        let value = shared
+            .borrow()
+            .bags
+            .get(&bag)
+            .and_then(|b| b.get(&key))
+            .cloned();
+        match value {
+            Some(value) => lua.to_value_with(&value, script::serialize()),
+            None => Ok(Value::Nil),
+        }
+    });
+    func!(native, "bag_set", shared, name, |lua,
+                                            (
+        bag,
+        key,
+        value,
+        replicated,
+    ): (
+        String,
+        String,
+        Value,
+        bool
+    )| {
+        let value: Json = lua.from_value_with(value, script::deserialize())?;
+        script::set_bag(&shared, &bag, &key, value, replicated);
+        Ok(())
+    });
+    func!(native, "readdir", shared, name, |_lua, path: String| {
+        let root = shared.borrow().resources_dir.canonicalize().ok();
+        let dir = std::path::Path::new(&path).canonicalize().ok();
+        let (Some(root), Some(dir)) = (root, dir) else {
+            return Ok(None);
+        };
+        if !dir.starts_with(&root) {
+            return Ok(None);
+        }
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .map(|entries| {
+                entries
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        Ok(Some(names))
+    });
+    func!(native, "cfxlua", shared, name, |_lua, source: String| {
+        Ok(crate::cfxlua::translate(&source).unwrap_or(source))
     });
     func!(native, "json_encode", shared, name, |lua, value: Value| {
         let json: Json = lua.from_value_with(value, script::deserialize())?;
@@ -181,6 +321,116 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
         }
     });
     g.set("__sare", native)?;
+
+    // msgpack, as FiveM's Lua runtime provides it. Values pass through JSON,
+    // so binary strings and integer-keyed maps are not preserved exactly.
+    let msgpack = lua.create_table()?;
+    let pack = |lua: &Lua, value: Value| -> mlua::Result<mlua::LuaString> {
+        let json: Json = lua.from_value_with(value, script::deserialize())?;
+        lua.create_string(rmp_serde::to_vec(&json).map_err(mlua::Error::external)?)
+    };
+    msgpack.set(
+        "pack",
+        lua.create_function(move |lua, value: Value| pack(lua, value))?,
+    )?;
+    msgpack.set(
+        "pack_args",
+        lua.create_function(move |lua, args: mlua::Variadic<Value>| {
+            let list = lua.create_sequence_from(args)?;
+            pack(lua, Value::Table(list))
+        })?,
+    )?;
+    msgpack.set(
+        "unpack",
+        lua.create_function(|lua, data: mlua::LuaString| {
+            let json: Json =
+                rmp_serde::from_slice(&data.as_bytes()).map_err(mlua::Error::external)?;
+            lua.to_value_with(&json, script::serialize())
+        })?,
+    )?;
+    msgpack.set(
+        "setoption",
+        lua.create_function(|_, _: mlua::MultiValue| Ok(()))?,
+    )?;
+    g.set("msgpack", msgpack)?;
+
+    func!(g, "GetStateBagValue", shared, name, |lua,
+                                                (bag, key): (
+        String,
+        String
+    )| {
+        let value = shared
+            .borrow()
+            .bags
+            .get(&bag)
+            .and_then(|b| b.get(&key))
+            .cloned();
+        match value {
+            Some(value) => lua.to_value_with(&value, script::serialize()),
+            None => Ok(Value::Nil),
+        }
+    });
+    func!(g, "SetStateBagValue", shared, name, |_lua,
+                                                (
+        bag,
+        key,
+        data,
+        _length,
+        replicated,
+    ): (
+        String,
+        String,
+        mlua::LuaString,
+        Option<i64>,
+        Option<bool>
+    )| {
+        let value: Json = rmp_serde::from_slice(&data.as_bytes()).map_err(mlua::Error::external)?;
+        script::set_bag(&shared, &bag, &key, value, replicated.unwrap_or(false));
+        Ok(())
+    });
+    func!(g, "StateBagHasKey", shared, name, |_lua,
+                                              (bag, key): (
+        String,
+        String
+    )| {
+        Ok(shared
+            .borrow()
+            .bags
+            .get(&bag)
+            .is_some_and(|b| b.contains_key(&key)))
+    });
+    func!(g, "GetStateBagKeys", shared, name, |_lua, bag: String| {
+        Ok(shared
+            .borrow()
+            .bags
+            .get(&bag)
+            .map(|b| b.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default())
+    });
+    func!(
+        g,
+        "GetPlayerFromStateBagName",
+        shared,
+        name,
+        |_lua, bag: String| {
+            Ok(bag
+                .strip_prefix("player:")
+                .and_then(|id| id.parse::<u32>().ok())
+                .unwrap_or(0))
+        }
+    );
+    func!(
+        g,
+        "GetEntityFromStateBagName",
+        shared,
+        name,
+        |_lua, bag: String| {
+            Ok(bag
+                .strip_prefix("entity:")
+                .and_then(|id| id.parse::<u32>().ok())
+                .unwrap_or(0))
+        }
+    );
 
     // Resource and server information.
     func!(g, "GetCurrentResourceName", shared, name, |_lua, (): ()| {
@@ -222,6 +472,16 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
             .or(default)
             .unwrap_or(0))
     });
+    func!(g, "GetConvarBool", shared, name, |_lua,
+                                             (key, default): (
+        String,
+        Option<bool>
+    )| {
+        Ok(match shared.borrow().convar(&key) {
+            Some(v) => matches!(v.to_ascii_lowercase().as_str(), "true" | "1" | "yes" | "on"),
+            None => default.unwrap_or(false),
+        })
+    });
     func!(g, "SetConvar", shared, name, |_lua,
                                          (key, value): (
         String,
@@ -262,6 +522,7 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
         shared,
         name,
         |_lua, resource: String| {
+            let resource = script::resolve(&shared, &resource).unwrap_or(resource);
             Ok(match shared.borrow().resources.get(&resource) {
                 Some(r) if r.started => "started",
                 Some(_) => "stopped",
@@ -481,6 +742,45 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
             }
             Ok(list)
         }
+    );
+    func!(
+        g,
+        "GetNumPlayerIdentifiers",
+        shared,
+        name,
+        |_lua, player: Value| { Ok(usize::from(peer(&shared, &player).is_some())) }
+    );
+    func!(
+        g,
+        "GetPlayerIdentifier",
+        shared,
+        name,
+        |_lua, (player, index): (Value, usize)| {
+            Ok(peer(&shared, &player)
+                .filter(|_| index == 0)
+                .map(|p| format!("sare:{}", p.id)))
+        }
+    );
+    // Only the `sare` session type exists: `license`, `discord`, `fivem` and
+    // others return nil, so frameworks that require a license reject joins.
+    func!(g, "GetPlayerIdentifierByType", shared, name, |_lua,
+                                                         (
+        player,
+        kind,
+    ): (
+        Value,
+        String
+    )| {
+        Ok(peer(&shared, &player)
+            .filter(|_| kind == "sare")
+            .map(|p| format!("sare:{}", p.id)))
+    });
+    func!(
+        g,
+        "GetNumPlayerTokens",
+        shared,
+        name,
+        |_lua, _player: Value| { Ok(0) }
     );
     func!(g, "GetPlayerPing", shared, name, |_lua, _player: Value| {
         Ok(0)

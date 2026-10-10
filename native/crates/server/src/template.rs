@@ -11,7 +11,7 @@ macro_rules! data {
         )
     };
 }
-pub const FILES: [(&str, &str); 12] = [
+pub const FILES: [(&str, &str); 20] = [
     data!("server.cfg"),
     data!("resources/[system]/chat/fxmanifest.lua"),
     data!("resources/[system]/chat/sv_chat.lua"),
@@ -23,6 +23,14 @@ pub const FILES: [(&str, &str); 12] = [
     data!("resources/[gamemodes]/basic-gamemode/basic_server.lua"),
     data!("resources/[gamemodes]/[maps]/sare-map-grove/fxmanifest.lua"),
     data!("resources/[gamemodes]/[maps]/sare-map-grove/map.lua"),
+    data!("resources/[examples]/sare_lib/fxmanifest.lua"),
+    data!("resources/[examples]/sare_lib/init.lua"),
+    data!("resources/[examples]/sare_lib/server.lua"),
+    data!("resources/[examples]/sare_lib/modules/math.lua"),
+    data!("resources/[examples]/sare_core/fxmanifest.lua"),
+    data!("resources/[examples]/sare_core/server.lua"),
+    data!("resources/[examples]/sare_jobs/fxmanifest.lua"),
+    data!("resources/[examples]/sare_jobs/server.lua"),
     ("resources/[local]/.gitkeep", ""),
 ];
 

@@ -17,6 +17,17 @@ end)
 local v = vector3(1, 2, 3) + vector3(1, 1, 1)
 SetConvar('tester_vector', ('%d %d %d %.1f'):format(v.x, v.y, v.z, #(vector3(3, 4, 0) - vector3(0, 0, 0))))
 SetConvar('tester_json', json.encode({ a = 1 }))
+-- ox_lib sets state bags with msgpack-packed values.
+local packed = msgpack.pack({ a = 1, b = { 'x' } })
+SetStateBagValue('global', 'packed', packed, #packed, true)
+SetConvar('tester_bag', json.encode(GlobalState.packed) .. ' ' .. json.encode(msgpack.unpack(packed)))
+SetConvar('tester_bool', tostring(GetConvarBool('missing_bool', true)))
+-- CfxLua syntax and library, also in chunks compiled with load().
+local n, none = 1, nil
+n += 2
+local loaded = load('local t = { a = 1 } t.a *= 5 return t?.a')()
+SetConvar('tester_cfx', ('%d %d %s %d %s %s %s'):format(n, `adder`, tostring(none?.x), loaded,
+  table.type({ 1, 2 }), table.type({ a = 1 }), (select(2, string.strsplit(':', 'a:b:c', 2)))))
 "#;
 
 fn temp_root() -> PathBuf {
@@ -108,6 +119,15 @@ fn default_resources_spawn_chat_commands_acl_and_exports() {
     assert_eq!(shared.borrow().convar("mapname"), Some("sare-map-grove"));
     assert_eq!(shared.borrow().convar("tester_vector"), Some("2 3 4 5.0"));
     assert_eq!(shared.borrow().convar("tester_json"), Some(r#"{"a":1}"#));
+    assert_eq!(
+        shared.borrow().convar("tester_bag"),
+        Some(r#"{"a":1,"b":["x"]} {"a":1,"b":["x"]}"#)
+    );
+    assert_eq!(shared.borrow().convar("tester_bool"), Some("true"));
+    assert_eq!(
+        shared.borrow().convar("tester_cfx"),
+        Some("3 -1216765807 nil 5 array hash b:c")
+    );
 
     let client = sa_net::Session::join(session.address, "Guest").unwrap();
     let mut known = BTreeMap::new();
@@ -270,6 +290,169 @@ fn category_ensure_starts_scripts_and_enabled_native_resources_only() {
     console.execute_line(0, "ensure [system]");
     assert!(started("chat"));
     drop(console);
+    drop(shared);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn framework_examples_use_includes_provide_function_refs_and_state_bags() {
+    let root = temp_root();
+    let commands = [
+        "endpoint_add_tcp 127.0.0.1:0",
+        "set sare_core_bannedNames \"Banned, Other\"",
+        "ensure chat",
+        "ensure sare_jobs",
+    ]
+    .iter()
+    .map(|l| words(l))
+    .collect();
+    let Server {
+        shared,
+        mut console,
+        session,
+        publication: _,
+    } = boot(commands, root.join("resources")).unwrap();
+    // sare_jobs depends on `sare-core`, which sare_core provides.
+    for name in ["sare_lib", "sare_core", "sare_jobs"] {
+        assert!(
+            shared.borrow().resources[name].started,
+            "{name} not started"
+        );
+    }
+    assert_eq!(
+        script::resolve(&shared, "sare-core").as_deref(),
+        Some("sare_core")
+    );
+
+    let client = sa_net::Session::join(session.address, "Guest").unwrap();
+    let mut known = BTreeMap::new();
+    let mut received: Vec<sa_net::NetEvent> = Vec::new();
+    let run = |console: &mut Console,
+               known: &mut BTreeMap<u32, String>,
+               received: &mut Vec<sa_net::NetEvent>,
+               until: &dyn Fn(&[sa_net::NetEvent]) -> bool| {
+        let start = Instant::now();
+        loop {
+            client.update(sa_net::Pose::default());
+            pump(&shared, console, &session, known).unwrap();
+            received.extend(client.events());
+            if until(received) {
+                return;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(5),
+                "timed out; got {received:?}"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+    };
+    let messages = |events: &[sa_net::NetEvent]| -> Vec<String> {
+        events
+            .iter()
+            .filter(|e| e.name == "chat:addMessage")
+            .map(|e| {
+                serde_json::from_str::<Vec<Json>>(&e.payload).unwrap()[0]["args"][1].to_string()
+            })
+            .collect()
+    };
+    let check = shared.clone();
+    run(&mut console, &mut known, &mut received, &|_| {
+        check
+            .borrow()
+            .bags
+            .get("global")
+            .and_then(|b| b.get("players"))
+            == Some(&Json::from(1))
+    });
+    let id = shared.borrow().peers[0].id;
+    let bag = format!("player:{id}");
+    assert_eq!(shared.borrow().bags[&bag]["cash"], Json::from(500));
+
+    // /job runs SetJob in sare_core through a function reference; the
+    // state bag change handler in sare_jobs notifies the player.
+    let send = |line: &str| {
+        client
+            .trigger(
+                None,
+                "__cfx_internal:commandFallback",
+                &Json::Array(vec![line.into()]).to_string(),
+            )
+            .unwrap()
+    };
+    send("/job taxi");
+    run(&mut console, &mut known, &mut received, &|e| {
+        messages(e)
+            .iter()
+            .any(|m| m.contains("You now work as taxi"))
+    });
+    assert_eq!(shared.borrow().bags[&bag]["job"], Json::from("taxi"));
+
+    // /work: AddMoney through the player object, then a callback that
+    // sare_lib stores and calls back into sare_core.
+    send("/work");
+    run(&mut console, &mut known, &mut received, &|e| {
+        messages(e).iter().any(|m| m.contains("Cash: $620"))
+    });
+    assert_eq!(shared.borrow().bags[&bag]["cash"], Json::from(620));
+
+    // Per-call callback references are freed; long-lived ones stay bounded.
+    for _ in 0..3 {
+        pump(&shared, &mut console, &session, &mut known).unwrap();
+    }
+    let held = shared.borrow().refs.len();
+    send("/work");
+    send("/work");
+    run(&mut console, &mut known, &mut received, &|e| {
+        messages(e).iter().any(|m| m.contains("Cash: $860"))
+    });
+    for _ in 0..3 {
+        // Proxies are collected by Lua's GC; force it so the count is stable.
+        for resource in ["sare_lib", "sare_core", "sare_jobs"] {
+            let lua = shared.borrow().resources[resource].lua.clone().unwrap();
+            lua.gc_collect().unwrap();
+            lua.gc_collect().unwrap();
+        }
+        pump(&shared, &mut console, &session, &mut known).unwrap();
+    }
+    assert!(
+        shared.borrow().refs.len() <= held,
+        "{} > {held}",
+        shared.borrow().refs.len()
+    );
+
+    // playerConnecting deferrals reject a banned name.
+    let banned = sa_net::Session::join(session.address, "Banned").unwrap();
+    let start = Instant::now();
+    loop {
+        pump(&shared, &mut console, &session, &mut known).unwrap();
+        if banned
+            .update(sa_net::Pose::default())
+            .is_some_and(|r| r.status.contains("not allowed"))
+        {
+            break;
+        }
+        assert!(start.elapsed() < Duration::from_secs(5));
+        thread::sleep(Duration::from_millis(5));
+    }
+
+    // Stopping the core makes its references unusable without crashing users.
+    console.execute_line(0, "stop sare_core");
+    assert!(shared
+        .borrow()
+        .refs
+        .keys()
+        .all(|k| !k.starts_with("sare_core:")));
+    shared.borrow_mut().capture = Some(String::new());
+    send("/work");
+    let check = shared.clone();
+    run(&mut console, &mut known, &mut received, &|_| {
+        check
+            .borrow()
+            .capture
+            .as_ref()
+            .is_some_and(|c| c.contains("no longer exists"))
+    });
+    drop(session);
     drop(shared);
     let _ = std::fs::remove_dir_all(root);
 }

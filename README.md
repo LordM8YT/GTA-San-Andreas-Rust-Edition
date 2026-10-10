@@ -61,7 +61,10 @@ and run **start-server.cmd**, or run it from a source checkout.
 The headless server is set up like a FiveM server: `server-data/server.cfg`,
 `resources/[category]/` with `fxmanifest.lua`, server-side Lua (events,
 commands, exports, threads), ACL and rcon. Players chat with **T** and use the
-**F8** console. See [server setup](docs/server-hosting.md).
+**F8** console. See [server setup](docs/server-hosting.md). Frameworks get
+`@resource` includes, `provide`, function references, server-side state bags
+and CfxLua syntax; ox_lib starts on the server, Qbox is not supported yet. See
+[framework compatibility](docs/framework-compatibility.md).
 Required native mods download and cache before joining; disconnect restores
 your offline world and local mods. Personal cars remain visible after their
 owner exits. Hosts also reserve up to three passenger seats so players can

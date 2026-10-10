@@ -3,6 +3,7 @@
 //! No window, GPU, Steam or game installation is needed.
 mod acl;
 mod cfg;
+mod cfxlua;
 mod console;
 mod manifest;
 mod natives;
@@ -329,14 +330,26 @@ fn pump(
                     &[Json::from("Exiting")],
                     false,
                 );
-                shared.borrow_mut().peers.retain(|p| p.id != *id);
+                let mut state = shared.borrow_mut();
+                state.peers.retain(|p| p.id != *id);
+                state.bags.remove(&format!("player:{id}"));
             }
         }
         shared.borrow_mut().peers = report.peers.clone();
         for (id, name) in &current {
             if !known.contains_key(id) {
                 out(shared, format!("Player {name} ({id}) joined."));
-                script::dispatch(shared, "playerJoining", *id, &[Json::from(*id)], false);
+                // Already connected: a rejecting handler drops the player.
+                let rejected = script::dispatch(
+                    shared,
+                    "playerConnecting",
+                    *id,
+                    &[Json::from(name.as_str())],
+                    false,
+                );
+                if !rejected {
+                    script::dispatch(shared, "playerJoining", *id, &[Json::from(*id)], false);
+                }
             }
         }
         *known = current;
@@ -388,7 +401,9 @@ fn boot_order(shared: &Shared, requested: &[String]) -> Vec<String> {
                 .values("dependency")
                 .filter(|d| !d.starts_with('/'))
             {
-                visit(shared, dependency, order, depth + 1);
+                let dependency =
+                    script::resolve(shared, dependency).unwrap_or_else(|| dependency.to_string());
+                visit(shared, &dependency, order, depth + 1);
             }
         }
         order.push(name.to_string());
