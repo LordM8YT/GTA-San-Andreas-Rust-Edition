@@ -1591,7 +1591,12 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size(preview_size())
-            .with_min_inner_size([640., 480.]),
+            .with_min_inner_size([640., 480.])
+            .with_icon(egui::IconData {
+                rgba: include_bytes!("../../../assets/icon-128.rgba").to_vec(),
+                width: 128,
+                height: 128,
+            }),
         ..Default::default()
     };
     eframe::run_native(

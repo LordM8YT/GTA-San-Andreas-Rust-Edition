@@ -239,12 +239,7 @@ impl WorldArchive {
         }
     }
 }
-fn placements(
-    root: &Path,
-    img: &mut WorldArchive,
-    center: [f32; 2],
-    radius: f32,
-) -> Result<Vec<Placement>> {
+fn placements(root: &Path, img: &mut WorldArchive) -> Result<Vec<Placement>> {
     let mut out = Vec::new();
     let names: Vec<_> = img.names().cloned().collect();
     for path in registered(root, "IPL", ".ipl")? {
@@ -315,14 +310,7 @@ fn placements(
         out.extend(base);
         out.extend(children);
     }
-    Ok(out
-        .into_iter()
-        .filter(|r| {
-            let x = r.pos[0] - center[0];
-            let y = r.pos[1] - center[1];
-            x * x + y * y <= radius * radius
-        })
-        .collect())
+    Ok(out)
 }
 fn rotate(point: [f32; 3], q: [f32; 4]) -> [f32; 3] {
     let len = q.iter().map(|v| v * v).sum::<f32>().sqrt();
@@ -569,7 +557,7 @@ impl WorldLoader {
         for path in registered(&game, "IDE", ".ide")? {
             texture::add_parents(lines(&path)?, &mut texture_parents);
         }
-        let rows = placements(&game, &mut img, [0.0, 0.0], 20000.0)?;
+        let rows = placements(&game, &mut img)?;
         let mut collision_models = HashMap::new();
         let mut files: Vec<_> = img
             .names()
@@ -640,7 +628,7 @@ impl WorldLoader {
         let defs = &self.defs;
         // Padding includes large road/building meshes whose origin is outside
         // the visible neighbourhood. Geometry is never clipped at the edge.
-        let rows: Vec<_> = self
+        let mut rows: Vec<_> = self
             .rows
             .iter()
             .filter(|r| {
@@ -657,6 +645,21 @@ impl WorldLoader {
                 x * x + y * y <= (range + 1600.0).powi(2)
             })
             .collect();
+        // Detailed placements first, nearest first. LOD groups are selected
+        // below, and a dense region sheds its farthest scenery instead of
+        // failing to load.
+        let order = |r: &Placement| {
+            let x = r.pos[0] - center[0];
+            let y = r.pos[1] - center[1];
+            (
+                r.is_lod || defs.get(&r.id).is_some_and(|d| d.model.starts_with("lod")),
+                x * x + y * y,
+            )
+        };
+        rows.sort_by(|a, b| {
+            let (a, b) = (order(a), order(b));
+            a.0.cmp(&b.0).then(a.1.total_cmp(&b.1))
+        });
         let mut models: HashMap<String, Vec<Geometry>> = HashMap::new();
         let mut batches = HashMap::new();
         let mut physical = Batch {
@@ -787,10 +790,12 @@ impl WorldLoader {
             }
             count += 1;
             lod_count += usize::from(is_lod);
-            ensure!(
-                count <= 30_000 && triangles <= 4_000_000,
-                "streaming region exceeds geometry budget"
-            );
+            if count >= 30_000 || triangles >= 4_000_000 {
+                eprintln!(
+                    "Streaming region reached its geometry budget after {count} placements; farthest scenery omitted"
+                );
+                break;
+            }
         }
         ensure!(count > 0, "no detailed placements");
         let mut textures = HashMap::new();

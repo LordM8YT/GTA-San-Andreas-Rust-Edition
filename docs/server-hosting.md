@@ -10,6 +10,8 @@ Up to 20 players. Movement is still simulated by clients.
 
 On Windows, run `start-server.cmd`. It builds `sa-server` when Cargo is available
 and runs it inside `server-data/`, like `FXServer.exe +exec server.cfg`.
+On Linux, `./start-server.sh` builds and runs the server from the project
+directory; its first run creates the server template there.
 
 ```
 server-data/

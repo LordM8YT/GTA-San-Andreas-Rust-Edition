@@ -147,9 +147,19 @@ fn one(data: &[u8], tag: u32) -> Result<&[u8]> {
     ensure!(found.len() == 1, "expected one RenderWare chunk {tag:#x}");
     Ok(found[0].body)
 }
+/// Unpack a chunk's library stamp, e.g. 0x1803ffff to 0x36003 (3.6.0.3).
+fn library(stamp: u32) -> u32 {
+    if stamp & 0xffff_0000 == 0 {
+        stamp << 8
+    } else {
+        (((stamp >> 14) & 0x3ff00) + 0x30000) | ((stamp >> 16) & 0x3f)
+    }
+}
 fn root(data: &[u8], tag: u32) -> Result<&[u8]> {
+    // The PC archives also carry assets exported with RenderWare 3.3-3.5.
+    // Every nested structure below is still length-checked.
     ensure!(
-        u32at(data, 0)? == tag && u32at(data, 8)? == 0x1803ffff,
+        u32at(data, 0)? == tag && (0x33000..=0x36003).contains(&library(u32at(data, 8)?)),
         "unsupported RenderWare root/version"
     );
     slice(data, 12, u32at(data, 4)? as usize)
@@ -248,7 +258,9 @@ fn geometry(
         };
     }
     ensure!(uv_count <= 8, "excess UV sets");
-    let mut p = 16;
+    // Before 3.4 the header also stores ambient, specular and diffuse factors.
+    let legacy = u32at(data, 0)? == 1 && library(u32at(data, 8)?) < 0x34000;
+    let mut p = if legacy { 28 } else { 16 };
     let mut colors = vec![[255; 4]; nv];
     if flags & 8 != 0 {
         for color in &mut colors {
@@ -632,6 +644,144 @@ fn blocks(data: &[u8], w: usize, h: usize, kind: u32, alpha: bool) -> Result<Vec
     }
     Ok(rgba)
 }
+/// Level-zero pixel storage of a PC native texture.
+#[derive(Clone, Copy)]
+enum Pixels {
+    Dxt(u32),
+    Bgra { alpha: bool },
+    Rgb565,
+    Argb1555 { alpha: bool },
+    Argb4444,
+    Luminance,
+    Palette { alpha: bool },
+}
+impl Pixels {
+    fn level_bytes(self, w: usize, h: usize) -> usize {
+        match self {
+            Self::Dxt(kind) => {
+                let block = if kind == u32::from_le_bytes(*b"DXT1") {
+                    8
+                } else {
+                    16
+                };
+                w.div_ceil(4) * h.div_ceil(4) * block
+            }
+            Self::Bgra { .. } => w * h * 4,
+            Self::Rgb565 | Self::Argb1555 { .. } | Self::Argb4444 => w * h * 2,
+            Self::Luminance | Self::Palette { .. } => w * h,
+        }
+    }
+}
+/// D3D9 dictionaries name a D3DFORMAT. Older D3D8 ones give only the raster
+/// format and, in the header's last byte, a DXT index.
+fn pixel_layout(platform: u32, raster: u32, declared: u32, last: u8) -> Result<Pixels> {
+    let dxt = |index: u8| u32::from_le_bytes([b'D', b'X', b'T', b'0' + index]);
+    ensure!(raster & 0x4000 == 0, "unsupported 4-bit palette texture");
+    if raster & 0x2000 != 0 {
+        return Ok(Pixels::Palette {
+            alpha: raster & 0x0f00 != 0x0600,
+        });
+    }
+    if platform == 9 {
+        return Ok(match declared {
+            kind if kind == dxt(1) || kind == dxt(3) || kind == dxt(5) => Pixels::Dxt(kind),
+            21 => Pixels::Bgra { alpha: true },
+            22 => Pixels::Bgra { alpha: false },
+            23 => Pixels::Rgb565,
+            24 => Pixels::Argb1555 { alpha: false },
+            25 => Pixels::Argb1555 { alpha: true },
+            26 => Pixels::Argb4444,
+            50 => Pixels::Luminance,
+            _ => bail!("unsupported texture compression"),
+        });
+    }
+    Ok(match (last, raster & 0x0f00) {
+        (1 | 3 | 5, _) => Pixels::Dxt(dxt(last)),
+        (0, 0x0100) => Pixels::Argb1555 { alpha: true },
+        (0, 0x0200) => Pixels::Rgb565,
+        (0, 0x0300) => Pixels::Argb4444,
+        (0, 0x0400) => Pixels::Luminance,
+        (0, 0x0500) => Pixels::Bgra { alpha: true },
+        (0, 0x0600) => Pixels::Bgra { alpha: false },
+        (0, 0x0a00) => Pixels::Argb1555 { alpha: false },
+        _ => bail!("unsupported texture compression"),
+    })
+}
+/// `cutout` is the dictionary's own alpha flag. Formats with spare alpha bits
+/// stay opaque without it, so unused bits cannot make a surface invisible.
+fn unpack(
+    layout: Pixels,
+    data: &[u8],
+    palette: &[u8],
+    w: usize,
+    h: usize,
+    cutout: bool,
+) -> Result<Vec<u8>> {
+    let five = |value: u16| ((value & 31) as u32 * 255 / 31) as u8;
+    Ok(match layout {
+        Pixels::Dxt(kind) => blocks(data, w, h, kind, cutout)?,
+        Pixels::Bgra { alpha } => data
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .flat_map(|v| [v[2], v[1], v[0], if alpha { v[3] } else { 255 }])
+            .collect(),
+        Pixels::Rgb565 => data
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .flat_map(|v| {
+                let color = rgb565(u16::from_le_bytes(*v));
+                [color[0], color[1], color[2], 255]
+            })
+            .collect(),
+        Pixels::Argb1555 { alpha } => data
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .flat_map(|v| {
+                let color = u16::from_le_bytes(*v);
+                let hidden = alpha && cutout && color & 0x8000 == 0;
+                [
+                    five(color >> 10),
+                    five(color >> 5),
+                    five(color),
+                    if hidden { 0 } else { 255 },
+                ]
+            })
+            .collect(),
+        Pixels::Argb4444 => data
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .flat_map(|v| {
+                let color = u16::from_le_bytes(*v);
+                let nibble = |shift: u32| (((color >> shift) & 15) * 17) as u8;
+                [
+                    nibble(8),
+                    nibble(4),
+                    nibble(0),
+                    if cutout { nibble(12) } else { 255 },
+                ]
+            })
+            .collect(),
+        Pixels::Luminance => data.iter().flat_map(|v| [*v, *v, *v, 255]).collect(),
+        Pixels::Palette { alpha } => {
+            ensure!(palette.len() == 1024, "missing texture palette");
+            data.iter()
+                .flat_map(|index| {
+                    let color = &palette[usize::from(*index) * 4..][..4];
+                    [
+                        color[0],
+                        color[1],
+                        color[2],
+                        if alpha && cutout { color[3] } else { 255 },
+                    ]
+                })
+                .collect()
+        }
+    })
+}
 pub fn decode_txd(data: &[u8], wanted: &str) -> Result<Texture> {
     let dictionary = root(data, 22)?;
     let count = u16at(one(dictionary, 1)?, 0)? as usize;
@@ -643,38 +793,45 @@ pub fn decode_txd(data: &[u8], wanted: &str) -> Result<Texture> {
     ensure!(natives.len() == count, "TXD count mismatch");
     for native in natives {
         let s = one(native.body, 1)?;
-        let key = name(slice(s, 8, 32)?)?;
+        // A non-ASCII name on an unrelated texture must not hide the wanted one.
+        let Ok(key) = name(slice(s, 8, 32)?) else {
+            continue;
+        };
         if key != wanted.to_ascii_lowercase() {
             continue;
         }
         ensure!(s.len() >= 88, "truncated native texture header");
-        ensure!(u32at(s, 0)? == 9, "unsupported texture platform");
+        let platform = u32at(s, 0)?;
+        ensure!(
+            platform == 8 || platform == 9,
+            "unsupported texture platform"
+        );
         let raster = u32at(s, 72)?;
-        let format = u32at(s, 76)?;
+        let declared = u32at(s, 76)?;
         let w = u16at(s, 80)? as usize;
         let h = u16at(s, 82)? as usize;
-        let depth = s[84];
         let levels = s[85] as usize;
-        let props = s[87];
+        let last = s[87];
         ensure!(
             (1..=4096).contains(&w)
                 && (1..=4096).contains(&h)
                 && (1..=13).contains(&levels)
-                && raster & 0x6000 == 0
-                && props & 6 == 0,
+                && (platform == 8 || last & 2 == 0),
             "unsupported texture layout"
         );
-        let dxt1 = u32::from_le_bytes(*b"DXT1");
-        let dxt3 = u32::from_le_bytes(*b"DXT3");
-        let dxt5 = u32::from_le_bytes(*b"DXT5");
-        ensure!(
-            [dxt1, dxt3, dxt5, 21, 22].contains(&format),
-            "unsupported texture compression"
-        );
-        if format == 21 || format == 22 {
-            ensure!(depth == 32, "unsupported BGRA depth");
-        }
+        let layout = pixel_layout(platform, raster, declared, last)?;
+        let flagged_alpha = if platform == 9 {
+            last & 1 != 0
+        } else {
+            declared != 0
+        };
         let mut p = 88;
+        let palette: &[u8] = if matches!(layout, Pixels::Palette { .. }) {
+            p += 1024;
+            slice(s, 88, 1024)?
+        } else {
+            &[]
+        };
         let mut rgba = Vec::new();
         let mut empty_tail = false;
         for level in 0..levels {
@@ -682,16 +839,12 @@ pub fn decode_txd(data: &[u8], wanted: &str) -> Result<Texture> {
             let mh = (h >> level).max(1);
             let size = u32at(s, p)? as usize;
             p += 4;
-            let expected = if format == 21 || format == 22 {
-                mw * mh * 4
-            } else {
-                mw.div_ceil(4) * mh.div_ceil(4) * if format == dxt1 { 8 } else { 16 }
-            };
+            let expected = layout.level_bytes(mw, mh);
             // Some original SA DXT textures declare empty final mips below a
             // full 4x4 block. Their earlier levels remain usable.
             if size == 0 {
                 ensure!(
-                    level > 0 && format != 21 && format != 22 && (mw < 4 || mh < 4),
+                    level > 0 && matches!(layout, Pixels::Dxt(_)) && (mw < 4 || mh < 4),
                     "invalid empty native mip"
                 );
                 empty_tail = true;
@@ -702,16 +855,7 @@ pub fn decode_txd(data: &[u8], wanted: &str) -> Result<Texture> {
             let pixels = slice(s, p, size)?;
             p += size;
             if level == 0 {
-                rgba = if format == 21 || format == 22 {
-                    pixels
-                        .as_chunks::<4>()
-                        .0
-                        .iter()
-                        .flat_map(|v| [v[2], v[1], v[0], if format == 21 { v[3] } else { 255 }])
-                        .collect()
-                } else {
-                    blocks(pixels, mw, mh, format, props & 1 != 0)?
-                };
+                rgba = unpack(layout, pixels, palette, mw, mh, flagged_alpha)?;
             }
         }
         ensure!(p == s.len(), "invalid native texture tail");
@@ -867,5 +1011,128 @@ mod tests {
             (texture.width, texture.height, texture.rgba.len()),
             (8, 8, 256)
         );
+    }
+    fn dictionary(stamp: u32, native: &[u8]) -> Vec<u8> {
+        let chunk = |tag: u32, body: &[u8]| {
+            let mut out = Vec::new();
+            out.extend(tag.to_le_bytes());
+            out.extend((body.len() as u32).to_le_bytes());
+            out.extend(stamp.to_le_bytes());
+            out.extend(body);
+            out
+        };
+        let mut body = chunk(1, &[1, 0, 0, 0]);
+        body.extend(chunk(21, &chunk(1, native)));
+        chunk(22, &body)
+    }
+    fn native(platform: u32, raster: u32, declared: u32, last: u8, pixels: &[u8]) -> Vec<u8> {
+        let mut native = vec![0u8; 88];
+        native[0..4].copy_from_slice(&platform.to_le_bytes());
+        native[8..13].copy_from_slice(b"test\0");
+        native[72..76].copy_from_slice(&raster.to_le_bytes());
+        native[76..80].copy_from_slice(&declared.to_le_bytes());
+        native[80..82].copy_from_slice(&2u16.to_le_bytes());
+        native[82..84].copy_from_slice(&1u16.to_le_bytes());
+        native[85] = 1;
+        native[87] = last;
+        native.extend(pixels);
+        native
+    }
+    #[test]
+    fn palette_and_sixteen_bit_textures_decode_instead_of_using_fallback_color() {
+        let mut palette = vec![0u8; 1024];
+        palette[4..8].copy_from_slice(&[10, 20, 30, 0]);
+        palette[8..12].copy_from_slice(&[200, 150, 100, 255]);
+        let mut indexed = palette.clone();
+        indexed.extend(2u32.to_le_bytes());
+        indexed.extend([1, 2]);
+        // 8-bit palette with alpha, as D3D9 and as an older D3D8 dictionary.
+        for (platform, declared, last) in [(9, 41, 1), (8, 1, 0)] {
+            let texture = decode_txd(
+                &dictionary(
+                    0x1803ffff,
+                    &native(platform, 0x2500, declared, last, &indexed),
+                ),
+                "TEST",
+            )
+            .unwrap();
+            assert_eq!(texture.rgba, [10, 20, 30, 0, 200, 150, 100, 255]);
+            assert!(texture.has_alpha);
+        }
+        // An opaque palette ignores its unused fourth byte.
+        let opaque = decode_txd(
+            &dictionary(0x1803ffff, &native(9, 0x2600, 41, 0, &indexed)),
+            "test",
+        )
+        .unwrap();
+        assert_eq!(opaque.rgba, [10, 20, 30, 255, 200, 150, 100, 255]);
+        let sixteen = |values: [u16; 2]| {
+            let mut data = 4u32.to_le_bytes().to_vec();
+            data.extend(values.iter().flat_map(|v| v.to_le_bytes()));
+            data
+        };
+        let rgb = decode_txd(
+            &dictionary(
+                0x1803ffff,
+                &native(9, 0x0200, 23, 0, &sixteen([0xf800, 0x001f])),
+            ),
+            "test",
+        )
+        .unwrap();
+        assert_eq!(rgb.rgba, [255, 0, 0, 255, 0, 0, 255, 255]);
+        let keyed = decode_txd(
+            &dictionary(
+                0x1803ffff,
+                &native(9, 0x0100, 25, 1, &sixteen([0xfc00, 0x03e0])),
+            ),
+            "test",
+        )
+        .unwrap();
+        assert_eq!(keyed.rgba, [255, 0, 0, 255, 0, 255, 0, 0]);
+        let nibbles = decode_txd(
+            &dictionary(
+                0x1803ffff,
+                &native(9, 0x0300, 26, 1, &sixteen([0x8f00, 0xf00f])),
+            ),
+            "test",
+        )
+        .unwrap();
+        assert_eq!(nibbles.rgba, [255, 0, 0, 136, 0, 0, 255, 255]);
+        // Truncated palettes and pixel data remain errors.
+        let mut short = palette[..512].to_vec();
+        short.extend(2u32.to_le_bytes());
+        short.extend([1, 2]);
+        assert!(decode_txd(
+            &dictionary(0x1803ffff, &native(9, 0x2500, 41, 1, &short)),
+            "test"
+        )
+        .is_err());
+        assert!(decode_txd(
+            &dictionary(0x1803ffff, &native(9, 0x0200, 23, 0, &sixteen([1, 2])[..7])),
+            "test"
+        )
+        .is_err());
+        assert!(decode_txd(
+            &dictionary(0x1803ffff, &native(9, 0x4500, 41, 1, &indexed)),
+            "test"
+        )
+        .is_err());
+    }
+    #[test]
+    fn older_library_versions_are_read_and_unknown_stamps_rejected() {
+        assert_eq!(library(0x1803ffff), 0x36003);
+        assert_eq!(library(0x1003ffff), 0x34003);
+        assert_eq!(library(0x0c02ffff), 0x33002);
+        assert_eq!(library(0x0310), 0x31000);
+        let mut pixels = 8u32.to_le_bytes().to_vec();
+        pixels.extend([1, 2, 3, 4, 5, 6, 7, 8]);
+        let bgra = native(8, 0x0600, 0, 0, &pixels);
+        for stamp in [0x1803ffff, 0x1003ffff, 0x0c02ffff] {
+            let texture = decode_txd(&dictionary(stamp, &bgra), "test").unwrap();
+            assert_eq!(texture.rgba, [3, 2, 1, 255, 7, 6, 5, 255]);
+        }
+        for stamp in [0, 0x0310, 0x0800ffff, u32::MAX] {
+            assert!(decode_txd(&dictionary(stamp, &bgra), "test").is_err());
+        }
     }
 }

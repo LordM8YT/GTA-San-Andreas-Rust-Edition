@@ -814,7 +814,17 @@ impl State {
                         .unwrap_or(0),
                 });
             } else if self.interior == 0 && streaming::distance(center, self.region) > 140.0 {
-                streamer.request(center);
+                // Centre the next region ahead of a moving car. Loading takes a
+                // few seconds; at speed the car otherwise reaches the edge of the
+                // old region first and reloads again almost immediately.
+                let ahead = self
+                    .car
+                    .as_ref()
+                    .filter(|_| self.driving)
+                    .map_or(Vec3::ZERO, |(car, _)| {
+                        car.forward() * (car.speed * 3.0).clamp(-120.0, 120.0)
+                    });
+                streamer.request([center[0] + ahead.x, center[1] - ahead.z]);
             }
         }
         self.streamer = Some(streamer);
@@ -991,9 +1001,14 @@ impl State {
                     car.position = previous;
                     car.stop();
                 }
+                // Ease the chase camera and radar heading behind the car instead
+                // of locking them to every small yaw correction of the body.
+                let turn = car.yaw - self.yaw;
+                self.yaw += turn.sin().atan2(turn.cos()) * (1.0 - (-5.0 * dt).exp());
+                let behind = Vec3::new(self.yaw.sin(), 0.0, self.yaw.cos());
                 self.position = world.clip_camera(
                     car.position + Vec3::Y,
-                    car.position - car.forward() * 7.0 + Vec3::Y * 3.5,
+                    car.position - behind * 7.0 + Vec3::Y * 3.5,
                 );
             }
         } else if self.walking {
@@ -1391,6 +1406,7 @@ impl State {
                     return;
                 }
                 self.menu.has_played = true;
+                self.menu.message.clear();
                 self.menu.page = None;
                 self.keys.clear();
                 self.last = Instant::now();
@@ -1469,16 +1485,13 @@ impl State {
                     }
                     self.car_render_pose = None;
                     self.driving = true;
-                    if self.driving {
-                        self.menu.has_played = true;
-                        self.menu.message.clear();
-                        self.menu.page = None;
-                        self.keys.clear();
-                        self.capture(true);
-                    } else {
-                        self.menu.message =
-                            "No clear supported space nearby. Move to an open road.".into();
-                    }
+                    // Same as F9 and F: peers keep seeing this car after its owner exits.
+                    self.network_car_spawned = true;
+                    self.menu.has_played = true;
+                    self.menu.message.clear();
+                    self.menu.page = None;
+                    self.keys.clear();
+                    self.capture(true);
                 }
             }
             Some(menu::Action::SpawnPed(index)) => match self.spawn_ped(index) {
@@ -2018,6 +2031,14 @@ impl ApplicationHandler for App {
                 .create_window(
                     Window::default_attributes()
                         .with_title(title)
+                        .with_window_icon(
+                            winit::window::Icon::from_rgba(
+                                include_bytes!("../../../assets/icon-128.rgba").to_vec(),
+                                128,
+                                128,
+                            )
+                            .ok(),
+                        )
                         .with_visible(!self.smoke)
                         .with_inner_size(winit::dpi::LogicalSize::new(1440, 900)),
                 )
@@ -2426,10 +2447,16 @@ impl ApplicationHandler for App {
                         event_loop.set_control_flow(ControlFlow::WaitUntil(state.next_frame));
                         return;
                     }
-                    state.next_frame = now
-                        + std::time::Duration::from_secs_f64(
-                            1.0 / state.menu.settings.fps_limit as f64,
-                        );
+                    let interval = std::time::Duration::from_secs_f64(
+                        1.0 / state.menu.settings.fps_limit as f64,
+                    );
+                    // Schedule from the previous deadline: wake-up latency must not
+                    // accumulate into fewer frames than the selected limit.
+                    state.next_frame = if now.duration_since(state.next_frame) > interval {
+                        now + interval
+                    } else {
+                        state.next_frame + interval
+                    };
                     event_loop.set_control_flow(ControlFlow::WaitUntil(state.next_frame));
                 } else {
                     event_loop.set_control_flow(ControlFlow::Poll);
@@ -3528,11 +3555,23 @@ fn main() -> Result<()> {
     } else {
         Some(sa_client::launch::RuntimeGuard::acquire()?)
     };
-    let game = args
+    // Without an explicit folder, use GTA_SA_DIR or a detected installation
+    // instead of one developer's drive layout.
+    let game = match args
         .windows(2)
         .find(|w| w[0] == "--game-dir")
         .map(|w| PathBuf::from(&w[1]))
-        .unwrap_or_else(|| PathBuf::from(r"E:\GTA San Andreas\Grand Theft Auto San Andreas"));
+    {
+        Some(path) => path,
+        None => sa_client::install::candidates()
+            .into_iter()
+            .find(|path| {
+                sa_assets::game_path::resolve(path, "models/gta3.img").is_ok_and(|p| p.is_file())
+            })
+            .context(
+                "No San Andreas installation found. Pass --game-dir <folder>, set GTA_SA_DIR, or start through sa-launcher.",
+            )?,
+    };
     if args.iter().any(|arg| arg == "--probe-audio") {
         let archive = sa_audio::archive::SfxArchive::open(&game)?;
         let mut count = 0;

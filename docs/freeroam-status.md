@@ -136,6 +136,10 @@ feilmelding vises i menyen.
   Los Santos, som tidligere manglet og etterlot et stort hull.
 - `--smoke-view eyeX,eyeY,eyeZ,målX,målY,målZ --capture-dir <mappe>` tar et
   bilde fra et fast kamera i startområdet, for å kontrollere kartet.
+- Et område som når geometribudsjettet (30 000 plasseringer / 4 mill. trekanter)
+  lastes likevel: nærmeste detaljer først, fjerneste kulisser utelates.
+- Neste område sentreres foran en bil i fart (inntil 120 m), slik at bilen
+  ikke når kanten av det gamle området før det nye er klart.
 - Originale COL1/2/3/4-kollisjonscontainere dekodes. 8 255 originalmodeller
   ble indeksert. Trekanter brukes direkte; bokser og kuler trianguleres.
 - Visuell kollisjon brukes som reserve for modeller uten COL.
