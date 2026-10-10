@@ -14,7 +14,7 @@ use serde_json::Value as Json;
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
-    path::PathBuf,
+    path::{Path, PathBuf},
     rc::Rc,
     time::Instant,
 };
@@ -61,6 +61,9 @@ pub struct State {
     pub ref_checks: Vec<String>,
     /// Server-side state bags: `global`, `player:<id>`, `entity:<handle>`.
     pub bags: BTreeMap<String, BTreeMap<String, Json>>,
+    /// Published client script bundles (resource, SHA-256) in start order,
+    /// announced to each joining player.
+    pub client_bundles: Vec<(String, String)>,
 }
 impl State {
     pub fn new(resources_dir: PathBuf) -> Self {
@@ -84,6 +87,7 @@ impl State {
             next_ref: 0,
             ref_checks: Vec::new(),
             bags: BTreeMap::new(),
+            client_bundles: Vec::new(),
         }
     }
     pub fn convar(&self, name: &str) -> Option<&str> {
@@ -370,30 +374,14 @@ fn start_depth(shared: &Shared, name: &str, depth: usize) -> Result<()> {
     }
     if let Some(lua) = &lua {
         for pattern in scripts {
-            // `@other/file.lua` runs another resource's file in this state,
-            // as `@ox_lib/init.lua` and `@oxmysql/lib/MySQL.lua` expect.
-            let (owner, folder, pattern) = match pattern.strip_prefix('@') {
-                Some(include) => {
-                    let Some((other, file)) = include.split_once('/') else {
-                        bail!("{name}: invalid script include {pattern}");
-                    };
-                    let other = resolve(shared, other)
-                        .with_context(|| format!("{name}: missing resource for {pattern}"))?;
-                    let folder = shared.borrow().resources[&other].path.clone();
-                    (other, folder, file.to_string())
-                }
-                None => (name.to_string(), path.clone(), pattern),
-            };
+            let (owner, folder, pattern) = script_source(shared, name, &path, &pattern)?;
             for file in manifest::expand(&folder, &pattern)? {
                 let source = std::fs::read_to_string(&file)
                     .with_context(|| format!("Cannot read {}", file.display()))?;
-                let chunk_name = format!(
-                    "@@{owner}/{}",
-                    file.strip_prefix(&folder).unwrap_or(&file).display()
-                );
+                let chunk_name = format!("@@{owner}/{}", relative(&folder, &file));
                 // FiveM's CfxLua syntax (`hash`, +=, ?.) becomes plain Lua;
                 // on a translation error Lua reports the original syntax error.
-                let source = crate::cfxlua::translate(&source).unwrap_or(source);
+                let source = sa_lua::cfxlua::translate(&source).unwrap_or(source);
                 if let Err(error) = lua.load(&source).set_name(chunk_name).exec() {
                     report_error(shared, name, error);
                 }
@@ -401,7 +389,12 @@ fn start_depth(shared: &Shared, name: &str, depth: usize) -> Result<()> {
         }
     }
     if client_scripts > 0 {
-        out(shared, format!("{name}: {client_scripts} client script(s) not run; client Lua is not supported yet"));
+        if let Err(error) = publish_client(shared, name, &path) {
+            out(
+                shared,
+                format!("{name}: client scripts not sent: {error:#}"),
+            );
+        }
     }
     out(shared, format!("Started resource {name}"));
     let args = [Json::String(name.into())];
@@ -426,6 +419,7 @@ pub fn stop(shared: &Shared, name: &str) -> Result<()> {
     let args = [Json::String(name.into())];
     dispatch(shared, "onResourceStop", 0, &args, false);
     dispatch(shared, "onServerResourceStop", 0, &args, false);
+    unpublish_client(shared, name);
     let mut state = shared.borrow_mut();
     let resource = state.resources.get_mut(name).unwrap();
     resource.started = false;
@@ -438,6 +432,124 @@ pub fn stop(shared: &Shared, name: &str) -> Result<()> {
     drop(state);
     out(shared, format!("Stopping resource {name}"));
     Ok(())
+}
+
+/// Where a manifest script entry lives: `@other/file.lua` names another
+/// resource's file, as `@ox_lib/init.lua` and `@oxmysql/lib/MySQL.lua` expect.
+fn script_source(
+    shared: &Shared,
+    name: &str,
+    path: &Path,
+    pattern: &str,
+) -> Result<(String, PathBuf, String)> {
+    match pattern.strip_prefix('@') {
+        Some(include) => {
+            let Some((other, file)) = include.split_once('/') else {
+                bail!("{name}: invalid script include {pattern}");
+            };
+            let other = resolve(shared, other)
+                .with_context(|| format!("{name}: missing resource for {pattern}"))?;
+            let folder = shared.borrow().resources[&other].path.clone();
+            Ok((other, folder, file.to_string()))
+        }
+        None => Ok((name.to_string(), path.to_path_buf(), pattern.to_string())),
+    }
+}
+fn relative(folder: &Path, file: &Path) -> String {
+    file.strip_prefix(folder)
+        .unwrap_or(file)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+/// Text files a client script may read with `LoadResourceFile`.
+const CLIENT_TEXT: &[&str] = &["lua", "json", "txt", "cfg", "md", "csv", "xml", "meta"];
+
+/// Send the resource's `shared_script` and `client_script` files (and text
+/// `files`) to players: shared first, then client, as FiveM loads them.
+fn publish_client(shared: &Shared, name: &str, path: &Path) -> Result<()> {
+    let manifest = shared.borrow().resources[name].manifest.clone();
+    let mut bundle = sa_lua::bundle::Bundle {
+        resource: name.to_string(),
+        ..Default::default()
+    };
+    let scripts: Vec<String> = manifest
+        .values("shared_script")
+        .chain(manifest.values("client_script"))
+        .map(str::to_string)
+        .collect();
+    for pattern in scripts {
+        let (owner, folder, pattern) = script_source(shared, name, path, &pattern)?;
+        for file in manifest::expand(&folder, &pattern)? {
+            let key = if owner == name {
+                relative(&folder, &file)
+            } else {
+                format!("@{owner}/{}", relative(&folder, &file))
+            };
+            if !bundle.files.contains_key(&key) {
+                let source = std::fs::read_to_string(&file)
+                    .with_context(|| format!("Cannot read {}", file.display()))?;
+                bundle.files.insert(key.clone(), source);
+            }
+            if !bundle.scripts.contains(&key) {
+                bundle.scripts.push(key);
+            }
+        }
+    }
+    for pattern in manifest.values("file") {
+        for file in manifest::expand(path, pattern).unwrap_or_default() {
+            let text = file
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| CLIENT_TEXT.contains(&e.to_ascii_lowercase().as_str()));
+            if text {
+                if let Ok(source) = std::fs::read_to_string(&file) {
+                    bundle.files.entry(relative(path, &file)).or_insert(source);
+                }
+            }
+        }
+    }
+    bundle.validate().map_err(anyhow::Error::msg)?;
+    let Some(session) = shared.borrow().session.clone() else {
+        return Ok(());
+    };
+    let sha = session.publish_script(name, bundle.to_bytes())?;
+    {
+        let mut state = shared.borrow_mut();
+        state.client_bundles.retain(|(r, _)| r != name);
+        state.client_bundles.push((name.to_string(), sha.clone()));
+    }
+    crate::natives::send_client(
+        shared,
+        None,
+        "__sare:resource",
+        &[Json::from(name), Json::from(sha)],
+    );
+    Ok(())
+}
+fn unpublish_client(shared: &Shared, name: &str) {
+    let (session, published) = {
+        let mut state = shared.borrow_mut();
+        let before = state.client_bundles.len();
+        state.client_bundles.retain(|(r, _)| r != name);
+        (state.session.clone(), state.client_bundles.len() != before)
+    };
+    if let (Some(session), true) = (session, published) {
+        session.unpublish_script(name);
+        crate::natives::send_client(shared, None, "__sare:resourceStop", &[Json::from(name)]);
+    }
+}
+/// A joining player gets every running resource's client scripts.
+pub fn announce_client_bundles(shared: &Shared, player: u32) {
+    let bundles = shared.borrow().client_bundles.clone();
+    for (name, sha) in bundles {
+        crate::natives::send_client(
+            shared,
+            Some(player),
+            "__sare:resource",
+            &[Json::from(name), Json::from(sha)],
+        );
+    }
 }
 
 /// `ensure [category]`: every resource inside that bracket folder, sorted.

@@ -36,7 +36,7 @@ fn vector3(lua: &Lua, [x, y, z]: [f32; 3]) -> mlua::Result<Value> {
     let make: Function = lua.globals().get("vector3")?;
     make.call((x, y, z))
 }
-fn send_client(shared: &Shared, target: Option<u32>, name: &str, args: &[Json]) {
+pub fn send_client(shared: &Shared, target: Option<u32>, name: &str, args: &[Json]) {
     let payload = Json::Array(args.to_vec()).to_string();
     let session = shared.borrow().session.clone();
     if let Some(session) = session {
@@ -307,9 +307,21 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
         names.sort();
         Ok(Some(names))
     });
-    func!(native, "cfxlua", shared, name, |_lua, source: String| {
-        Ok(crate::cfxlua::translate(&source).unwrap_or(source))
-    });
+    func!(
+        native,
+        "cfxlua",
+        shared,
+        name,
+        |lua, source: mlua::LuaString| {
+            match source.to_str() {
+                Ok(text) => match sa_lua::cfxlua::translate(&text) {
+                    Ok(translated) => Ok(lua.create_string(translated)?),
+                    Err(_) => Ok(source.clone()),
+                },
+                Err(_) => Ok(source.clone()),
+            }
+        }
+    );
     func!(native, "json_encode", shared, name, |lua, value: Value| {
         let json: Json = lua.from_value_with(value, script::deserialize())?;
         Ok(json.to_string())
@@ -885,8 +897,12 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
         Ok(())
     });
 
-    lua.load(include_str!("prelude.lua"))
-        .set_name("@citizen:/scripting/lua/scheduler.lua")
-        .exec()?;
+    lua.load(format!(
+        "{}\n{}",
+        sa_lua::COMMON_PRELUDE,
+        include_str!("prelude.lua")
+    ))
+    .set_name("@citizen:/scripting/lua/scheduler.lua")
+    .exec()?;
     Ok(lua)
 }

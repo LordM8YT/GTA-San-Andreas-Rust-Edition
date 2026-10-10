@@ -44,6 +44,11 @@ fn temp_root() -> PathBuf {
     )
     .unwrap();
     std::fs::write(tester.join("server.lua"), TESTER).unwrap();
+    std::fs::write(
+        tester.join("client.lua"),
+        "RegisterCommand('hi', function() print('hi') end)",
+    )
+    .unwrap();
     root
 }
 
@@ -379,12 +384,67 @@ fn framework_examples_use_includes_provide_function_refs_and_state_bags() {
             )
             .unwrap()
     };
-    send("/job taxi");
+    // Client scripts: sare_lib and sare_jobs reach the player and run in the
+    // sandbox; the job menu sends `/job taxi` back through the server.
+    let mut host = sa_lua::client::Host::new();
+    let mut fed = 0;
+    let start = Instant::now();
+    while host.resources().len() < 2 {
+        client.update(sa_net::Pose::default());
+        pump(&shared, &mut console, &session, &mut known).unwrap();
+        received.extend(client.events());
+        for event in &received[fed..] {
+            host.handle_event(&event.name, &event.payload);
+        }
+        fed = received.len();
+        for sha in host.take_requests() {
+            client.request_script(&sha);
+        }
+        for (sha, bytes) in client.take_scripts() {
+            host.load(&sha, &bytes).unwrap();
+        }
+        host.tick(sa_lua::client::View::default());
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            host.take_outputs()
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(host.resources(), ["sare_jobs", "sare_lib"]);
+    let errors: Vec<_> = host
+        .take_outputs()
+        .into_iter()
+        .filter(|o| format!("{o:?}").contains("ERROR"))
+        .collect();
+    assert!(errors.is_empty(), "{errors:?}");
+    assert!(host.key_pressed("F2"));
+    let menu = host.ui().context.clone();
+    let menu = menu.unwrap_or_else(|| panic!("no menu: {:?}", host.take_outputs()));
+    assert_eq!(menu.options[0].description, "$120 per shift");
+    host.select_context(0);
+    for output in host.take_outputs() {
+        if let sa_lua::client::Output::ServerEvent { name, payload } = output {
+            assert_eq!(
+                (name.as_str(), payload.as_str()),
+                ("__cfx_internal:commandFallback", r#"["job taxi"]"#)
+            );
+            client.trigger(None, &name, &payload).unwrap();
+        }
+    }
     run(&mut console, &mut known, &mut received, &|e| {
         messages(e)
             .iter()
             .any(|m| m.contains("You now work as taxi"))
+            && e.iter().any(|e| e.name == "sare:ui:notify")
     });
+    for event in &received[fed..] {
+        host.handle_event(&event.name, &event.payload);
+    }
+    assert_eq!(
+        host.ui().notifications[0].description,
+        "You now work as taxi"
+    );
     assert_eq!(shared.borrow().bags[&bag]["job"], Json::from("taxi"));
 
     // /work: AddMoney through the player object, then a callback that

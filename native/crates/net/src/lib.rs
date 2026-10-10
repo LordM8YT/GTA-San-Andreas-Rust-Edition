@@ -6,7 +6,7 @@ pub mod relay;
 pub mod resources;
 pub use passengers::{PassengerSeat, RideReply, RideRequest, RideResult};
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     io::{self, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
     sync::{
@@ -19,7 +19,7 @@ use std::{
 
 pub const MAX_PLAYERS: usize = 20;
 pub const DEFAULT_PORT: u16 = 7777;
-pub const VERSION: u32 = 7;
+pub const VERSION: u32 = 8;
 /// Script events: FiveM-style `TriggerServerEvent` / `TriggerClientEvent`.
 /// Names are ASCII identifiers; payloads are JSON arrays of arguments.
 pub const MAX_EVENT_NAME: usize = 64;
@@ -30,6 +30,10 @@ const EVENT_BUDGET: u32 = 30;
 const TICK: Duration = Duration::from_millis(50);
 const TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_FRAME: usize = 16 * 1024;
+/// Largest client script bundle a host serves or a client accepts.
+pub const MAX_SCRIPT_BYTES: usize = 8 * 1024 * 1024;
+/// Script bundles a guest may have requested at once.
+const MAX_SCRIPT_REQUESTS: usize = 64;
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Pose {
@@ -172,6 +176,11 @@ enum Message {
         name: String,
         payload: String,
     },
+    /// Client -> host during gameplay: send this published script bundle as
+    /// `ResourceChunk`s. Only clients told a hash by a script event ask.
+    ScriptFile {
+        sha256: String,
+    },
 }
 fn safe_name(name: &str) -> String {
     let name: String = name.chars().filter(|c| !c.is_control()).take(24).collect();
@@ -277,6 +286,7 @@ pub struct Session {
     local: Arc<Mutex<Pose>>,
     report: Arc<Mutex<Report>>,
     mail: Arc<Mailbox>,
+    script_keys: Mutex<HashMap<String, String>>,
 }
 #[derive(Default)]
 struct Mailbox {
@@ -284,6 +294,11 @@ struct Mailbox {
     inbox: Mutex<VecDeque<NetEvent>>,
     /// Hosts only: admitted players, including a player host. 0 = MAX_PLAYERS.
     max_clients: std::sync::atomic::AtomicUsize,
+    /// Hosts: published client script bundles by SHA-256.
+    scripts: Mutex<HashMap<String, Arc<[u8]>>>,
+    /// Clients: bundles to request, and verified bundles received.
+    script_requests: Mutex<Vec<String>>,
+    script_files: Mutex<Vec<(String, Vec<u8>)>>,
 }
 impl Mailbox {
     fn receive(&self, event: NetEvent) {
@@ -406,6 +421,7 @@ impl Session {
                 ..Report::default()
             })),
             mail: Arc::default(),
+            script_keys: Mutex::default(),
         }
     }
     #[allow(clippy::type_complexity)]
@@ -444,6 +460,43 @@ impl Session {
                 .take(256)
                 .collect(),
         });
+    }
+    /// Hosts only: serve `data` to clients that request its SHA-256, which is
+    /// returned. Publishing again under the same `key` replaces the old bundle.
+    pub fn publish_script(&self, key: &str, data: Vec<u8>) -> io::Result<String> {
+        if data.len() > MAX_SCRIPT_BYTES {
+            return Err(io::Error::other("Client script bundle is too large"));
+        }
+        let sha256 = resources::hash(&data);
+        let mut keys = self.script_keys.lock().unwrap();
+        let mut scripts = self.mail.scripts.lock().unwrap();
+        if let Some(old) = keys.insert(key.to_string(), sha256.clone()) {
+            if old != sha256 && !keys.values().any(|v| v == &old) {
+                scripts.remove(&old);
+            }
+        }
+        scripts.insert(sha256.clone(), data.into());
+        Ok(sha256)
+    }
+    /// Hosts only: stop serving the bundle published under `key`.
+    pub fn unpublish_script(&self, key: &str) {
+        let mut keys = self.script_keys.lock().unwrap();
+        if let Some(old) = keys.remove(key) {
+            if !keys.values().any(|v| v == &old) {
+                self.mail.scripts.lock().unwrap().remove(&old);
+            }
+        }
+    }
+    /// Clients only: ask the host for a published bundle.
+    pub fn request_script(&self, sha256: &str) {
+        let mut requests = self.mail.script_requests.lock().unwrap();
+        if requests.len() < MAX_SCRIPT_REQUESTS {
+            requests.push(sha256.to_string());
+        }
+    }
+    /// Clients only: bundles received and verified against their SHA-256.
+    pub fn take_scripts(&self) -> Vec<(String, Vec<u8>)> {
+        std::mem::take(&mut *self.mail.script_files.lock().unwrap())
     }
     /// Hosts only: admitted player limit (1..=MAX_PLAYERS), like `sv_maxclients`.
     pub fn set_max_clients(&self, count: usize) {
@@ -486,6 +539,7 @@ struct Guest {
     hello: bool,
     assets: bool,
     transfer: Option<(String, Arc<[u8]>, usize)>,
+    scripts: VecDeque<String>,
     budget: (Instant, u32),
 }
 #[allow(clippy::too_many_arguments)]
@@ -532,6 +586,7 @@ fn host_worker(
                 hello: false,
                 assets: false,
                 transfer: None,
+                scripts: VecDeque::new(),
                 budget: (Instant::now(), 0),
             });
             next_id = next_id.wrapping_add(1).max(1);
@@ -562,6 +617,10 @@ fn host_worker(
                     }
                     Message::ResourceQuery { .. } if !guest.hello && !guest.assets => {
                         let _=guest.wire.queue(&Message::Reject("Incompatible multiplayer version. Update client and host to the same build.".into()));let _=guest.wire.flush();return false;
+                    }
+                    Message::ScriptFile { sha256 } if guest.hello => {
+                        if guest.scripts.len() >= MAX_SCRIPT_REQUESTS { return false; }
+                        guest.scripts.push_back(sha256);
                     }
                     Message::ResourceFile { sha256 } if guest.assets && guest.transfer.is_none() => {
                         let Some(data) = share.blob(&sha256) else { return false; };
@@ -617,6 +676,14 @@ fn host_worker(
                         }
                     }
                     _ => return false,
+                }
+            }
+            if guest.transfer.is_none() {
+                if let Some(sha256) = guest.scripts.pop_front() {
+                    // An unknown or replaced bundle ends at once, so the
+                    // client moves on to its next request.
+                    let data = mail.scripts.lock().unwrap().get(&sha256).cloned();
+                    guest.transfer = Some((sha256, data.unwrap_or_else(|| Arc::from([])), 0));
                 }
             }
             if let Some((sha256, data, offset)) = &mut guest.transfer {
@@ -712,6 +779,9 @@ fn client_stream(
     let mut next_ping = Instant::now();
     let mut ping: Option<(u64, Instant)> = None;
     let mut nonce = 0u64;
+    // Script bundles: requested hashes in order, and the one being received.
+    let mut wanted: VecDeque<String> = VecDeque::new();
+    let mut receiving: Vec<u8> = Vec::new();
     while !stop.load(Ordering::Relaxed) {
         if wire.last.elapsed() > TIMEOUT {
             return Err(io::ErrorKind::TimedOut.into());
@@ -764,11 +834,45 @@ fn client_stream(
                         payload,
                     });
                 }
+                Message::ResourceChunk {
+                    sha256,
+                    offset,
+                    data,
+                    done,
+                } if id.is_some() && wanted.front() == Some(&sha256) => {
+                    if offset != receiving.len()
+                        || data.len() > 2048
+                        || receiving.len() + data.len() > MAX_SCRIPT_BYTES
+                        || (data.is_empty() && !done)
+                    {
+                        return Err(invalid());
+                    }
+                    receiving.extend(data);
+                    if done {
+                        wanted.pop_front();
+                        let bytes = std::mem::take(&mut receiving);
+                        if resources::hash(&bytes) == sha256 {
+                            mail.script_files.lock().unwrap().push((sha256, bytes));
+                        }
+                    }
+                }
                 Message::Reject(reason) => return Err(io::Error::other(reason)),
                 _ => return Err(invalid()),
             }
         }
         if id.is_some() {
+            for sha256 in std::mem::take(&mut *mail.script_requests.lock().unwrap()) {
+                if wanted.len() < MAX_SCRIPT_REQUESTS
+                    && !wanted.contains(&sha256)
+                    && wire
+                        .queue(&Message::ScriptFile {
+                            sha256: sha256.clone(),
+                        })
+                        .is_ok()
+                {
+                    wanted.push_back(sha256);
+                }
+            }
             for outbound in mail.take() {
                 if let Outbound::Event { name, payload, .. } = outbound {
                     let _ = wire.queue(&Message::Event { name, payload });
@@ -805,6 +909,33 @@ mod tests {
         });
         let measured = report(&guest).round_trip.unwrap();
         assert!(measured > Duration::ZERO && measured < TIMEOUT);
+    }
+    #[test]
+    fn published_script_bundles_reach_requesting_clients_verified() {
+        let host = Session::host(address(), "Host").unwrap();
+        let guest = Session::join(host.address, "Guest").unwrap();
+        wait(|| {
+            host.update(Pose::default());
+            report(&guest).local_id != 0
+        });
+        let big: Vec<u8> = (0..20_000).map(|i| (i % 251) as u8).collect();
+        let sha = host.publish_script("demo", big.clone()).unwrap();
+        // Unknown hashes end immediately; later requests still arrive.
+        guest.request_script(&"0".repeat(64));
+        guest.request_script(&sha);
+        let mut received = Vec::new();
+        wait(|| {
+            host.update(Pose::default());
+            guest.update(Pose::default());
+            received.extend(guest.take_scripts());
+            !received.is_empty()
+        });
+        assert_eq!(received, vec![(sha.clone(), big)]);
+        // Replaced bundles are no longer served.
+        let newer = host.publish_script("demo", b"new".to_vec()).unwrap();
+        assert!(!host.mail.scripts.lock().unwrap().contains_key(&sha));
+        host.unpublish_script("demo");
+        assert!(!host.mail.scripts.lock().unwrap().contains_key(&newer));
     }
     fn address() -> SocketAddr {
         "127.0.0.1:0".parse().unwrap()

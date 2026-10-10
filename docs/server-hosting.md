@@ -99,8 +99,11 @@ library. ox_lib 3.40.0 starts on the server. See
 [framework compatibility](framework-compatibility.md) for what Qbox still needs,
 the example framework in `resources/[examples]` and `tools/framework-check.py`.
 
-Not supported yet: client scripts (`client_script` entries are listed but not
-run), NUI pages, OneSync entities, routing buckets, replicated state bags,
+Client scripts run sandboxed on players' machines, and scripts show menus,
+dialogs, notifications and progress bars through the game's own UI; see
+[client scripts](client-scripts.md).
+
+Not supported yet: NUI pages (by design: use the script UI), OneSync entities, routing buckets, replicated state bags,
 databases (oxmysql is a Node.js resource), `PerformHttpRequest`, and identifiers
 beyond a session ID (`sare:<id>`). `playerConnecting` runs after the player has
 joined, so a rejection drops them. FiveM resources that use GTA V natives must
@@ -135,5 +138,6 @@ has no Lua and relays plain chat itself.
 `cargo test -p sa-server` runs the shipped resources against a real client
 socket: spawn, chat, cancelled messages, player commands, ACL, exports, threads,
 live restart and kick, plus the example framework (includes, `provide`, function
-references, state bags and deferrals) and CfxLua translation. `tools/test-multiplayer.ps1 -Dedicated [-Relay]` starts a
+references, state bags and deferrals), client script download and the script
+UI, and CfxLua translation. `tools/test-multiplayer.ps1 -Dedicated [-Relay]` starts a
 server from a generated `server-data` plus two Vulkan game instances.

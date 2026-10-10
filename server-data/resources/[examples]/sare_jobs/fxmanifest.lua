@@ -12,3 +12,4 @@ dependencies {
 
 shared_script '@sare_lib/init.lua'
 server_script 'server.lua'
+client_script 'client.lua'

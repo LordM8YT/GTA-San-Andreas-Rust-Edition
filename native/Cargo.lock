@@ -3209,6 +3209,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sa-lua"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "sa-net"
 version = "0.1.0"
 dependencies = [
@@ -3234,6 +3244,7 @@ dependencies = [
  "sa-assets",
  "sa-audio",
  "sa-client",
+ "sa-lua",
  "sa-net",
  "sa-scene",
  "sa-script",
@@ -3273,6 +3284,7 @@ dependencies = [
  "anyhow",
  "mlua",
  "rmp-serde",
+ "sa-lua",
  "sa-net",
  "sa-scene",
  "serde",

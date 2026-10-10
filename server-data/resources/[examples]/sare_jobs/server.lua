@@ -35,5 +35,7 @@ AddStateBagChangeHandler('job', nil, function(bag, _key, value)
   local src = GetPlayerFromStateBagName(bag)
   if src ~= 0 and value ~= 'unemployed' then
     notify(src, ('You now work as %s. Use /work to earn money.'):format(value))
+    -- Drawn by the game's own UI on the player's screen.
+    TriggerClientEvent('sare:ui:notify', src, { title = 'Jobs', description = ('You now work as %s'):format(value), type = 'success' })
   end
 end)
