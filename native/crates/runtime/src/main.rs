@@ -7,6 +7,7 @@ use sa_scene::{
 use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Instant};
 mod capture;
 mod chat;
+mod client_scripts;
 mod controller;
 mod culling;
 mod gameplay_audio;
@@ -16,6 +17,7 @@ mod mipmaps;
 mod multiplayer;
 mod postprocess;
 mod progress;
+mod script_ui;
 mod server_events;
 mod session_resources;
 mod settings;
@@ -124,6 +126,13 @@ struct State {
     /// Server-requested position (`SetEntityCoords`), SA world coordinates.
     pending_coords: Option<[f32; 3]>,
     chat: chat::Chat,
+    /// The server's client scripts, sandboxed, and the UI they show.
+    scripts: sa_lua::client::Host,
+    /// Latest session snapshot for `GetEntityCoords` and friends.
+    script_peers: Vec<sa_net::Peer>,
+    script_local_id: u32,
+    /// The script UI released the mouse; take it back when the UI closes.
+    script_cursor: bool,
     network_car_spawned: bool,
     passenger: Option<sa_net::PassengerSeat>,
     passenger_car: Option<sa_net::VehiclePose>,
@@ -562,6 +571,10 @@ impl State {
             network_peer_ids: Vec::new(),
             pending_coords: None,
             chat: chat::Chat::default(),
+            scripts: sa_lua::client::Host::new(),
+            script_peers: Vec::new(),
+            script_local_id: 0,
+            script_cursor: false,
             network_car_spawned: false,
             passenger: None,
             passenger_car: None,
@@ -1667,6 +1680,7 @@ impl State {
                 self.offline_world.is_some(),
             )
         });
+        let mut script_actions = Vec::new();
         let mut output = context.run_ui(raw_input, |ui| {
             if let Some(text) = &debug {
                 egui::Area::new("performance".into())
@@ -1690,10 +1704,14 @@ impl State {
                 &self.radar_tiles,
             );
             let scale = (ui.ctx().content_rect().height() / 900.0).clamp(0.65, 1.5);
+            if self.menu.page.is_none() {
+                script_actions = script_ui::draw(ui.ctx(), &self.scripts, scale);
+            }
             if self.menu.page.is_none() || self.chat.console_open {
                 self.chat.draw(ui.ctx(), scale);
             }
         });
+        script_ui::apply(&mut self.scripts, script_actions);
         if self.captured && self.menu.page.is_none() {
             output.platform_output.cursor_icon = egui::CursorIcon::None;
         }
@@ -2379,6 +2397,14 @@ impl ApplicationHandler for App {
                     }
                     return;
                 }
+                // An open script menu or dialog has the mouse and keyboard.
+                if state.scripts.ui().wants_cursor() && state.menu.page.is_none() {
+                    if event.physical_key == PhysicalKey::Code(KeyCode::Escape) {
+                        state.scripts.close_context();
+                        state.scripts.submit_dialog(None);
+                    }
+                    return;
+                }
                 if event.physical_key == PhysicalKey::Code(KeyCode::KeyT)
                     && state.menu.page.is_none()
                     && state.streamer.is_some()
@@ -2429,7 +2455,7 @@ impl ApplicationHandler for App {
                 }
             }
         }
-        if (state.menu.page.is_some() || state.chat.active())
+        if (state.menu.page.is_some() || state.chat.active() || state.scripts.ui().wants_cursor())
             && matches!(
                 event,
                 WindowEvent::KeyboardInput { .. } | WindowEvent::MouseInput { .. }
@@ -3460,7 +3486,19 @@ impl ApplicationHandler for App {
                                     state.walking = true;
                                 }
                             }
+                            KeyCode::KeyX
+                                if !event.repeat && state.scripts.ui().progress.is_some() =>
+                            {
+                                state.scripts.cancel_progress();
+                            }
                             _ => {
+                                // Keys the game does not use can run a
+                                // script's RegisterKeyMapping command.
+                                if !event.repeat {
+                                    if let Some(name) = client_scripts::key_name(code) {
+                                        state.scripts.key_pressed(name);
+                                    }
+                                }
                                 state.keys.insert(code);
                             }
                         }

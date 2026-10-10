@@ -1,0 +1,11 @@
+[package]
+name = "sa-lua"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mlua = { version = "0.12.2", features = ["lua54", "vendored", "serde"] }
+rmp-serde = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

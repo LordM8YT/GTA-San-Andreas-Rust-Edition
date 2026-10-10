@@ -329,6 +329,9 @@ impl State {
         self.network_host = false;
         self.network_peer_ids.clear();
         self.pending_coords = None;
+        self.scripts.stop_all();
+        self.script_peers.clear();
+        self.release_script_cursor();
         self.chat.reset_server_state();
     }
     pub(super) fn browse_network(&mut self) {
@@ -354,7 +357,7 @@ impl State {
             Err(e) => self.menu.browser_status = e.to_string(),
         }
     }
-    fn local_pose(&self) -> Pose {
+    pub(super) fn local_pose(&self) -> Pose {
         let vehicle = self
             .car
             .as_ref()
@@ -464,6 +467,7 @@ impl State {
     pub(super) fn update_network(&mut self) {
         self.update_session_resources();
         self.handle_server_events();
+        self.update_client_scripts();
         self.process_chat();
         self.apply_pending_coords();
         if let Some(request) = &self.network_browser {
@@ -583,6 +587,8 @@ impl State {
             }
             self.menu.network_active = true;
             self.network_peer_ids = report.peers.iter().map(|p| p.id).collect();
+            self.script_peers = report.peers.clone();
+            self.script_local_id = report.local_id;
             self.menu.network_players = report
                 .peers
                 .iter()

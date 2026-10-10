@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 mlua = { version = "0.12.2", features = ["lua54", "vendored", "serde", "anyhow"] }
+sa-lua = { path = "../lua" }
 sa-net = { path = "../net" }
 sa-scene = { path = "../scene" }
 rmp-serde = "1"

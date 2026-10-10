@@ -10,7 +10,7 @@ Questions, bug reports and people to play with: <https://discord.gg/F8KwXJqw6D>
 
 For multiplayer, choose Servers, enter a host IP:port or a relay IP:port
 and 12-character join code. A trusted relay's browser lists public rooms on that
-relay only. All participants, host and relay must use protocol 7. Required native
+relay only. All participants, host and relay must use protocol 8. Required native
 mods are verified and cached before gameplay; downloads can be disabled in Settings.
 There is no configured public multiplayer service, Steam relay or account requirement.
 The packaged launcher automatically checks GitHub client releases; see [updates](https://github.com/LordM8YT/GTA-San-Andreas-Rust-Edition/blob/main/docs/client-updates.md).

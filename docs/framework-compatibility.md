@@ -6,9 +6,10 @@ kan bygge på), og senere en Qbox-portering. Direkte kompatibilitet blir først
 lovet når en bestemt Qbox-versjon og alle dens nødvendige avhengigheter er
 testet sammen på `sa-server`, og den testen er en del av CI.
 
-Oversikten gjelder serversiden. SARE kjører ikke klient-Lua eller NUI ennå, og
-alt som tegner UI, leser GTA V-entiteter eller kaller GTA V-natives på klienten
-mangler uansett.
+Oversikten gjelder mest serversiden. Klient-Lua kjører i en sandkasse med et
+lite sett klientnatives og et UI-API i ox_lib-stil som spillet tegner selv (se
+[klientskript](client-scripts.md)). NUI (nettsider) støttes ikke, med vilje, og
+GTA V-natives på klienten mangler.
 
 ## Testet versjonssett (10. oktober 2026)
 
@@ -51,7 +52,10 @@ NUI kjører ikke.
 | `glm`-matematikk, `Citizen.InvokeNative` | ox_lib | Mangler |
 | Serverentiteter (OneSync): `CreateVehicle`, `GetGamePool`, nettverks-ID-er | ox_lib, qbx_core | Mangler |
 | Routing buckets | ox_lib, qbx_core | Mangler (`GetPlayerRoutingBucket` gir 0) |
-| Klient-Lua, NUI, GTA V-natives | alle Qbox-ressurser | Mangler |
+| Klient-Lua (`client_script`) | alle Qbox-ressurser | **Delvis** (nytt): kjører i sandkasse; spiller- og posisjonsnatives, events, kommandoer, tastebindinger |
+| UI: varsler, kontekstmeny, input-dialog, fremdriftslinje, tekst-UI | ox_lib (`lib.notify`, `lib.registerContext`, `lib.inputDialog` ...) | **Delvis** (nytt): eget `UI`-API med samme felter; ox_libs NUI-versjon kjører ikke |
+| NUI (`ui_page`, `SendNUIMessage`) | ox_lib, ox_inventory, qbx_core | Støttes ikke (sikkerhet); bruk skript-UI-et |
+| GTA V-natives på klienten | alle Qbox-ressurser | Mangler |
 
 ## Trinnplan
 
@@ -68,8 +72,9 @@ NUI kjører ikke.
    eksponeres som `license:`, og deferrals før spilleren slippes inn.
 5. **Serverentiteter:** biler, peds og objekter som serveren eier, routing
    buckets og replikerte state bags.
-6. **Klient-Lua og NUI** i SARE-klienten, med SA-varianter av de mest brukte
-   GTA V-natives.
+6. **Klient-Lua og UI (delvis ferdig):** sandkasse, nedlasting med SHA-256,
+   UI tegnet av spillet. Gjenstår: flere SA-varianter av GTA V-natives og en
+   ox_lib-bro som oversetter `lib.notify`/`lib.registerContext` til `UI`.
 7. **Qbox-test:** fest versjonene over, kjør qbx_core, ox_lib, oxmysql-erstatningen
    og ox_inventory sammen i CI. Først da kan en bestemt Qbox-versjon kalles
    kompatibel.

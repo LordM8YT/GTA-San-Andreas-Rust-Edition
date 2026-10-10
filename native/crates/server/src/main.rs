@@ -3,7 +3,6 @@
 //! No window, GPU, Steam or game installation is needed.
 mod acl;
 mod cfg;
-mod cfxlua;
 mod console;
 mod manifest;
 mod natives;
@@ -339,6 +338,7 @@ fn pump(
         for (id, name) in &current {
             if !known.contains_key(id) {
                 out(shared, format!("Player {name} ({id}) joined."));
+                script::announce_client_bundles(shared, *id);
                 // Already connected: a rejecting handler drops the player.
                 let rejected = script::dispatch(
                     shared,

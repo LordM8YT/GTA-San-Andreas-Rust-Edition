@@ -253,7 +253,7 @@ The native launcher selects direct IP or a relay browser/join code and starts th
 runtime with `--play`. The runtime still performs resource preflight, verification,
 model upload and inventory-pinned admission before entering gameplay. Direct
 runtime starts can use the same flags. Update runtime, headless server and relay
-together: protocol 7 adds script events (chat, commands, server teleports); protocol 6 added matched Ping/Pong messages. The displayed RTT measures
+together: protocol 8 adds client script downloads; protocol 7 added script events (chat, commands, server teleports); protocol 6 added matched Ping/Pong messages. The displayed RTT measures
 the gameplay connection, including relay hops and host scheduling; it is not a
 one-way delay or the directory request duration. Hosting locally has no remote RTT.
 

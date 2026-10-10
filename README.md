@@ -20,7 +20,7 @@ Play together. Direct runtime startup remains supported.
 The launcher shares settings and launch contracts with the runtime, saves favorites,
 shows installation errors, previews unused cache cleanup and creates reviewable
 local diagnostic reports. Runtime joins prepare and verify server resources before
-automatically entering gameplay. All multiplayer binaries now need **protocol 7**;
+automatically entering gameplay. All multiplayer binaries now need **protocol 8**;
 round-trip time is measured on the gameplay connection. F3 shows frame/CPU timings
 and resident memory. GPU timestamp profiling is not implemented.
 
@@ -60,7 +60,8 @@ For a server that stays running without a player's game, download
 and run **start-server.cmd**, or run it from a source checkout.
 The headless server is set up like a FiveM server: `server-data/server.cfg`,
 `resources/[category]/` with `fxmanifest.lua`, server-side Lua (events,
-commands, exports, threads), ACL and rcon. Players chat with **T** and use the
+commands, exports, threads), sandboxed client Lua with menus and dialogs drawn
+by the game ([client scripts](docs/client-scripts.md)), ACL and rcon. Players chat with **T** and use the
 **F8** console. See [server setup](docs/server-hosting.md). Frameworks get
 `@resource` includes, `provide`, function references, server-side state bags
 and CfxLua syntax; ox_lib starts on the server, Qbox is not supported yet. See

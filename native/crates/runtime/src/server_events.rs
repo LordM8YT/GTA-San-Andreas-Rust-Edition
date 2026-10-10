@@ -34,7 +34,9 @@ impl State {
                     }
                 }
                 name => {
-                    if !self.chat.handle_event(name, &args) {
+                    let chat = self.chat.handle_event(name, &args);
+                    let scripts = self.scripts.handle_event(name, &event.payload);
+                    if !chat && !scripts {
                         self.chat.log(format!("event {name} {}", event.payload));
                     }
                 }
@@ -129,6 +131,7 @@ impl State {
             "help" | "cmdlist" => self.chat.log(
                 "Local: /cars /peds /mp /mods, connect <ip:port>, disconnect, quit. Other /commands go to the server.",
             ),
+            _ if self.scripts.command(line) => {}
             _ => match &self.network_session {
                 Some(session) if !self.network_host => {
                     let payload = json!([line]).to_string();

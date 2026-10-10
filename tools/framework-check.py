@@ -5,7 +5,8 @@ Usage: python tools/framework-check.py <resource-or-resources-folder> [--all] [-
 Reads each fxmanifest.lua, collects the server-side Lua it would run (server and
 shared scripts, `@other/file.lua` includes and non-client Lua listed under
 `files`), and compares the globals those scripts call with what sa-server
-provides (native/crates/server/src/natives.rs and prelude.lua). This is a
+provides (native/crates/server/src/natives.rs, prelude.lua and the shared
+native/crates/lua/src/common.lua). This is a
 static estimate: a resource with no missing natives can still fail at runtime,
 and a missing name may be a global defined by another resource.
 """
@@ -19,6 +20,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 SERVER_SRC = REPO / 'native' / 'crates' / 'server' / 'src'
+COMMON_LUA = REPO / 'native' / 'crates' / 'lua' / 'src' / 'common.lua'
 SCRIPT_KEYS = {
     'server_script': 'server', 'server_scripts': 'server',
     'shared_script': 'shared', 'shared_scripts': 'shared',
@@ -46,6 +48,7 @@ FEATURES = [
 def provided_names() -> set[str]:
     natives = (SERVER_SRC / 'natives.rs').read_text(encoding='utf-8')
     prelude = (SERVER_SRC / 'prelude.lua').read_text(encoding='utf-8')
+    prelude += '\n' + COMMON_LUA.read_text(encoding='utf-8')
     names = set(re.findall(r'func!\(\s*g,\s*"(\w+)"', natives))
     names |= set(re.findall(r'g\.set\("(\w+)"', natives))
     names |= set(re.findall(r'^function\s+([A-Za-z_][\w.]*)\s*\(', prelude, re.M))
@@ -142,7 +145,8 @@ def check(name: str, folder: Path, resources: dict[str, Path], provided: set[str
         files += [p for p in sorted(folder.rglob('*.lua'))
                   if 'client' not in p.relative_to(folder).as_posix() and p.name != 'fxmanifest.lua']
     if manifest.get('client'):
-        notes.append(f"{len(manifest['client'])} client script entries: not run (no client Lua yet)")
+        notes.append(f"{len(manifest['client'])} client script entries: sent to players and run sandboxed; "
+                     'only a small set of client natives exists (not checked here)')
     if manifest.get('ui_page'):
         notes.append('ui_page (NUI): not supported')
     for pattern in manifest.get('server', []):
