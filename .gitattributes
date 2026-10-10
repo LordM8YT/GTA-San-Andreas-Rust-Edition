@@ -13,4 +13,3 @@
 *.ifp  binary
 *.ttf  binary
 *.db   binary
-target/** filter=lfs diff=lfs merge=lfs -text
