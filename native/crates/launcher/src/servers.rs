@@ -2,8 +2,8 @@
 //! table of servers, a details panel with one Connect button, and direct
 //! connect as a dialog.
 use super::{
-    input, input_limit, log_error, primary, surface, Launcher, Session, ACCENT, MUTED,
-    SURFACE, SURFACE_HIGH, TEXT,
+    input, input_limit, log_error, primary, surface, Launcher, Session, ACCENT, MUTED, SURFACE,
+    SURFACE_HIGH, TEXT,
 };
 use eframe::egui::{self, Color32, RichText};
 
@@ -36,8 +36,7 @@ fn initial(name: &str) -> String {
 /// A table row: square icon, name and detail, players and status columns.
 fn server_row(ui: &mut egui::Ui, row: &Row, selected: bool) -> egui::Response {
     let width = ui.available_width();
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(width, 58.), egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 58.), egui::Sense::click());
     let fill = if selected {
         Color32::from_rgb(48, 34, 28)
     } else if response.hovered() {
@@ -109,11 +108,7 @@ fn server_row(ui: &mut egui::Ui, row: &Row, selected: bool) -> egui::Response {
         } else {
             ("Saved", MUTED)
         };
-        painter.circle_filled(
-            egui::pos2(rect.right() - 118., rect.center().y),
-            4.,
-            color,
-        );
+        painter.circle_filled(egui::pos2(rect.right() - 118., rect.center().y), 4., color);
         painter.text(
             egui::pos2(rect.right() - 108., rect.center().y),
             egui::Align2::LEFT_CENTER,
@@ -184,11 +179,11 @@ impl Launcher {
             ] {
                 let active = self.server_tab == tab;
                 let response = ui.add(
-                    egui::Button::new(
-                        RichText::new(label)
-                            .size(17.)
-                            .color(if active { TEXT } else { MUTED }),
-                    )
+                    egui::Button::new(RichText::new(label).size(17.).color(if active {
+                        TEXT
+                    } else {
+                        MUTED
+                    }))
                     .frame(false),
                 );
                 if active {
@@ -242,7 +237,7 @@ impl Launcher {
         ui.horizontal_top(|ui| {
             ui.allocate_ui(egui::vec2(list_width, 0.), |ui| {
                 ui.vertical(|ui| {
-                    if rows.len() > 0 && list_width > 560. {
+                    if !rows.is_empty() && list_width > 560. {
                         ui.horizontal(|ui| {
                             ui.add_space(64.);
                             ui.label(RichText::new("SERVER").small().color(MUTED));
@@ -480,7 +475,12 @@ impl Launcher {
         }
         let ctx = ui.ctx().clone();
         let modal = egui::Modal::new(egui::Id::new("direct-connect"))
-            .frame(egui::Frame::new().fill(SURFACE).corner_radius(6).inner_margin(24))
+            .frame(
+                egui::Frame::new()
+                    .fill(SURFACE)
+                    .corner_radius(6)
+                    .inner_margin(24),
+            )
             .show(&ctx, |ui| {
                 ui.set_width(460.);
                 ui.label(RichText::new("Direct connect").size(22.).strong());

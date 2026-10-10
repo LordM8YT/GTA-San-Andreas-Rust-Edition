@@ -1360,11 +1360,11 @@ impl Launcher {
                             format!("        {label}")
                         };
                         let response = ui.add(
-                            egui::Button::new(
-                                RichText::new(text)
-                                    .size(16.)
-                                    .color(if active { TEXT } else { MUTED }),
-                            )
+                            egui::Button::new(RichText::new(text).size(16.).color(if active {
+                                TEXT
+                            } else {
+                                MUTED
+                            }))
                             .frame(false)
                             .min_size(egui::vec2(0., 40.)),
                         );

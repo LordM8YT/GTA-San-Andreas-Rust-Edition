@@ -67,7 +67,13 @@ fn hint(painter: &egui::Painter, right: f32, y: f32, key: &str, label: &str, sca
         .layout_no_wrap(label.into(), font.clone(), TEXT)
         .size()
         .x;
-    painter.text(Pos2::new(right, y), egui::Align2::RIGHT_CENTER, label, font.clone(), TEXT);
+    painter.text(
+        Pos2::new(right, y),
+        egui::Align2::RIGHT_CENTER,
+        label,
+        font.clone(),
+        TEXT,
+    );
     let key_width = painter
         .layout_no_wrap(key.into(), font.clone(), Color32::BLACK)
         .size()
@@ -79,7 +85,13 @@ fn hint(painter: &egui::Painter, right: f32, y: f32, key: &str, label: &str, sca
         Vec2::new(key_width, 22.0 * scale),
     );
     painter.rect_filled(key_rect, 3.0, TEXT);
-    painter.text(key_rect.center(), egui::Align2::CENTER_CENTER, key, font, Color32::BLACK);
+    painter.text(
+        key_rect.center(),
+        egui::Align2::CENTER_CENTER,
+        key,
+        font,
+        Color32::BLACK,
+    );
     key_rect.left() - 22.0 * scale
 }
 
@@ -111,7 +123,9 @@ impl Menu {
         let location = DESTINATIONS
             .iter()
             .min_by(|a, b| {
-                let d = |xy: [f32; 2]| (xy[0] - coordinates[0]).powi(2) + (xy[1] - coordinates[1]).powi(2);
+                let d = |xy: [f32; 2]| {
+                    (xy[0] - coordinates[0]).powi(2) + (xy[1] - coordinates[1]).powi(2)
+                };
                 d(a.1).total_cmp(&d(b.1))
             })
             .map(|d| d.0)
@@ -143,7 +157,8 @@ impl Menu {
         let tab_width = (right - left - gap * (TABS.len() - 1) as f32) / TABS.len() as f32;
         let active = TABS.iter().position(|(p, _)| *p == page);
         if !ctx.egui_wants_keyboard_input() {
-            let (previous, next) = ctx.input(|i| (i.key_pressed(egui::Key::Q), i.key_pressed(egui::Key::E)));
+            let (previous, next) =
+                ctx.input(|i| (i.key_pressed(egui::Key::Q), i.key_pressed(egui::Key::E)));
             let current = active.unwrap_or(1);
             if previous {
                 self.open(TABS[(current + TABS.len() - 1) % TABS.len()].0);
@@ -166,7 +181,13 @@ impl Menu {
                 (PANEL, TEXT)
             };
             painter.rect_filled(rect, 0.0, fill);
-            painter.text(rect.center(), egui::Align2::CENTER_CENTER, *label, menu_font(18.0 * scale), color);
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                *label,
+                menu_font(18.0 * scale),
+                color,
+            );
             if response.clicked() && !selected {
                 self.open(*tab);
             }
@@ -182,7 +203,12 @@ impl Menu {
 
         let footer = screen.bottom() - 36.0 * scale;
         let mut x = right;
-        for (key, label) in [("Esc", "Back"), ("Enter", "Select"), ("E", "Next tab"), ("Q", "Previous tab")] {
+        for (key, label) in [
+            ("Esc", "Back"),
+            ("Enter", "Select"),
+            ("E", "Next tab"),
+            ("Q", "Previous tab"),
+        ] {
             x = hint(&painter, x, footer, key, label, scale);
         }
         Rect::from_min_max(
@@ -212,7 +238,10 @@ impl Menu {
         let row_height = 36.0 * scale;
         for (index, label) in PAUSE_ITEMS.iter().enumerate() {
             let rect = Rect::from_min_size(
-                Pos2::new(content.left(), content.top() + index as f32 * (row_height + 2.0)),
+                Pos2::new(
+                    content.left(),
+                    content.top() + index as f32 * (row_height + 2.0),
+                ),
                 Vec2::new(list_width, row_height),
             );
             let selected = self.selected == index;
@@ -246,39 +275,89 @@ impl Menu {
         painter.rect_filled(panel, 0.0, PANEL);
         let (title, body) = match self.selected {
             0 => ("Resume", "Return to free roam where you left off."),
-            1 => ("Map & destinations", "Travel to nine regions of San Andreas. The area loads before you move."),
-            2 => ("Settings", "Display, graphics, gameplay, interface and audio."),
+            1 => (
+                "Map & destinations",
+                "Travel to nine regions of San Andreas. The area loads before you move.",
+            ),
+            2 => (
+                "Settings",
+                "Display, graphics, gameplay, interface and audio.",
+            ),
             3 => ("Controls", "Keyboard, mouse and controller bindings."),
             4 => ("Mods", "Local or server resources that are loaded now."),
             5 => ("Wardrobe", "Choose which clothes your character wears."),
             6 => ("Interiors", "Visit the interiors that are available today."),
             7 => ("Cars", "Spawn a vehicle nearby and get in."),
             8 => ("Peds", "Change your player model or spawn a ped."),
-            9 => ("Main menu", "Leave free roam for the main menu. Offline progress is saved."),
-            _ => ("Multiplayer", "Host, join a server or browse a relay. T opens chat, F8 the console."),
+            9 => (
+                "Main menu",
+                "Leave free roam for the main menu. Offline progress is saved.",
+            ),
+            _ => (
+                "Multiplayer",
+                "Host, join a server or browse a relay. T opens chat, F8 the console.",
+            ),
         };
         let inner = panel.shrink(22.0 * scale);
-        painter.text(inner.left_top(), egui::Align2::LEFT_TOP, title, menu_font(30.0 * scale), TEXT);
+        painter.text(
+            inner.left_top(),
+            egui::Align2::LEFT_TOP,
+            title,
+            menu_font(30.0 * scale),
+            TEXT,
+        );
         let galley = painter.layout(
             body.into(),
             FontId::proportional(17.0 * scale),
             Color32::from_rgb(210, 210, 210),
             inner.width(),
         );
-        painter.galley(inner.left_top() + Vec2::new(0.0, 44.0 * scale), galley, TEXT);
+        painter.galley(
+            inner.left_top() + Vec2::new(0.0, 44.0 * scale),
+            galley,
+            TEXT,
+        );
         let facts = [
-            ("Position", format!("{:.0}, {:.0}, {:.0}", coordinates[0], coordinates[1], coordinates[2])),
+            (
+                "Position",
+                format!(
+                    "{:.0}, {:.0}, {:.0}",
+                    coordinates[0], coordinates[1], coordinates[2]
+                ),
+            ),
             ("Session", self.network_status.clone()),
-            ("Players", if self.network_active { self.network_players.len().to_string() } else { "Offline".into() }),
+            (
+                "Players",
+                if self.network_active {
+                    self.network_players.len().to_string()
+                } else {
+                    "Offline".into()
+                },
+            ),
         ];
         for (index, (label, value)) in facts.iter().enumerate() {
             let y = inner.bottom() - (facts.len() - index) as f32 * 30.0 * scale;
             painter.line_segment(
-                [Pos2::new(inner.left(), y - 4.0 * scale), Pos2::new(inner.right(), y - 4.0 * scale)],
+                [
+                    Pos2::new(inner.left(), y - 4.0 * scale),
+                    Pos2::new(inner.right(), y - 4.0 * scale),
+                ],
                 egui::Stroke::new(1.0, Color32::from_white_alpha(30)),
             );
-            painter.text(Pos2::new(inner.left(), y + 10.0 * scale), egui::Align2::LEFT_CENTER, *label, FontId::proportional(15.0 * scale), MUTED);
-            painter.text(Pos2::new(inner.right(), y + 10.0 * scale), egui::Align2::RIGHT_CENTER, value, FontId::proportional(15.0 * scale), TEXT);
+            painter.text(
+                Pos2::new(inner.left(), y + 10.0 * scale),
+                egui::Align2::LEFT_CENTER,
+                *label,
+                FontId::proportional(15.0 * scale),
+                MUTED,
+            );
+            painter.text(
+                Pos2::new(inner.right(), y + 10.0 * scale),
+                egui::Align2::RIGHT_CENTER,
+                value,
+                FontId::proportional(15.0 * scale),
+                TEXT,
+            );
         }
         action
     }
