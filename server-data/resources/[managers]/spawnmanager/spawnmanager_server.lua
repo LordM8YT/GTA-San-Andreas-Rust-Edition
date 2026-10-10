@@ -1,4 +1,4 @@
--- FiveM's spawnmanager runs on the client. SARE has no client Lua yet, so
+-- FiveM's spawnmanager runs on the client. In SARE it runs on the server:
 -- this server version picks the point and moves the player with SetEntityCoords.
 
 local autoSpawn = true

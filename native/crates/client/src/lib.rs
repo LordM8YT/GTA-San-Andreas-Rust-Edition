@@ -17,6 +17,24 @@ pub const BUILD_ID: &str = env!("SARE_BUILD_ID");
 pub fn config_dir() -> PathBuf {
     settings::Settings::path().parent().unwrap().to_path_buf()
 }
+/// The player's secret key (`identity.key` beside the settings), created on
+/// first use. Servers only see a salted hash of it: see
+/// `sa_net::set_identity_secret`. Deleting the file gives a new identity.
+pub fn identity_secret() -> Result<String> {
+    let path = config_dir().join("identity.key");
+    if let Ok(text) = std::fs::read_to_string(&path) {
+        let text = text.trim();
+        if text.len() == 64 && text.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Ok(text.to_string());
+        }
+    }
+    let mut random = [0u8; 32];
+    getrandom::fill(&mut random).map_err(|e| anyhow::anyhow!("no system randomness: {e}"))?;
+    let secret: String = random.iter().map(|b| format!("{b:02x}")).collect();
+    std::fs::create_dir_all(config_dir())?;
+    std::fs::write(&path, &secret)?;
+    Ok(secret)
+}
 pub fn cache_dir() -> PathBuf {
     if std::env::var_os("SARE_CONFIG_DIR").is_some() {
         return config_dir().join("server-cache");

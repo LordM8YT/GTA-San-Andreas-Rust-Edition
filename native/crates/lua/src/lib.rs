@@ -4,6 +4,7 @@
 pub mod bundle;
 pub mod cfxlua;
 pub mod client;
+pub mod json;
 pub mod ui;
 
 /// Scheduler, events, exports, function references, vectors, json and the

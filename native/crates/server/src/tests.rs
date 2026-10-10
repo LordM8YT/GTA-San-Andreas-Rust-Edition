@@ -35,7 +35,7 @@ fn temp_root() -> PathBuf {
     let unique = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!("sare-server-{}-{unique}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
-    template::create(&root).unwrap();
+    template::create(&root, "freeroam").unwrap();
     let tester = root.join("resources/[local]/tester");
     std::fs::create_dir_all(&tester).unwrap();
     std::fs::write(
@@ -82,6 +82,31 @@ fn template_cfg_uses_only_known_commands() {
     assert_eq!(shared.borrow().convar("sv_hostname"), Some("SARE Freeroam"));
     assert!(shared.borrow().server_info.contains("sv_projectName"));
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn every_template_cfg_runs_and_sarebox_starts_its_resources() {
+    for (name, ..) in template::TEMPLATES {
+        let root =
+            std::env::temp_dir().join(format!("sare-template-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        template::create(&root, name).unwrap();
+        let shared: Shared = Rc::new(RefCell::new(State::new(root.join("resources"))));
+        shared.borrow_mut().capture = Some(String::new());
+        let mut console = Console::new(shared.clone());
+        console.execute_line(
+            0,
+            &format!("exec \"{}\"", root.join("server.cfg").display()),
+        );
+        let output = shared.borrow_mut().capture.take().unwrap();
+        assert!(!output.contains("No such command"), "{name}: {output}");
+        if name == "sarebox" {
+            assert!(console.boot_resources.contains(&"[sarebox]".to_string()));
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    assert!(template::choose(Some("SAREBOX")).is_ok_and(|t| t == "sarebox"));
+    assert!(template::choose(Some("qbox")).is_err());
 }
 
 #[test]
@@ -512,6 +537,174 @@ fn framework_examples_use_includes_provide_function_refs_and_state_bags() {
             .as_ref()
             .is_some_and(|c| c.contains("no longer exists"))
     });
+    drop(session);
+    drop(shared);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn sarebox_saves_characters_by_license_and_admin_needs_the_acl() {
+    sa_net::set_identity_secret("sarebox-test-player");
+    let root = temp_root();
+    let commands = [
+        "endpoint_add_tcp 127.0.0.1:0",
+        "ensure mapmanager",
+        "ensure chat",
+        "ensure spawnmanager",
+        "ensure sare-map-grove",
+        "ensure [sarebox]",
+        "add_ace group.admin command allow",
+    ]
+    .iter()
+    .map(|l| words(l))
+    .collect();
+    let Server {
+        shared,
+        mut console,
+        session,
+        publication: _,
+    } = boot(commands, root.join("resources")).unwrap();
+    for name in ["sarebox_core", "sarebox_admin"] {
+        assert!(
+            shared.borrow().resources[name].started,
+            "{name} not started"
+        );
+    }
+    let mut known = BTreeMap::new();
+
+    // Joins a player, runs their client scripts, and returns them once the
+    // character is loaded on both sides.
+    let join = |console: &mut Console, known: &mut BTreeMap<u32, String>| {
+        let client = sa_net::Session::join(session.address, "Tester").unwrap();
+        let mut host = sa_lua::client::Host::new();
+        let start = Instant::now();
+        loop {
+            client.update(sa_net::Pose::default());
+            pump(&shared, console, &session, known).unwrap();
+            for event in client.events() {
+                host.handle_event(&event.name, &event.payload);
+            }
+            for sha in host.take_requests() {
+                client.request_script(&sha);
+            }
+            for (sha, bytes) in client.take_scripts() {
+                host.load(&sha, &bytes).unwrap();
+            }
+            host.tick(sa_lua::client::View::default());
+            for output in host.take_outputs() {
+                match output {
+                    sa_lua::client::Output::ServerEvent { name, payload } => {
+                        client.trigger(None, &name, &payload).unwrap()
+                    }
+                    sa_lua::client::Output::Console(line) => {
+                        assert!(!line.contains("ERROR"), "{line}")
+                    }
+                    _ => {}
+                }
+            }
+            if host.ui().text.is_some() {
+                return (client, host);
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(5),
+                "player did not load"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+    };
+    let drive = |console: &mut Console,
+                 known: &mut BTreeMap<u32, String>,
+                 client: &sa_net::Session,
+                 host: &mut sa_lua::client::Host,
+                 until: &dyn Fn(&sa_lua::client::Host) -> bool| {
+        let start = Instant::now();
+        while !until(host) {
+            client.update(sa_net::Pose::default());
+            pump(&shared, console, &session, known).unwrap();
+            for event in client.events() {
+                host.handle_event(&event.name, &event.payload);
+            }
+            host.tick(sa_lua::client::View::default());
+            host.take_outputs();
+            assert!(
+                start.elapsed() < Duration::from_secs(5),
+                "timed out: {:?}",
+                host.ui()
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+    };
+    let command = |client: &sa_net::Session, line: &str| {
+        let payload = Json::Array(vec![line.into()]).to_string();
+        client
+            .trigger(None, "__cfx_internal:commandFallback", &payload)
+            .unwrap();
+    };
+
+    let (client, mut host) = join(&mut console, &mut known);
+    assert!(host
+        .ui()
+        .text
+        .as_ref()
+        .unwrap()
+        .contains("$500  |  Bank $5000"));
+    let id = shared.borrow().peers[0].id;
+    let license = session.identity(id).expect("game sent an identity");
+    assert_eq!(
+        shared.borrow().bags[&format!("player:{id}")]["cash"],
+        Json::from(500)
+    );
+
+    // Not an admin yet: the restricted command is refused.
+    shared.borrow_mut().capture = Some(String::new());
+    command(&client, &format!("/givemoney {id} cash 250"));
+    let check = shared.clone();
+    drive(&mut console, &mut known, &client, &mut host, &|_| {
+        check
+            .borrow()
+            .capture
+            .as_ref()
+            .is_some_and(|c| c.contains("Access denied"))
+    });
+    // Admin by license, as server.cfg would grant it.
+    console.execute_line(
+        0,
+        &format!("add_principal identifier.license:{license} group.admin"),
+    );
+    command(&client, &format!("/givemoney {id} cash 250"));
+    drive(&mut console, &mut known, &client, &mut host, &|h| {
+        h.ui().text.as_ref().is_some_and(|t| t.contains("$750"))
+    });
+    command(&client, &format!("/setjob {id} taxi 1"));
+    drive(&mut console, &mut known, &client, &mut host, &|h| {
+        h.ui()
+            .text
+            .as_ref()
+            .is_some_and(|t| t.contains("Taxi - Driver"))
+    });
+
+    // Leaving saves the character; the same player comes back with it.
+    drop(client);
+    host.stop_all();
+    let start = Instant::now();
+    while !shared.borrow().peers.is_empty() {
+        pump(&shared, &mut console, &session, &mut known).unwrap();
+        assert!(start.elapsed() < Duration::from_secs(5));
+        thread::sleep(Duration::from_millis(5));
+    }
+    script::flush_kvp(&shared, true);
+    let saved = std::fs::read_to_string(root.join("kvp/sarebox_core.json")).unwrap();
+    assert!(
+        saved.contains(&license) && saved.contains("\\\"cash\\\":750"),
+        "{saved}"
+    );
+    let (client, host) = join(&mut console, &mut known);
+    let text = host.ui().text.clone().unwrap();
+    assert!(
+        text.contains("$750") && text.contains("Taxi - Driver"),
+        "{text}"
+    );
+    drop(client);
     drop(session);
     drop(shared);
     let _ = std::fs::remove_dir_all(root);

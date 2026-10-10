@@ -26,9 +26,10 @@ impl Acl {
             parents.retain(|p| p != parent);
         }
     }
-    fn closure(&self, principal: &str) -> HashSet<String> {
+    fn closure(&self, principals: &[String]) -> HashSet<String> {
         let mut seen = HashSet::new();
-        let mut pending = vec![principal.to_string(), "builtin.everyone".into()];
+        let mut pending = principals.to_vec();
+        pending.push("builtin.everyone".into());
         while let Some(next) = pending.pop() {
             if seen.len() < 256 && seen.insert(next.clone()) {
                 pending.extend(self.parents.get(&next).into_iter().flatten().cloned());
@@ -37,10 +38,15 @@ impl Acl {
         seen
     }
     pub fn allowed(&self, principal: &str, object: &str) -> bool {
-        if principal == "system.console" {
+        self.allowed_any(&[principal.to_string()], object)
+    }
+    /// A player is `player.<id>` plus `identifier.<id>` for each identifier,
+    /// as in FiveM: `add_principal identifier.license:... group.admin`.
+    pub fn allowed_any(&self, principals: &[String], object: &str) -> bool {
+        if principals.iter().any(|p| p == "system.console") {
             return true;
         }
-        let principals = self.closure(principal);
+        let principals = self.closure(principals);
         let mut candidate = object.to_string();
         loop {
             let matches: Vec<bool> = self

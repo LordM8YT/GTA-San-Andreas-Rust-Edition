@@ -1,4 +1,4 @@
-"""Build a FiveM-style dedicated server ZIP: server/ binaries plus a server-data/ template."""
+"""Build a FiveM-style dedicated server ZIP: server/ binaries plus server-data/ resources."""
 import argparse
 import hashlib
 import json
@@ -61,9 +61,13 @@ def package(target: Path, client_package: Path, destination: Path, platform: str
         if not binary.is_file() or binary.is_symlink():
             raise ValueError(f'Missing or unsafe binary: {binary.name}')
     data_root = REPO / 'server-data'
-    data = sorted(p for p in data_root.rglob('*') if p.is_file() and not p.is_symlink() and p.name.endswith(SERVER_DATA_SUFFIXES))
-    if not (data_root / 'server.cfg') in data:
-        raise ValueError('server-data/server.cfg is missing')
+    # No server.cfg: sa-server asks for a template (Freeroam or SARE Box) on
+    # the first start, and an extracted update never overwrites the owner's.
+    data = sorted(p for p in data_root.rglob('*') if p.is_file() and not p.is_symlink()
+                  and p.name.endswith(SERVER_DATA_SUFFIXES)
+                  and p != data_root / 'server.cfg' and 'templates' not in p.relative_to(data_root).parts)
+    if not (data_root / 'resources').is_dir():
+        raise ValueError('server-data/resources is missing')
     destination.mkdir(parents=True, exist_ok=True)
     output = destination / f'SARE-server-{platform}.zip'
     staging = output.with_name(output.name + '.staging')

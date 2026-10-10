@@ -10,8 +10,9 @@ Up to 20 players. Movement is still simulated by clients.
 
 **Download:** every tested main-branch build publishes `SARE-server-windows.zip`
 and `SARE-server-linux.zip` on the [latest release](https://github.com/LordM8YT/GTA-San-Andreas-Rust-Edition/releases/latest).
-Extract it, edit `server-data/server.cfg` and run `start-server.cmd` (Linux:
-`./start-server.sh`). The package keeps binaries in `server/` and your data in
+Extract it and run `start-server.cmd` (Linux: `./start-server.sh`). The first
+start asks for a template, **Freeroam** or **[SARE Box](sarebox.md)**, and
+creates `server-data/server.cfg` (without a console: `+set sv_template sarebox`). The package keeps binaries in `server/` and your data in
 `server-data/`. Started from those scripts, the server installs new releases by
 itself while no players are online; see [server package](server-package.md).
 
@@ -31,12 +32,14 @@ server-data/
     [gamemodes]/basic-gamemode/    freeroam game type, join/leave messages, /respawn
     [gamemodes]/[maps]/sare-map-grove/   Grove Street spawn points
     [examples]/                    example framework (sare_lib, sare_core, sare_jobs), not started
+    [sarebox]/                     SARE Box framework (sarebox_core, sarebox_admin), started by its template
     [local]/                       your own resources
 ```
 
 For deployment, copy `sa-server.exe` and your `server-data` folder. Running
-`sa-server` in an empty folder creates this template. Launch arguments use
-FiveM syntax: `sa-server +exec server.cfg +set sv_maxclients 8`.
+`sa-server` in an empty folder asks for a template and creates it. Without
+`+exec`, server.cfg runs first. Launch arguments use FiveM syntax:
+`sa-server +exec server.cfg +set sv_maxclients 8`.
 
 ## server.cfg
 
@@ -103,9 +106,16 @@ Client scripts run sandboxed on players' machines, and scripts show menus,
 dialogs, notifications and progress bars through the game's own UI; see
 [client scripts](client-scripts.md).
 
+Players have a `license:` identifier that stays the same on your server
+(see [SARE Box](sarebox.md#players-and-saving) for how it works and its
+limits), so the ACL can grant rights by license:
+`add_principal identifier.license:... group.admin`. Resource KVP
+(`SetResourceKvp`, `GetResourceKvpString` ...) saves to `kvp/<resource>.json`
+next to server.cfg.
+
 Not supported yet: NUI pages (by design: use the script UI), OneSync entities, routing buckets, replicated state bags,
 databases (oxmysql is a Node.js resource), `PerformHttpRequest`, and identifiers
-beyond a session ID (`sare:<id>`). `playerConnecting` runs after the player has
+other than `license` and `sare`. `playerConnecting` runs after the player has
 joined, so a rejection drops them. FiveM resources that use GTA V natives must
 be adapted.
 

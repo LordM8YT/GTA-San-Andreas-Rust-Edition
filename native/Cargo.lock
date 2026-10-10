@@ -3181,6 +3181,7 @@ name = "sa-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "getrandom 0.3.4",
  "glam 0.30.10",
  "sa-assets",
  "sa-net",
@@ -3282,6 +3283,7 @@ name = "sa-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "getrandom 0.3.4",
  "mlua",
  "rmp-serde",
  "sa-lua",

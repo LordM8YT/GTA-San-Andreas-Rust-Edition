@@ -13,3 +13,4 @@ serde_json = "1"
 sa-assets = { path = "../assets" }
 sa-scene = { path = "../scene" }
 sa-net = { path = "../net" }
+getrandom = "0.3"

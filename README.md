@@ -61,7 +61,9 @@ and run **start-server.cmd**, or run it from a source checkout.
 The headless server is set up like a FiveM server: `server-data/server.cfg`,
 `resources/[category]/` with `fxmanifest.lua`, server-side Lua (events,
 commands, exports, threads), sandboxed client Lua with menus and dialogs drawn
-by the game ([client scripts](docs/client-scripts.md)), ACL and rcon. Players chat with **T** and use the
+by the game ([client scripts](docs/client-scripts.md)), ACL and rcon. The first start asks for a template: Freeroam, or
+[SARE Box](docs/sarebox.md), a small roleplay framework with saved characters,
+money, jobs and an admin menu. Players chat with **T** and use the
 **F8** console. See [server setup](docs/server-hosting.md). Frameworks get
 `@resource` includes, `provide`, function references, server-side state bags
 and CfxLua syntax; ox_lib starts on the server, Qbox is not supported yet. See

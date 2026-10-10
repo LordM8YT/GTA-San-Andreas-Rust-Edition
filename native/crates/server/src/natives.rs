@@ -36,6 +36,28 @@ fn vector3(lua: &Lua, [x, y, z]: [f32; 3]) -> mlua::Result<Value> {
     let make: Function = lua.globals().get("vector3")?;
     make.call((x, y, z))
 }
+/// `license:<hex>` when the player's game sent an identity (unique to this
+/// server's salt), then the session's `sare:<id>`.
+pub fn identifiers(shared: &Shared, id: u32) -> Vec<String> {
+    let session = shared.borrow().session.clone();
+    let mut list: Vec<String> = session
+        .and_then(|s| s.identity(id))
+        .map(|identity| format!("license:{identity}"))
+        .into_iter()
+        .collect();
+    list.push(format!("sare:{id}"));
+    list
+}
+/// ACL principals of a player: `player.<id>` and `identifier.<identifier>`.
+pub fn principals(shared: &Shared, id: u32) -> Vec<String> {
+    let mut list = vec![format!("player.{id}")];
+    list.extend(
+        identifiers(shared, id)
+            .into_iter()
+            .map(|i| format!("identifier.{i}")),
+    );
+    list
+}
 pub fn send_client(shared: &Shared, target: Option<u32>, name: &str, args: &[Json]) {
     let payload = Json::Array(args.to_vec()).to_string();
     let session = shared.borrow().session.clone();
@@ -283,7 +305,7 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
         Value,
         bool
     )| {
-        let value: Json = lua.from_value_with(value, script::deserialize())?;
+        let value: Json = sa_lua::json::to_json(&value)?;
         script::set_bag(&shared, &bag, &key, value, replicated);
         Ok(())
     });
@@ -323,7 +345,7 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
         }
     );
     func!(native, "json_encode", shared, name, |lua, value: Value| {
-        let json: Json = lua.from_value_with(value, script::deserialize())?;
+        let json: Json = sa_lua::json::to_json(&value)?;
         Ok(json.to_string())
     });
     func!(native, "json_decode", shared, name, |lua, text: String| {
@@ -338,7 +360,7 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
     // so binary strings and integer-keyed maps are not preserved exactly.
     let msgpack = lua.create_table()?;
     let pack = |lua: &Lua, value: Value| -> mlua::Result<mlua::LuaString> {
-        let json: Json = lua.from_value_with(value, script::deserialize())?;
+        let json: Json = sa_lua::json::to_json(&value)?;
         lua.create_string(rmp_serde::to_vec(&json).map_err(mlua::Error::external)?)
     };
     msgpack.set(
@@ -683,10 +705,8 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
             let Some(id) = player_id(&player) else {
                 return Ok(false);
             };
-            Ok(shared
-                .borrow()
-                .acl
-                .allowed(&format!("player.{id}"), &object))
+            let principals = principals(&shared, id);
+            Ok(shared.borrow().acl.allowed_any(&principals, &object))
         }
     );
     func!(g, "IsPrincipalAceAllowed", shared, name, |_lua,
@@ -747,10 +767,11 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
         shared,
         name,
         |lua, player: Value| {
-            // No account system yet: a session identifier only, never trusted.
             let list = lua.create_table()?;
             if let Some(p) = peer(&shared, &player) {
-                list.push(format!("sare:{}", p.id))?;
+                for identifier in identifiers(&shared, p.id) {
+                    list.push(identifier)?;
+                }
             }
             Ok(list)
         }
@@ -760,7 +781,9 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
         "GetNumPlayerIdentifiers",
         shared,
         name,
-        |_lua, player: Value| { Ok(usize::from(peer(&shared, &player).is_some())) }
+        |_lua, player: Value| {
+            Ok(peer(&shared, &player).map_or(0, |p| identifiers(&shared, p.id).len()))
+        }
     );
     func!(
         g,
@@ -769,12 +792,11 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
         name,
         |_lua, (player, index): (Value, usize)| {
             Ok(peer(&shared, &player)
-                .filter(|_| index == 0)
-                .map(|p| format!("sare:{}", p.id)))
+                .and_then(|p| identifiers(&shared, p.id).into_iter().nth(index)))
         }
     );
-    // Only the `sare` session type exists: `license`, `discord`, `fivem` and
-    // others return nil, so frameworks that require a license reject joins.
+    // `license` (salted per server) and `sare` exist; `discord`, `fivem`,
+    // `steam` and others return nil.
     func!(g, "GetPlayerIdentifierByType", shared, name, |_lua,
                                                          (
         player,
@@ -783,9 +805,90 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
         Value,
         String
     )| {
-        Ok(peer(&shared, &player)
-            .filter(|_| kind == "sare")
-            .map(|p| format!("sare:{}", p.id)))
+        let prefix = format!("{kind}:");
+        Ok(peer(&shared, &player).and_then(|p| {
+            identifiers(&shared, p.id)
+                .into_iter()
+                .find(|i| i.starts_with(&prefix))
+        }))
+    });
+    // Resource KVP (see kvp.rs). The NoSync variants and FlushResourceKvp
+    // behave the same: saving happens in the background once a second.
+    for (native, kind) in [
+        ("SetResourceKvp", "string"),
+        ("SetResourceKvpNoSync", "string"),
+        ("SetResourceKvpInt", "int"),
+        ("SetResourceKvpIntNoSync", "int"),
+        ("SetResourceKvpFloat", "float"),
+        ("SetResourceKvpFloatNoSync", "float"),
+    ] {
+        func!(
+            g,
+            native,
+            shared,
+            name,
+            |_lua, (key, value): (String, Value)| {
+                let value = match (kind, value) {
+                    ("string", Value::String(s)) => Json::String(s.to_string_lossy()),
+                    ("int", Value::Integer(i)) => Json::from(i),
+                    ("int", Value::Number(n)) => Json::from(n as i64),
+                    ("float", Value::Integer(i)) => Json::from(i as f64),
+                    ("float", Value::Number(n)) if n.is_finite() => Json::from(n),
+                    (_, other) => {
+                        return Err(mlua::Error::runtime(format!(
+                            "{native}: expected a {kind} value, got {}",
+                            other.type_name()
+                        )))
+                    }
+                };
+                let result = shared.borrow_mut().kvp.set(&name, &key, value);
+                result.map_err(mlua::Error::runtime)
+            }
+        );
+    }
+    func!(
+        g,
+        "GetResourceKvpString",
+        shared,
+        name,
+        |_lua, key: String| {
+            let value = shared.borrow_mut().kvp.get(&name, &key);
+            Ok(value.and_then(|v| v.as_str().map(str::to_string)))
+        }
+    );
+    func!(g, "GetResourceKvpInt", shared, name, |_lua, key: String| {
+        let value = shared.borrow_mut().kvp.get(&name, &key);
+        Ok(value.and_then(|v| v.as_i64()).unwrap_or(0))
+    });
+    func!(
+        g,
+        "GetResourceKvpFloat",
+        shared,
+        name,
+        |_lua, key: String| {
+            let value = shared.borrow_mut().kvp.get(&name, &key);
+            Ok(value.and_then(|v| v.as_f64()).unwrap_or(0.0))
+        }
+    );
+    for native in ["DeleteResourceKvp", "DeleteResourceKvpNoSync"] {
+        func!(g, native, shared, name, |_lua, key: String| {
+            shared.borrow_mut().kvp.delete(&name, &key);
+            Ok(())
+        });
+    }
+    func!(g, "FlushResourceKvp", shared, name, |_lua, (): ()| {
+        script::flush_kvp(&shared, true);
+        Ok(())
+    });
+    func!(g, "StartFindKvp", shared, name, |_lua, prefix: String| {
+        Ok(shared.borrow_mut().kvp.start_find(&name, &prefix))
+    });
+    func!(g, "FindKvp", shared, name, |_lua, handle: i64| {
+        Ok(shared.borrow_mut().kvp.find(handle))
+    });
+    func!(g, "EndFindKvp", shared, name, |_lua, handle: i64| {
+        shared.borrow_mut().kvp.end_find(handle);
+        Ok(())
     });
     func!(
         g,

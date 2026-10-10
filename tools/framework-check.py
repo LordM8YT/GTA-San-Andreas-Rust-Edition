@@ -39,7 +39,7 @@ FEATURES = [
     ('glm math library', r'\bglm\.', 'missing'),
     ('Citizen.InvokeNative', r'Citizen\.InvokeNative', 'missing'),
     ('playerConnecting deferrals', r'deferrals\.', 'partial: the player is already connected'),
-    ('license identifiers', r"['\"](license2?|discord|steam|fivem|xbl|live)['\"]", 'missing: only sare:<id> exists'),
+    ('license identifiers', r"['\"](license2?|discord|steam|fivem|xbl|live)['\"]", 'partial: license (per server, unsigned) and sare:<id>; no discord/steam/fivem'),
     ('routing buckets', r'RoutingBucket', 'missing'),
     ('OneSync entities', r'\b(CreateVehicle|CreatePed|CreateObject|NetworkGetEntityFromNetworkId|GetGamePool)\b', 'missing'),
 ]

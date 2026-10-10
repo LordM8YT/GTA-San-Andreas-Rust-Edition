@@ -113,6 +113,18 @@ pub struct NetEvent {
     pub name: String,
     pub payload: String,
 }
+static IDENTITY_SECRET: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+/// The player's secret key for every session this process joins. Servers
+/// receive only a hash of it with their own salt, so identities differ per
+/// server; a server that lies about its salt can still learn another
+/// server's identity for the player (there is no signature yet).
+pub fn set_identity_secret(secret: &str) {
+    let _ = IDENTITY_SECRET.set(secret.to_string());
+}
+fn identity(secret: &str, salt: &str) -> String {
+    resources::hash(format!("sare-identity\n{secret}\n{salt}").as_bytes())
+}
+
 pub fn valid_event(name: &str, payload: &str) -> bool {
     !name.is_empty()
         && name.len() <= MAX_EVENT_NAME
@@ -155,7 +167,12 @@ enum Message {
     },
     Welcome {
         id: u32,
+        /// Per-server salt for the player's identity; empty when unused.
+        #[serde(default)]
+        salt: String,
     },
+    /// Clients: SHA-256 of the player's secret key and the server's salt.
+    Identity(String),
     Pose(Pose),
     Snapshot(Vec<Peer>),
     Reject(String),
@@ -299,6 +316,9 @@ struct Mailbox {
     /// Clients: bundles to request, and verified bundles received.
     script_requests: Mutex<Vec<String>>,
     script_files: Mutex<Vec<(String, Vec<u8>)>>,
+    /// Hosts: the salt sent with Welcome, and joined players' identities.
+    identity_salt: Mutex<String>,
+    identities: Mutex<HashMap<u32, String>>,
 }
 impl Mailbox {
     fn receive(&self, event: NetEvent) {
@@ -498,6 +518,17 @@ impl Session {
     pub fn take_scripts(&self) -> Vec<(String, Vec<u8>)> {
         std::mem::take(&mut *self.mail.script_files.lock().unwrap())
     }
+    /// Hosts only: the salt that makes players' identities unique to this
+    /// server. Set it before players join; without one, players have none.
+    pub fn set_identity_salt(&self, salt: &str) {
+        *self.mail.identity_salt.lock().unwrap() =
+            salt.chars().filter(|c| !c.is_control()).take(128).collect();
+    }
+    /// Hosts only: a joined player's identity (64 hex digits), stable for
+    /// the same player key and server salt.
+    pub fn identity(&self, id: u32) -> Option<String> {
+        self.mail.identities.lock().unwrap().get(&id).cloned()
+    }
     /// Hosts only: admitted player limit (1..=MAX_PLAYERS), like `sv_maxclients`.
     pub fn set_max_clients(&self, count: usize) {
         self.mail
@@ -541,6 +572,7 @@ struct Guest {
     transfer: Option<(String, Arc<[u8]>, usize)>,
     scripts: VecDeque<String>,
     budget: (Instant, u32),
+    identity: Option<String>,
 }
 #[allow(clippy::too_many_arguments)]
 fn host_worker(
@@ -588,6 +620,7 @@ fn host_worker(
                 transfer: None,
                 scripts: VecDeque::new(),
                 budget: (Instant::now(), 0),
+                identity: None,
             });
             next_id = next_id.wrapping_add(1).max(1);
         }
@@ -653,11 +686,22 @@ fn host_worker(
                         guest.hello = true;
                         if guest
                             .wire
-                            .queue(&Message::Welcome { id: guest.peer.id })
+                            .queue(&Message::Welcome {
+                                id: guest.peer.id,
+                                salt: mail.identity_salt.lock().unwrap().clone(),
+                            })
                             .is_err()
                         {
                             return false;
                         }
+                    }
+                    Message::Identity(identity)
+                        if guest.hello
+                            && guest.identity.is_none()
+                            && identity.len() == 64
+                            && identity.bytes().all(|b| b.is_ascii_hexdigit()) =>
+                    {
+                        guest.identity = Some(identity.to_ascii_lowercase());
                     }
                     Message::Ping(nonce) if guest.hello => {
                         if guest.wire.queue(&Message::Pong(nonce)).is_err(){return false;}
@@ -747,6 +791,10 @@ fn host_worker(
                     seats.decorate(peer.id, peer.pose, &source)
                 };
             }
+            *mail.identities.lock().unwrap() = guests
+                .iter()
+                .filter_map(|g| g.identity.clone().map(|i| (g.peer.id, i)))
+                .collect();
             publish(&report, &status, true, 0, peers.clone());
             let snapshot = Message::Snapshot(peers);
             guests.retain_mut(|guest| {
@@ -788,8 +836,12 @@ fn client_stream(
         }
         for message in wire.read()? {
             match message {
-                Message::Welcome { id: assigned } if id.is_none() && assigned != 0 => {
-                    id = Some(assigned)
+                Message::Welcome { id: assigned, salt } if id.is_none() && assigned != 0 => {
+                    id = Some(assigned);
+                    if let (Some(secret), false) = (IDENTITY_SECRET.get(), salt.is_empty()) {
+                        let identity = identity(secret, &salt);
+                        wire.queue(&Message::Identity(identity))?;
+                    }
                 }
                 Message::Snapshot(peers) if id.is_some() => {
                     let local_id = id.unwrap();
@@ -937,6 +989,35 @@ mod tests {
         host.unpublish_script("demo");
         assert!(!host.mail.scripts.lock().unwrap().contains_key(&newer));
     }
+    #[test]
+    fn identities_are_salted_per_server_and_stay_off_snapshots() {
+        set_identity_secret("player-secret");
+        let secret = IDENTITY_SECRET.get().unwrap().clone();
+        let mut seen = Vec::new();
+        for salt in ["server-a", "server-b"] {
+            let host = Session::host(address(), "Host").unwrap();
+            host.set_identity_salt(salt);
+            let guest = Session::join(host.address, "Guest").unwrap();
+            let mut id = 0;
+            wait(|| {
+                host.update(Pose::default());
+                id = report(&guest).local_id;
+                id != 0 && host.identity(id).is_some()
+            });
+            let identity = host.identity(id).unwrap();
+            assert_eq!(identity, super::identity(&secret, salt));
+            assert!(!serde_json::to_string(&report(&guest).peers)
+                .unwrap()
+                .contains(&identity));
+            seen.push(identity);
+        }
+        assert_ne!(seen[0], seen[1]);
+        // Without a salt the server gets no identity.
+        let host = Session::host(address(), "Host").unwrap();
+        let guest = Session::join(host.address, "Guest").unwrap();
+        wait(|| report(&guest).local_id != 0 && report(&host).peers.len() >= 2);
+        assert_eq!(host.identity(report(&guest).local_id), None);
+    }
     fn address() -> SocketAddr {
         "127.0.0.1:0".parse().unwrap()
     }
@@ -963,7 +1044,11 @@ mod tests {
     #[test]
     fn fragmented_and_combined_frames_preserve_message_boundaries() {
         let (mut sender, mut wire) = pair();
-        let data = serde_json::to_vec(&Message::Welcome { id: 7 }).unwrap();
+        let data = serde_json::to_vec(&Message::Welcome {
+            id: 7,
+            salt: String::new(),
+        })
+        .unwrap();
         let mut frame = (data.len() as u32).to_le_bytes().to_vec();
         frame.extend(data);
         sender.write_all(&frame[..2]).unwrap();
@@ -978,7 +1063,7 @@ mod tests {
         });
         assert!(received
             .iter()
-            .all(|m| matches!(m, Message::Welcome { id: 7 })));
+            .all(|m| matches!(m, Message::Welcome { id: 7, .. })));
     }
     #[test]
     fn oversized_frames_and_slow_writer_queues_are_bounded() {

@@ -266,6 +266,10 @@ impl State {
         radar_tiles: Vec<sa_scene::RadarTile>,
     ) -> Result<Self> {
         let mut startup_settings = settings::Settings::load();
+        match sa_client::identity_secret() {
+            Ok(secret) => sa_net::set_identity_secret(&secret),
+            Err(error) => eprintln!("Player identity unavailable: {error:#}"),
+        }
         let args: Vec<_> = std::env::args().collect();
         if let Some(pair) = args.windows(2).find(|w| w[0] == "--renderer") {
             startup_settings.renderer = match pair[1].as_str() {

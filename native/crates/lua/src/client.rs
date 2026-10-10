@@ -12,8 +12,8 @@ use crate::{
     ui::{Owner, Ui},
 };
 use mlua::{
-    serde::{DeserializeOptions, SerializeOptions},
-    Function, HookTriggers, Lua, LuaOptions, LuaSerdeExt, StdLib, Table, Value, VmState,
+    serde::SerializeOptions, Function, HookTriggers, Lua, LuaOptions, LuaSerdeExt, StdLib, Table,
+    Value, VmState,
 };
 use serde_json::{json, Value as Json};
 use std::{
@@ -74,7 +74,8 @@ struct Shared {
     resources: BTreeMap<String, Resource>,
     exports: BTreeSet<(String, String)>,
     commands: BTreeMap<String, String>,
-    keys: BTreeMap<String, String>,
+    /// Key -> (command, resource that mapped it).
+    keys: BTreeMap<String, (String, String)>,
     refs: BTreeMap<String, usize>,
     next_ref: u64,
     ref_checks: Vec<String>,
@@ -89,16 +90,11 @@ fn serialize() -> SerializeOptions {
         .serialize_unit_to_null(false)
         .set_array_metatable(false)
 }
-fn deserialize() -> DeserializeOptions {
-    DeserializeOptions::new()
-        .deny_unsupported_types(false)
-        .encode_empty_tables_as_array(false)
-}
-fn pack_to_json(lua: &Lua, args: &Table) -> mlua::Result<Vec<Json>> {
+fn pack_to_json(_lua: &Lua, args: &Table) -> mlua::Result<Vec<Json>> {
     let n: Option<usize> = args.get("n")?;
     let n = n.unwrap_or(args.raw_len()).min(256);
     (1..=n)
-        .map(|i| lua.from_value_with(args.raw_get::<Value>(i)?, deserialize()))
+        .map(|i| crate::json::to_json(&args.raw_get::<Value>(i)?))
         .collect()
 }
 fn json_to_pack(lua: &Lua, args: &[Json]) -> mlua::Result<Table> {
@@ -377,8 +373,7 @@ impl Host {
         state.resources.remove(name);
         state.exports.retain(|(r, _)| r != name);
         state.commands.retain(|_, r| r != name);
-        let commands: BTreeSet<String> = state.commands.keys().cloned().collect();
-        state.keys.retain(|_, c| commands.contains(c));
+        state.keys.retain(|_, (_, r)| r != name);
         state
             .refs
             .retain(|key, _| key.rsplit_once(':').map(|(o, _)| o) != Some(name));
@@ -530,7 +525,20 @@ impl Host {
             .keys
             .get(&key.to_ascii_uppercase())
             .cloned();
-        command.is_some_and(|command| self.command(&command))
+        let Some((command, _)) = command else {
+            return false;
+        };
+        // A command no client resource has goes to the server, as in FiveM.
+        if !self.command(&command) {
+            push(
+                &self.shared,
+                Output::ServerEvent {
+                    name: "__cfx_internal:commandFallback".into(),
+                    payload: json!([command]).to_string(),
+                },
+            );
+        }
+        true
     }
 
     /// The player picked an option of the open context menu.
@@ -836,10 +844,10 @@ fn create_state(
         String,
         String
     )| {
-        shared
-            .borrow_mut()
-            .keys
-            .insert(key.to_ascii_uppercase(), command.to_ascii_lowercase());
+        shared.borrow_mut().keys.insert(
+            key.to_ascii_uppercase(),
+            (command.to_ascii_lowercase(), name.clone()),
+        );
         Ok(())
     });
     func!(
@@ -946,7 +954,7 @@ fn create_state(
         name,
         deadline,
         |lua, value: Value| {
-            let json: Json = lua.from_value_with(value, deserialize())?;
+            let json: Json = crate::json::to_json(&value)?;
             Ok(json.to_string())
         }
     );
@@ -987,7 +995,7 @@ fn create_state(
         name,
         deadline,
         |lua, data: Value| {
-            let data: Json = lua.from_value_with(data, deserialize())?;
+            let data: Json = crate::json::to_json(&data)?;
             let mut state = shared.borrow_mut();
             let now = state.now_ms;
             state.ui.notify(&data, now);
@@ -1001,7 +1009,7 @@ fn create_state(
         name,
         deadline,
         |lua, data: Value| {
-            let data: Json = lua.from_value_with(data, deserialize())?;
+            let data: Json = crate::json::to_json(&data)?;
             shared.borrow_mut().ui.context =
                 Ui::parse_context(&data, Owner::Resource(name.clone()));
             Ok(())
@@ -1030,8 +1038,8 @@ fn create_state(
         Value,
         i64
     )| {
-        let heading: Json = lua.from_value_with(heading, deserialize())?;
-        let rows: Json = lua.from_value_with(rows, deserialize())?;
+        let heading: Json = crate::json::to_json(&heading)?;
+        let rows: Json = crate::json::to_json(&rows)?;
         let dialog = Ui::parse_dialog(&heading, &rows, Owner::Resource(name.clone()), token)
             .ok_or_else(|| mlua::Error::runtime("inputDialog rows must be a list"))?;
         let old = shared.borrow_mut().ui.dialog.replace(dialog);
@@ -1055,7 +1063,7 @@ fn create_state(
         Value,
         i64
     )| {
-        let data: Json = lua.from_value_with(data, deserialize())?;
+        let data: Json = crate::json::to_json(&data)?;
         let now = shared.borrow().now_ms;
         let progress = crate::ui::Progress {
             label: crate::ui::text(&data["label"]),

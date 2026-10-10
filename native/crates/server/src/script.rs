@@ -6,10 +6,7 @@ use crate::{
     manifest::{self, Manifest},
 };
 use anyhow::{bail, Context, Result};
-use mlua::{
-    serde::{DeserializeOptions, SerializeOptions},
-    Function, Lua, LuaSerdeExt, Table, Value,
-};
+use mlua::{serde::SerializeOptions, Function, Lua, LuaSerdeExt, Table, Value};
 use serde_json::Value as Json;
 use std::{
     cell::RefCell,
@@ -64,9 +61,13 @@ pub struct State {
     /// Published client script bundles (resource, SHA-256) in start order,
     /// announced to each joining player.
     pub client_bundles: Vec<(String, String)>,
+    /// Resource KVP, saved in `kvp/` next to server.cfg.
+    pub kvp: crate::kvp::Store,
 }
 impl State {
     pub fn new(resources_dir: PathBuf) -> Self {
+        let kvp =
+            crate::kvp::Store::new(resources_dir.parent().unwrap_or(Path::new(".")).join("kvp"));
         Self {
             session: None,
             peers: Vec::new(),
@@ -88,6 +89,7 @@ impl State {
             ref_checks: Vec::new(),
             bags: BTreeMap::new(),
             client_bundles: Vec::new(),
+            kvp,
         }
     }
     pub fn convar(&self, name: &str) -> Option<&str> {
@@ -112,17 +114,12 @@ pub fn serialize() -> SerializeOptions {
         .serialize_unit_to_null(false)
         .set_array_metatable(false)
 }
-pub fn deserialize() -> DeserializeOptions {
-    DeserializeOptions::new()
-        .deny_unsupported_types(false)
-        .encode_empty_tables_as_array(false)
-}
 /// `{ n = count, ... }` -> JSON arguments; `nil` becomes `null`.
-pub fn pack_to_json(lua: &Lua, args: &Table) -> mlua::Result<Vec<Json>> {
+pub fn pack_to_json(_lua: &Lua, args: &Table) -> mlua::Result<Vec<Json>> {
     let n: Option<usize> = args.get("n")?;
     let n = n.unwrap_or(args.raw_len()).min(256);
     (1..=n)
-        .map(|i| lua.from_value_with(args.raw_get::<Value>(i)?, deserialize()))
+        .map(|i| sa_lua::json::to_json(&args.raw_get::<Value>(i)?))
         .collect()
 }
 pub fn json_to_pack(lua: &Lua, args: &[Json]) -> mlua::Result<Table> {
@@ -229,6 +226,7 @@ fn free_unclaimed_refs(shared: &Shared) {
 
 pub fn tick(shared: &Shared) {
     free_unclaimed_refs(shared);
+    flush_kvp(shared, false);
     let now = shared.borrow().started.elapsed().as_millis() as i64;
     for (resource, lua) in started_states(shared) {
         let result = lua
@@ -238,6 +236,13 @@ pub fn tick(shared: &Shared) {
         if let Err(error) = result {
             report_error(shared, &resource, error);
         }
+    }
+}
+
+pub fn flush_kvp(shared: &Shared, force: bool) {
+    let errors = shared.borrow_mut().kvp.flush(force);
+    for error in errors {
+        out(shared, error);
     }
 }
 
