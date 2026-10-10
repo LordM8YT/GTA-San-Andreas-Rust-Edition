@@ -12,8 +12,8 @@ Up to 20 players. Movement is still simulated by clients.
 and `SARE-server-linux.zip` on the [latest release](https://github.com/LordM8YT/GTA-San-Andreas-Rust-Edition/releases/latest).
 Extract it, edit `server-data/server.cfg` and run `start-server.cmd` (Linux:
 `./start-server.sh`). The package keeps binaries in `server/` and your data in
-`server-data/`, so updating means replacing `server/` only, like FXServer
-artifacts. See [server package](server-package.md).
+`server-data/`. Started from those scripts, the server installs new releases by
+itself while no players are online; see [server package](server-package.md).
 
 From source:
 On Windows, run `start-server.cmd`. It builds `sa-server` when Cargo is available

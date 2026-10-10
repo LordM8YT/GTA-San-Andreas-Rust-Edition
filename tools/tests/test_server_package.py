@@ -1,4 +1,6 @@
+import hashlib
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -28,7 +30,7 @@ class ServerPackageTests(unittest.TestCase):
         with zipfile.ZipFile(client, 'w') as archive:
             for name in ['LICENSE', 'THIRD-PARTY-NOTICES.txt', 'licenses/x-1.0/LICENSE', 'sa-launcher' + suffix]:
                 archive.writestr(name, 'notice')
-        with patch.object(package_server, 'REPO', root):
+        with patch.object(package_server, 'REPO', root), patch.dict(package_server.os.environ, {'GITHUB_SHA': 'a' * 40}):
             return package_server.package(target, client, root / 'output', platform)
 
     def test_fivem_style_layout_with_only_server_binaries(self):
@@ -40,6 +42,15 @@ class ServerPackageTests(unittest.TestCase):
                          'server/licenses/x-1.0/LICENSE', 'start-server.cmd', 'START-HERE.md']:
             self.assertIn(expected, names)
         self.assertNotIn('server-data/server.log', names)
+
+    def test_server_manifest_hashes_every_server_file(self):
+        with zipfile.ZipFile(self.build('linux')) as archive:
+            build = json.loads(archive.read('server/sare-build.json'))
+            files = {f['path']: f for f in build['files']}
+            self.assertEqual((build['commit'], build['platform']), ('a' * 40, 'linux'))
+            self.assertEqual(set(files), {n[len('server/'):] for n in archive.namelist()
+                                          if n.startswith('server/') and n != 'server/sare-build.json'})
+            self.assertEqual(files['sa-server']['sha256'], hashlib.sha256(b'owned test fixture').hexdigest())
 
     def test_linux_scripts_and_binaries_are_executable(self):
         with zipfile.ZipFile(self.build('linux')) as archive:

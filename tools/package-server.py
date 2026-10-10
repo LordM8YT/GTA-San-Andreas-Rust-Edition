@@ -1,22 +1,36 @@
 """Build a FiveM-style dedicated server ZIP: server/ binaries plus a server-data/ template."""
 import argparse
+import hashlib
+import json
+import os
 from pathlib import Path
+import re
+import subprocess
 import zipfile
 
 REPO = Path(__file__).resolve().parents[1]
 
 # Same split as FXServer: replace server/ to update, keep your own server-data/.
+# Exit code 42 means sa-server installed an update from GitHub: start it again.
 WINDOWS_START = '''@echo off
 rem Runs sa-server inside server-data, like FXServer.exe +exec server.cfg.
 cd /d "%~dp0server-data"
+set SARE_SERVER_SUPERVISED=1
+:start
 "%~dp0server\\sa-server.exe" +exec server.cfg %*
+if %errorlevel%==42 goto start
 if errorlevel 1 pause
 '''
 LINUX_START = '''#!/usr/bin/env bash
 # Runs sa-server inside server-data, like FXServer +exec server.cfg.
-set -euo pipefail
+set -uo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/server-data"
-exec ../server/sa-server +exec server.cfg "$@"
+export SARE_SERVER_SUPERVISED=1
+while true; do
+    ../server/sa-server +exec server.cfg "$@"
+    code=$?
+    [[ $code -eq 42 ]] || exit $code
+done
 '''
 WINDOWS_RELAY = '''@echo off
 "%~dp0server\\sa-relay.exe" %*
@@ -33,6 +47,12 @@ def write(archive, name, data, executable=False):
     info.compress_type = zipfile.ZIP_DEFLATED
     info.external_attr = (0o755 if executable else 0o644) << 16
     archive.writestr(info, data)
+
+def commit():
+    value = os.environ.get('GITHUB_SHA') or subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=REPO, capture_output=True, text=True, check=True).stdout.strip()
+    if not re.fullmatch(r'[0-9a-f]{40}', value):
+        raise ValueError('Invalid package commit')
+    return value
 
 def package(target: Path, client_package: Path, destination: Path, platform: str) -> Path:
     suffix = '.exe' if platform == 'windows' else ''
@@ -54,6 +74,11 @@ def package(target: Path, client_package: Path, destination: Path, platform: str
         for name in client.namelist():
             if name in ('LICENSE', 'THIRD-PARTY-NOTICES.txt') or name.startswith('licenses/'):
                 write(archive, 'server/' + name, client.read(name))
+        # Manifest for the server's self-updater: every file under server/.
+        files = [{'path': name[len('server/'):], 'size': archive.getinfo(name).file_size,
+                  'sha256': hashlib.sha256(archive.read(name)).hexdigest()}
+                 for name in archive.namelist() if name.startswith('server/')]
+        write(archive, 'server/sare-build.json', json.dumps({'schema': 1, 'commit': commit(), 'platform': platform, 'files': files}, indent=2))
         for file in data:
             write(archive, file.relative_to(REPO).as_posix(), file.read_bytes())
         write(archive, 'START-HERE.md', (REPO / 'docs/server-package.md').read_bytes())
