@@ -1,4 +1,6 @@
-native/target/
+# Cargo build output, wherever CARGO_TARGET_DIR points. Clients ship as release ZIPs.
+target/
+*.pdb
 native/**/*.exe
 settings.json
 server.json
