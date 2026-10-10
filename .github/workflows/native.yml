@@ -45,6 +45,9 @@ jobs:
       - name: Package review client
         working-directory: .
         run: python tools/package-client.py --platform ${{ runner.os == 'Windows' && 'windows' || 'linux' }}
+      - name: Package dedicated server
+        working-directory: .
+        run: python tools/package-server.py --platform ${{ runner.os == 'Windows' && 'windows' || 'linux' }}
       - uses: actions/upload-artifact@v4
         with:
           name: SARE-${{ runner.os }}-test
@@ -66,12 +69,16 @@ jobs:
       - name: Publish tested client packages
         env:
           GH_TOKEN: ${{ github.token }}
+          # Optional: a Discord channel webhook (repository secret) announces each new release.
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         shell: bash
         run: |
           # Do not publish an older concurrent build after main has advanced.
           test "$(gh api repos/$GITHUB_REPOSITORY/commits/main --jq .sha)" = "$GITHUB_SHA"
           test -f client-packages/SARE-windows-test.zip
           test -f client-packages/SARE-linux-test.zip
+          test -f client-packages/SARE-server-windows.zip
+          test -f client-packages/SARE-server-linux.zip
           tag="client-$GITHUB_SHA"
           # A rerun of an already-published commit must not mutate release assets.
           existing=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null || true)
@@ -82,5 +89,18 @@ jobs:
           if [ "$existing" != "true" ]; then
             gh release create "$tag" --target "$GITHUB_SHA" --title "SARE client ${GITHUB_SHA:0:12}" --draft --notes-file docs/client-release-notes.md
           fi
-          gh release upload "$tag" --clobber client-packages/SARE-windows-test.zip client-packages/SARE-linux-test.zip
+          gh release upload "$tag" --clobber client-packages/SARE-windows-test.zip client-packages/SARE-linux-test.zip \
+            client-packages/SARE-server-windows.zip client-packages/SARE-server-linux.zip
           gh release edit "$tag" --draft=false --latest
+          if [ -n "$DISCORD_WEBHOOK_URL" ]; then
+            base="https://github.com/$GITHUB_REPOSITORY/releases/download/$tag"
+            message=$(printf '%s\n' \
+              "**New SARE build \`${GITHUB_SHA:0:12}\`**" \
+              "Client: [Windows]($base/SARE-windows-test.zip) · [Linux]($base/SARE-linux-test.zip)" \
+              "Server: [Windows]($base/SARE-server-windows.zip) · [Linux]($base/SARE-server-linux.zip)" \
+              "Release notes: https://github.com/$GITHUB_REPOSITORY/releases/tag/$tag")
+            # An announcement failure must not fail an already-published release.
+            jq -n --arg content "$message" '{content: $content, flags: 4}' |
+              curl -fsS -X POST -H 'Content-Type: application/json' --data @- "$DISCORD_WEBHOOK_URL" ||
+              echo "::warning::Discord announcement failed"
+          fi

@@ -10,3 +10,7 @@ mlua = { version = "0.12.2", features = ["lua54", "vendored", "serde", "anyhow"]
 sa-net = { path = "../net" }
 sa-scene = { path = "../scene" }
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10.9"
+ureq = { version = "3.4", default-features = false, features = ["rustls"] }
+zip = { version = "4", default-features = false, features = ["deflate-flate2-zlib-rs"] }

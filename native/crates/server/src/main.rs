@@ -8,6 +8,7 @@ mod manifest;
 mod natives;
 mod script;
 mod template;
+mod update;
 
 use anyhow::{Context, Result};
 use console::Console;
@@ -83,6 +84,21 @@ fn main() -> Result<()> {
         // EOF is normal under systemd/hosting panels; it must not stop a server.
     });
     out(&shared, "Server started. Type help for commands.");
+    let mut updater = update::install_root()
+        .filter(|_| {
+            shared
+                .borrow()
+                .convar("sv_autoUpdate")
+                .is_none_or(|v| !matches!(v, "0" | "false"))
+        })
+        .map(update::Updater::new);
+    if updater.is_some() {
+        out(
+            &shared,
+            "Automatic server updates are on (set sv_autoUpdate false to disable).",
+        );
+    }
+    let mut restart = false;
 
     let mut known: BTreeMap<u32, String> = BTreeMap::new();
     let mut published = String::new();
@@ -104,6 +120,28 @@ fn main() -> Result<()> {
         if let Some(socket) = &rcon {
             serve_rcon(socket, &mut console, &mut rcon_failures);
         }
+        if let Some(updater) = &mut updater {
+            let mut log = Vec::new();
+            let players = shared.borrow().peers.len();
+            let ready = updater.poll(players, &mut log);
+            for line in log {
+                out(&shared, line);
+            }
+            if let Some(commit) = ready {
+                match updater.install() {
+                    Ok(()) => {
+                        restart = true;
+                        console.quit = Some(format!("installing server update {}", &commit[..12]));
+                    }
+                    Err(error) => out(
+                        &shared,
+                        format!(
+                            "Server update failed: {error:#}. The current server keeps running."
+                        ),
+                    ),
+                }
+            }
+        }
         if let Some(reason) = console.quit.take() {
             out(&shared, format!("Stopping server: {reason}"));
             for peer in shared.borrow().peers.clone() {
@@ -121,6 +159,9 @@ fn main() -> Result<()> {
             }
             thread::sleep(Duration::from_millis(300));
             drop(publication);
+            if restart {
+                std::process::exit(update::RESTART_CODE);
+            }
             return Ok(());
         }
         thread::sleep(Duration::from_millis(10));
