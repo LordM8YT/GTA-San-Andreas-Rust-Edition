@@ -153,7 +153,7 @@ A custom player character is registered with `player`:
 }
 ```
 
-Up to 16 player resources can be registered. `/peds` or F8 selects the controlled
+Up to 16 player resources can be registered. `/peds` or F4 selects the controlled
 player. Use “Spawn nearby” or S to place an idle ped in the world (maximum eight).
 Spawned peds have no navigation/combat AI; remove them from the Peds menu. The model must have PC Skin/HAnim
 data with bone IDs and weights. `txd` can be omitted for untextured geometry.

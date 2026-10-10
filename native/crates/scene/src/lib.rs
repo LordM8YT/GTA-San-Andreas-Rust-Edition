@@ -1,7 +1,7 @@
 //! Manifest-ordered SA world placement and small bounded scene assembly.
 pub mod collision;
 mod mods;
-pub use mods::share_resources;
+pub use mods::{share_resource_folders, share_resources};
 pub mod ped;
 mod roadsign;
 mod texture;
@@ -28,7 +28,13 @@ struct Placement {
     interior: i32,
     lod: i32,
     is_lod: bool,
+    /// World-wide index, and the index of this row's IPL LOD parent.
+    /// `NO_ROW` for placements outside the original IPL set.
+    uid: u32,
+    parent: u32,
 }
+const NO_ROW: u32 = u32::MAX;
+const ALL_AREAS: i32 = 13;
 #[repr(C)]
 #[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
@@ -162,6 +168,8 @@ fn placement(id: i32, interior: i32, pos: [f32; 3], quat: [f32; 4]) -> Result<Pl
         quat,
         lod: -1,
         is_lod: false,
+        uid: NO_ROW,
+        parent: NO_ROW,
     })
 }
 fn binary_ipl(data: &[u8]) -> Result<Vec<Placement>> {
@@ -292,6 +300,17 @@ fn placements(
             if let Some(row) = base.get_mut(parent) {
                 row.is_lod = true;
             }
+        }
+        // LOD indices are relative to this IPL's text rows; make them global
+        // so a loader can keep each LOD group whole.
+        let offset = out.len();
+        let base_len = base.len();
+        for (index, row) in base.iter_mut().chain(children.iter_mut()).enumerate() {
+            row.uid = u32::try_from(offset + index)?;
+            row.parent = usize::try_from(row.lod)
+                .ok()
+                .filter(|&lod| lod < base_len)
+                .map_or(Ok(NO_ROW), |lod| u32::try_from(offset + lod))?;
         }
         out.extend(base);
         out.extend(children);
@@ -625,7 +644,9 @@ impl WorldLoader {
             .rows
             .iter()
             .filter(|r| {
-                if r.interior != interior {
+                // Interior 13 means "visible in every area" in San Andreas;
+                // downtown Los Santos roads, lights and LODs use it outdoors.
+                if r.interior != interior && !(interior == 0 && r.interior == ALL_AREAS) {
                     return false;
                 }
                 let x = r.pos[0] - center[0];
@@ -650,44 +671,17 @@ impl WorldLoader {
         let mut lod_count = 0;
         let mut sign_models = std::collections::HashSet::new();
         let mut triangles = 0;
+        // Pass 1: decode candidates and measure each mesh's distance from
+        // the region centre. Rural terrain meshes can span hundreds of metres
+        // from their IPL origin, so bounds, not origins, decide.
+        let detail = (radius + 100.0).powi(2);
+        let mut candidates = Vec::new();
         for r in rows {
             if self.resources.excluded.contains(&r.id) {
                 continue;
             }
             let Some(def) = defs.get(&r.id) else { continue };
             let is_lod = r.is_lod || def.model.starts_with("lod");
-            if let Some(model) = self.collision_models.get(&def.model).filter(|_| !is_lod) {
-                // Collision-only objects and transparent surfaces remain solid.
-                let mut min = [f32::INFINITY; 2];
-                let mut max = [f32::NEG_INFINITY; 2];
-                for corner in 0..8 {
-                    let point = std::array::from_fn(|a| {
-                        if corner & (1 << a) == 0 {
-                            model.min[a]
-                        } else {
-                            model.max[a]
-                        }
-                    });
-                    let v = rotate(point, r.quat);
-                    for a in 0..2 {
-                        min[a] = min[a].min(v[a] + r.pos[a]);
-                        max[a] = max[a].max(v[a] + r.pos[a]);
-                    }
-                }
-                let dist: f32 = (0..2)
-                    .map(|a| (center[a] - center[a].clamp(min[a], max[a])).powi(2))
-                    .sum();
-                if dist <= (radius + 100.0).powi(2) {
-                    for face in &model.triangles {
-                        for point in face {
-                            physical.vertices.push(Vertex {
-                                position: place(*point, r, origin),
-                                ..Default::default()
-                            });
-                        }
-                    }
-                }
-            }
             let dff = format!("{}.dff", def.model);
             let txd = format!("{}.txd", def.txd);
             if let Some(custom) = self.resources.geometry.get(&dff) {
@@ -707,8 +701,6 @@ impl WorldLoader {
                     },
                 );
             }
-            // Select by transformed mesh bounds, not the IPL origin. Rural
-            // terrain meshes can span hundreds of metres from their origin.
             let mut min = [f32::INFINITY; 2];
             let mut max = [f32::NEG_INFINITY; 2];
             for geometry in &models[&dff] {
@@ -724,10 +716,69 @@ impl WorldLoader {
             let distance_squared: f32 = (0..2)
                 .map(|axis| (center[axis] - center[axis].clamp(min[axis], max[axis])).powi(2))
                 .sum();
-            if !visible_region(distance_squared, is_lod, radius) {
+            candidates.push((r, def, is_lod, dff, distance_squared));
+        }
+        // Pass 2: an IPL LOD group is drawn either in full detail or as its
+        // LOD model, never half of each. Previously a LOD crossing the detail
+        // edge was hidden while its children beyond the edge were not loaded,
+        // leaving holes in the ground and missing buildings in a ring.
+        let detailed_groups: std::collections::HashSet<u32> = candidates
+            .iter()
+            .filter(|(r, _, is_lod, _, d)| !is_lod && r.parent != NO_ROW && *d <= detail)
+            .map(|(r, ..)| r.parent)
+            .collect();
+        let group_limit = (radius + 700.0).powi(2);
+        for (r, def, is_lod, dff, distance_squared) in candidates {
+            let linked_lod = r.is_lod && r.uid != NO_ROW;
+            let visible = if linked_lod {
+                !detailed_groups.contains(&r.uid) && distance_squared <= DISTANT_RADIUS.powi(2)
+            } else if is_lod {
+                visible_region(distance_squared, true, radius)
+            } else {
+                distance_squared <= detail
+                    || (detailed_groups.contains(&r.parent) && distance_squared <= group_limit)
+            };
+            if !is_lod {
+                if let Some(model) = self.collision_models.get(&def.model) {
+                    // Collision-only objects and transparent surfaces remain solid.
+                    let mut min = [f32::INFINITY; 2];
+                    let mut max = [f32::NEG_INFINITY; 2];
+                    for corner in 0..8 {
+                        let point = std::array::from_fn(|a| {
+                            if corner & (1 << a) == 0 {
+                                model.min[a]
+                            } else {
+                                model.max[a]
+                            }
+                        });
+                        let v = rotate(point, r.quat);
+                        for a in 0..2 {
+                            min[a] = min[a].min(v[a] + r.pos[a]);
+                            max[a] = max[a].max(v[a] + r.pos[a]);
+                        }
+                    }
+                    let dist: f32 = (0..2)
+                        .map(|a| (center[a] - center[a].clamp(min[a], max[a])).powi(2))
+                        .sum();
+                    if dist <= detail {
+                        for face in &model.triangles {
+                            for point in face {
+                                physical.vertices.push(Vertex {
+                                    position: place(*point, r, origin),
+                                    ..Default::default()
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            if !visible {
                 continue;
             }
-            if !is_lod && !self.collision_models.contains_key(&def.model) {
+            if !is_lod
+                && !self.collision_models.contains_key(&def.model)
+                && distance_squared <= detail
+            {
                 add_model(&mut fallback, &models[&dff], r, origin, &def.txd)?;
             }
             triangles += add_model(&mut batches, &models[&dff], r, origin, &def.txd)?;
@@ -882,6 +933,8 @@ pub fn load_first_model(game: &Path) -> Result<Scene> {
         interior: 0,
         lod: -1,
         is_lod: false,
+        uid: NO_ROW,
+        parent: NO_ROW,
         pos: [2500.0, -1670.0, 0.0],
         quat: [0.0, 0.0, 0.0, 1.0],
     };
@@ -922,6 +975,8 @@ pub fn load_cuttest(game: &Path) -> Result<Scene> {
         interior: 0,
         lod: -1,
         is_lod: false,
+        uid: NO_ROW,
+        parent: NO_ROW,
         pos: [0.0, 0.0, 0.0],
         quat: [0.0, 0.0, 0.0, 1.0],
     };
@@ -983,6 +1038,8 @@ pub fn load_prologue(game: &Path) -> Result<Scene> {
         interior: 0,
         lod: -1,
         is_lod: false,
+        uid: NO_ROW,
+        parent: NO_ROW,
         pos: [0.0; 3],
         quat: [0.0, 0.0, 0.0, 1.0],
     };

@@ -326,6 +326,10 @@ impl State {
         self.menu.network_active = false;
         self.menu.session_code.clear();
         self.network_car_spawned = false;
+        self.network_host = false;
+        self.network_peer_ids.clear();
+        self.pending_coords = None;
+        self.chat.reset_server_state();
     }
     pub(super) fn browse_network(&mut self) {
         if self.network_browser.is_some() {
@@ -459,6 +463,9 @@ impl State {
     }
     pub(super) fn update_network(&mut self) {
         self.update_session_resources();
+        self.handle_server_events();
+        self.process_chat();
+        self.apply_pending_coords();
         if let Some(request) = &self.network_browser {
             match request.receiver.try_recv() {
                 Ok(result) => {
@@ -575,6 +582,7 @@ impl State {
                     format!("{} | {}", self.menu.network_status, published.status);
             }
             self.menu.network_active = true;
+            self.network_peer_ids = report.peers.iter().map(|p| p.id).collect();
             self.menu.network_players = report
                 .peers
                 .iter()

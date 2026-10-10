@@ -49,12 +49,11 @@ try {
  }
  foreach($launcherCase in $launcherCases) {
   if($launcherCase.host){
-   $launcherHostConfig=Join-Path $launcherRoot 'server.json'
-   $launcherHostMods=Join-Path $launcherRoot 'empty-server-mods'
-   New-Item -ItemType Directory -Path $launcherHostMods | Out-Null
-   [IO.File]::WriteAllText($launcherHostConfig,(@{name='Local test session';listen='127.0.0.1:0';relay=$launcherRelayAddress;public=$true;mods_dir=$launcherHostMods}|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
+   $launcherHostData=Join-Path $launcherRoot 'server-data'
+   [void][IO.Directory]::CreateDirectory((Join-Path $launcherHostData 'resources'))
+   [IO.File]::WriteAllLines((Join-Path $launcherHostData 'server.cfg'),[string[]]@('endpoint_add_tcp "127.0.0.1:0"','sv_hostname "Local test session"',('set sv_relay "'+$launcherRelayAddress+'"')),[Text.UTF8Encoding]::new($false))
    $launcherHostLog=Join-Path $launcherRoot 'host.log'
-   $launcherHostProcess=Start-Process -FilePath $launcherServerExe -ArgumentList @('--config',('"'+$launcherHostConfig+'"')) -WindowStyle Hidden -PassThru -RedirectStandardOutput $launcherHostLog -RedirectStandardError (Join-Path $launcherRoot 'host-error.log')
+   $launcherHostProcess=Start-Process -FilePath $launcherServerExe -WorkingDirectory $launcherHostData -ArgumentList @('+exec','server.cfg') -WindowStyle Hidden -PassThru -RedirectStandardOutput $launcherHostLog -RedirectStandardError (Join-Path $launcherRoot 'host-error.log')
    $launcherDeadline=(Get-Date).AddSeconds(10)
    do {
     Start-Sleep -Milliseconds 50

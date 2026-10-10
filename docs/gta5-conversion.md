@@ -313,7 +313,7 @@ otherwise export the matching source YFT skeleton as CodeWalker XML.
 python tools/convert-gta5.py C:/Downloads/ped/custom.ydd --textures C:/Downloads/ped/custom.ytd --type player --skeleton C:/Downloads/ped/source.yft.xml --base-player C:/MyNativePed/ped.dff --base-ifp C:/MyNativePed/ped.ifp --bone-map C:/MyNativePed/bones.json --out "mods/[peds]/custom-player" --enable
 ```
 
-Restart to register the player. Use `/peds` or F8 to select an enabled player resource. The target DFF
+Restart to register the player. Use `/peds` or F4 to select an enabled player resource. The target DFF
 supplies the bone hierarchy and bind matrices; only its animation IFP is copied
 into this player package. Textures come from the converted character. The
 converted player must fit our upright 1–2.5 m height requirement and all weighted

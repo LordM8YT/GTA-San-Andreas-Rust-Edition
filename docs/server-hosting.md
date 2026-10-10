@@ -1,89 +1,116 @@
-# Dedicated freeroam server
+# Dedicated server (FiveM-style)
 
-`sa-server` runs membership, pose relay and native resource distribution without
-a window, graphics device, Steam installation or original San Andreas files.
-It accepts **20 actual clients**, with no placeholder host avatar. This is a
-headless version of the current multiplayer prototype: movement and collisions
-are still simulated by clients, and exchanging cars, passengers and NPCs are
-not an authoritative shared world yet.
+`sa-server` is laid out and configured like a FiveM server (FXServer): a
+`server-data` folder with `server.cfg` and `resources/`, resources described by
+`fxmanifest.lua`, server-side Lua scripts with FiveM's API, and the same console
+commands. It needs no window, GPU, Steam installation or San Andreas files.
+Up to 20 players. Movement is still simulated by clients.
 
 ## Start
 
-On Windows, run `start-server.cmd`. It builds `sa-server` when Cargo is available,
-then creates `server.json` in the project directory on first run. Defaults bind
-only `127.0.0.1:7777`, with no relay. Type `quit`, edit the configuration and run
-again. `status`, `players`, `help` and `quit` are available in the console.
+On Windows, run `start-server.cmd`. It builds `sa-server` when Cargo is available
+and runs it inside `server-data/`, like `FXServer.exe +exec server.cfg`.
 
-For deployment, build with `cargo build --release -p sa-server` from `native`.
-Copy `sa-server.exe`, your `server.json` and permitted native mod folders into
-one server directory; the runtime, original archives and GPU libraries are not
-needed. Source is platform-neutral Rust; a native Linux build/deployment has
-not been tested yet.
-
-## Browser and join code via the project's relay
-
-Run a reachable `sa-relay` on a trusted LAN/VPN, as described in
-[multiplayer setup](multiplayer.md). Configure:
-
-```json
-{
-  "name": "Friends Freeroam",
-  "listen": "127.0.0.1:7777",
-  "relay": "192.168.1.10:7778",
-  "public": true,
-  "mods_dir": "mods"
-}
+```
+server-data/
+  server.cfg
+  resources/
+    [system]/chat/                 chat messages, /say, command suggestions
+    [managers]/mapmanager/         game type, map resources and spawn points
+    [managers]/spawnmanager/       moves joining players to a spawn point
+    [gamemodes]/basic-gamemode/    freeroam game type, join/leave messages, /respawn
+    [gamemodes]/[maps]/sare-map-grove/   Grove Street spawn points
+    [local]/                       your own resources
 ```
 
-`relay` selects outbound relay hosting; `listen` is then unused, and the game
-server binds an internal loopback port automatically. Players enter the same
-relay address in Multiplayer, enable **Use relay / join code**, and refresh the
-server browser. The running server prints its join code. With `public: false`,
-it is omitted from the browser and the code is required. A restart gets a new
-code. The dedicated server stays running when players leave; it does not depend
-on any player's game staying open. Relay failure currently stops hosting.
+For deployment, copy `sa-server.exe` and your `server-data` folder. Running
+`sa-server` in an empty folder creates this template. Launch arguments use
+FiveM syntax: `sa-server +exec server.cfg +set sv_maxclients 8`.
 
-The relay itself must be reachable; no public service is deployed. Connections
-use the existing unencrypted TCP prototype, suitable for trusted LAN/VPN tests.
-Steam discovery/Valve relay, passwords, administrator identities, bans,
-automatic reconnect and host failover are not implemented.
+## server.cfg
 
-## Direct LAN hosting
+| Line | Meaning |
+| --- | --- |
+| `endpoint_add_tcp "0.0.0.0:7777"` | Game endpoint. rcon answers over UDP on the same port. |
+| `sv_hostname "Name"` | Server name (1–24 characters) in the browser. |
+| `sv_maxclients 20` | Player slots, 1–20. Can be changed live. |
+| `ensure name` / `ensure [category]` | Start a resource, or every resource in a bracket folder. |
+| `set` / `sets` / `setr` | Convars; `sets` marks server information (`sv_projectName`, `tags`, `locale`). |
+| `exec file.cfg` | Run another cfg file. |
+| `rcon_password "secret"` | Enables Quake-style rcon (FiveM's protocol) over UDP. |
+| `add_ace` / `add_principal` | Permissions, e.g. `add_ace group.admin command allow`. |
+| `set sv_relay "ip:port"` | Publish through a SARE relay: server browser and join code. |
+| `sv_master1 ""` | With a relay: hide from the browser, join code only. |
 
-Set `relay: null` and `listen: "0.0.0.0:7777"`. Allow TCP 7777 on the server PC.
-Guests use direct mode with the server's LAN IP and port. Direct internet hosting
-needs an inbound route/port forwarding; this mode does not use the browser.
+`endpoint_add_udp`, `load_server_icon`, `sv_licenseKey`-style convars are accepted
+so FiveM cfg files keep working; SARE gameplay itself is TCP. Allow TCP (and UDP
+for rcon) on the port for internet hosting.
 
-Relative `mods_dir` paths resolve beside the selected configuration file, not
-the executable. `--config <file>` selects another configuration. Server names
-accept 1–24 printable characters; unknown configuration keys fail explicitly.
+## Console
 
-## Native resources
+`status`, `resources`, `ensure|start|stop|restart <resource>`, `refresh`,
+`clientkick <id> <reason>`, `say <text>`, `add_principal player.<id> group.admin`,
+`test_ace`, `list_aces`, `cmdlist`, `quit`. Any `RegisterCommand` command can be
+run from the console. Players run commands from chat (`/respawn`); built-in and
+restricted commands need `command.<name>` in the ACL.
 
-Place enabled native resource folders under `mods_dir`. The server takes an
-immutable snapshot at startup, includes only files referenced by each resource
-manifest, and shares that inventory with clients. Restart to apply changes.
-Original game archives and adjacent unrelated files are not exported. Only share
-mods you may redistribute. Guests download missing files, verify hashes and reuse
-their cache next time; supported formats and limits are in
-[resource preparation](multiplayer.md#native-server-resource-preparation).
+Player identity is the session ID only. There are no accounts or license
+identifiers yet, so grant admin per session (`add_principal player.3 group.admin`).
 
-The server distributes map assets and catalogs. Selected car, ped and clothing
-choices synchronize between clients. The runtime, server and relay must all
-use network protocol 6; incompatible versions are rejected.
+## Resources and Lua
+
+A resource is a folder with `fxmanifest.lua`:
+
+```lua
+fx_version 'cerulean'
+game 'common'
+server_script 'server.lua'      -- also server_scripts { 'server/*.lua' }
+dependency 'spawnmanager'
+```
+
+Server scripts run in one Lua 5.4 state per resource, like FiveM. Supported:
+`AddEventHandler`, `RegisterNetEvent`, `TriggerEvent`, `TriggerClientEvent`,
+`CancelEvent`/`WasEventCanceled`, `RegisterCommand`, `ExecuteCommand`,
+`Citizen.CreateThread`/`Wait`/`SetTimeout`, `exports(...)` and
+`exports.resource:fn(...)`, `GetPlayers`, `GetPlayerName`, `GetPlayerPed`,
+`GetEntityCoords`, `GetEntityHeading`, `SetEntityCoords`, `SetEntityHeading`,
+`DropPlayer`, `IsPlayerAceAllowed`, convars, resource metadata,
+`LoadResourceFile`/`SaveResourceFile`, `json`, `vector3` and `promise`.
+Events: `playerJoining`, `playerDropped`, `onResourceStart`/`Stop`,
+`chatMessage`. Coordinates are San Andreas world coordinates.
+
+Not supported yet: client scripts (`client_script` entries are listed but not
+run), NUI pages, OneSync entities, routing buckets, `playerConnecting` deferrals,
+statebags, and `GetPlayerIdentifiers` beyond a session ID. FiveM resources that
+use GTA V natives must be adapted.
+
+## Native assets
+
+Resources with `resource.json`/`mod.json` (cars, peds, clothing, map placements)
+are shared with joining players. `ensure name` shares it; `ensure [category]`
+includes native resources whose manifest says `"enabled": true`. Assets are fixed
+at server start, because clients download them before joining; restart the
+server after changing them. Script resources can be restarted live. Only share
+mods you may redistribute.
+
+## Relay hosting
+
+Run a reachable `sa-relay` on a trusted LAN/VPN, as described in
+[multiplayer setup](multiplayer.md), then add `set sv_relay "192.168.1.10:7778"`.
+Players enable **Use relay / join code** and refresh the server browser. The
+server prints its join code; a restart gets a new code. Relay failure currently
+stops hosting. Connections use the unencrypted prototype protocol.
+
+## In the game
+
+**T** opens chat, **F8** the console (`connect ip:port`, `disconnect`, `quit`,
+and `/commands` sent to the server). Chat messages, suggestions and server
+teleports come from the resources above. A player-hosted session (F5 → Host)
+has no Lua and relays plain chat itself.
 
 ## Verification
 
-Real socket tests cover zero-player browser listings, 20 actual direct/relay
-clients, overflow rejection, departed-slot reuse and removal after shutdown.
-`tools/test-multiplayer.ps1 -Dedicated -Relay` starts its own dedicated server,
-relay and two Vulkan game instances, then stops only those test processes.
-Add `-HostModsDir <server mods>` / `-ClientModsDir <guest local mods>` and
-`-CacheDirectory <test cache>` to exercise isolated resource preparation.
-Same-PC tests do not establish connectivity or latency on separate networks,
-nor rendering performance with 20 real players.
-
-The hosting model follows the two options described by
-[ReSkate](https://github.com/Dingo-Shenanigans/ReSkate/blob/main/Server/README.txt):
-in-game friend hosting and independent servers in a browser. Our implementation
-uses its own protocol/relay; it does not incorporate ReSkate's Steam integration.
+`cargo test -p sa-server` runs the shipped resources against a real client
+socket: spawn, chat, cancelled messages, player commands, ACL, exports, threads,
+live restart and kick. `tools/test-multiplayer.ps1 -Dedicated [-Relay]` starts a
+server from a generated `server-data` plus two Vulkan game instances.

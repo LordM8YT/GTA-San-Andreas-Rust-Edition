@@ -48,7 +48,7 @@ pub fn load(path: &Path) -> anyhow::Result<egui::ColorImage> {
 
 pub fn background(ui: &egui::Ui, rect: egui::Rect, image: Option<&egui::TextureHandle>) {
     let painter = ui.painter().with_clip_rect(rect);
-    painter.rect_filled(rect, 10, Color32::from_rgb(28, 65, 48));
+    painter.rect_filled(rect, 6, Color32::from_rgb(30, 22, 22));
     if let Some(image) = image {
         let aspect = image.size_vec2().x / image.size_vec2().y;
         let target = rect.width() / rect.height();
@@ -68,8 +68,8 @@ pub fn background(ui: &egui::Ui, rect: egui::Rect, image: Option<&egui::TextureH
     } else {
         // Original abstract hills: quiet depth when the player has not chosen artwork.
         for (offset, color) in [
-            (0., Color32::from_rgb(38, 77, 55)),
-            (70., Color32::from_rgb(26, 54, 41)),
+            (0., Color32::from_rgb(70, 36, 24)),
+            (70., Color32::from_rgb(44, 26, 22)),
         ] {
             let points = vec![
                 rect.left_bottom(),
@@ -94,7 +94,7 @@ pub fn background(ui: &egui::Ui, rect: egui::Rect, image: Option<&egui::TextureH
         rect,
         egui::TextureId::default(),
         egui::Rect::from_min_max(egui::epaint::WHITE_UV, egui::epaint::WHITE_UV),
-        |t| Color32::from_rgba_unmultiplied(7, 23, 17, (240. - 150. * t) as u8),
+        |t| Color32::from_rgba_unmultiplied(10, 10, 13, (240. - 150. * t) as u8),
     )));
 }
 

@@ -8,6 +8,7 @@ use egui::{Color32, FontFamily, FontId, Pos2, Rect, RichText, Sense, Vec2};
 const GOLD: Color32 = Color32::from_rgb(223, 183, 120);
 const WHITE: Color32 = Color32::from_rgb(239, 233, 221);
 const MUTED: Color32 = Color32::from_rgb(162, 169, 162);
+mod gta;
 const RADAR_WORLD_MIN: f32 = -3000.0;
 const RADAR_WORLD_MAX: f32 = 3000.0;
 const RADAR_TILE_SIZE: f32 = (RADAR_WORLD_MAX - RADAR_WORLD_MIN) / 12.0;
@@ -747,7 +748,7 @@ impl Menu {
                             .strong(),
                         );
                         ui.label(
-                            RichText::new("Esc  Menu    M  Map    F7  Cars    F8  Peds")
+                            RichText::new("Esc  Menu    M  Map    T  Chat    F8  Console    F7  Cars    F4  Peds")
                                 .size(14.0)
                                 .color(MUTED),
                         );
@@ -883,14 +884,21 @@ impl Menu {
             mesh.add_triangle(0,1,2);mesh.add_triangle(0,2,3);painter.add(egui::Shape::mesh(mesh));
             let left=screen.left()+screen.width()*0.065;
             let top=screen.top()+screen.height()*0.12;
+            let footer=screen.bottom()-48.0*scale;
+            // In game the pause menu uses GTA V-style tabs; the title screen keeps San Andreas styling.
+            let in_game=self.has_played && page!=Page::Main;
+            let gta_content=in_game.then(|| self.gta_chrome(ui,screen,scale,page,coordinates));
+            if !in_game {
             painter.text(Pos2::new(left,top),egui::Align2::LEFT_TOP,"San Andreas",FontId::new(80.0*scale,FontFamily::Name("street".into())),WHITE);
             painter.text(Pos2::new(left+3.0,top+91.0*scale),egui::Align2::LEFT_TOP,"Freeroam",FontId::new(27.0*scale,FontFamily::Name("menu".into())),GOLD);
             let heading=match page{Page::Main=>"The whole state. Your way.",Page::Pause=>"Take a breath",Page::Map=>"Choose a destination",Page::Settings=>"Settings",Page::Controls=>"Controls",Page::Wardrobe=>"Wardrobe",Page::Interiors=>"Interiors",Page::Mods=>if self.network_active {"Server resources"} else {"Local resources"},Page::Cars=>"Spawn a vehicle",Page::Peds=>"Choose your player",Page::Commands=>"Commands",Page::Network=>"Multiplayer",Page::Quit=>"Leave free roam?"};
             painter.text(Pos2::new(left,top+150.0*scale),egui::Align2::LEFT_TOP,heading,FontId::proportional(18.0*scale),MUTED);
-            let footer=screen.bottom()-48.0*scale;
             painter.text(Pos2::new(left,footer),egui::Align2::LEFT_CENTER,"D-pad / arrows  Move     A / Enter  Select     B / Esc  Back",FontId::proportional(14.0*scale),MUTED);
             painter.text(Pos2::new(screen.right()-40.0*scale,footer),egui::Align2::RIGHT_CENTER,"SA Runtime  •  Free Roam",FontId::proportional(14.0*scale),MUTED);
-            if matches!(page,Page::Main|Page::Pause) {
+            }
+            if let (Some(content), Page::Pause) = (gta_content, page) {
+                if let Some(chosen) = self.gta_pause(ui, content, scale, coordinates) { action = Some(chosen); }
+            } else if matches!(page,Page::Main|Page::Pause) {
                 let labels=if page==Page::Main{[if self.has_checkpoint { "Continue free roam" } else { "Explore San Andreas" },"Map & destinations","Settings","Controls","Mods","Wardrobe","Interiors","Cars","Peds","Quit","Multiplayer"]}else{["Resume","Map & destinations","Settings","Controls","Mods","Wardrobe","Interiors","Cars","Peds","Main menu","Multiplayer"]};
                 if ctx.input(|i|i.key_pressed(egui::Key::ArrowDown)){self.selected=(self.selected+1)%labels.len();}
                 if ctx.input(|i|i.key_pressed(egui::Key::ArrowUp)){self.selected=(self.selected+labels.len()-1)%labels.len();}
@@ -917,7 +925,7 @@ impl Menu {
                 painter.text(Pos2::new(right,screen.bottom()-189.0*scale),egui::Align2::LEFT_TOP,"No missions. Just freedom.\nWalk, explore, and build on.",FontId::proportional(17.0*scale),MUTED);
             } else {
                 let start=Pos2::new(left,top+210.0*scale);
-                let rect=Rect::from_min_max(start,Pos2::new(screen.right()-screen.width()*0.07,footer-36.0*scale));
+                let rect=gta_content.unwrap_or_else(|| Rect::from_min_max(start,Pos2::new(screen.right()-screen.width()*0.07,footer-36.0*scale)));
                 let mut child=ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::top_down(egui::Align::Min)));
                 if page == Page::Settings { self.draw_settings(&mut child, scale); } else {
                 egui::ScrollArea::vertical().max_height(rect.height()).show(&mut child,|ui|{

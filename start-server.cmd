@@ -10,4 +10,10 @@ if not errorlevel 1 (
   pause
   exit /b 1
 )
-"%~dp0native\target\release\sa-server.exe" %*
+rem Like FXServer: run inside server-data with server.cfg and resources\.
+cd /d "%~dp0server-data"
+if "%~1"=="" (
+  "%~dp0native\target\release\sa-server.exe" +exec server.cfg
+) else (
+  "%~dp0native\target\release\sa-server.exe" %*
+)

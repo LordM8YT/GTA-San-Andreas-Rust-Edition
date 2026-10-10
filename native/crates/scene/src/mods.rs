@@ -139,15 +139,24 @@ fn identity() -> [f32; 4] {
 /// Share only files referenced by enabled native manifests. Category folders,
 /// disabled demos, original IMG archives and arbitrary adjacent files stay local.
 pub fn share_resources(directory: &Path) -> Result<sa_net::resources::Share> {
-    use sa_net::resources::{Input, Share, MAX_FILES, MAX_PACK_BYTES};
-    use std::collections::BTreeSet;
     if !directory.exists() {
-        return Ok(Share::default());
+        return Ok(sa_net::resources::Share::default());
     }
     let root = directory.canonicalize()?;
+    share_resource_folders(resource_folders(&root)?, false)
+}
+/// Share an explicit, ordered resource list, e.g. a server's `ensure` lines.
+/// `force_enabled` treats each listed resource as enabled, as `ensure` does.
+pub fn share_resource_folders(
+    folders: Vec<PathBuf>,
+    force_enabled: bool,
+) -> Result<sa_net::resources::Share> {
+    use sa_net::resources::{Input, Share, MAX_FILES, MAX_PACK_BYTES};
+    use std::collections::BTreeSet;
     let mut inputs = Vec::new();
     let (mut total_bytes, mut total_files) = (0_usize, 0_usize);
-    for folder in resource_folders(&root)? {
+    for folder in folders {
+        let folder = folder.canonicalize()?;
         let filename = if folder.join("mod.json").is_file() {
             "mod.json"
         } else if folder.join("resource.json").is_file() {
@@ -157,7 +166,7 @@ pub fn share_resources(directory: &Path) -> Result<sa_net::resources::Share> {
         };
         let raw = resource(&folder, filename)?;
         let manifest: Manifest = serde_json::from_slice(&raw)?;
-        if !manifest.enabled {
+        if !manifest.enabled && !force_enabled {
             continue;
         }
         manifest.validate_vehicle_tuning()?;
@@ -194,6 +203,9 @@ pub fn share_resources(directory: &Path) -> Result<sa_net::resources::Share> {
         );
         let mut exported: serde_json::Value = serde_json::from_slice(&raw)?;
         exported["name"] = serde_json::Value::String(name.clone());
+        if force_enabled {
+            exported["enabled"] = serde_json::Value::Bool(true);
+        }
         fn normalize(value: &mut serde_json::Value) {
             match value {
                 serde_json::Value::Object(fields) => {

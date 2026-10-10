@@ -11,7 +11,7 @@ Play together. Direct runtime startup remains supported.
 The launcher shares settings and launch contracts with the runtime, saves favorites,
 shows installation errors, previews unused cache cleanup and creates reviewable
 local diagnostic reports. Runtime joins prepare and verify server resources before
-automatically entering gameplay. All multiplayer binaries now need **protocol 6**;
+automatically entering gameplay. All multiplayer binaries now need **protocol 7**;
 round-trip time is measured on the gameplay connection. F3 shows frame/CPU timings
 and resident memory. GPU timestamp profiling is not implemented.
 
@@ -46,8 +46,10 @@ LAN/VPN machine, then configure its address in Multiplayer. The game host
 needs no port forwarding in relay mode. No public relay or Steam integration
 is configured; the prototype relay uses unencrypted TCP.
 For a server that stays running without a player's game, run **start-server.cmd**.
-The headless server supports 20 clients, direct IP or relay/browser hosting,
-and native mod distribution. See [server setup](docs/server-hosting.md).
+The headless server is set up like a FiveM server: `server-data/server.cfg`,
+`resources/[category]/` with `fxmanifest.lua`, server-side Lua (events,
+commands, exports, threads), ACL and rcon. Players chat with **T** and use the
+**F8** console. See [server setup](docs/server-hosting.md).
 Required native mods download and cache before joining; disconnect restores
 your offline world and local mods. Personal cars remain visible after their
 owner exits. Hosts also reserve up to three passenger seats so players can

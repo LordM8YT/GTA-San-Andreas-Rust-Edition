@@ -233,13 +233,23 @@ impl Session {
         let join_code = code(join_code)?;
         let session = Self::new(address, "Joining player-hosted session...");
         let (stop, local, report) = session.shared();
+        let mail = session.mail.clone();
         let name = safe_name(name);
         thread::Builder::new()
             .name("relay-guest".into())
             .spawn(move || {
                 let result = (|| {
                     let stream = open_tunnel(address, &join_code)?;
-                    client_stream(stream, address, name, &stop, &local, &report, fingerprint)
+                    client_stream(
+                        stream,
+                        address,
+                        name,
+                        &stop,
+                        &local,
+                        &report,
+                        fingerprint,
+                        &mail,
+                    )
                 })();
                 let status = match result {
                     Ok(()) => "Disconnected".into(),

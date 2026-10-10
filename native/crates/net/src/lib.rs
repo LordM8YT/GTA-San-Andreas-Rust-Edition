@@ -6,6 +6,7 @@ pub mod relay;
 pub mod resources;
 pub use passengers::{PassengerSeat, RideReply, RideRequest, RideResult};
 use std::{
+    collections::VecDeque,
     io::{self, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
     sync::{
@@ -18,7 +19,14 @@ use std::{
 
 pub const MAX_PLAYERS: usize = 20;
 pub const DEFAULT_PORT: u16 = 7777;
-pub const VERSION: u32 = 6;
+pub const VERSION: u32 = 7;
+/// Script events: FiveM-style `TriggerServerEvent` / `TriggerClientEvent`.
+/// Names are ASCII identifiers; payloads are JSON arrays of arguments.
+pub const MAX_EVENT_NAME: usize = 64;
+pub const MAX_EVENT_PAYLOAD: usize = 4 * 1024;
+const MAX_INBOX: usize = 256;
+/// Per-guest event budget per second; excess events are discarded, not queued.
+const EVENT_BUDGET: u32 = 30;
 const TICK: Duration = Duration::from_millis(50);
 const TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_FRAME: usize = 16 * 1024;
@@ -93,6 +101,34 @@ pub struct Peer {
     pub name: String,
     pub pose: Pose,
 }
+/// One script event. On a server, `source` is the sending player's ID; on a
+/// client, events always come from the server (`source == 0`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct NetEvent {
+    pub source: u32,
+    pub name: String,
+    pub payload: String,
+}
+pub fn valid_event(name: &str, payload: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= MAX_EVENT_NAME
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_:-.".contains(&b))
+        && payload.len() <= MAX_EVENT_PAYLOAD
+        && serde_json::from_str::<Vec<serde_json::Value>>(payload).is_ok()
+}
+enum Outbound {
+    Event {
+        target: Option<u32>,
+        name: String,
+        payload: String,
+    },
+    Drop {
+        target: u32,
+        reason: String,
+    },
+}
 #[derive(Clone, Debug, Default)]
 pub struct Report {
     /// Round trip through the gameplay connection, including relay and host processing.
@@ -131,6 +167,10 @@ enum Message {
         offset: usize,
         data: Vec<u8>,
         done: bool,
+    },
+    Event {
+        name: String,
+        payload: String,
     },
 }
 fn safe_name(name: &str) -> String {
@@ -236,6 +276,31 @@ pub struct Session {
     stop: Arc<AtomicBool>,
     local: Arc<Mutex<Pose>>,
     report: Arc<Mutex<Report>>,
+    mail: Arc<Mailbox>,
+}
+#[derive(Default)]
+struct Mailbox {
+    outbox: Mutex<Vec<Outbound>>,
+    inbox: Mutex<VecDeque<NetEvent>>,
+    /// Hosts only: admitted players, including a player host. 0 = MAX_PLAYERS.
+    max_clients: std::sync::atomic::AtomicUsize,
+}
+impl Mailbox {
+    fn receive(&self, event: NetEvent) {
+        let mut inbox = self.inbox.lock().unwrap();
+        if inbox.len() < MAX_INBOX {
+            inbox.push_back(event);
+        }
+    }
+    fn take(&self) -> Vec<Outbound> {
+        std::mem::take(&mut *self.outbox.lock().unwrap())
+    }
+    fn capacity(&self) -> usize {
+        match self.max_clients.load(Ordering::Relaxed) {
+            0 => MAX_PLAYERS,
+            n => n.min(MAX_PLAYERS),
+        }
+    }
 }
 impl Session {
     pub fn host(address: SocketAddr, name: &str) -> io::Result<Self> {
@@ -267,11 +332,21 @@ impl Session {
         listener.set_nonblocking(true)?;
         let session = Self::new(listener.local_addr()?, "Starting host");
         let (stop, local, report) = session.shared();
+        let mail = session.mail.clone();
         let name = safe_name(name);
         thread::Builder::new()
             .name("multiplayer-host".into())
             .spawn(move || {
-                host_worker(listener, name, stop, local, report, share, host_player);
+                host_worker(
+                    listener,
+                    name,
+                    stop,
+                    local,
+                    report,
+                    share,
+                    host_player,
+                    mail,
+                );
             })?;
         Ok(session)
     }
@@ -285,13 +360,23 @@ impl Session {
     ) -> io::Result<Self> {
         let session = Self::new(address, "Connecting...");
         let (stop, local, report) = session.shared();
+        let mail = session.mail.clone();
         let name = safe_name(name);
         thread::Builder::new()
             .name("multiplayer-client".into())
             .spawn(move || {
                 let result = (|| {
                     let stream = TcpStream::connect_timeout(&address, Duration::from_secs(3))?;
-                    client_stream(stream, address, name, &stop, &local, &report, fingerprint)
+                    client_stream(
+                        stream,
+                        address,
+                        name,
+                        &stop,
+                        &local,
+                        &report,
+                        fingerprint,
+                        &mail,
+                    )
                 })();
                 let status = match result {
                     Ok(()) => "Disconnected".into(),
@@ -320,6 +405,7 @@ impl Session {
                 status: status.into(),
                 ..Report::default()
             })),
+            mail: Arc::default(),
         }
     }
     #[allow(clippy::type_complexity)]
@@ -327,6 +413,47 @@ impl Session {
         (self.stop.clone(), self.local.clone(), self.report.clone())
     }
     /// Latest-only mailbox: a slow renderer cannot grow a network queue.
+    /// Queue a script event. Hosts send to one player (`Some(id)`) or all
+    /// (`None`); clients always send to the server and ignore `target`.
+    pub fn trigger(&self, target: Option<u32>, name: &str, payload: &str) -> io::Result<()> {
+        if !valid_event(name, payload) {
+            return Err(invalid());
+        }
+        let mut outbox = self.mail.outbox.lock().unwrap();
+        if outbox.len() >= MAX_INBOX {
+            return Err(io::ErrorKind::WouldBlock.into());
+        }
+        outbox.push(Outbound::Event {
+            target,
+            name: name.into(),
+            payload: payload.into(),
+        });
+        Ok(())
+    }
+    /// Received script events, oldest first.
+    pub fn events(&self) -> Vec<NetEvent> {
+        self.mail.inbox.lock().unwrap().drain(..).collect()
+    }
+    /// Hosts only: disconnect a player with a reason shown to them.
+    pub fn drop_player(&self, id: u32, reason: &str) {
+        self.mail.outbox.lock().unwrap().push(Outbound::Drop {
+            target: id,
+            reason: reason
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(256)
+                .collect(),
+        });
+    }
+    /// Hosts only: admitted player limit (1..=MAX_PLAYERS), like `sv_maxclients`.
+    pub fn set_max_clients(&self, count: usize) {
+        self.mail
+            .max_clients
+            .store(count.clamp(1, MAX_PLAYERS), Ordering::Relaxed);
+    }
+    pub fn max_clients(&self) -> usize {
+        self.mail.capacity()
+    }
     pub fn update(&self, pose: Pose) -> Option<Report> {
         if pose.valid() {
             if let Ok(mut local) = self.local.try_lock() {
@@ -359,7 +486,9 @@ struct Guest {
     hello: bool,
     assets: bool,
     transfer: Option<(String, Arc<[u8]>, usize)>,
+    budget: (Instant, u32),
 }
+#[allow(clippy::too_many_arguments)]
 fn host_worker(
     listener: TcpListener,
     name: String,
@@ -368,6 +497,7 @@ fn host_worker(
     report: Arc<Mutex<Report>>,
     share: resources::Share,
     host_player: bool,
+    mail: Arc<Mailbox>,
 ) {
     let fingerprint = share
         .manifest
@@ -402,6 +532,7 @@ fn host_worker(
                 hello: false,
                 assets: false,
                 transfer: None,
+                budget: (Instant::now(), 0),
             });
             next_id = next_id.wrapping_add(1).max(1);
         }
@@ -450,10 +581,11 @@ fn host_worker(
                             let _ = guest.wire.flush();
                             return false;
                         }
-                        if admitted >= MAX_PLAYERS - usize::from(host_player) {
+                        let capacity = mail.capacity();
+                        if admitted >= capacity.saturating_sub(usize::from(host_player)) {
                             let _ = guest
                                 .wire
-                                .queue(&Message::Reject("Session full (20 players)".into()));
+                                .queue(&Message::Reject(format!("Session full ({capacity} players)")));
                             let _ = guest.wire.flush();
                             return false;
                         }
@@ -475,6 +607,15 @@ fn host_worker(
                         guest.peer.pose = seats.apply(guest.peer.id, pose, &source);
                         guest.ready = true;
                     }
+                    Message::Event { name, payload } if guest.hello && valid_event(&name, &payload) => {
+                        if guest.budget.0.elapsed() >= Duration::from_secs(1) {
+                            guest.budget = (Instant::now(), 0);
+                        }
+                        guest.budget.1 += 1;
+                        if guest.budget.1 <= EVENT_BUDGET {
+                            mail.receive(NetEvent { source: guest.peer.id, name, payload });
+                        }
+                    }
                     _ => return false,
                 }
             }
@@ -491,6 +632,34 @@ fn host_worker(
             }
             guest.wire.flush().is_ok()
         });
+        for outbound in mail.take() {
+            match outbound {
+                Outbound::Event {
+                    target,
+                    name,
+                    payload,
+                } => {
+                    let message = Message::Event { name, payload };
+                    for guest in guests
+                        .iter_mut()
+                        .filter(|g| g.hello && target.is_none_or(|id| id == g.peer.id))
+                    {
+                        // A full queue drops the event; it is not a protocol error.
+                        let _ = guest.wire.queue(&message);
+                    }
+                }
+                Outbound::Drop { target, reason } => {
+                    guests.retain_mut(|guest| {
+                        if guest.peer.id != target {
+                            return true;
+                        }
+                        let _ = guest.wire.queue(&Message::Reject(reason.clone()));
+                        let _ = guest.wire.flush();
+                        false
+                    });
+                }
+            }
+        }
         if Instant::now() >= next_tick {
             next_tick = Instant::now() + TICK;
             let mut peers = Vec::new();
@@ -521,6 +690,7 @@ fn host_worker(
     }
     publish(&report, "Disconnected", false, 0, Vec::new());
 }
+#[allow(clippy::too_many_arguments)]
 fn client_stream(
     stream: TcpStream,
     address: SocketAddr,
@@ -529,6 +699,7 @@ fn client_stream(
     local: &Mutex<Pose>,
     report: &Mutex<Report>,
     fingerprint: Option<String>,
+    mail: &Mailbox,
 ) -> io::Result<()> {
     let mut wire = Wire::new(stream)?;
     wire.queue(&Message::Hello {
@@ -583,8 +754,25 @@ fn client_stream(
                         return Err(invalid());
                     }
                 }
+                Message::Event { name, payload } if id.is_some() => {
+                    if !valid_event(&name, &payload) {
+                        return Err(invalid());
+                    }
+                    mail.receive(NetEvent {
+                        source: 0,
+                        name,
+                        payload,
+                    });
+                }
                 Message::Reject(reason) => return Err(io::Error::other(reason)),
                 _ => return Err(invalid()),
+            }
+        }
+        if id.is_some() {
+            for outbound in mail.take() {
+                if let Outbound::Event { name, payload, .. } = outbound {
+                    let _ = wire.queue(&Message::Event { name, payload });
+                }
             }
         }
         if id.is_some() && Instant::now() >= next_tick {
@@ -951,6 +1139,46 @@ mod tests {
         wait(|| intruder.read().is_err());
         assert!(report(&host).connected);
         assert!(report(&client).connected);
+    }
+    #[test]
+    fn script_events_flow_both_ways_and_hosts_can_drop_and_cap_players() {
+        let server =
+            Session::dedicated_resources(address(), "Server", resources::Share::default()).unwrap();
+        server.set_max_clients(1);
+        let guest = Session::join(server.address, "Guest").unwrap();
+        wait(|| report(&server).peers.len() == 1);
+        guest
+            .trigger(None, "chat:messageEntered", r#"["Guest","hi"]"#)
+            .unwrap();
+        let mut received = Vec::new();
+        wait(|| {
+            received.extend(server.events());
+            !received.is_empty()
+        });
+        let id = report(&server).peers[0].id;
+        assert_eq!(received[0].source, id);
+        assert_eq!(received[0].payload, r#"["Guest","hi"]"#);
+        server
+            .trigger(Some(id), "chat:addMessage", r#"[{"args":["hi"]}]"#)
+            .unwrap();
+        let mut delivered = Vec::new();
+        wait(|| {
+            report(&guest);
+            delivered.extend(guest.events());
+            !delivered.is_empty()
+        });
+        assert_eq!(delivered[0].name, "chat:addMessage");
+        assert!(guest.trigger(None, "bad name", "[]").is_err());
+        assert!(guest.trigger(None, "ok", "{}").is_err());
+        let overflow = Session::join(server.address, "Overflow").unwrap();
+        wait(|| {
+            report(&overflow)
+                .status
+                .contains("Session full (1 players)")
+        });
+        server.drop_player(id, "Kicked by admin");
+        wait(|| report(&guest).status.contains("Kicked by admin"));
+        wait(|| report(&server).peers.is_empty());
     }
     #[test]
     fn dedicated_server_has_twenty_real_slots_and_no_phantom_host() {

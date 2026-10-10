@@ -6,6 +6,7 @@ use sa_scene::{
 };
 use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Instant};
 mod capture;
+mod chat;
 mod controller;
 mod culling;
 mod gameplay_audio;
@@ -15,6 +16,7 @@ mod mipmaps;
 mod multiplayer;
 mod postprocess;
 mod progress;
+mod server_events;
 mod session_resources;
 mod settings;
 mod streaming;
@@ -115,6 +117,13 @@ struct State {
     spawned_peds: Vec<SpawnedPed>,
     npc_seconds: f32,
     network_session: Option<sa_net::Session>,
+    /// True when this game hosts the session (player-hosted, no Lua).
+    network_host: bool,
+    /// Session IDs in the same order as `menu.network_players`.
+    network_peer_ids: Vec<u32>,
+    /// Server-requested position (`SetEntityCoords`), SA world coordinates.
+    pending_coords: Option<[f32; 3]>,
+    chat: chat::Chat,
     network_car_spawned: bool,
     passenger: Option<sa_net::PassengerSeat>,
     passenger_car: Option<sa_net::VehiclePose>,
@@ -549,6 +558,10 @@ impl State {
             spawned_peds: Vec::new(),
             npc_seconds: 0.0,
             network_session: None,
+            network_host: false,
+            network_peer_ids: Vec::new(),
+            pending_coords: None,
+            chat: chat::Chat::default(),
             network_car_spawned: false,
             passenger: None,
             passenger_car: None,
@@ -1663,6 +1676,10 @@ impl State {
                 self.yaw,
                 &self.radar_tiles,
             );
+            let scale = (ui.ctx().content_rect().height() / 900.0).clamp(0.65, 1.5);
+            if self.menu.page.is_none() || self.chat.console_open {
+                self.chat.draw(ui.ctx(), scale);
+            }
         });
         if self.captured && self.menu.page.is_none() {
             output.platform_output.cursor_icon = egui::CursorIcon::None;
@@ -1841,6 +1858,9 @@ struct App {
     smoke_idle_car: bool,
     idle_car_start: Option<(u64, u64)>,
     smoke_signs: bool,
+    /// `--smoke-view eyeX,eyeY,eyeZ,targetX,targetY,targetZ` in SA world
+    /// coordinates: capture `view.png` from a fixed camera in the start region.
+    smoke_view: Option<(Vec3, Vec3)>,
     smoke_neon: bool,
     smoke_network: bool,
     network_saw_ped: bool,
@@ -2004,45 +2024,49 @@ impl ApplicationHandler for App {
                 .expect("window"),
         );
         let scene = self.scene.take().expect("loaded scene");
-        let sign_camera = (self.smoke_signs || self.smoke_neon).then(|| {
-            let text = scene
-                .batches
-                .iter()
-                .find(|b| {
-                    if self.smoke_neon {
-                        b.key.contains("|uv|7313:")
-                    } else {
-                        b.key == "runtime:roadsignfont"
-                    }
-                })
-                .expect("original sign text missing");
-            let quad = text
-                .vertices
-                .as_chunks::<6>()
-                .0
-                .iter()
-                .min_by(|a, b| {
-                    let distance =
-                        |v: &sa_scene::Vertex| v.position[0].powi(2) + v.position[2].powi(2);
-                    distance(&a[0]).total_cmp(&distance(&b[0]))
-                })
-                .expect("sign glyph missing");
-            let a = Vec3::from_array(quad[0].position);
-            let right = (Vec3::from_array(quad[1].position) - a).normalize();
-            let up = (Vec3::from_array(quad[2].position) - Vec3::from_array(quad[1].position))
-                .normalize();
-            let normal = right.cross(up).normalize();
-            let target = if self.smoke_neon {
-                text.vertices
+        let sign_camera = if let Some((eye, target)) = self.smoke_view {
+            Some((eye, (target - eye).normalize()))
+        } else {
+            (self.smoke_signs || self.smoke_neon).then(|| {
+                let text = scene
+                    .batches
                     .iter()
-                    .map(|v| Vec3::from_array(v.position))
-                    .sum::<Vec3>()
-                    / text.vertices.len() as f32
-            } else {
-                a + right * 1.0 + up * 0.5
-            };
-            (target + normal * 5.0, -normal)
-        });
+                    .find(|b| {
+                        if self.smoke_neon {
+                            b.key.contains("|uv|7313:")
+                        } else {
+                            b.key == "runtime:roadsignfont"
+                        }
+                    })
+                    .expect("original sign text missing");
+                let quad = text
+                    .vertices
+                    .as_chunks::<6>()
+                    .0
+                    .iter()
+                    .min_by(|a, b| {
+                        let distance =
+                            |v: &sa_scene::Vertex| v.position[0].powi(2) + v.position[2].powi(2);
+                        distance(&a[0]).total_cmp(&distance(&b[0]))
+                    })
+                    .expect("sign glyph missing");
+                let a = Vec3::from_array(quad[0].position);
+                let right = (Vec3::from_array(quad[1].position) - a).normalize();
+                let up = (Vec3::from_array(quad[2].position) - Vec3::from_array(quad[1].position))
+                    .normalize();
+                let normal = right.cross(up).normalize();
+                let target = if self.smoke_neon {
+                    text.vertices
+                        .iter()
+                        .map(|v| Vec3::from_array(v.position))
+                        .sum::<Vec3>()
+                        / text.vertices.len() as f32
+                } else {
+                    a + right * 1.0 + up * 0.5
+                };
+                (target + normal * 5.0, -normal)
+            })
+        };
         let radar_tiles = match sa_scene::load_radar_tiles(&self.game_dir) {
             Ok(tiles) => Some(tiles),
             Err(error) => {
@@ -2318,6 +2342,30 @@ impl ApplicationHandler for App {
         let _ = state.gui_input.on_window_event(&state.window, &event);
         if let WindowEvent::KeyboardInput { event, .. } = &event {
             if event.state == ElementState::Pressed && !event.repeat {
+                // F8 console and T chat, as in FiveM. While either is open,
+                // keys belong to the text box, not to the game.
+                if event.physical_key == PhysicalKey::Code(KeyCode::F8) && state.streamer.is_some()
+                {
+                    state.chat.toggle_console();
+                    state.keys.clear();
+                    state.capture(!state.chat.active() && state.menu.page.is_none());
+                    return;
+                }
+                if state.chat.active() {
+                    if event.physical_key == PhysicalKey::Code(KeyCode::Escape) {
+                        state.chat.close();
+                        state.capture(state.menu.page.is_none());
+                    }
+                    return;
+                }
+                if event.physical_key == PhysicalKey::Code(KeyCode::KeyT)
+                    && state.menu.page.is_none()
+                    && state.streamer.is_some()
+                {
+                    state.chat.open_chat();
+                    state.keys.clear();
+                    return;
+                }
                 if state.menu.page.is_none()
                     && matches!(&event.logical_key,winit::keyboard::Key::Character(text) if text.as_str()=="/")
                 {
@@ -2360,7 +2408,7 @@ impl ApplicationHandler for App {
                 }
             }
         }
-        if state.menu.page.is_some()
+        if (state.menu.page.is_some() || state.chat.active())
             && matches!(
                 event,
                 WindowEvent::KeyboardInput { .. } | WindowEvent::MouseInput { .. }
@@ -2650,6 +2698,11 @@ impl ApplicationHandler for App {
                 if self.smoke_signs {
                     if rendered {
                         self.smoke_frames += 1;
+                        if self.smoke_view.is_some() && self.smoke_frames == 2 {
+                            if let Some(directory) = &self.capture_dir {
+                                state.capture_next = Some(directory.join("view.png"));
+                            }
+                        }
                         if self.smoke_frames >= 4 {
                             println!("GPU original sign text rendered at {:?}", state.position);
                             event_loop.exit();
@@ -3284,7 +3337,7 @@ impl ApplicationHandler for App {
                                 state.keys.clear();
                                 state.capture(false);
                             }
-                            KeyCode::F8 if !event.repeat => {
+                            KeyCode::F4 if !event.repeat => {
                                 state.menu.open(menu::Page::Peds);
                                 state.keys.clear();
                                 state.capture(false);
@@ -3887,6 +3940,7 @@ fn main() -> Result<()> {
                 || a == "--smoke-car"
                 || a == "--smoke-signs"
                 || a == "--smoke-culling"
+                || a == "--smoke-view"
                 || a == "--smoke-neon"
                 || a == "--smoke-network"
                 || a == "--smoke-appearance"
@@ -3916,7 +3970,19 @@ fn main() -> Result<()> {
         idle_car_start: None,
         smoke_signs: args
             .iter()
-            .any(|a| a == "--smoke-signs" || a == "--smoke-culling"),
+            .any(|a| a == "--smoke-signs" || a == "--smoke-culling" || a == "--smoke-view"),
+        smoke_view: args
+            .windows(2)
+            .find(|pair| pair[0] == "--smoke-view")
+            .map(|pair| {
+                let v: Vec<f32> = pair[1]
+                    .split(',')
+                    .map(|n| n.trim().parse().expect("--smoke-view needs six numbers"))
+                    .collect();
+                assert_eq!(v.len(), 6, "--smoke-view needs six numbers");
+                let world = |x: f32, y: f32, z: f32| Vec3::new(x - ORIGIN[0], z, ORIGIN[1] - y);
+                (world(v[0], v[1], v[2]), world(v[3], v[4], v[5]))
+            }),
         smoke_neon: args.iter().any(|a| a == "--smoke-neon"),
         smoke_network: args
             .iter()

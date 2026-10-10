@@ -549,6 +549,8 @@ impl State {
                                 session.address
                             );
                             self.network_session = Some(session);
+                            self.network_host = !joining;
+                            self.chat.reset_server_state();
                             self.network_publication = publication;
                             self.network_revision = 0;
                         }

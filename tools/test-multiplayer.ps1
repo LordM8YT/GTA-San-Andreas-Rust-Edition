@@ -72,15 +72,20 @@ try {
         if (-not (Test-Path -LiteralPath $mpServerSource)) { throw 'Build sa-server in release mode first.' }
         $mpServerExe = Join-Path $mpResults 'sa-server-test.exe'
         Copy-Item -LiteralPath $mpServerSource -Destination $mpServerExe
-        $mpServerMods = $HostModsDir
-        if (-not $mpServerMods) { $mpServerMods = Join-Path $mpResults 'empty-mods' }
-        $mpServerConfig = Join-Path $mpResults 'server.json'
-        $mpServerRelayAddress = $null
-        if ($Relay) { $mpServerRelayAddress = $mpEndpoint }
-        $mpServerJson = @{ name='DedicatedTest'; listen=$mpEndpoint; relay=$mpServerRelayAddress; public=$true; mods_dir=$mpServerMods } | ConvertTo-Json
-        [System.IO.File]::WriteAllText($mpServerConfig, $mpServerJson, [System.Text.UTF8Encoding]::new($false))
-        $mpServer = Start-Process -WindowStyle Hidden -FilePath $mpServerExe -WorkingDirectory $mpResults -PassThru `
-            -ArgumentList @('--config', ('"' + $mpServerConfig + '"')) -RedirectStandardOutput (Join-Path $mpResults 'server.log') -RedirectStandardError (Join-Path $mpResults 'server-errors.log')
+        # FiveM-style server-data: server.cfg plus resources\[local] with the host mods.
+        $mpServerData = Join-Path $mpResults 'server-data'
+        $mpServerLocal = Join-Path $mpServerData 'resources\[local]'
+        [void][System.IO.Directory]::CreateDirectory($mpServerLocal)
+        if ($HostModsDir) {
+            foreach ($mpMod in Get-ChildItem -LiteralPath $HostModsDir -Directory) {
+                Copy-Item -LiteralPath $mpMod.FullName -Destination (Join-Path $mpServerLocal $mpMod.Name) -Recurse
+            }
+        }
+        $mpServerCfg = @("endpoint_add_tcp `"$mpEndpoint`"", 'sv_hostname "DedicatedTest"', 'ensure [local]')
+        if ($Relay) { $mpServerCfg += "set sv_relay `"$mpEndpoint`"" }
+        [System.IO.File]::WriteAllLines((Join-Path $mpServerData 'server.cfg'), [string[]]$mpServerCfg, [System.Text.UTF8Encoding]::new($false))
+        $mpServer = Start-Process -WindowStyle Hidden -FilePath $mpServerExe -WorkingDirectory $mpServerData -PassThru `
+            -ArgumentList @('+exec', 'server.cfg') -RedirectStandardOutput (Join-Path $mpResults 'server.log') -RedirectStandardError (Join-Path $mpResults 'server-errors.log')
         $mpServerDeadline = (Get-Date).AddSeconds(20)
         while ((Get-Date) -lt $mpServerDeadline -and -not $mpServer.HasExited) {
             $mpServerLog = Get-Content (Join-Path $mpResults 'server.log') -Raw

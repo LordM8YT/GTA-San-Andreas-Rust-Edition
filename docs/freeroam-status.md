@@ -58,7 +58,7 @@ Direkte oppstart støttes også via `native/target/release/sa-runtime.exe`.
 - I dypt vann: WASD beveger i overflaten, Space gir et løft.
 - P: gåmodus/flykamera. Q/E: ned/opp i flykamera. Esc: pausemeny.
 - M: kartmeny. Mus, piltaster/Enter eller Xbox D-pad/A brukes i menyene.
-- /cars eller F7: velg og spawn bil. /peds eller F8: bytt spillerfigur.
+- /cars eller F7: velg og spawn bil. /peds eller F4: bytt spillerfigur. T: chat. F8: konsoll.
   /mods viser ressurslisten, med serverens liste mens du er tilkoblet.
   Trykk /, skriv kommandoen og Enter. Menyene finnes ogsaa i pausemenyen.
   Velg Spawn nearby eller S i peds-menyen for en figur i verden (maks aatte),
@@ -127,10 +127,15 @@ feilmelding vises i menyen.
   Dette er foreløpig uten bølger, dykking eller svømmeanimasjon.
 - `--probe-water` kontrollerer flyting med original kystgeometri.
 - Foreldre angitt via IPL LOD-lenker filtreres bort fra detaljvisningen.
-- Fjern-LOD vises opptil 2,5 km. LOD-modeller hvis grenser berører
-  detaljområdet holdes ute; fjernmodellene inngår aldri i gangkollisjon.
-  Kameraets fjernplan er 3,5 km. Overgangen kan fortsatt ha synlige hull
-  eller sprang for store grupper; dette er ikke full original LOD-styring.
+- Fjern-LOD vises opptil 2,5 km. En IPL-LOD-gruppe vises enten helt i
+  detalj eller som LOD-modellen, aldri halvt; tidligere ga dette en ring med
+  hull i bakken i kanten av detaljområdet. Fjernmodellene inngår aldri i
+  gangkollisjon. Kameraets fjernplan er 3,5 km.
+- Objekter med interiør-ID 13 («synlig overalt») vises nå utendørs. Det gjelder
+  284 plasseringer, blant annet veier, trafikklys og LOD-bygninger i sentrum av
+  Los Santos, som tidligere manglet og etterlot et stort hull.
+- `--smoke-view eyeX,eyeY,eyeZ,målX,målY,målZ --capture-dir <mappe>` tar et
+  bilde fra et fast kamera i startområdet, for å kontrollere kartet.
 - Originale COL1/2/3/4-kollisjonscontainere dekodes. 8 255 originalmodeller
   ble indeksert. Trekanter brukes direkte; bokser og kuler trianguleres.
 - Visuell kollisjon brukes som reserve for modeller uten COL.

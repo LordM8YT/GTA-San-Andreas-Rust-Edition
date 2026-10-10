@@ -13,11 +13,15 @@ use std::{
 };
 mod artwork;
 mod local_mods;
+mod servers;
 mod updater;
-const BACKGROUND: Color32 = Color32::from_rgb(12, 28, 22);
-const SURFACE: Color32 = Color32::from_rgb(21, 43, 33);
-const MUTED: Color32 = Color32::from_rgb(165, 184, 169);
-const GOLD: Color32 = Color32::from_rgb(223, 183, 120);
+// Dark neutral surfaces with one warm accent, like the FiveM client.
+const BACKGROUND: Color32 = Color32::from_rgb(14, 14, 18);
+const SURFACE: Color32 = Color32::from_rgb(24, 24, 30);
+const SURFACE_HIGH: Color32 = Color32::from_rgb(34, 34, 42);
+const MUTED: Color32 = Color32::from_rgb(150, 150, 165);
+const TEXT: Color32 = Color32::from_rgb(236, 236, 242);
+const ACCENT: Color32 = Color32::from_rgb(240, 98, 32);
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
     Home,
@@ -56,6 +60,8 @@ struct Launcher {
     browser_initialized: bool,
     search: String,
     favorites_only: bool,
+    server_tab: servers::ServerTab,
+    selected_server: Option<String>,
     direct_open: bool,
     resource_tab: usize,
     mods_inspected: bool,
@@ -104,30 +110,30 @@ impl Launcher {
         style.wrap_mode = Some(egui::TextWrapMode::Wrap);
         style.visuals.panel_fill = BACKGROUND;
         style.visuals.window_fill = SURFACE;
-        style.visuals.extreme_bg_color = Color32::from_rgb(9, 23, 17);
-        style.visuals.widgets.inactive.bg_fill = Color32::from_rgb(35, 59, 45);
-        style.visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(35, 59, 45);
-        style.visuals.widgets.active.bg_stroke = egui::Stroke::new(2., GOLD);
-        style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1., GOLD);
-        style.visuals.widgets.active.bg_fill = Color32::from_rgb(76, 86, 51);
+        style.visuals.extreme_bg_color = Color32::from_rgb(10, 10, 13);
+        style.visuals.widgets.inactive.bg_fill = SURFACE_HIGH;
+        style.visuals.widgets.inactive.weak_bg_fill = SURFACE_HIGH;
+        style.visuals.widgets.active.bg_stroke = egui::Stroke::new(2., ACCENT);
+        style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1., ACCENT);
+        style.visuals.widgets.active.bg_fill = Color32::from_rgb(72, 40, 26);
         style.visuals.widgets.noninteractive.bg_stroke =
-            egui::Stroke::new(1., Color32::from_rgb(44, 66, 51));
+            egui::Stroke::new(1., Color32::from_rgb(40, 40, 50));
         style
             .text_styles
             .insert(egui::TextStyle::Heading, egui::FontId::proportional(27.));
         style
             .text_styles
             .insert(egui::TextStyle::Button, egui::FontId::proportional(16.));
-        style.visuals.override_text_color = Some(Color32::from_rgb(239, 233, 221));
-        style.visuals.selection.bg_fill = Color32::from_rgb(105, 83, 44);
-        style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(49, 73, 53);
+        style.visuals.override_text_color = Some(TEXT);
+        style.visuals.selection.bg_fill = Color32::from_rgb(120, 52, 20);
+        style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(46, 46, 56);
         for widget in [
             &mut style.visuals.widgets.inactive,
             &mut style.visuals.widgets.hovered,
             &mut style.visuals.widgets.active,
             &mut style.visuals.widgets.open,
         ] {
-            widget.corner_radius = egui::CornerRadius::same(6);
+            widget.corner_radius = egui::CornerRadius::same(4);
         }
         style.spacing.scroll = egui::style::ScrollStyle::solid();
         style.spacing.item_spacing = egui::vec2(12., 12.);
@@ -176,6 +182,8 @@ impl Launcher {
             browser_initialized: false,
             search: String::new(),
             favorites_only: false,
+            server_tab: servers::ServerTab::All,
+            selected_server: None,
             direct_open: false,
             resource_tab: 0,
             mods_inspected: false,
@@ -575,8 +583,6 @@ impl Launcher {
         }
     }
     fn home(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Home");
-        ui.add_space(10.);
         let checkpoint =
             sa_client::progress::Save::load(&sa_client::config_dir().join("progress.json"))
                 .ok()
@@ -614,11 +620,11 @@ impl Launcher {
                             self.ready(),
                             egui::Button::new(
                                 RichText::new(format!("      {label}"))
-                                    .color(Color32::from_rgb(30, 35, 22))
+                                    .color(Color32::WHITE)
                                     .strong(),
                             )
                             .min_size(egui::vec2(218., 48.))
-                            .fill(GOLD),
+                            .fill(ACCENT),
                         )
                         .clicked()
                     {
@@ -744,263 +750,6 @@ impl Launcher {
                 });
         });
     }
-    fn multiplayer(&mut self, ui: &mut egui::Ui) {
-        if !self.browser_initialized {
-            self.browser_initialized = true;
-            if !self.config.relay.trim().is_empty() {
-                self.browse();
-            }
-        }
-        ui.heading("Servers");
-        ui.label(
-            RichText::new("Find a session, or connect directly to a host you trust.").color(MUTED),
-        );
-        ui.horizontal_wrapped(|ui| {
-            ui.add(
-                egui::TextEdit::singleline(&mut self.search)
-                    .hint_text("Search servers")
-                    .desired_width(260.)
-                    .margin(egui::vec2(12., 11.)),
-            );
-            if ui
-                .add_enabled(
-                    self.browser_worker.is_none() && !self.config.relay.trim().is_empty(),
-                    egui::Button::new("Refresh"),
-                )
-                .clicked()
-            {
-                self.browse();
-            }
-            ui.selectable_value(&mut self.favorites_only, false, "All");
-            ui.selectable_value(&mut self.favorites_only, true, "Favorites");
-        });
-        ui.add_space(8.);
-        if self.browser_worker.is_some() {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label("Loading server directory...");
-            });
-        } else if let Some(error) = self.browser_error.clone() {
-            surface(ui, |ui| {
-                ui.colored_label(
-                    GOLD,
-                    "Server directory unavailable. Offline free roam is still available.",
-                );
-                ui.horizontal_wrapped(|ui| {
-                    if ui.button("Retry").clicked() {
-                        self.browse();
-                    }
-                    if ui.button("Configure connection").clicked() {
-                        self.direct_open = true;
-                    }
-                });
-                ui.collapsing("Details", |ui| {ui.label(error); ui.small("Check the relay address and ask the host whether the relay is running. Technical errors are recorded in the launcher log.");});
-            });
-        } else if self.config.relay.trim().is_empty() && self.direct_open {
-            ui.label("No relay configured. Enter a host or relay below.");
-        } else if self.config.relay.trim().is_empty() {
-            surface(ui, |ui| {
-                ui.label(RichText::new("No relay configured").strong());
-                ui.label("Enter a relay supplied by your host to browse its public sessions. Direct IP connections also work without a directory.");
-                ui.horizontal_wrapped(|ui| {
-                    if ui.button("Configure connection").clicked() {
-                        self.relay_mode = true;
-                        self.direct_open = true;
-                    }
-                    if ui.button("Direct connect").clicked() {
-                        self.relay_mode = false;
-                        self.direct_open = true;
-                    }
-                });
-            });
-        } else if self.browser_time.is_none() {
-            ui.label("Refresh to load sessions from your configured relay.");
-        } else if self.servers.is_empty() {
-            surface(ui, |ui| {
-                ui.label("No public sessions on this relay yet.");
-                ui.small("A host can publish a session from Multiplayer inside the game, or share a private join code.");
-            });
-        }
-        if let Some(error) = self.connection_error.clone() {
-            surface(ui, |ui| {
-                ui.colored_label(GOLD, "The connection action could not be completed.");
-                if ui.button("Review connection").clicked() {
-                    self.direct_open = true;
-                }
-                ui.collapsing("Connection details", |ui| {
-                    ui.label(error);
-                });
-            });
-        }
-        if self
-            .config
-            .relay
-            .parse::<std::net::SocketAddr>()
-            .is_ok_and(|a| a.ip().is_loopback())
-        {
-            ui.small("Local relay: this address connects only to a service on this PC.");
-        }
-        let visible: Vec<_> = self
-            .servers
-            .iter()
-            .filter(|server| {
-                server
-                    .name
-                    .to_lowercase()
-                    .contains(&self.search.to_lowercase())
-                    && (!self.favorites_only
-                        || self.config.favorites.iter().any(|f| {
-                            f.relay && f.address == self.config.relay && f.code == server.code
-                        }))
-            })
-            .cloned()
-            .collect();
-        if !self.servers.is_empty() && visible.is_empty() {
-            ui.label("No servers match this search or filter.");
-        }
-        for server in visible {
-            surface(ui, |ui| {
-                ui.label(RichText::new(&server.name).strong().size(20.));
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(format!("{} / {} players", server.players, server.capacity));
-                    let compatible = server.version == sa_net::VERSION;
-                    ui.label(if compatible {
-                        "Compatible"
-                    } else {
-                        "Protocol mismatch"
-                    });
-                    if ui
-                        .add_enabled(
-                            compatible && server.players < server.capacity && self.ready(),
-                            primary("Join"),
-                        )
-                        .clicked()
-                    {
-                        self.start(Session::Relay {
-                            address: self.config.relay.clone(),
-                            code: server.code.clone(),
-                        });
-                    }
-                    let saved = self.config.favorites.iter().any(|f| {
-                        f.relay && f.address == self.config.relay && f.code == server.code
-                    });
-                    if ui
-                        .add_enabled(
-                            !saved,
-                            egui::Button::new(if saved { "Saved" } else { "Save favorite" }),
-                        )
-                        .clicked()
-                    {
-                        self.relay_mode = true;
-                        self.code = server.code.clone();
-                        self.favorite(server.name.clone());
-                    }
-                });
-            });
-        }
-        if self.favorites_only {
-            ui.add_space(8.);
-            ui.label(RichText::new("Saved connections").strong());
-            if self.config.favorites.is_empty() {
-                ui.label("No favorites yet. Save a server or a direct connection.");
-            }
-            let mut remove = None;
-            let search = self.search.to_lowercase();
-            for (index, favorite) in self
-                .config
-                .favorites
-                .clone()
-                .into_iter()
-                .enumerate()
-                .filter(|(_, f)| f.name.to_lowercase().contains(&search))
-            {
-                surface(ui, |ui| {
-                    ui.label(&favorite.name);
-                    ui.small("Saved connection; availability and player count are not checked.");
-                    ui.horizontal_wrapped(|ui| {
-                        if ui
-                            .add_enabled(self.ready(), egui::Button::new("Join saved connection"))
-                            .clicked()
-                        {
-                            self.start(if favorite.relay {
-                                Session::Relay {
-                                    address: favorite.address.clone(),
-                                    code: favorite.code.clone(),
-                                }
-                            } else {
-                                Session::Direct(favorite.address.clone())
-                            });
-                        }
-                        if ui.button("Edit connection").clicked() {
-                            self.relay_mode = favorite.relay;
-                            if favorite.relay {
-                                self.config.relay = favorite.address.clone();
-                                self.code = favorite.code.clone();
-                                self.servers.clear();
-                                self.browser_time = None;
-                                self.browser_error = None;
-                            } else {
-                                self.direct = favorite.address.clone();
-                            }
-                            self.direct_open = true;
-                        }
-                        if ui.button("Remove").clicked() {
-                            remove = Some(index);
-                        }
-                    });
-                });
-            }
-            if let Some(index) = remove {
-                self.config.favorites.remove(index);
-                if let Err(e) = self.config.save() {
-                    let error = format!("Could not save favorites: {e}");
-                    log_error(&error);
-                    self.connection_error = Some(error);
-                }
-            }
-        }
-        ui.add_space(14.);
-        let panel = egui::CollapsingHeader::new("Direct connect")
-            .open(Some(self.direct_open))
-            .show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 8.;
-                ui.label("Player name");
-                input_limit(ui, &mut self.config.player, "Player", 24);
-                ui.horizontal_wrapped(|ui| {
-                    ui.selectable_value(&mut self.relay_mode, true, "Relay / join code");
-                    ui.selectable_value(&mut self.relay_mode, false, "Direct IP");
-                });
-                if self.relay_mode {
-                    ui.label("Relay address (IP:port)");
-                    if input(ui, &mut self.config.relay, "Relay supplied by your host").changed() {
-                        self.servers.clear(); self.browser_time = None; self.browser_error = None;
-                    }
-                    ui.label("Join code");
-                    input_limit(ui, &mut self.code, "12-character code", 12);
-                } else {
-                    ui.label("Host address (IP:port)");
-                    input(ui, &mut self.direct, "Host supplied by your friend");
-                }
-                ui.horizontal_wrapped(|ui| {
-                    if ui.add_enabled(self.ready() && self.connection_valid(), primary("Join session")).clicked() {
-                        self.start(if self.relay_mode { Session::Relay {address: self.config.relay.clone(), code: self.code.clone()} } else { Session::Direct(self.direct.clone()) });
-                    }
-                    if ui.add_enabled(self.connection_valid(), egui::Button::new("Save favorite")).clicked() {
-                        self.favorite(if self.relay_mode { "Saved relay session".into() } else { self.direct.clone() });
-                    }
-                    if ui.button("Save connection").clicked() {
-                        match self.config.save() {
-                            Ok(()) => {self.connection_error = None; self.message = "Connection saved.".into();}
-                            Err(e) => {let error = format!("Could not save connection: {e}");log_error(&error);self.connection_error = Some(error);},
-                        }
-                    }
-                });
-                ui.small("Host sessions from Multiplayer inside the game. No public relay or Steam service is bundled.");
-            });
-        if panel.header_response.clicked() {
-            self.direct_open = !self.direct_open;
-        }
-    }
     fn resources(&mut self, ui: &mut egui::Ui) {
         ui.heading("Resources");
         ui.label(RichText::new("Inspect your mods and downloaded resources.").color(MUTED));
@@ -1015,7 +764,7 @@ impl Launcher {
         ui.separator();
         if let Some(error) = &self.resource_error {
             ui.colored_label(
-                GOLD,
+                ACCENT,
                 "Resource inspection failed. Retry after reviewing Details.",
             );
             ui.collapsing("Details", |ui| {
@@ -1134,7 +883,7 @@ impl Launcher {
                     ui.separator();
                     ui.label("Cleanup removes only the previewed download cache. Required resources download again next time.");
                     if plan.busy || self.child.is_some() {
-                        ui.colored_label(GOLD, "Close all game sessions before cleanup. Active resources are protected.");
+                        ui.colored_label(ACCENT, "Close all game sessions before cleanup. Active resources are protected.");
                     }
                     if ui
                         .add_enabled(
@@ -1222,13 +971,13 @@ impl Launcher {
         });
         if let Some((path, report)) = &self.validation {
             if path == &self.config.game_dir && report.ready() {
-                ui.colored_label(GOLD, "Installation validated. Ready to play.");
+                ui.colored_label(ACCENT, "Installation validated. Ready to play.");
             }
             for error in &report.errors {
                 ui.colored_label(Color32::LIGHT_RED, error);
             }
             for warning in &report.warnings {
-                ui.colored_label(GOLD, warning);
+                ui.colored_label(ACCENT, warning);
             }
         }
         ui.separator();
@@ -1320,7 +1069,7 @@ impl Launcher {
             }
         });
         if self.config.hero_image.is_some() && self.hero.is_none() {
-            ui.colored_label(GOLD,"Artwork unavailable. Using the default background; choose the image again to restore it.");
+            ui.colored_label(ACCENT,"Artwork unavailable. Using the default background; choose the image again to restore it.");
         }
         if before != serde_json::to_value((&self.settings, &self.config)).ok() {
             self.settings_message = None;
@@ -1453,14 +1202,14 @@ fn input_limit(ui: &mut egui::Ui, value: &mut String, hint: &str, limit: usize) 
     )
 }
 fn primary(label: &str) -> egui::Button<'_> {
-    egui::Button::new(RichText::new(label).color(BACKGROUND))
-        .fill(GOLD)
+    egui::Button::new(RichText::new(label).color(Color32::WHITE).strong())
+        .fill(ACCENT)
         .min_size(egui::vec2(100., 40.))
 }
 fn surface(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::new()
         .fill(SURFACE)
-        .corner_radius(10)
+        .corner_radius(6)
         .inner_margin(20)
         .show(ui, |ui| {
             ui.set_min_width((ui.available_width() - 1.).max(0.));
@@ -1547,7 +1296,7 @@ impl Launcher {
         }
         let pages = [
             (Page::Home, "Home"),
-            (Page::Multiplayer, "Servers"),
+            (Page::Multiplayer, "Play"),
             (Page::Resources, "Resources"),
             (Page::Settings, "Settings"),
             (Page::Help, "Help"),
@@ -1579,92 +1328,98 @@ impl Launcher {
                         .on_hover_text(status);
                     if self.updates.busy() || self.updates.has_staged() {
                         ui.separator();
-                        ui.label(RichText::new(&self.updates.status).small().color(GOLD));
+                        ui.label(RichText::new(&self.updates.status).small().color(ACCENT));
                     }
                 });
             });
-        if ui.available_width() >= 900. {
-            egui::Panel::left("sidebar")
-                .exact_size(220.)
-                .resizable(false)
-                .frame(
-                    egui::Frame::new()
-                        .fill(Color32::from_rgb(9, 23, 17))
-                        .inner_margin(egui::Margin::symmetric(20, 28)),
-                )
-                .show(ui, |ui| {
+        // FiveM-style top bar: logo, page tabs with an accent underline, and
+        // the player name on the right. Tabs stay keyboard/controller focusable.
+        egui::Panel::top("topbar")
+            .frame(
+                egui::Frame::new()
+                    .fill(Color32::from_rgb(10, 10, 13))
+                    .inner_margin(egui::Margin::symmetric(24, 10)),
+            )
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
                     ui.label(
                         RichText::new("SARE")
                             .font(egui::FontId::new(
-                                46.,
+                                32.,
                                 egui::FontFamily::Name("street".into()),
                             ))
-                            .color(GOLD),
+                            .color(ACCENT),
                     );
-                    ui.label(
-                        RichText::new("San Andreas Rust Edition")
-                            .size(12.)
-                            .color(MUTED),
-                    );
-                    ui.add_space(38.);
+                    ui.add_space(18.);
+                    let compact = ui.available_width() < 760.;
                     for (page, label) in pages {
                         let active = self.page == page;
+                        let text = if compact {
+                            label.to_string()
+                        } else {
+                            format!("        {label}")
+                        };
                         let response = ui.add(
-                            egui::Button::new(RichText::new(format!("      {label}")).color(
-                                if active {
-                                    GOLD
-                                } else {
-                                    Color32::from_rgb(239, 233, 221)
-                                },
-                            ))
-                            .selected(active)
-                            .min_size(egui::vec2(180., 46.)),
+                            egui::Button::new(
+                                RichText::new(text)
+                                    .size(16.)
+                                    .color(if active { TEXT } else { MUTED }),
+                            )
+                            .frame(false)
+                            .min_size(egui::vec2(0., 40.)),
                         );
-                        nav_icon(
-                            ui,
-                            response.rect.left_center() + egui::vec2(21., 0.),
-                            page,
-                            if active { GOLD } else { MUTED },
-                        );
+                        if !compact {
+                            nav_icon(
+                                ui,
+                                response.rect.left_center() + egui::vec2(12., 0.),
+                                page,
+                                if active { ACCENT } else { MUTED },
+                            );
+                        }
                         if active {
                             let r = response.rect;
                             ui.painter().rect_filled(
-                                egui::Rect::from_min_size(
-                                    r.left_top() + egui::vec2(0., 10.),
-                                    egui::vec2(3., 26.),
+                                egui::Rect::from_min_max(
+                                    egui::pos2(r.left(), r.bottom() + 6.),
+                                    egui::pos2(r.right(), r.bottom() + 9.),
                                 ),
-                                2,
-                                GOLD,
+                                1,
+                                ACCENT,
                             );
                         }
                         if response.clicked() {
                             self.page = page;
                         }
                     }
+                    if !compact {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let name = if self.config.player.trim().is_empty() {
+                                "Player"
+                            } else {
+                                self.config.player.as_str()
+                            };
+                            egui::Frame::new()
+                                .fill(SURFACE_HIGH)
+                                .corner_radius(16)
+                                .inner_margin(egui::Margin::symmetric(12, 6))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        let (dot, _) = ui.allocate_exact_size(
+                                            egui::vec2(8., 8.),
+                                            egui::Sense::hover(),
+                                        );
+                                        ui.painter().circle_filled(
+                                            dot.center(),
+                                            4.,
+                                            Color32::from_rgb(120, 205, 130),
+                                        );
+                                        ui.label(RichText::new(name).size(14.));
+                                    });
+                                });
+                        });
+                    }
                 });
-        } else {
-            egui::Panel::top("compact-navigation")
-                .frame(egui::Frame::new().fill(SURFACE).inner_margin(16))
-                .show(ui, |ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(
-                            RichText::new("SARE")
-                                .font(egui::FontId::new(
-                                    28.,
-                                    egui::FontFamily::Name("street".into()),
-                                ))
-                                .color(GOLD),
-                        );
-                        egui::ComboBox::from_id_salt("navigation")
-                            .selected_text(pages.iter().find(|(p, _)| *p == self.page).unwrap().1)
-                            .show_ui(ui, |ui| {
-                                for (page, label) in pages {
-                                    ui.selectable_value(&mut self.page, page, label);
-                                }
-                            });
-                    });
-                });
-        }
+            });
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(BACKGROUND).inner_margin(28))
             .show(ui, |ui| {
@@ -2008,7 +1763,7 @@ mod tests {
         output.textures_delta.clear();
     }
     #[test]
-    fn desktop_sidebar_is_reachable_by_keyboard_and_controller() {
+    fn top_navigation_is_reachable_by_keyboard_and_controller() {
         let context = egui::Context::default();
         let mut app = Launcher::configured(
             &context,
