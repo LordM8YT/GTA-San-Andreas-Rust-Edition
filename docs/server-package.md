@@ -7,15 +7,23 @@ Cargo is needed.
 
 ```
 server/            sa-server, sa-relay, license notices
-server-data/       server.cfg and resources/ — this folder is yours
+server-data/       resources/, and server.cfg after the first start — this folder is yours
 start-server.cmd   Windows: runs sa-server +exec server.cfg inside server-data
 start-server.sh    Linux:   the same
 start-relay.*      optional relay for a server browser and join codes
 ```
 
 1. Extract the ZIP into its own folder, for example `C:\SARE-Server`.
-2. Edit `server-data/server.cfg` (name, slots, rcon password, resources).
-3. Run `start-server.cmd` (Linux: `./start-server.sh`).
+2. Run `start-server.cmd` (Linux: `./start-server.sh`). The first start asks
+   which server you want and creates `server-data/server.cfg`:
+   - **Freeroam**: free roam with chat and spawn points.
+   - **SARE Box**: a roleplay framework with saved characters, money, jobs,
+     paychecks and an admin menu.
+   Without a console (hosting panels, systemd) pass
+   `+set sv_template sarebox` or `+set sv_template freeroam`; with neither,
+   Freeroam is created.
+3. Edit `server-data/server.cfg` (name, slots, rcon password, admins) and
+   restart. To pick another template later, rename `server.cfg` and start again.
 4. For internet hosting, allow TCP and UDP 7777 in the firewall/router,
    or publish through a relay with `set sv_relay "ip:port"`.
 

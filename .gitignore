@@ -16,3 +16,7 @@ mods/local-fivem-test/
 mods/local-ped-test/
 mods/local-upscaled-textures/
 .claude-flow/
+
+# Created by sa-server at runtime
+server-data/identity.salt
+server-data/kvp/

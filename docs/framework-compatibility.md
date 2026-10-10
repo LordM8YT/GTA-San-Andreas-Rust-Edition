@@ -45,10 +45,12 @@ NUI kjører ikke.
 | CfxLua-bibliotek: `table.clone/type/wipe/create`, `string.strsplit/strjoin/strtrim`, `io.readdir` | ox_lib | **Støttet** (nytt) |
 | `debug`-biblioteket | ox_lib (`debug.getinfo`) | **Støttet** (nytt) |
 | `playerConnecting` med `deferrals` og `setKickReason` | qbx_core | **Delvis** (nytt): spilleren er allerede koblet til, avvisning kaster spilleren ut |
-| `GetPlayerIdentifierByType`, `GetNumPlayerIdentifiers`, `GetPlayerIdentifier` | qbx_core | **Delvis** (nytt): bare `sare:<id>`; `license` gir `nil`, så Qbox avviser alle |
+| `GetPlayerIdentifierByType`, `GetNumPlayerIdentifiers`, `GetPlayerIdentifier` | qbx_core | **Delvis** (nytt): `license:<hex>` (stabil per server, ikke signert) og `sare:<id>`; `discord`, `fivem` m.fl. gir `nil` |
+| Resource-KVP (`SetResourceKvp*`, `GetResourceKvp*`, `StartFindKvp`) | ox_lib, qbx_core | **Støttet** (nytt): lagres i `kvp/<ressurs>.json` |
+| ACL med `identifier.license:...` | txAdmin-oppsett, Qbox-admin | **Støttet** (nytt) |
 | `GetConvarBool` | ox_lib | **Støttet** (nytt) |
 | Database (oxmysql-API) | qbx_core, ox_inventory | Mangler |
-| `PerformHttpRequest`, resource-KVP, `AddConvarChangeListener` | ox_lib | Mangler |
+| `PerformHttpRequest`, `AddConvarChangeListener` | ox_lib | Mangler |
 | `glm`-matematikk, `Citizen.InvokeNative` | ox_lib | Mangler |
 | Serverentiteter (OneSync): `CreateVehicle`, `GetGamePool`, nettverks-ID-er | ox_lib, qbx_core | Mangler |
 | Routing buckets | ox_lib, qbx_core | Mangler (`GetPlayerRoutingBucket` gir 0) |
@@ -68,8 +70,9 @@ NUI kjører ikke.
    `transaction`, `prepare`) mot MySQL/MariaDB, slik at `@oxmysql/lib/MySQL.lua`
    fungerer uendret. I tillegg `PerformHttpRequest`, resource-KVP og
    `AddConvarChangeListener`.
-4. **Identitet:** en stabil spilleridentitet (konto eller nøkkel) som kan
-   eksponeres som `license:`, og deferrals før spilleren slippes inn.
+4. **Identitet (delvis ferdig):** `license:` fra en nøkkel hos spilleren,
+   saltet per server. Gjenstår: signatur, slik at en server ikke kan låne en
+   annen servers license, og deferrals før spilleren slippes inn.
 5. **Serverentiteter:** biler, peds og objekter som serveren eier, routing
    buckets og replikerte state bags.
 6. **Klient-Lua og UI (delvis ferdig):** sandkasse, nedlasting med SHA-256,
@@ -78,6 +81,12 @@ NUI kjører ikke.
 7. **Qbox-test:** fest versjonene over, kjør qbx_core, ox_lib, oxmysql-erstatningen
    og ox_inventory sammen i CI. Først da kan en bestemt Qbox-versjon kalles
    kompatibel.
+
+## SARE Box
+
+SARE Box er SAREs eget rammeverk i Qbox-form (spillerobjekter, penger, jobber,
+lønn, adminmeny, lagring per license). Det er ikke Qbox, men viser at et
+rammeverk med samme oppbygning kjører på SARE i dag. Se [SARE Box](sarebox.md).
 
 ## Bygge et rammeverk på SARE nå
 

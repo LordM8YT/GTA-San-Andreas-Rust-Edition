@@ -4,6 +4,7 @@
 mod acl;
 mod cfg;
 mod console;
+mod kvp;
 mod manifest;
 mod natives;
 mod script;
@@ -28,7 +29,8 @@ use std::{
 
 const USAGE: &str = "sa-server [+exec server.cfg] [+set name value] [+ensure resource] ...
 Run in a server-data folder containing server.cfg and resources/.
-Without arguments: exec server.cfg, creating a FiveM-style template when absent.";
+Without +exec, server.cfg runs first. When server.cfg is missing, the server
+asks which template to create (or uses +set sv_template freeroam|sarebox).";
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -41,11 +43,27 @@ fn main() -> Result<()> {
         "Arguments use FiveM syntax, e.g. +exec server.cfg. See --help."
     );
     let mut commands = cfg::parse_arguments(&args);
-    if commands.is_empty() {
-        if !Path::new("server.cfg").exists() {
-            template::create(Path::new("."))?;
-        }
-        commands.push(vec!["exec".into(), "server.cfg".into()]);
+    // First start: create server.cfg and resources/ from a template when the
+    // server would run server.cfg and it is missing.
+    let execs: Vec<&str> = commands
+        .iter()
+        .filter(|c| c.first().is_some_and(|w| w == "exec"))
+        .filter_map(|c| c.get(1).map(String::as_str))
+        .collect();
+    let needs_cfg = execs.is_empty() || execs.contains(&"server.cfg");
+    if needs_cfg && !Path::new("server.cfg").exists() {
+        let requested = commands
+            .iter()
+            .find(|c| {
+                c.len() >= 3
+                    && matches!(c[0].as_str(), "set" | "setr" | "sets")
+                    && c[1] == "sv_template"
+            })
+            .map(|c| c[2].clone());
+        template::create(Path::new("."), template::choose(requested.as_deref())?)?;
+    }
+    if execs.is_empty() {
+        commands.insert(0, vec!["exec".into(), "server.cfg".into()]);
     }
 
     let Server {
@@ -157,6 +175,7 @@ fn main() -> Result<()> {
             for name in names.iter().rev() {
                 let _ = script::stop(&shared, name);
             }
+            script::flush_kvp(&shared, true);
             thread::sleep(Duration::from_millis(300));
             drop(publication);
             if restart {
@@ -177,7 +196,7 @@ struct Server {
 /// Execute the startup commands, share boot-time native assets, open the
 /// endpoint and start the ensured resources, in FiveM's order.
 fn boot(commands: Vec<Vec<String>>, resources_dir: PathBuf) -> Result<Server> {
-    let shared: Shared = Rc::new(RefCell::new(State::new(resources_dir)));
+    let shared: Shared = Rc::new(RefCell::new(State::new(resources_dir.clone())));
     {
         let mut state = shared.borrow_mut();
         state
@@ -279,6 +298,7 @@ fn boot(commands: Vec<Vec<String>>, resources_dir: PathBuf) -> Result<Server> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(sa_net::MAX_PLAYERS);
     session.set_max_clients(max);
+    session.set_identity_salt(&identity_salt(&shared, &resources_dir)?);
     shared.borrow_mut().session = Some(session.clone());
 
     for name in boot_order(&shared, &console.boot_resources) {
@@ -337,7 +357,10 @@ fn pump(
         shared.borrow_mut().peers = report.peers.clone();
         for (id, name) in &current {
             if !known.contains_key(id) {
-                out(shared, format!("Player {name} ({id}) joined."));
+                let license = session
+                    .identity(*id)
+                    .map_or("no license".into(), |l| format!("license:{l}"));
+                out(shared, format!("Player {name} ({id}) joined, {license}."));
                 script::announce_client_bundles(shared, *id);
                 // Already connected: a rejecting handler drops the player.
                 let rejected = script::dispatch(
@@ -380,6 +403,32 @@ fn pump(
 }
 
 /// `ensure` order, with dependencies first, without duplicates.
+/// Players' `license:` identifiers are salted per server so they cannot be
+/// matched across servers. The salt lives in `identity.salt` next to
+/// server.cfg (or `sv_identitySalt`); changing it changes every license.
+fn identity_salt(shared: &Shared, resources_dir: &Path) -> Result<String> {
+    if let Some(salt) = shared
+        .borrow()
+        .convar("sv_identitySalt")
+        .filter(|s| !s.is_empty())
+    {
+        return Ok(salt.to_string());
+    }
+    let path = resources_dir
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("identity.salt");
+    if let Ok(text) = std::fs::read_to_string(&path) {
+        if !text.trim().is_empty() {
+            return Ok(text.trim().to_string());
+        }
+    }
+    let mut random = [0u8; 16];
+    getrandom::fill(&mut random).map_err(|e| anyhow::anyhow!("no system randomness: {e}"))?;
+    let salt: String = random.iter().map(|b| format!("{b:02x}")).collect();
+    std::fs::write(&path, &salt).with_context(|| format!("Cannot write {}", path.display()))?;
+    Ok(salt)
+}
 fn boot_order(shared: &Shared, requested: &[String]) -> Vec<String> {
     let requested: Vec<String> = requested
         .iter()

@@ -61,11 +61,10 @@ impl Console {
                 .commands
                 .get(&command)
                 .is_none_or(|c| c.restricted);
-            let allowed = self
-                .shared
-                .borrow()
-                .acl
-                .allowed(&format!("player.{source}"), &format!("command.{command}"));
+            let allowed = self.shared.borrow().acl.allowed_any(
+                &crate::natives::principals(&self.shared, source),
+                &format!("command.{command}"),
+            );
             if restricted && !allowed {
                 self.say(format!(
                     "Access denied for command {command} (player {source})"

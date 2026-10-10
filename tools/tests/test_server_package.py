@@ -16,7 +16,8 @@ class ServerPackageTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
-        for path in ['server-data/server.cfg', 'server-data/resources/[managers]/mapmanager/fxmanifest.lua',
+        for path in ['server-data/server.cfg', 'server-data/templates/sarebox.cfg',
+                     'server-data/resources/[managers]/mapmanager/fxmanifest.lua',
                      'server-data/resources/[local]/.gitkeep', 'server-data/server.log', 'docs/server-package.md']:
             file = root / path
             file.parent.mkdir(parents=True, exist_ok=True)
@@ -37,11 +38,14 @@ class ServerPackageTests(unittest.TestCase):
         with zipfile.ZipFile(self.build('windows')) as archive:
             names = set(archive.namelist())
         self.assertEqual({n for n in names if n.endswith('.exe')}, {'server/sa-server.exe', 'server/sa-relay.exe'})
-        for expected in ['server-data/server.cfg', 'server-data/resources/[managers]/mapmanager/fxmanifest.lua',
+        for expected in ['server-data/resources/[managers]/mapmanager/fxmanifest.lua',
                          'server-data/resources/[local]/.gitkeep', 'server/LICENSE', 'server/THIRD-PARTY-NOTICES.txt',
                          'server/licenses/x-1.0/LICENSE', 'start-server.cmd', 'START-HERE.md']:
             self.assertIn(expected, names)
         self.assertNotIn('server-data/server.log', names)
+        # sa-server creates server.cfg from a template on the first start.
+        self.assertNotIn('server-data/server.cfg', names)
+        self.assertNotIn('server-data/templates/sarebox.cfg', names)
 
     def test_server_manifest_hashes_every_server_file(self):
         with zipfile.ZipFile(self.build('linux')) as archive:
