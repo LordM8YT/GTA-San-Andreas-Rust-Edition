@@ -54,7 +54,10 @@ connections from host and guests. Run `start-relay.cmd` on a reachable trusted
 LAN/VPN machine, then configure its address in Multiplayer. The game host
 needs no port forwarding in relay mode. No public relay or Steam integration
 is configured; the prototype relay uses unencrypted TCP.
-For a server that stays running without a player's game, run **start-server.cmd**.
+For a server that stays running without a player's game, download
+**SARE-server-windows.zip** or **SARE-server-linux.zip** from the
+[latest release](https://github.com/LordM8YT/GTA-San-Andreas-Rust-Edition/releases/latest)
+and run **start-server.cmd**, or run it from a source checkout.
 The headless server is set up like a FiveM server: `server-data/server.cfg`,
 `resources/[category]/` with `fxmanifest.lua`, server-side Lua (events,
 commands, exports, threads), ACL and rcon. Players chat with **T** and use the

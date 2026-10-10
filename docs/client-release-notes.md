@@ -1,6 +1,7 @@
 SARE free-roam test client, built and tested from the linked commit.
 
-Download the Windows or Linux ZIP and extract into a separate writable folder.
+Players: download `SARE-windows-test.zip` or `SARE-linux-test.zip` and extract
+into a separate writable folder.
 Run `sa-launcher.exe` (Linux: `./sa-launcher`). Your own original PC San Andreas
 installation is required; no original game assets are included.
 
@@ -10,3 +11,7 @@ local mods and the original game installation. Automatic updates can be disabled
 under Settings → Client updates. Development repo builds continue to use Git/Cargo.
 
 These are experimental community builds, not signed commercial releases.
+
+Server hosts: download `SARE-server-windows.zip` or `SARE-server-linux.zip`, a
+FiveM-style dedicated server with binaries in `server/` and your configuration in
+`server-data/`. Update by replacing `server/` only. See docs/server-package.md.
