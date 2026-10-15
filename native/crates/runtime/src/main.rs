@@ -2754,7 +2754,16 @@ impl App {
             return;
         };
         state.gamepad = input;
-
+        if input.fire && !previous.fire {
+            state.fire_held = true;
+        } else if !input.fire && previous.fire {
+            state.fire_held = false;
+        }
+        if input.aim && !previous.aim {
+            state.aim_held = true;
+        } else if !input.aim && previous.aim {
+            state.aim_held = false;
+        }
         if input.pause && !previous.pause && state.streamer.is_some() {
             if state.menu.page.is_some() {
                 state.menu.back();

@@ -20,6 +20,8 @@ pub struct Input {
     pub pause: bool,
     pub map: bool,
     pub enter_exit: bool,
+    pub fire: bool,
+    pub aim: bool,
 }
 
 const STICK_DEADZONE: f32 = 0.16;
@@ -59,13 +61,14 @@ pub fn car_steering(left: bool, right: bool, stick_x: f32) -> f32 {
 pub fn read(gamepad: &Gamepad) -> Input {
     let axis = |axis| gamepad.axis_data(axis).map_or(0.0, |data| data.value());
     let (move_x, move_y) = movement_axes(axis(Axis::LeftStickX), axis(Axis::LeftStickY));
+    let rt_analog = trigger_value(gamepad, Button::RightTrigger2);
+    let lt_analog = trigger_value(gamepad, Button::LeftTrigger2);
     Input {
         move_x,
         move_y,
         look_x: stick_axis(axis(Axis::RightStickX)),
         look_y: -stick_axis(axis(Axis::RightStickY)),
-        throttle: trigger_value(gamepad, Button::RightTrigger2)
-            - trigger_value(gamepad, Button::LeftTrigger2),
+        throttle: rt_analog - lt_analog,
         jump: gamepad.is_pressed(Button::South),
         sprint: gamepad.is_pressed(Button::West),
         handbrake: gamepad.is_pressed(Button::LeftTrigger),
@@ -78,6 +81,8 @@ pub fn read(gamepad: &Gamepad) -> Input {
         pause: gamepad.is_pressed(Button::Start),
         map: gamepad.is_pressed(Button::Select),
         enter_exit: gamepad.is_pressed(Button::North),
+        fire: rt_analog > 0.3,
+        aim: lt_analog > 0.3,
     }
 }
 
