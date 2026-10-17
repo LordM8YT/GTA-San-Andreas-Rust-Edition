@@ -2,6 +2,12 @@
 
 # SARE - San Andreas Rust Edition
 
+Current development version: **0.33.0**. This number was set from the 33 published
+GitHub releases visible on 17 October 2026, including the first release. It is a
+development release count, not a percentage complete. The shared version lives in
+`native/Cargo.toml` under `[workspace.package]`; the launcher also shows the Git
+build ID to distinguish builds. Existing commit-based release tags stay valid.
+
 [![Join the SARE Discord](https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/F8KwXJqw6D)
 [![Build status](https://img.shields.io/github/actions/workflow/status/LordM8YT/GTA-San-Andreas-Rust-Edition/native.yml?branch=main&style=for-the-badge&label=build)](https://github.com/LordM8YT/GTA-San-Andreas-Rust-Edition/actions/workflows/native.yml)
 [![Latest client](https://img.shields.io/badge/Download-latest%20client-2ea44f?style=for-the-badge)](https://github.com/LordM8YT/GTA-San-Andreas-Rust-Edition/releases/latest)

@@ -1315,10 +1315,17 @@ impl Launcher {
             .show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(
-                        RichText::new(format!("SARE {}", sa_client::VERSION))
-                            .small()
-                            .color(MUTED),
+                        RichText::new(format!("SARE v{}", sa_client::VERSION))
+                            .strong()
+                            .color(TEXT),
                     );
+                    ui.label(
+                        RichText::new(format!("Build {}", sa_client::BUILD_ID))
+                            .small()
+                            .monospace()
+                            .color(MUTED),
+                    )
+                    .on_hover_text("Build ID of this running client. Updates can share the same version number; use this ID when reporting an issue.");
                     ui.separator();
                     if self.worker.is_some() {
                         ui.spinner();
@@ -1605,7 +1612,7 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(
-        "SARE - San Andreas Rust Edition",
+        &format!("SARE v{} - San Andreas Rust Edition", sa_client::VERSION),
         options,
         Box::new(|cc| Ok(Box::new(Launcher::new(&cc.egui_ctx)))),
     )
