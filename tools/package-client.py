@@ -121,6 +121,17 @@ def package(target: Path, destination: Path, platform: str) -> Path:
                 explicit = (root / dependency['license_file']).resolve()
                 if explicit.is_relative_to(root.resolve()) and explicit.is_file() and explicit not in files:
                     files.append(explicit)
+            # dispatch 0.2.0 declares MIT but ships no license text, even at its
+            # pinned upstream commit. Keep an attributed notice for this exact
+            # crates.io version; other missing notices must still fail packaging.
+            if not files and (dependency['name'], dependency['version'],
+                              dependency.get('license'), dependency['source']) == (
+                    'dispatch', '0.2.0', 'MIT',
+                    'registry+https://github.com/rust-lang/crates.io-index'):
+                bundled = REPO / 'tools/licenses/dispatch-0.2.0-MIT.txt'
+                if bundled.is_file() and not bundled.is_symlink():
+                    files.append(bundled)
+                    notices.append('  Bundled notice source: tools/licenses/dispatch-0.2.0-MIT.txt (upstream MIT declaration and author attribution)')
             if not files:
                 for file, source in upstream_notices(dependency, REPO / 'native/target/license-cache'):
                     files.append(file)
