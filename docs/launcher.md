@@ -22,8 +22,14 @@ automatically entering the admitted session. Auto downloads can be disabled.
 Resource preparation also works when starting the runtime directly. Hosting remains
 in the runtime Multiplayer menu or the existing headless server.
 
-Settings, version/build ID and launch contract live in `sa-client`. Normal runtime
-instances share an OS profile lock; duplicate starts are rejected. The launcher
+Settings, version/build ID and launch contract live in `sa-client`. The launcher
+shows the compiled version in its window title and a prominent version label
+(currently `SARE v0.1.0`)
+label with the compiled Git build ID in the footer on every page. The version
+comes from the `sa-client` Cargo package; it is not a count of published builds.
+Multiple releases can share that version, so include the build ID in bug reports.
+Help > About also shows the version, build ID and network protocol.
+Normal runtime instances share an OS profile lock; duplicate starts are rejected. The launcher
 tracks its child and reloads settings after it exits. Logs are local, under the
 profile's logs folder. Help displays the last observed GPU/backend and a bounded,
 conservatively redacted report. Paths, credentials and invitation identifiers can
