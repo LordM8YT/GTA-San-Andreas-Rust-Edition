@@ -10,6 +10,57 @@ package_client = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(package_client)
 
 class ClientPackageTests(unittest.TestCase):
+    def test_dispatch_notice_is_included_in_both_mac_packages(self):
+        import hashlib
+        import json
+        notice = (package_client.REPO / 'tools/licenses/dispatch-0.2.0-MIT.txt').read_bytes()
+        for platform in ['macos-aarch64', 'macos-x86_64']:
+            with self.subTest(platform=platform), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                for path in ['LICENSE', 'docs/client-package.md', 'native/Cargo.lock',
+                             'native/crates/runtime/assets/UnifrakturCook-OFL.txt',
+                             'native/crates/runtime/vendor/fsr1/license.txt']:
+                    file = root / path
+                    file.parent.mkdir(parents=True, exist_ok=True)
+                    file.write_text('fixture', encoding='utf-8')
+                bundled = root / 'tools/licenses/dispatch-0.2.0-MIT.txt'
+                bundled.parent.mkdir(parents=True)
+                bundled.write_bytes(notice)
+                target = root / 'build'
+                target.mkdir()
+                for name in ['sa-launcher', 'sa-runtime', 'sa-server', 'sa-relay']:
+                    (target / name).write_bytes(b'fixture executable')
+                dependency = root / 'dispatch-0.2.0'
+                dependency.mkdir()
+                metadata = {'packages': [{
+                    'name': 'dispatch', 'version': '0.2.0',
+                    'source': 'registry+https://github.com/rust-lang/crates.io-index',
+                    'license': 'MIT', 'repository': 'http://github.com/SSheldon/rust-dispatch',
+                    'manifest_path': str(dependency / 'Cargo.toml'),
+                }]}
+                with patch.object(package_client, 'REPO', root), patch.object(
+                        package_client.subprocess, 'check_output', return_value=json.dumps(metadata).encode()), patch.object(
+                        package_client, 'upstream_notices', return_value=[]), patch.dict(
+                        package_client.os.environ, {'GITHUB_SHA': 'a' * 40}):
+                    output = package_client.package(target, root / 'output', platform)
+                with zipfile.ZipFile(output) as archive:
+                    path = 'licenses/dispatch-0.2.0/dispatch-0.2.0-MIT.txt'
+                    self.assertEqual(archive.read(path), notice)
+                    self.assertIn(b'Steven Sheldon', archive.read(path))
+                    self.assertIn(b'Permission is hereby granted', archive.read(path))
+                    build = json.loads(archive.read('sare-build.json'))
+                    entry = next(entry for entry in build['files'] if entry['path'] == path)
+                    self.assertEqual(entry['sha256'], hashlib.sha256(notice).hexdigest())
+                # Never apply this notice to another version, registry or license.
+                for key, value in [('version', '0.3.0'), ('license', 'Apache-2.0'),
+                                   ('source', 'registry+https://example.invalid/index')]:
+                    changed = {'packages': [{**metadata['packages'][0], key: value}]}
+                    with self.subTest(field=key), patch.object(package_client, 'REPO', root), patch.object(
+                            package_client.subprocess, 'check_output', return_value=json.dumps(changed).encode()), patch.object(
+                            package_client, 'upstream_notices', return_value=[]):
+                        with self.assertRaisesRegex(ValueError, 'Required dependency notices unavailable'):
+                            package_client.package(target, root / 'output', platform)
+
     def test_mac_packages_use_matching_architecture_and_executable_permissions(self):
         import json
         for platform, triple in [('macos-aarch64', 'aarch64-apple-darwin'),
