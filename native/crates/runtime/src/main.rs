@@ -724,9 +724,9 @@ impl State {
                     ..Default::default()
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24Plus,
+                    format: wgpu::TextureFormat::Depth32Float,
                     depth_write_enabled: Some(!alpha),
-                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    depth_compare: Some(wgpu::CompareFunction::Greater),
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
@@ -770,9 +770,9 @@ impl State {
                     ..Default::default()
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24Plus,
+                    format: wgpu::TextureFormat::Depth32Float,
                     depth_write_enabled: Some(false),
-                    depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                    depth_compare: Some(wgpu::CompareFunction::GreaterEqual),
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
@@ -1838,8 +1838,9 @@ impl State {
         let projection = Mat4::perspective_rh(
             fov.to_radians(),
             self.size.width.max(1) as f32 / self.size.height.max(1) as f32,
-            0.1,
+            // Reversed floating-point depth retains precision on distant roads.
             3500.0,
+            0.1,
         );
         let camera_matrix = projection * view;
         self.frustum = culling::Frustum::new(camera_matrix);
@@ -2477,7 +2478,7 @@ impl State {
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &self.postprocess.depth,
                     depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
+                        load: wgpu::LoadOp::Clear(0.0),
                         store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
@@ -2753,6 +2754,12 @@ impl App {
         let Some(state) = self.state.as_mut() else {
             return;
         };
+        if !state.window.has_focus() || state.chat.active() {
+            state.gamepad = controller::Input::default();
+            state.fire_held = false;
+            state.aim_held = false;
+            return;
+        }
         state.gamepad = input;
         if input.fire && !previous.fire {
             state.fire_held = true;
@@ -3365,16 +3372,28 @@ impl ApplicationHandler for App {
                     state.third_person = !(210..240).contains(&self.smoke_frames);
                 }
                 if self.smoke_car {
-                    state.keys.insert(KeyCode::KeyW);
-                    if self.smoke_frames == 180 {
+                    // Advance a repeatable amount of simulation time. Leave
+                    // room for the current get-out/get-in door animation chains.
+                    state.last = Instant::now() - std::time::Duration::from_secs_f32(1.0 / 60.0);
+                    state.keys.clear();
+                    if self.smoke_frames < 240 {
+                        state.keys.insert(KeyCode::KeyW);
+                    }
+                    if (180..240).contains(&self.smoke_frames) {
                         state.keys.insert(KeyCode::Space);
                     }
                     if self.smoke_frames == 240 {
                         state.keys.clear();
                         state.toggle_car();
+                    }
+                    if self.smoke_frames == 480 {
+                        assert!(
+                            state.door_swing.is_none(),
+                            "exit door animation did not finish"
+                        );
                         self.idle_car_start = Some((state.car_uploads, state.car_uploaded_bytes));
                     }
-                    if self.smoke_frames == 270 {
+                    if self.smoke_frames == 510 {
                         if let Some((uploads, bytes)) = self.idle_car_start {
                             let updates = state.car_uploads - uploads;
                             let written = state.car_uploaded_bytes - bytes;
@@ -3921,13 +3940,17 @@ impl ApplicationHandler for App {
                         "car fell out of world"
                     );
                     self.smoke_frames += 1;
-                    if self.smoke_frames == 300 {
+                    if self.smoke_frames == 810 {
                         assert!(state.driving, "car re-entry failed");
+                        assert!(
+                            state.entering_car.is_none(),
+                            "entry animation did not finish"
+                        );
                         if let Some(directory) = &self.capture_dir {
                             state.capture_next = Some(directory.join("car.png"));
                         }
                     }
-                    if self.smoke_frames >= 302 {
+                    if self.smoke_frames >= 812 {
                         assert!(
                             car.position.distance(self.car_start) > 1.0,
                             "car did not move"

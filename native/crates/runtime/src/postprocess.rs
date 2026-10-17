@@ -240,7 +240,7 @@ impl PostProcess {
                 size,
             ),
             texture(
-                wgpu::TextureFormat::Depth24Plus,
+                wgpu::TextureFormat::Depth32Float,
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
                 "Scene depth",
                 size,

@@ -1,4 +1,4 @@
-name: Native Windows and Linux
+name: Native Windows, Linux and macOS
 on:
   push:
   pull_request:
@@ -12,7 +12,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        include:
+          - os: windows-latest
+            platform: windows
+          - os: ubuntu-latest
+            platform: linux
+          - os: macos-14
+            platform: macos-aarch64
+          - os: macos-15-intel
+            platform: macos-x86_64
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -44,13 +52,14 @@ jobs:
       - run: cargo build --release --workspace
       - name: Package review client
         working-directory: .
-        run: python tools/package-client.py --platform ${{ runner.os == 'Windows' && 'windows' || 'linux' }}
+        run: python tools/package-client.py --platform ${{ matrix.platform }}
       - name: Package dedicated server
+        if: runner.os != 'macOS'
         working-directory: .
         run: python tools/package-server.py --platform ${{ runner.os == 'Windows' && 'windows' || 'linux' }}
       - uses: actions/upload-artifact@v4
         with:
-          name: SARE-${{ runner.os }}-test
+          name: SARE-${{ matrix.platform }}-test
           path: native/target/packages/*.zip
           if-no-files-found: error
   publish-client:
@@ -77,6 +86,8 @@ jobs:
           test "$(gh api repos/$GITHUB_REPOSITORY/commits/main --jq .sha)" = "$GITHUB_SHA"
           test -f client-packages/SARE-windows-test.zip
           test -f client-packages/SARE-linux-test.zip
+          test -f client-packages/SARE-macos-aarch64-test.zip
+          test -f client-packages/SARE-macos-x86_64-test.zip
           test -f client-packages/SARE-server-windows.zip
           test -f client-packages/SARE-server-linux.zip
           tag="client-$GITHUB_SHA"
@@ -90,7 +101,8 @@ jobs:
             gh release create "$tag" --target "$GITHUB_SHA" --title "SARE client ${GITHUB_SHA:0:12}" --draft --notes-file docs/client-release-notes.md
           fi
           gh release upload "$tag" --clobber client-packages/SARE-windows-test.zip client-packages/SARE-linux-test.zip \
-            client-packages/SARE-server-windows.zip client-packages/SARE-server-linux.zip
+            client-packages/SARE-server-windows.zip client-packages/SARE-server-linux.zip \
+            client-packages/SARE-macos-aarch64-test.zip client-packages/SARE-macos-x86_64-test.zip
           gh release edit "$tag" --draft=false --latest
           if [ -n "$DISCORD_WEBHOOK_URL" ]; then
             base="https://github.com/$GITHUB_REPOSITORY/releases/download/$tag"

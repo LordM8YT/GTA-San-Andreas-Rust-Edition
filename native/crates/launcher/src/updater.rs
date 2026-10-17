@@ -66,6 +66,10 @@ pub struct Updates {
 fn platform() -> &'static str {
     if cfg!(windows) {
         "windows"
+    } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        "macos-aarch64"
+    } else if cfg!(target_os = "macos") {
+        "macos-x86_64"
     } else {
         "linux"
     }
@@ -235,8 +239,10 @@ fn verify_tree(root: &Path) -> Result<Build> {
 }
 fn install_root() -> Result<PathBuf> {
     ensure!(
-        cfg!(target_arch = "x86_64") && (cfg!(windows) || cfg!(target_os = "linux")),
-        "Updates support x64 Windows/Linux packages"
+        (cfg!(target_arch = "x86_64") && (cfg!(windows) || cfg!(target_os = "linux")))
+            || (cfg!(target_os = "macos")
+                && (cfg!(target_arch = "x86_64") || cfg!(target_arch = "aarch64"))),
+        "Updates support x64 Windows/Linux and Intel/Apple Silicon macOS packages"
     );
     let exe = std::env::current_exe()?.canonicalize()?;
     ensure!(

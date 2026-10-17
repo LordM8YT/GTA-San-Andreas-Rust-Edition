@@ -1,8 +1,8 @@
 SARE free-roam test client, built and tested from the linked commit.
 
-Players: download `SARE-windows-test.zip` or `SARE-linux-test.zip` and extract
+Players: download the Windows, Linux, Apple Silicon macOS or Intel macOS ZIP and extract
 into a separate writable folder.
-Run `sa-launcher.exe` (Linux: `./sa-launcher`). Your own original PC San Andreas
+Run `sa-launcher.exe` (Linux/macOS: `./sa-launcher`). Your own original PC San Andreas
 installation is required; no original game assets are included.
 
 This launcher checks for tested client updates automatically. Updates wait until
@@ -28,3 +28,5 @@ corner that zooms out the faster you drive and keeps you low, so more of the
 road ahead shows. The pause map (M) can be dragged and zoomed, has a legend,
 and right-click places a waypoint with a GPS route along the roads. Server
 scripts can place blips with GPS routes; the SARE Box taxi job uses them.
+
+macOS packages are unsigned executables without an app bundle or notarization.

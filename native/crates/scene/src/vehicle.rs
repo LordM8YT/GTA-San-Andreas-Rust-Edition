@@ -479,6 +479,11 @@ impl Car {
             );
         }
     }
+    fn support_force(&self, target: f32, ground_velocity: f32) -> f32 {
+        (9.81 + (target - self.position.y) * self.handling.suspension_spring
+            - (self.vertical_speed - ground_velocity) * self.handling.suspension_damping)
+            .max(0.0)
+    }
     fn integrate(
         &mut self,
         world: &CollisionWorld,
@@ -532,8 +537,39 @@ impl Car {
             .iter()
             .zip(&contacts)
             .any(|(&(x, z), ground)| ground.is_none_or(|g| expected_height(x, z) - g > REACH));
+        let height = |index: usize| contacts[index].unwrap_or(self.position.y - self.clearance);
+        let measured_pitch =
+            (((height(1) + height(3)) - (height(0) + height(2))) * 0.5 / 2.7).atan();
+        let measured_roll =
+            (((height(2) + height(3)) - (height(0) + height(1))) * 0.5 / 1.44).atan();
+        // With a wheel over open air keep the grade of the road being left; after
+        // a flight that grade is stale, so level out until all wheels find ground.
+        let (slope_pitch, slope_roll) = if !over_air {
+            (measured_pitch, measured_roll)
+        } else if self.airborne {
+            (0.0, 0.0)
+        } else {
+            (self.ground_pitch, self.ground_roll)
+        };
+        self.ground_pitch = slope_pitch;
+        self.ground_roll = slope_roll;
+        // The sampled road plane sets both suspension load and tire grip.
+        let grade = if over_air {
+            (slope_pitch.tan(), slope_roll.tan())
+        } else {
+            (0.0, 0.0)
+        };
+        let ground = supports
+            .iter()
+            .map(|(x, z, ground)| ground - z * grade.0 - x * grade.1)
+            .sum::<f32>()
+            / supports.len().max(1) as f32;
+        let normal_offset =
+            self.clearance * (1.0 + slope_pitch.tan().powi(2) + slope_roll.tan().powi(2)).sqrt();
+        let target = ground + normal_offset;
         let grounded = supports.len() >= 2;
-        let grip = if grounded {
+        let road_velocity = self.speed * slope_pitch.tan() + self.lateral_speed * slope_roll.tan();
+        let grip = if grounded && self.support_force(target, road_velocity) > 0.0 {
             supports.len() as f32 / 4.0
         } else {
             0.0
@@ -590,22 +626,6 @@ impl Car {
         let side = Vec3::new(self.yaw.cos(), 0.0, -self.yaw.sin());
         self.speed = velocity.dot(self.forward());
         self.lateral_speed = velocity.dot(side);
-        let height = |index: usize| contacts[index].unwrap_or(self.position.y - self.clearance);
-        let measured_pitch =
-            (((height(1) + height(3)) - (height(0) + height(2))) * 0.5 / 2.7).atan();
-        let measured_roll =
-            (((height(2) + height(3)) - (height(0) + height(1))) * 0.5 / 1.44).atan();
-        // With a wheel over open air keep the grade of the road being left; after
-        // a flight that grade is stale, so level out until all wheels find ground.
-        let (slope_pitch, slope_roll) = if !over_air {
-            (measured_pitch, measured_roll)
-        } else if self.airborne {
-            (0.0, 0.0)
-        } else {
-            (self.ground_pitch, self.ground_roll)
-        };
-        self.ground_pitch = slope_pitch;
-        self.ground_roll = slope_roll;
         let blend = 1.0 - (-8.0 * dt).exp();
         self.pitch +=
             ((slope_pitch + acceleration * grip * 0.012).clamp(-0.6, 0.6) - self.pitch) * blend;
@@ -645,40 +665,25 @@ impl Car {
             self.position = desired;
         }
         if grounded {
-            // Extend the remembered road plane from the wheels still on it, so
-            // the body is not pulled down to the rear axle at a ramp lip.
-            let grade = if over_air {
-                (slope_pitch.tan(), slope_roll.tan())
-            } else {
-                (0.0, 0.0)
-            };
-            let ground = supports
-                .iter()
-                .map(|(x, z, ground)| ground - z * grade.0 - x * grade.1)
-                .sum::<f32>()
-                / supports.len() as f32;
             let moved = self.position - before_motion;
             let ground_velocity = (moved.dot(self.forward()) * slope_pitch.tan()
                 + moved.dot(side) * slope_roll.tan())
                 / dt;
-            let ground = ground + ground_velocity * dt;
-            let normal_offset = self.clearance
-                * (1.0 + slope_pitch.tan().powi(2) + slope_roll.tan().powi(2)).sqrt();
-            let target = ground + normal_offset;
+            let target = target + ground_velocity * dt;
             // A damped suspension settles instead of snapping to one centre ray.
             // Ground support cancels gravity before damping. Damping a velocity
             // already reduced by gravity creates a frame-rate-dependent height offset.
-            self.vertical_speed += ((target - self.position.y) * tuning.suspension_spring
-                - (self.vertical_speed - ground_velocity) * tuning.suspension_damping)
-                * dt;
+            // Tires can push against the road, but cannot pull the body down.
+            // Preserve upward momentum over crests, even while the road remains
+            // within suspension reach. Gravity alone brings an unloaded car back.
+            let support = self.support_force(target, ground_velocity);
+            self.vertical_speed += (support - 9.81) * dt;
             self.position.y += self.vertical_speed * dt;
             if self.position.y < target {
                 self.position.y = target;
                 self.vertical_speed = self.vertical_speed.max(ground_velocity);
             }
-            if !over_air {
-                self.airborne = false;
-            }
+            self.airborne = support == 0.0;
         } else {
             self.vertical_speed -= 9.81 * dt;
             self.position.y += self.vertical_speed * dt;
@@ -1025,7 +1030,7 @@ mod tests {
         }
     }
     #[test]
-    fn crossing_a_hill_crest_keeps_support_and_a_real_drop_still_falls() {
+    fn crossing_a_hill_crest_can_leave_the_road_and_a_real_drop_still_falls() {
         let strip = |z0: f32, y0: f32, z1: f32, y1: f32| {
             mesh(&[
                 [-20.0, y0, z0],
@@ -1040,20 +1045,24 @@ mod tests {
             strip(-20.0, 0.0, 0.0, 0.0),
             strip(0.0, 0.0, 12.0, 3.0),
             strip(12.0, 3.0, 24.0, 0.0),
-            strip(24.0, 0.0, 60.0, 0.0),
+            strip(24.0, 0.0, 600.0, 0.0),
         ]);
         let mut car = Car::new(Vec3::new(0.0, 0.6, -5.0), 0.6);
+        let mut crest_air = false;
         for _ in 0..720 {
             car.step(&world, 1.0, 0.0, false, 1.0, 1.0 / 120.0);
             if let Some(road) = world.ground_below(car.position, car.position.y + 1.0) {
                 let gap = car.position.y - car.clearance - road;
                 assert!(
-                    gap > -0.4 && gap < 0.6,
-                    "crest suspension lost road: gap={gap}, {:?}",
+                    gap > -0.4 && gap < 5.0,
+                    "crest penetrated road or launched excessively: gap={gap}, {:?}",
                     car.position
                 );
+                crest_air |= car.position.z > 12.0 && gap > 0.6;
             }
         }
+        assert!(crest_air, "fast crest crossing remained glued to the road");
+        assert!((car.position.y - 0.6).abs() < 0.1, "car failed to land");
         assert!(
             car.position.z > 25.0,
             "crest stopped car at {:?}",
@@ -1081,6 +1090,45 @@ mod tests {
             "suspension snapped to lower floor instead of falling: {:?}",
             car.position
         );
+    }
+    #[test]
+    fn suspension_cannot_pull_an_upward_moving_car_down() {
+        let world = CollisionWorld::from_batches(&[floor(-100.0, 100.0, 0.0)]);
+        for hz in [30.0, 60.0, 120.0] {
+            let mut car = Car::new(Vec3::Y * 0.8, 0.6);
+            car.vertical_speed = 5.0;
+            car.step(&world, 0.0, 0.0, false, 1.0, 1.0 / hz);
+            assert!(
+                (car.vertical_speed - (5.0 - 9.81 / hz)).abs() < 0.001,
+                "suspension cancelled launch momentum at {hz} Hz: {}",
+                car.vertical_speed
+            );
+            assert!(car.position.y > 0.8);
+        }
+    }
+    #[test]
+    fn unloaded_tires_cannot_accelerate_brake_or_steer_during_takeoff() {
+        let world = CollisionWorld::from_batches(&[floor(-100.0, 100.0, 0.0)]);
+        for throttle in [-1.0, 1.0] {
+            let mut coast = Car::new(Vec3::Y * 0.8, 0.6);
+            coast.speed = 10.0;
+            coast.vertical_speed = 5.0;
+            let mut driven = Car::new(coast.position, coast.clearance);
+            driven.speed = coast.speed;
+            driven.vertical_speed = coast.vertical_speed;
+            for _ in 0..6 {
+                coast.step(&world, 0.0, 0.0, false, 1.0, 1.0 / 120.0);
+                driven.step(&world, throttle, 1.0, true, 1.0, 1.0 / 120.0);
+            }
+            assert!(
+                (driven.speed - coast.speed).abs() < 0.001,
+                "unloaded tires changed speed: {} versus {}",
+                driven.speed,
+                coast.speed
+            );
+            assert!(driven.yaw.abs() < 0.0001, "unloaded tires turned the body");
+            assert!(driven.position.distance(coast.position) < 0.001);
+        }
     }
     #[test]
     fn a_ramp_launches_the_car_instead_of_pulling_it_down_at_the_lip() {

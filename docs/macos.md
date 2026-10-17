@@ -1,5 +1,16 @@
 # macOS
 
+## Packaged clients
+
+The build workflow prepares separate `SARE-macos-aarch64-test.zip` (Apple Silicon)
+and `SARE-macos-x86_64-test.zip` (Intel) client packages. Extract the matching ZIP
+into a writable folder and run `./sa-launcher` from Terminal. Packaged updates
+use the launcher's architecture, including under Rosetta. These executables are
+unsigned, without an app bundle or notarization. The new packaging jobs still
+need a successful macOS CI run before their packages can be published.
+
+## Building from source
+
 The native runtime uses wgpu with Metal, winit for windows, Kira/CPAL for audio (CoreAudio), and gilrs for controllers. It reads original game data directly; it does not launch the Windows game executable or require Wine for rendering.
 
 Install Rust plus your original PC San Andreas installation:

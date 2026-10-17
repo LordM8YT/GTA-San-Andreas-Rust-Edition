@@ -15,6 +15,9 @@ not the GTA IV or GTA V physics engine.
   to slopes, acceleration and cornering. Local and remote rendering converts
   independent forward/side grade angles into one rotation, avoiding excess
   side tilt on roads that are both sloped and banked.
+- Suspension only pushes against the road; it cannot pull a rising car down.
+  Ramp launches and fast hill crests preserve vertical momentum and fall under
+  gravity, then regain suspension support on landing.
 - Opposite throttle brakes before engaging reverse. Engine acceleration decreases
   near top speed, with rolling resistance and quadratic aerodynamic drag.
 - Airborne cars retain momentum but cannot accelerate or steer through tire grip.

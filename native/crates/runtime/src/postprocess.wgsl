@@ -54,7 +54,7 @@ fn puddles(p: vec2<f32>, wetness: f32) -> f32 {
 fn reflection(uv: vec2<f32>, color: vec3<f32>) -> vec3<f32> {
     let wetness = controls.eye.w;
     let depth = depth_at(uv);
-    if (wetness <= 0.0 || depth >= 1.0) { return color; }
+    if (wetness <= 0.0 || depth <= 0.0) { return color; }
     let world = world_at(uv, depth);
     let px = controls.pixel.xy;
     let right = world_at(uv + vec2<f32>(px.x, 0.0), depth_at(uv + vec2<f32>(px.x, 0.0)));
@@ -80,7 +80,7 @@ fn reflection(uv: vec2<f32>, color: vec3<f32>) -> vec3<f32> {
         let sample_uv = vec2<f32>(clip.x / clip.w * 0.5 + 0.5, 0.5 - clip.y / clip.w * 0.5);
         if (any(sample_uv < vec2<f32>(0.0)) || any(sample_uv > vec2<f32>(1.0))) { break; }
         let scene_depth_here = depth_at(sample_uv);
-        if (scene_depth_here >= 1.0) {
+        if (scene_depth_here <= 0.0) {
             // Open sky above the puddle.
             found = read(sample_uv);
             previous = travelled;

@@ -73,13 +73,21 @@ def upstream_notices(dependency, cache):
         return [(path, base + path.name) for path in workers.map(fetch, names) if path is not None]
 
 def package(target: Path, destination: Path, platform: str) -> Path:
+    targets = {
+        'windows': 'x86_64-pc-windows-msvc',
+        'linux': 'x86_64-unknown-linux-gnu',
+        'macos-aarch64': 'aarch64-apple-darwin',
+        'macos-x86_64': 'x86_64-apple-darwin',
+    }
+    if platform not in targets:
+        raise ValueError(f'Unsupported platform: {platform}')
     suffix = '.exe' if platform == 'windows' else ''
     binaries = [target / (name + suffix) for name in ('sa-launcher', 'sa-runtime', 'sa-server', 'sa-relay')]
     for binary in binaries:
         if not binary.is_file() or binary.is_symlink():
             raise ValueError(f'Missing or unsafe binary: {binary.name}')
     metadata = json.loads(subprocess.check_output([
-        'cargo', 'metadata', '--locked', '--format-version', '1', '--filter-platform', 'x86_64-pc-windows-msvc' if platform == 'windows' else 'x86_64-unknown-linux-gnu', '--manifest-path', str(REPO / 'native/Cargo.toml')
+        'cargo', 'metadata', '--locked', '--format-version', '1', '--filter-platform', targets[platform], '--manifest-path', str(REPO / 'native/Cargo.toml')
     ], cwd=REPO))
     destination.mkdir(parents=True, exist_ok=True)
     output = destination / f'SARE-{platform}-test.zip'
@@ -88,7 +96,12 @@ def package(target: Path, destination: Path, platform: str) -> Path:
     notices = ['SARE test package. Review before redistribution.', 'Dependency license notices follow; no original game files are included.']
     with zipfile.ZipFile(staging, 'w', compression=zipfile.ZIP_DEFLATED, strict_timestamps=False) as archive:
         for binary in binaries:
-            archive.write(binary, binary.name)
+            # Preserve runnable files even when packaging a fixture on Windows.
+            info = zipfile.ZipInfo.from_file(binary, binary.name, strict_timestamps=False)
+            info.create_system = 3
+            info.external_attr = (0o100755 if platform != 'windows' else 0o100644) << 16
+            info.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(info, binary.read_bytes())
         for source, name in [
             (REPO / 'LICENSE', 'LICENSE'),
             (REPO / 'docs/client-package.md', 'START-HERE.md'),
@@ -145,7 +158,7 @@ def package(target: Path, destination: Path, platform: str) -> Path:
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--platform', choices=['windows', 'linux'], required=True)
+    parser.add_argument('--platform', choices=['windows', 'linux', 'macos-aarch64', 'macos-x86_64'], required=True)
     parser.add_argument('--target', type=Path, default=REPO / 'native/target/release')
     parser.add_argument('--output', type=Path, default=REPO / 'native/target/packages')
     args = parser.parse_args()

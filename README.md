@@ -25,7 +25,8 @@ round-trip time is measured on the gameplay connection. F3 shows frame/CPU timin
 and resident memory. GPU timestamp profiling is not implemented.
 
 See [launcher setup and limits](docs/launcher.md) and [package instructions](docs/client-package.md).
-Every successful main-branch CI build publishes Windows/Linux client ZIPs. Packaged
+Every successful main-branch CI build publishes Windows/Linux and separate
+Apple Silicon/Intel macOS client ZIPs. Packaged
 launchers automatically download tested updates and restart after the game closes.
 Source checkouts continue to use Git/Cargo. See [automatic updates](docs/client-updates.md).
 

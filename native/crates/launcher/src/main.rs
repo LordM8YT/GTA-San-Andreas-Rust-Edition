@@ -571,6 +571,11 @@ impl Launcher {
     fn controller_events(&mut self, raw: &mut egui::RawInput) {
         if let Some(gilrs) = &mut self.gilrs {
             while let Some(event) = gilrs.next_event() {
+                // Drain background events so a later focus change cannot replay
+                // controller presses intended for another application.
+                if !raw.focused {
+                    continue;
+                }
                 let (button, pressed) = match event.event {
                     gilrs::EventType::ButtonPressed(b, _) => (b, true),
                     gilrs::EventType::ButtonReleased(b, _) => (b, false),

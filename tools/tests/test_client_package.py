@@ -10,6 +10,32 @@ package_client = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(package_client)
 
 class ClientPackageTests(unittest.TestCase):
+    def test_mac_packages_use_matching_architecture_and_executable_permissions(self):
+        import json
+        for platform, triple in [('macos-aarch64', 'aarch64-apple-darwin'),
+                                 ('macos-x86_64', 'x86_64-apple-darwin')]:
+            with self.subTest(platform=platform), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                for path in ['LICENSE', 'docs/client-package.md', 'native/Cargo.lock',
+                             'native/crates/runtime/assets/UnifrakturCook-OFL.txt',
+                             'native/crates/runtime/vendor/fsr1/license.txt']:
+                    file = root / path
+                    file.parent.mkdir(parents=True, exist_ok=True)
+                    file.write_text('fixture', encoding='utf-8')
+                target = root / 'build'
+                target.mkdir()
+                for name in ['sa-launcher', 'sa-runtime', 'sa-server', 'sa-relay']:
+                    (target / name).write_bytes(b'fixture executable')
+                with patch.object(package_client, 'REPO', root), patch.object(
+                        package_client.subprocess, 'check_output', return_value=b'{"packages":[]}') as metadata:
+                    output = package_client.package(target, root / 'output', platform)
+                self.assertEqual(output.name, f'SARE-{platform}-test.zip')
+                self.assertIn(triple, metadata.call_args.args[0])
+                with zipfile.ZipFile(output) as archive:
+                    self.assertEqual(json.loads(archive.read('sare-build.json'))['platform'], platform)
+                    for name in ['sa-launcher', 'sa-runtime', 'sa-server', 'sa-relay']:
+                        self.assertEqual((archive.getinfo(name).external_attr >> 16) & 0o777, 0o755)
+
     def test_explicit_allowlist_excludes_assets_settings_cache_and_logs(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

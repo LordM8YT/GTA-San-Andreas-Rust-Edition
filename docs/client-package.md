@@ -1,7 +1,7 @@
 ﻿# SARE test client
 
 Extract the whole ZIP into its own folder, outside your original game installation.
-Run **sa-launcher.exe** on Windows or **./sa-launcher** on Linux. Cargo is only
+Run **sa-launcher.exe** on Windows or **./sa-launcher** on Linux/macOS. Cargo is only
 needed by developers building from source. Choose your original **PC San Andreas**
 installation in Settings, validate it, then Play or Continue free roam. The original
 executable is never launched and original files are never modified.
@@ -26,6 +26,14 @@ Windows `%LOCALAPPDATA%/SAFreeroam`; Linux `$XDG_CONFIG_HOME/sa-freeroam`
 (or `~/.config/sa-freeroam`), with cache under `$XDG_CACHE_HOME/sa-freeroam`
 (or `~/.cache/sa-freeroam`). `SARE_CONFIG_DIR` isolates a test profile and cache.
 The package's optional `mods/` folder is for local native resources.
+
+macOS has separate `SARE-macos-aarch64-test.zip` (Apple Silicon) and
+`SARE-macos-x86_64-test.zip` (Intel) packages. Extract into a writable folder
+and run `./sa-launcher` from Terminal. Use the Auto renderer to select Metal.
+The same original PC game data is required; these are unsigned command-line
+packages, without an app bundle, signing or notarization. macOS GPU and physical
+Xbox controller validation must be performed on a Mac. The updater selects the
+package matching the launcher's architecture, including under Rosetta.
 
 Use Resources to preview cache cleanup; active sessions/downloads prevent deletion.
 Use Help to preview and save a redacted local diagnostic report. Reports are never

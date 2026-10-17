@@ -50,7 +50,12 @@ fn trigger_value(gamepad: &Gamepad, button: Button) -> f32 {
     normalize_trigger(value)
 }
 fn movement_axes(x: f32, y: f32) -> (f32, f32) {
-    (stick_axis(x), stick_axis(y))
+    let length = x.hypot(y);
+    if !length.is_finite() || length <= STICK_DEADZONE {
+        return (0.0, 0.0);
+    }
+    let magnitude = ((length.min(1.0) - STICK_DEADZONE) / (1.0 - STICK_DEADZONE)).max(0.0);
+    (x / length * magnitude, y / length * magnitude)
 }
 
 // Positive vehicle yaw turns toward screen-left in the +Z-forward world.
@@ -89,6 +94,15 @@ pub fn read(gamepad: &Gamepad) -> Input {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn radial_stick_preserves_direction_without_diagonal_boost() {
+        let (x, y) = movement_axes(1.0, 1.0);
+        assert!((x.hypot(y) - 1.0).abs() < 0.00001);
+        let (x, y) = movement_axes(0.12, 0.16);
+        assert!(x > 0.0 && y > 0.0);
+        assert!((x / y - 0.75).abs() < 0.00001);
+        assert_eq!(movement_axes(f32::NAN, 0.0), (0.0, 0.0));
+    }
     #[test]
     fn car_controls_turn_toward_the_requested_driver_side() {
         use glam::Vec3;

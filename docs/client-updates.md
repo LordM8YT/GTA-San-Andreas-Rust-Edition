@@ -1,6 +1,6 @@
 # Automatic client updates
 
-Download and extract a complete Windows/Linux client ZIP once, into a writable
+Download and extract a complete Windows/Linux/macOS client ZIP once, into a writable
 folder outside the original San Andreas installation. Subsequent packaged
 launchers check GitHub automatically at startup and every 30 minutes while open.
 They download and verify updates in the background, save client settings, wait
@@ -16,12 +16,13 @@ download/verification progress also appears in its footer.
 
 ## Publishing
 
-The existing `native.yml` workflow builds/tests/packages Windows and Linux. A
-push to `main` publishes only after both jobs succeed, using the narrowly scoped
+The `native.yml` workflow builds/tests/packages Windows, Linux, Apple Silicon
+macOS and Intel macOS. A push to `main` publishes only after all four jobs succeed, using the narrowly scoped
 `contents: write` permission in the publishing job. PRs/other branches cannot publish.
 An advanced main commit cancels older builds, and publishing checks main's SHA.
 
-Each release uses `client-<full commit SHA>` and contains the two platform ZIPs.
+Each release uses `client-<full commit SHA>` and contains four platform ZIPs.
+macOS packages are architecture-specific: `macos-aarch64` and `macos-x86_64`.
 Assets upload to a draft before it becomes latest. A rerun preserves an already
 published release's assets; an interrupted draft can be completed by rerunning CI.
 A failed build publishes no update. Tags must not be moved or published assets

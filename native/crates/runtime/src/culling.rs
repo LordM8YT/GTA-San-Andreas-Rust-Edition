@@ -91,6 +91,18 @@ impl Frustum {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reversed_depth_keeps_distant_surfaces_distinct_and_culls_behind_camera() {
+        let projection = Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, 3500.0, 0.1);
+        let depth = |distance: f32| projection.project_point3(Vec3::new(0.0, 0.0, -distance)).z;
+        assert!((depth(0.1) - 1.0).abs() < 0.00001);
+        assert!(depth(1000.0) > depth(1000.01));
+        assert!(depth(1000.0) < depth(1.0));
+        let frustum = Frustum::new(projection);
+        assert!(frustum.visible(box_at(Vec3::new(0.0, 0.0, -1000.0), 1.0)));
+        assert!(!frustum.visible(box_at(Vec3::new(0.0, 0.0, 10.0), 1.0)));
+        assert!(!frustum.visible(box_at(Vec3::new(0.0, 0.0, -4000.0), 1.0)));
+    }
     fn box_at(center: Vec3, size: f32) -> Option<Bounds> {
         Some(Bounds {
             min: center - Vec3::splat(size),

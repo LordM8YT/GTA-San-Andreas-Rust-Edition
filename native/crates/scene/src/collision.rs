@@ -35,7 +35,12 @@ impl CollisionWorld {
                     Vec3::from_array(v[2].position),
                 );
                 let cross = (b - a).cross(c - a);
-                if cross.length_squared() < 1e-8 {
+                if !a.is_finite()
+                    || !b.is_finite()
+                    || !c.is_finite()
+                    || !cross.is_finite()
+                    || cross.length_squared() < 1e-8
+                {
                     continue;
                 }
                 let normal = cross.normalize();
@@ -139,7 +144,10 @@ impl CollisionWorld {
                 }
             }
         }
-        seen.into_iter().collect()
+        // Stable contact order avoids changing the selected correction at corners.
+        let mut indices: Vec<_> = seen.into_iter().collect();
+        indices.sort_unstable();
+        indices
     }
     pub fn ground_below(&self, pos: Vec3, max_y: f32) -> Option<f32> {
         let mut best = None;
@@ -268,7 +276,9 @@ impl CollisionWorld {
             let mut correction = Vec3::ZERO;
             for i in self.nearby(feet, radius + 0.5) {
                 let t = self.triangles[i];
-                if t.normal.y.abs() > 0.7 || t.a.y.max(t.b.y).max(t.c.y) <= feet.y + 0.01 {
+                // Use the same walkable slope threshold as ground_below: a road
+                // must not simultaneously act as a wall that pushes us sideways.
+                if t.normal.y.abs() >= 0.55 || t.a.y.max(t.b.y).max(t.c.y) <= feet.y + 0.01 {
                     continue;
                 }
                 for height in [0.25, height * 0.5, height - 0.25] {
@@ -444,6 +454,21 @@ impl Player {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn walkable_steep_roads_do_not_also_push_bodies_sideways() {
+        use glam::Vec3;
+        // Normal Y is 0.64: walkable, but previously treated as a wall.
+        let world = super::CollisionWorld::from_batches(&[batch(&[
+            [-5.0, -6.0, -5.0],
+            [5.0, -6.0, -5.0],
+            [5.0, 6.0, 5.0],
+            [-5.0, -6.0, -5.0],
+            [5.0, 6.0, 5.0],
+            [-5.0, 6.0, 5.0],
+        ])]);
+        assert_eq!(world.ground_below(Vec3::ZERO, 0.1), Some(0.0));
+        assert_eq!(world.resolve_body(Vec3::ZERO, 0.9, 1.5), Vec3::ZERO);
+    }
     use super::*;
     use crate::Vertex;
     fn batch(points: &[[f32; 3]]) -> Batch {
