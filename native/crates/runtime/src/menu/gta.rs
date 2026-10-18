@@ -43,18 +43,27 @@ fn menu_font(size: f32) -> FontId {
 fn row(ui: &mut egui::Ui, rect: Rect, text: &str, selected: bool, id: usize, scale: f32) -> bool {
     let response = ui.interact(rect, egui::Id::new(("gta-row", id)), Sense::click());
     let (fill, color) = if selected {
-        (TEXT, Color32::from_rgb(20, 20, 20))
+        (Color32::from_rgb(31, 43, 53), TEXT)
     } else if response.hovered() || response.has_focus() {
-        (Color32::from_black_alpha(215), TEXT)
+        (Color32::from_rgb(35, 47, 58), TEXT)
     } else {
-        (PANEL, TEXT)
+        (PANEL, MUTED)
     };
-    ui.painter().rect_filled(rect, 0.0, fill);
-    ui.painter().text(
-        rect.left_center() + Vec2::new(14.0 * scale, 0.0),
+    let painter = ui.painter();
+    painter.rect_filled(rect, 0.0, fill);
+    painter.rect_filled(
+        Rect::from_min_size(
+            rect.min,
+            Vec2::new(if selected { 3.0 } else { 1.0 } * scale, rect.height()),
+        ),
+        0.0,
+        if selected { STRIPE } else { Color32::from_rgb(54, 67, 77) },
+    );
+    painter.text(
+        rect.left_center() + Vec2::new(13.0 * scale, 0.0),
         egui::Align2::LEFT_CENTER,
         text,
-        FontId::proportional(17.0 * scale),
+        FontId::proportional(16.0 * scale),
         color,
     );
     response.clicked()
@@ -183,18 +192,28 @@ impl Menu {
             let response = ui.interact(rect, egui::Id::new(("gta-tab", index)), Sense::click());
             let selected = active == Some(index);
             let (fill, color) = if selected {
-                (TEXT, Color32::from_rgb(20, 20, 20))
+                (Color32::from_rgb(31, 43, 53), STRIPE)
             } else if response.hovered() || response.has_focus() {
-                (Color32::from_black_alpha(215), TEXT)
+                (Color32::from_rgb(35, 47, 58), TEXT)
             } else {
-                (PANEL, TEXT)
+                (PANEL, MUTED)
             };
             painter.rect_filled(rect, 0.0, fill);
+            if selected {
+                painter.rect_filled(
+                    Rect::from_min_size(
+                        Pos2::new(rect.left(), rect.bottom() - 2.0 * scale),
+                        Vec2::new(rect.width(), 2.0 * scale),
+                    ),
+                    0.0,
+                    STRIPE,
+                );
+            }
             painter.text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
                 *label,
-                menu_font(18.0 * scale),
+                menu_font(17.0 * scale),
                 color,
             );
             if response.clicked() && !selected {
@@ -285,6 +304,11 @@ impl Menu {
         );
         let painter = ui.painter();
         painter.rect_filled(panel, 0.0, PANEL);
+        painter.rect_filled(
+            Rect::from_min_size(panel.min, Vec2::new(3.0 * scale, panel.height())),
+            0.0,
+            STRIPE,
+        );
         let (title, body) = match self.selected {
             0 => ("Resume", "Return to free roam where you left off."),
             1 => (
@@ -319,7 +343,7 @@ impl Menu {
             egui::Align2::LEFT_TOP,
             title,
             menu_font(30.0 * scale),
-            TEXT,
+            STRIPE,
         );
         let galley = painter.layout(
             body.into(),
