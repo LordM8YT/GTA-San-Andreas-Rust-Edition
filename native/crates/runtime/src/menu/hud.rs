@@ -4,21 +4,21 @@ use super::*;
 impl Menu {
     pub(super) fn status_hud(&self, ctx: &egui::Context, scale: f32) {
         egui::Area::new("sare-status".into())
-            .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-28.0, 26.0))
+            .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-24.0 * scale, 24.0 * scale))
             .interactable(false)
             .show(ctx, |ui| {
                 egui::Frame::new()
-                    .fill(Color32::from_rgba_unmultiplied(15, 21, 29, 205))
-                    .corner_radius(3)
-                    .inner_margin(12)
+                    .fill(ui_theme::SURFACE)
+                    .corner_radius(egui::CornerRadius::same(4))
+                    .inner_margin((12.0 * scale) as i8)
                     .show(ui, |ui| {
-                        ui.set_width(210.0 * scale);
+                        ui.set_width(220.0 * scale);
                         ui.spacing_mut().item_spacing.y = 5.0;
                         ui.horizontal(|ui| {
                             ui.label(
                                 RichText::new(format!("{:02}:{:02}", self.clock.0, self.clock.1))
                                     .size(28.0 * scale)
-                                    .color(WHITE)
+                                    .color(ui_theme::TEXT)
                                     .strong(),
                             );
                             ui.with_layout(
@@ -49,7 +49,7 @@ impl Menu {
                                 ui.label(
                                     RichText::new(format!("{loaded:02}"))
                                         .size(27.0 * scale)
-                                        .color(GOLD)
+                                        .color(ui_theme::ACCENT)
                                         .strong(),
                                 );
                                 ui.label(
