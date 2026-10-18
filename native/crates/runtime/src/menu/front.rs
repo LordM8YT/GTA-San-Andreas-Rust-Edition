@@ -1,4 +1,4 @@
-//! The title screen uses a cinematic SARE layout with clear, game-first navigation.
+//! The title screen puts the three ways to play over original SARE artwork.
 use super::*;
 
 impl Menu {
@@ -15,59 +15,35 @@ impl Menu {
         let inset = screen.width() * 0.065;
         let left = screen.left() + inset;
         let right = screen.right() - inset;
-        let top = screen.top() + screen.height() * 0.055;
+        let top = screen.top() + screen.height() * 0.065;
         let footer = screen.bottom() - 34.0 * scale;
         ui_theme::horizon(&painter, screen);
-
-        // Brand lockup: compact metadata first, then the custom SARE wordmark.
         painter.text(
             Pos2::new(left, top),
             egui::Align2::LEFT_TOP,
-            "SAN ANDREAS  /  OPEN WORLD",
-            FontId::proportional((11.0 * scale).max(10.0)),
-            ui_theme::ACCENT,
-        );
-        painter.text(
-            Pos2::new(left, top + 17.0 * scale),
-            egui::Align2::LEFT_TOP,
             "SARE",
-            FontId::new(76.0 * scale, FontFamily::Name("street".into())),
+            FontId::new(82.0 * scale, FontFamily::Name("street".into())),
             WHITE,
         );
         painter.text(
-            Pos2::new(left + 4.0 * scale, top + 102.0 * scale),
+            Pos2::new(left, top + 100.0 * scale),
             egui::Align2::LEFT_TOP,
-            "SAN ANDREAS RUST EDITION",
-            FontId::proportional((12.0 * scale).max(10.0)),
+            "San Andreas Rust Edition",
+            FontId::proportional(17.0 * scale),
             MUTED,
         );
-        painter.line_segment(
-            [
-                Pos2::new(left, top + 127.0 * scale),
-                Pos2::new(left + 118.0 * scale, top + 127.0 * scale),
-            ],
-            egui::Stroke::new(2.0 * scale, ui_theme::ACCENT),
-        );
-
-        // A compact session indicator replaces a floating, unanchored status label.
-        let status = if self.network_active { "ONLINE SESSION" } else { "STORY MODE" };
-        let status_color = if self.network_active { ui_theme::SUCCESS } else { ui_theme::ACCENT };
         painter.text(
-            Pos2::new(right, top + 7.0 * scale),
+            Pos2::new(right, top + 10.0 * scale),
             egui::Align2::RIGHT_TOP,
-            status,
-            FontId::proportional((12.0 * scale).max(10.0)),
-            status_color,
+            if self.network_active {
+                "Multiplayer"
+            } else {
+                "Free roam"
+            },
+            FontId::proportional(16.0 * scale),
+            GOLD,
         );
-        painter.line_segment(
-            [
-                Pos2::new(right - 112.0 * scale, top + 28.0 * scale),
-                Pos2::new(right, top + 28.0 * scale),
-            ],
-            egui::Stroke::new(1.0, Color32::from_white_alpha(70)),
-        );
-
-        let body_top = top + 151.0 * scale;
+        let body_top = top + 154.0 * scale;
         let gap = 24.0 * scale;
         let width = ((right - left - gap) * 0.55).min(610.0 * scale);
         let secondary_left = left + width + gap;
@@ -103,9 +79,7 @@ impl Menu {
         }
         let keyboard_select =
             !ctx.egui_wants_keyboard_input() && ctx.input(|i| i.key_pressed(egui::Key::Enter));
-
-        // The three primary destinations use the same interaction geometry, with
-        // a narrow accent rail and a quiet surface instead of oversized gold blocks.
+        // Keep the established action indices so keyboard and controller navigation agree.
         for (slot, index) in [0, 1, 10].into_iter().enumerate() {
             let rect = Rect::from_min_size(
                 Pos2::new(left, body_top + slot as f32 * 83.0 * scale),
@@ -114,35 +88,14 @@ impl Menu {
             let selected = self.selected == index;
             let response = ui.interact(rect, egui::Id::new(("front-play", index)), Sense::click());
             let active = selected || response.hovered() || response.has_focus();
-            let fill = if active {
-                Color32::from_rgba_unmultiplied(18, 27, 36, 245)
-            } else {
-                Color32::from_rgba_unmultiplied(10, 15, 21, 205)
-            };
-            painter.rect_filled(rect, 2, fill);
-            painter.rect_filled(
-                Rect::from_min_size(
-                    rect.min,
-                    Vec2::new(if active { 4.0 } else { 2.0 } * scale, rect.height()),
-                ),
-                0,
-                if active {
-                    ui_theme::ACCENT
-                } else {
-                    Color32::from_rgb(66, 78, 86)
-                },
-            );
-            painter.line_segment(
-                [rect.left_bottom(), rect.right_bottom()],
-                egui::Stroke::new(1.0, Color32::from_white_alpha(if active { 58 } else { 25 })),
-            );
-            let title_color = if active { ui_theme::TEXT } else { WHITE };
+            painter.rect_filled(rect, 3, if active { GOLD } else { ui_theme::SURFACE });
+            let color = if active { ui_theme::BACKGROUND } else { WHITE };
             painter.text(
-                rect.min + Vec2::new(17.0, 12.0) * scale,
+                rect.min + Vec2::new(17.0, 13.0) * scale,
                 egui::Align2::LEFT_TOP,
-                labels[index].to_uppercase(),
-                FontId::proportional((17.0 * scale).max(14.0)),
-                title_color,
+                labels[index],
+                FontId::proportional(23.0 * scale),
+                color,
             );
             let detail = match index {
                 0 => {
@@ -152,23 +105,16 @@ impl Menu {
                         "Start your story on Grove Street"
                     }
                 }
-                1 => "Explore the map and choose a destination",
+                1 => "Find your next corner of the state",
                 _ => "Host a session or join your friends",
             };
             let galley = painter.layout(
                 detail.into(),
-                FontId::proportional((12.5 * scale).max(11.0)),
-                MUTED,
-                rect.width() - 45.0 * scale,
+                FontId::proportional((14.0 * scale).max(12.0)),
+                if active { ui_theme::BACKGROUND } else { MUTED },
+                rect.width() - 34.0 * scale,
             );
-            painter.galley(rect.min + Vec2::new(17.0, 42.0) * scale, galley, MUTED);
-            painter.text(
-                rect.right_center() - Vec2::new(17.0 * scale, 0.0),
-                egui::Align2::RIGHT_CENTER,
-                "›",
-                FontId::proportional(25.0 * scale),
-                if active { ui_theme::ACCENT } else { MUTED },
-            );
+            painter.galley(rect.min + Vec2::new(17.0, 43.0) * scale, galley, color);
             if response.clicked() || (selected && keyboard_select) {
                 self.selected = index;
                 match index {
@@ -178,8 +124,6 @@ impl Menu {
                 }
             }
         }
-
-        // Secondary destinations remain compact and consistent with the in-game tabs.
         let row_height = 37.0 * scale;
         for (slot, index) in (2..10).enumerate() {
             let rect = Rect::from_min_size(
@@ -217,7 +161,6 @@ impl Menu {
                 }
             }
         }
-
         let location = self.zone.as_deref().unwrap_or_else(|| {
             DESTINATIONS
                 .iter()
@@ -232,21 +175,13 @@ impl Menu {
         });
         if body_top + 345.0 * scale < footer - 58.0 * scale {
             painter.text(
-                Pos2::new(left, footer - 79.0 * scale),
+                Pos2::new(left, footer - 68.0 * scale),
                 egui::Align2::LEFT_BOTTOM,
-                "CURRENT AREA",
-                FontId::proportional((10.0 * scale).max(9.0)),
-                MUTED,
-            );
-            painter.text(
-                Pos2::new(left, footer - 59.0 * scale),
-                egui::Align2::LEFT_BOTTOM,
-                location.to_uppercase(),
-                FontId::new(26.0 * scale, FontFamily::Name("street".into())),
-                ui_theme::ACCENT,
+                location,
+                FontId::new(31.0 * scale, FontFamily::Name("street".into())),
+                GOLD,
             );
         }
-
         let mut hints = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(Rect::from_min_max(
@@ -255,25 +190,25 @@ impl Menu {
                 ))
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
-        ui_theme::key_hint(&mut hints, "ENTER / A", "SELECT");
-        ui_theme::key_hint(&mut hints, "ARROWS / D-PAD", "MOVE");
+        ui_theme::key_hint(&mut hints, "Enter / A", "Select");
+        ui_theme::key_hint(&mut hints, "Arrows / D-pad", "Move");
         if screen.width() > 950.0 {
             painter.text(
                 Pos2::new(right, footer),
                 egui::Align2::RIGHT_CENTER,
                 format!("SARE v{}", sa_client::VERSION),
-                FontId::proportional((12.0 * scale).max(10.0)),
+                FontId::proportional((14.0 * scale).max(12.0)),
                 MUTED,
             );
         }
         if !self.message.is_empty() {
             let galley = painter.layout(
                 self.message.clone(),
-                FontId::proportional(13.0 * scale),
-                ui_theme::ACCENT,
+                FontId::proportional(14.0 * scale),
+                GOLD,
                 right - left,
             );
-            painter.galley(Pos2::new(left, footer - 40.0 * scale), galley, ui_theme::ACCENT);
+            painter.galley(Pos2::new(left, footer - 40.0 * scale), galley, GOLD);
         }
         action
     }
