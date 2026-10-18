@@ -248,7 +248,8 @@ impl Ped {
         ped.height_offset = -low;
         let mut texture_bytes = 0usize;
         for batch in &batches {
-            let image = if batch.key == "runtime:white" {
+            let key = texture_key(&batch.key);
+            let image = if key == "runtime:white" {
                 Texture {
                     width: 1,
                     height: 1,
@@ -256,7 +257,7 @@ impl Ped {
                     has_alpha: false,
                 }
             } else {
-                let (_, name) = batch.key.split_once(':').context("ped material key")?;
+                let (_, name) = key.split_once(':').context("ped material key")?;
                 if let Some(image) = source.clothing_textures.get(name).cloned() {
                     image
                 } else {
@@ -479,6 +480,42 @@ mod tests {
             .iter()
             .flat_map(|b| &b.vertices)
             .all(|v| v.position[1] >= -0.001));
+    }
+    #[test]
+    fn transparent_ped_materials_keep_their_images_during_animation() {
+        for textured in [false, true] {
+            let mut source = source();
+            for part in &mut source.model.parts {
+                for material in &mut part.geometry.materials {
+                    material.color[3] = 128;
+                    material.texture = textured.then(|| "shared".to_string());
+                }
+            }
+            source.clothing_textures.insert(
+                "shared".into(),
+                Texture {
+                    width: 1,
+                    height: 1,
+                    rgba: vec![10, 20, 30, 255],
+                    has_alpha: false,
+                },
+            );
+            let ped = Ped::from_source(source, Path::new("not-an-installation")).unwrap();
+            let scene = ped.scene().unwrap();
+            assert_eq!(scene.triangles, 120);
+            for time in [0.0, 0.3] {
+                let frame = ped.frame("walk_player", time).unwrap();
+                for batch in &frame {
+                    assert!(batch.alpha);
+                    let expected = if textured {
+                        [10, 20, 30, 255]
+                    } else {
+                        [255; 4]
+                    };
+                    assert_eq!(scene.textures[&batch.key].rgba, expected);
+                }
+            }
+        }
     }
     #[test]
     fn player_rejects_missing_weighted_bone_animation() {

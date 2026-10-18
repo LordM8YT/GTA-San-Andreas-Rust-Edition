@@ -1,5 +1,12 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Follow-up fixes after 0.33.1 (pending platform CI):
+- Missing texture dictionaries no longer remove otherwise valid world models and collision.
+- Transparent surfaces no longer disable depth writes or fallback collision for opaque surfaces sharing the same texture.
+
+See `docs/bug-audit-2026-10-18.md` for the reproduced cases, tests and Ponytail Review.
+Original-map and GPU verification remain pending.
+
 Version 0.33.1:
 - Fixed on-foot movement getting blocked by walkable slopes and ramp-to-flat seams.
 - Prevented overlapping detail and coarser terrain models in nested IPL LOD chains.

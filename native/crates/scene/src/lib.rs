@@ -342,6 +342,11 @@ fn place(point: [f32; 3], r: &Placement, center: [f32; 2]) -> [f32; 3] {
         -(v[1] + r.pos[1] - center[1]),
     ]
 }
+/// Batch suffixes describe draw state; they are not part of the TXD entry name.
+fn texture_key(key: &str) -> &str {
+    let key = key.strip_suffix("|alpha").unwrap_or(key);
+    key.split_once("|uv|").map_or(key, |(base, _)| base)
+}
 fn add_model(
     batches: &mut HashMap<String, Batch>,
     geometry: &[Geometry],
@@ -358,15 +363,24 @@ fn add_model(
                 .as_ref()
                 .map(|n| format!("{txd}:{n}"))
                 .unwrap_or_else(|| "runtime:white".into());
-            let key = if let Some(track) = &material.uv_animation {
+            let mut key = if let Some(track) = &material.uv_animation {
                 format!("{base_key}|uv|{}:{}", r.id, track.name)
             } else {
                 base_key
             };
+            // A glass pane must not turn an opaque road/floor using the same
+            // texture into a blended batch (or remove its fallback collision).
+            let alpha = material.color[3] < 255
+                || t[..3]
+                    .iter()
+                    .any(|&index| g.colors[index as usize][3] < 255);
+            if alpha {
+                key.push_str("|alpha");
+            }
             let batch = batches.entry(key.clone()).or_insert_with(|| Batch {
                 key,
                 vertices: Vec::new(),
-                alpha: false,
+                alpha,
                 animated: false,
                 uv_animation: material.uv_animation.clone(),
             });
@@ -375,7 +389,6 @@ fn add_model(
                 let c = g.colors[i];
                 let m = material.color;
                 let color = std::array::from_fn(|j| c[j] as f32 * m[j] as f32 / 65025.0);
-                batch.alpha |= color[3] < 1.0;
                 batch.vertices.push(Vertex {
                     position: place(g.positions[i], r, center),
                     uv: g.uvs[i],
@@ -486,7 +499,8 @@ fn car_scene(
     }
     let mut textures = HashMap::new();
     for key in batches.keys() {
-        let mut image = if key.ends_with(":runtime_white") {
+        let base_key = texture_key(key);
+        let mut image = if base_key.ends_with(":runtime_white") {
             Texture {
                 width: 1,
                 height: 1,
@@ -494,9 +508,6 @@ fn car_scene(
                 has_alpha: false,
             }
         } else {
-            let base_key = key
-                .split_once("|uv|")
-                .map_or(key.as_str(), |(base, _)| base);
             let (_, name) = base_key.split_once(':').context("car texture key")?;
             texture(name)?
         };
@@ -747,10 +758,9 @@ impl WorldLoader {
             let Some(def) = defs.get(&r.id) else { continue };
             let is_lod = r.is_lod || def.model.starts_with("lod");
             let dff = format!("{}.dff", def.model);
-            let txd = format!("{}.txd", def.txd);
             if let Some(custom) = self.resources.geometry.get(&dff) {
                 models.entry(dff.clone()).or_insert_with(|| custom.clone());
-            } else if !img.has(&dff) || !img.has(&txd) {
+            } else if !img.has(&dff) {
                 continue;
             }
             if !models.contains_key(&dff) {
@@ -910,9 +920,11 @@ impl WorldLoader {
             if textures.contains_key(key) {
                 continue;
             }
-            let texture_key = key
-                .split_once("|uv|")
-                .map_or(key.as_str(), |(base, _)| base);
+            let texture_key = texture_key(key);
+            if let Some(image) = textures.get(texture_key).cloned() {
+                textures.insert(key.clone(), image);
+                continue;
+            }
             let (txd, tex) = texture_key.split_once(':').context("invalid texture key")?;
             let file = format!("{txd}.txd");
             let texture = if let Some(image) = self.resources.textures.get(texture_key) {
@@ -1031,7 +1043,7 @@ pub fn load_first_model(game: &Path) -> Result<Scene> {
     let triangles = add_model(&mut batches, &geometry, &r, [2500.0, -1670.0], "cj_bins")?;
     let mut textures = HashMap::new();
     for key in batches.keys() {
-        let (_, tex) = key
+        let (_, tex) = texture_key(key)
             .split_once(':')
             .context("first model material untextured")?;
         textures.insert(key.clone(), decode_txd(&img.read("cj_bins.txd")?, tex)?);
@@ -1074,8 +1086,9 @@ pub fn load_weapon_model(game: &Path, model: &str, txd: &str) -> Result<Scene> {
     )?;
     let mut textures = HashMap::new();
     for key in batches.keys() {
-        let image = match key.split_once(':') {
-            Some((_, name)) if key != "runtime:white" => decode_txd(&dictionary, name)?,
+        let base_key = texture_key(key);
+        let image = match base_key.split_once(':') {
+            Some((_, name)) if base_key != "runtime:white" => decode_txd(&dictionary, name)?,
             _ => Texture {
                 width: 1,
                 height: 1,
@@ -1125,7 +1138,9 @@ pub fn load_cuttest(game: &Path) -> Result<Scene> {
     let triangles = add_model(&mut batches, &geometry, &r, [0.0, 0.0], "csgoldrec")?;
     let mut textures = HashMap::new();
     for key in batches.keys() {
-        let (_, tex) = key.split_once(':').context("cuttest material untextured")?;
+        let (_, tex) = texture_key(key)
+            .split_once(':')
+            .context("cuttest material untextured")?;
         textures.insert(key.clone(), decode_txd(&img.read("csgoldrec.txd")?, tex)?);
     }
     let mut batches: Vec<_> = batches.into_values().collect();
@@ -1189,7 +1204,7 @@ pub fn load_prologue(game: &Path) -> Result<Scene> {
     let triangles = add_model(&mut batches, &geometry, &placement, [0.0, 0.0], "cstaxi92")?;
     let mut textures = HashMap::new();
     for key in batches.keys() {
-        if key == "runtime:white" {
+        if texture_key(key) == "runtime:white" {
             textures.insert(
                 key.clone(),
                 Texture {
@@ -1200,7 +1215,9 @@ pub fn load_prologue(game: &Path) -> Result<Scene> {
                 },
             );
         } else {
-            let (_, tex) = key.split_once(':').context("prologue material key")?;
+            let (_, tex) = texture_key(key)
+                .split_once(':')
+                .context("prologue material key")?;
             textures.insert(
                 key.clone(),
                 decode_txd(&taxi_txd, tex)
@@ -1232,6 +1249,204 @@ pub fn load_prologue(game: &Path) -> Result<Scene> {
 #[cfg(test)]
 mod streaming_tests {
     use super::*;
+    fn test_loader(label: &str) -> (PathBuf, WorldLoader) {
+        let folder = std::env::temp_dir().join(format!("sa-{label}-{}", std::process::id()));
+        fs::create_dir_all(&folder).unwrap();
+        let archive = folder.join("test.img");
+        // The repository's own room fixture, with no texture dictionary.
+        let dff = include_bytes!("../../../../mods/native-room-demo/room.dff");
+        let sectors = dff.len().div_ceil(2048);
+        let mut bytes = vec![0; (sectors + 1) * 2048];
+        bytes[..4].copy_from_slice(b"VER2");
+        bytes[4..8].copy_from_slice(&1u32.to_le_bytes());
+        bytes[8..12].copy_from_slice(&1u32.to_le_bytes());
+        bytes[12..14].copy_from_slice(&(sectors as u16).to_le_bytes());
+        bytes[16..24].copy_from_slice(b"room.dff");
+        bytes[2048..2048 + dff.len()].copy_from_slice(dff);
+        fs::write(&archive, bytes).unwrap();
+        let loader = WorldLoader {
+            img: WorldArchive {
+                exterior: Img::open(&archive).unwrap(),
+                interior: None,
+            },
+            defs: HashMap::from([(
+                1,
+                Definition {
+                    model: "room".into(),
+                    txd: "absent".into(),
+                },
+            )]),
+            rows: vec![placement(1, 0, [0.0; 3], [0.0, 0.0, 0.0, 1.0]).unwrap()],
+            collision_models: HashMap::new(),
+            resources: mods::Resources::default(),
+            texture_parents: HashMap::new(),
+            water: std::sync::Arc::new(water::WaterMap::default()),
+            water_texture: None,
+            roadsign_font: None,
+            uv_tracks: HashMap::new(),
+        };
+        (folder, loader)
+    }
+    #[test]
+    fn missing_txd_does_not_remove_untextured_geometry_or_its_floor() {
+        let (folder, mut loader) = test_loader("missing-txd");
+        let scene = loader.load([0.0; 2], [0.0; 2], 50.0).unwrap();
+        assert_eq!(scene.placements, 1);
+        assert!(scene.triangles > 0);
+        assert!(scene.collision.as_ref().unwrap().triangle_count() > 0);
+        // A missing dictionary must not remove an explicitly supplied COL, either.
+        loader.collision_models.insert(
+            "room".into(),
+            sa_assets::col::CollisionModel {
+                name: "room".into(),
+                triangles: vec![[[-5.0, -5.0, 1.0], [5.0, -5.0, 1.0], [0.0, 5.0, 1.0]]],
+                min: [-5.0, -5.0, 1.0],
+                max: [5.0, 5.0, 1.0],
+            },
+        );
+        let scene = loader.load([0.0; 2], [0.0; 2], 50.0).unwrap();
+        let world = scene.collision.as_ref().unwrap();
+        assert_eq!(world.triangle_count(), 1);
+        assert_eq!(world.ground_below(glam::Vec3::ZERO, 2.0), Some(1.0));
+        drop(loader);
+        fs::remove_dir_all(folder).unwrap();
+    }
+    #[test]
+    fn transparent_triangle_does_not_remove_an_opaque_floor_sharing_its_texture() {
+        for textured in [false, true] {
+            for vertex_alpha in [false, true] {
+                let (folder, mut loader) = test_loader("mixed-opacity");
+                let mut colors = vec![[255; 4]; 6];
+                if vertex_alpha {
+                    colors[3][3] = 128;
+                }
+                let texture = textured.then(|| "shared".to_string());
+                loader.resources.geometry.insert(
+                    "room.dff".into(),
+                    vec![Geometry {
+                        positions: vec![
+                            [-5.0, -5.0, 0.0],
+                            [5.0, -5.0, 0.0],
+                            [0.0, 5.0, 0.0],
+                            [-5.0, -5.0, 3.0],
+                            [5.0, -5.0, 3.0],
+                            [0.0, 5.0, 3.0],
+                        ],
+                        normals: vec![[0.0, 0.0, 1.0]; 6],
+                        uvs: vec![[0.0; 2]; 6],
+                        colors,
+                        triangles: vec![[0, 1, 2, 0], [3, 4, 5, 1]],
+                        materials: vec![
+                            sa_assets::Material {
+                                color: [255; 4],
+                                texture: texture.clone(),
+                                uv_animation: None,
+                            },
+                            sa_assets::Material {
+                                color: [255, 255, 255, if vertex_alpha { 255 } else { 128 }],
+                                texture,
+                                uv_animation: None,
+                            },
+                        ],
+                        road_signs: Vec::new(),
+                        lights: Vec::new(),
+                    }],
+                );
+                if textured {
+                    loader.resources.textures.insert(
+                        "absent:shared".into(),
+                        Texture {
+                            width: 1,
+                            height: 1,
+                            rgba: vec![255; 4],
+                            has_alpha: false,
+                        },
+                    );
+                }
+                let scene = loader.load([0.0; 2], [0.0; 2], 50.0).unwrap();
+                let world = scene.collision.as_ref().unwrap();
+                assert_eq!(world.ground_below(glam::Vec3::ZERO, 4.0), Some(0.0),
+                    "glass must not disable the solid floor: texture={textured}, vertex_alpha={vertex_alpha}");
+                assert_eq!(
+                    scene
+                        .batches
+                        .iter()
+                        .filter(|b| !b.alpha)
+                        .map(|b| b.vertices.len())
+                        .sum::<usize>(),
+                    3
+                );
+                assert_eq!(
+                    scene
+                        .batches
+                        .iter()
+                        .filter(|b| b.alpha)
+                        .map(|b| b.vertices.len())
+                        .sum::<usize>(),
+                    3
+                );
+                assert!(scene
+                    .batches
+                    .iter()
+                    .all(|b| scene.textures.contains_key(&b.key)));
+                drop(loader);
+                fs::remove_dir_all(folder).unwrap();
+            }
+        }
+    }
+    #[test]
+    fn car_batch_suffixes_preserve_glass_and_opaque_reflection_masks() {
+        let source = sa_assets::decode_vehicle_pieces(include_bytes!(
+            "../../../../mods/native-car-demo/car.dff"
+        ))
+        .unwrap();
+        for textured in [false, true] {
+            for opacity in ["opaque", "material", "vertex"] {
+                let mut geometry = source[0].geometry.clone();
+                for material in &mut geometry.materials {
+                    material.texture = textured.then(|| "shared|paint".to_string());
+                    material.color[3] = if opacity == "material" { 128 } else { 255 };
+                }
+                for color in &mut geometry.colors {
+                    color[3] = if opacity == "vertex" { 128 } else { 255 };
+                }
+                let scene = car_scene(
+                    &[sa_assets::VehiclePiece {
+                        geometry,
+                        part: sa_assets::VehiclePart::Body,
+                        damaged: false,
+                        pivot: [0.0; 3],
+                    }],
+                    None,
+                    |name| {
+                        assert!(textured, "untextured glass must use runtime white");
+                        assert_eq!(name, "shared|paint");
+                        Ok(Texture {
+                            width: 1,
+                            height: 1,
+                            rgba: vec![10, 20, 30, 64],
+                            has_alpha: true,
+                        })
+                    },
+                )
+                .unwrap();
+                assert!(!scene.batches.is_empty());
+                for batch in &scene.batches {
+                    assert_eq!(batch.alpha, opacity != "opaque");
+                    assert!(scene.vehicle_pieces.contains_key(&batch.key));
+                    let image = &scene.textures[&batch.key];
+                    assert_eq!(
+                        image.rgba[3],
+                        if textured && opacity != "opaque" {
+                            64
+                        } else {
+                            255
+                        }
+                    );
+                }
+            }
+        }
+    }
     #[test]
     fn area_loader_emits_only_one_of_three_overlapping_terrain_levels() {
         let folder = std::env::temp_dir().join(format!("sa-lod-overlap-{}", std::process::id()));
