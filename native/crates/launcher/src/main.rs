@@ -14,14 +14,10 @@ use std::{
 mod artwork;
 mod local_mods;
 mod servers;
+#[path = "../../../ui/theme.rs"]
+mod ui_theme;
 mod updater;
-// Dark neutral surfaces with one warm accent, like the FiveM client.
-const BACKGROUND: Color32 = Color32::from_rgb(14, 14, 18);
-const SURFACE: Color32 = Color32::from_rgb(24, 24, 30);
-const SURFACE_HIGH: Color32 = Color32::from_rgb(34, 34, 42);
-const MUTED: Color32 = Color32::from_rgb(150, 150, 165);
-const TEXT: Color32 = Color32::from_rgb(236, 236, 242);
-const ACCENT: Color32 = Color32::from_rgb(240, 98, 32);
+use ui_theme::{ACCENT, BACKGROUND, MUTED, SURFACE, SURFACE_HIGH, TEXT};
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
     Home,
@@ -105,48 +101,8 @@ impl Launcher {
             vec!["street".into()],
         );
         ctx.set_fonts(fonts);
-        let mut style = (*ctx.style_of(egui::Theme::Dark)).clone();
-        style.visuals = egui::Visuals::dark();
-        style.wrap_mode = Some(egui::TextWrapMode::Wrap);
-        style.visuals.panel_fill = BACKGROUND;
-        style.visuals.window_fill = SURFACE;
-        style.visuals.extreme_bg_color = Color32::from_rgb(10, 10, 13);
-        style.visuals.widgets.inactive.bg_fill = SURFACE_HIGH;
-        style.visuals.widgets.inactive.weak_bg_fill = SURFACE_HIGH;
-        style.visuals.widgets.active.bg_stroke = egui::Stroke::new(2., ACCENT);
-        style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1., ACCENT);
-        style.visuals.widgets.active.bg_fill = Color32::from_rgb(72, 40, 26);
-        style.visuals.widgets.noninteractive.bg_stroke =
-            egui::Stroke::new(1., Color32::from_rgb(40, 40, 50));
-        style
-            .text_styles
-            .insert(egui::TextStyle::Heading, egui::FontId::proportional(27.));
-        style
-            .text_styles
-            .insert(egui::TextStyle::Button, egui::FontId::proportional(16.));
-        style.visuals.override_text_color = Some(TEXT);
-        style.visuals.selection.bg_fill = Color32::from_rgb(120, 52, 20);
-        style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(46, 46, 56);
-        for widget in [
-            &mut style.visuals.widgets.inactive,
-            &mut style.visuals.widgets.hovered,
-            &mut style.visuals.widgets.active,
-            &mut style.visuals.widgets.open,
-        ] {
-            widget.corner_radius = egui::CornerRadius::same(4);
-        }
-        style.spacing.scroll = egui::style::ScrollStyle::solid();
-        style.spacing.item_spacing = egui::vec2(12., 12.);
-        style.spacing.button_padding = egui::vec2(14., 9.);
-        style
-            .text_styles
-            .insert(egui::TextStyle::Body, egui::FontId::proportional(17.));
-        style
-            .text_styles
-            .insert(egui::TextStyle::Small, egui::FontId::proportional(13.));
-        ctx.set_theme(egui::Theme::Dark);
+        ui_theme::apply(ctx);
         ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(egui::SystemTheme::Dark));
-        ctx.set_style_of(egui::Theme::Dark, style);
 
         if config.player.is_empty() {
             config.player = "Player".into();
@@ -593,67 +549,104 @@ impl Launcher {
                 .ok()
                 .flatten();
         let width = ui.available_width();
-        let hero_height = (ui.available_height() * 0.48).clamp(240., 440.);
-        ui.allocate_ui(egui::vec2(width, hero_height), |ui| {
-            let rect = egui::Rect::from_min_size(
-                ui.next_widget_position(),
-                egui::vec2(width, hero_height),
-            );
-            artwork::background(ui, rect, self.hero.as_ref());
-            egui::Frame::new().inner_margin(28).show(ui, |ui| {
-                ui.set_min_size(egui::vec2((width - 56.).max(100.), hero_height - 56.));
-                ui.add_space(14.);
-                ui.label(
-                    RichText::new("Back to San Andreas.")
-                        .size(if width < 600. { 30. } else { 40. })
-                        .strong(),
-                );
-                ui.label(
-                    RichText::new("Your streets. Your story.")
-                        .size(18.)
-                        .color(MUTED),
-                );
-                ui.add_space(30.);
-                ui.horizontal_wrapped(|ui| {
-                    let label = if checkpoint.is_some() {
-                        "Continue free roam"
-                    } else {
-                        "Start free roam"
-                    };
-                    if ui
-                        .add_enabled(
-                            self.ready(),
-                            egui::Button::new(
-                                RichText::new(format!("      {label}"))
-                                    .color(Color32::WHITE)
-                                    .strong(),
-                            )
-                            .min_size(egui::vec2(218., 48.))
+        let height = (ui.available_height() * 0.52).clamp(260.0, 360.0);
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+        artwork::background(ui, rect, self.hero.as_ref());
+        let painter = ui.painter().with_clip_rect(rect);
+        let left = rect.left() + 28.0;
+        painter.text(
+            egui::pos2(left, rect.top() + 27.0),
+            egui::Align2::LEFT_TOP,
+            "San Andreas",
+            egui::FontId::new(
+                if width < 600.0 { 44.0 } else { 62.0 },
+                egui::FontFamily::Name("street".into()),
+            ),
+            TEXT,
+        );
+        painter.text(
+            egui::pos2(left, rect.top() + if width < 600.0 { 94.0 } else { 112.0 }),
+            egui::Align2::LEFT_TOP,
+            "An open world. A new beginning.",
+            egui::FontId::proportional(17.0),
+            MUTED,
+        );
+        let play = egui::Rect::from_min_size(
+            egui::pos2(left, rect.bottom() - 84.0),
+            egui::vec2(218.0, 44.0),
+        );
+        let label = if checkpoint.is_some() {
+            "Continue free roam"
+        } else {
+            "Start free roam"
+        };
+        let ready = self.ready();
+        let response = ui
+            .scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(play)
+                    .layout(egui::Layout::centered_and_justified(
+                        egui::Direction::TopDown,
+                    )),
+                |ui| {
+                    ui.add_enabled(
+                        ready,
+                        egui::Button::new(RichText::new(label).color(BACKGROUND).strong())
                             .fill(ACCENT),
-                        )
-                        .clicked()
-                    {
-                        self.start(Session::Offline);
-                    }
-                    ui.vertical(|ui| {
-                        if let Some(save) = &checkpoint {
-                            ui.label(saved_place(save.position));
-                            ui.label(RichText::new(&save.car).color(MUTED));
-                        } else {
-                            ui.label("Grove Street");
-                            ui.label(RichText::new("A new free roam").color(MUTED));
-                        }
-                    });
-                });
-                if !self.validation.as_ref().is_some_and(|(_, v)| v.ready()) {
-                    ui.add_space(8.);
-                    if ui.link("Choose your installation in Settings").clicked() {
-                        self.page = Page::Settings;
-                    }
-                }
-            });
+                    )
+                },
+            )
+            .inner;
+        if response
+            .on_disabled_hover_text("Choose and validate your original installation in Settings")
+            .clicked()
+        {
+            self.start(Session::Offline);
+        }
+        let note_left = play.right() + 14.0;
+        let place = checkpoint
+            .as_ref()
+            .map_or("Grove Street", |save| saved_place(save.position));
+        let detail = checkpoint
+            .as_ref()
+            .map_or("A new free roam", |save| save.car.as_str());
+        for (y, text, color) in [
+            (play.top() + 1.0, place, TEXT),
+            (play.top() + 24.0, detail, MUTED),
+        ] {
+            let galley = painter.layout(
+                text.into(),
+                egui::FontId::proportional(14.0),
+                color,
+                (rect.right() - 24.0 - note_left).max(60.0),
+            );
+            painter.galley(egui::pos2(note_left, y), galley, color);
+        }
+        if !self.validation.as_ref().is_some_and(|(_, v)| v.ready()) {
+            let link = egui::Rect::from_min_size(
+                egui::pos2(left, rect.bottom() - 29.0),
+                egui::vec2(width - 56.0, 21.0),
+            );
+            if ui
+                .scope_builder(
+                    egui::UiBuilder::new()
+                        .max_rect(link)
+                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                    |ui| ui.link("Choose your installation in Settings"),
+                )
+                .inner
+                .clicked()
+            {
+                self.page = Page::Settings;
+            }
+        }
+        ui.add_space(12.0);
+        ui.horizontal_wrapped(|ui| {
+            ui_theme::key_hint(ui, "Enter", "Select");
+            ui_theme::key_hint(ui, "Tab", "Move focus");
+            ui_theme::key_hint(ui, "Esc", "Home");
         });
-        ui.add_space(20.);
+        ui.add_space(14.0);
         self.dashboard(ui);
     }
     fn dashboard(&mut self, ui: &mut egui::Ui) {
@@ -675,10 +668,11 @@ impl Launcher {
             egui::Frame::new()
                 .fill(SURFACE)
                 .inner_margin(20)
-                .corner_radius(10)
+                .corner_radius(4)
+                .stroke(egui::Stroke::new(1.0, SURFACE_HIGH))
                 .show(ui, |ui| {
                     ui.set_min_width((ui.available_width() - 2.).max(100.));
-                    ui.set_min_height(176.);
+                    ui.set_min_height(135.);
                     let card_top = ui.next_widget_position().y;
                     ui.label(
                         RichText::new(["Browse servers", "Last session", "Favorites"][index])
@@ -702,7 +696,7 @@ impl Launcher {
                     };
                     ui.label(RichText::new(body).color(MUTED));
                     // Bottom alignment keeps all card actions on one baseline.
-                    ui.add_space((card_top + 138. - ui.next_widget_position().y).max(8.));
+                    ui.add_space((card_top + 98. - ui.next_widget_position().y).max(8.));
                     match index {
                         0 => {
                             if ui
@@ -1207,7 +1201,7 @@ fn input_limit(ui: &mut egui::Ui, value: &mut String, hint: &str, limit: usize) 
     )
 }
 fn primary(label: &str) -> egui::Button<'_> {
-    egui::Button::new(RichText::new(label).color(Color32::WHITE).strong())
+    egui::Button::new(RichText::new(label).color(BACKGROUND).strong())
         .fill(ACCENT)
         .min_size(egui::vec2(100., 40.))
 }
@@ -1301,7 +1295,7 @@ impl Launcher {
         }
         let pages = [
             (Page::Home, "Home"),
-            (Page::Multiplayer, "Play"),
+            (Page::Multiplayer, "Multiplayer"),
             (Page::Resources, "Resources"),
             (Page::Settings, "Settings"),
             (Page::Help, "Help"),
@@ -1325,7 +1319,7 @@ impl Launcher {
                             .monospace()
                             .color(MUTED),
                     )
-                    .on_hover_text("Build ID of this running client. Updates can share the same version number; use this ID when reporting an issue.");
+                    .on_hover_text("Build ID of this running client. Development builds can share a version; use this ID when reporting an issue.");
                     ui.separator();
                     if self.worker.is_some() {
                         ui.spinner();
@@ -1349,7 +1343,7 @@ impl Launcher {
         egui::Panel::top("topbar")
             .frame(
                 egui::Frame::new()
-                    .fill(Color32::from_rgb(10, 10, 13))
+                    .fill(BACKGROUND)
                     .inner_margin(egui::Margin::symmetric(24, 10)),
             )
             .show(ui, |ui| {
@@ -1423,7 +1417,7 @@ impl Launcher {
                                         ui.painter().circle_filled(
                                             dot.center(),
                                             4.,
-                                            Color32::from_rgb(120, 205, 130),
+                                            ui_theme::SUCCESS,
                                         );
                                         ui.label(RichText::new(name).size(14.));
                                     });

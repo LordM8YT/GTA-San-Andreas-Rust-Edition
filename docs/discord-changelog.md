@@ -1,6 +1,8 @@
-**SARE 0.33.2 — pending release**
+**SARE 0.34.0 — native interface refresh (pending release)**
 
-- Missing texture files no longer remove otherwise valid world models and their collision.
-- Transparent surfaces no longer disable collision or depth writes for solid surfaces sharing the same texture.
+- A new look for the launcher, main menu and pause menus, with consistent SARE styling.
+- A quieter gameplay HUD: grouped clock, ammo and online status, plus a clearer speedometer.
+- Better small-window layouts, visible selection states and English interface text.
 
-Regression tests pass. The 0.33.2 platform build and in-game verification remain pending.
+Native interface previews and regression checks are available in the PR. Platform CI
+and original-map gameplay checks are still required before release.
