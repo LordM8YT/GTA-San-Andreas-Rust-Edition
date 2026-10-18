@@ -1,13 +1,14 @@
-//! Shared native interface palette and quiet, static San Andreas-inspired artwork.
+//! Shared SARE interface tokens and original San Andreas-inspired artwork.
 use egui::{Color32, FontId, Pos2, Rect, RichText, Vec2};
 
-pub const BACKGROUND: Color32 = Color32::from_rgb(15, 21, 29);
-pub const SURFACE: Color32 = Color32::from_rgb(24, 33, 44);
-pub const SURFACE_HIGH: Color32 = Color32::from_rgb(35, 46, 59);
-pub const TEXT: Color32 = Color32::from_rgb(245, 241, 230);
-pub const MUTED: Color32 = Color32::from_rgb(169, 181, 193);
-pub const ACCENT: Color32 = Color32::from_rgb(228, 188, 119);
-pub const SUCCESS: Color32 = Color32::from_rgb(143, 194, 165);
+/// The same restrained palette is used by the launcher, menus and in-game HUD.
+pub const BACKGROUND: Color32 = Color32::from_rgb(10, 15, 21);
+pub const SURFACE: Color32 = Color32::from_rgb(18, 27, 36);
+pub const SURFACE_HIGH: Color32 = Color32::from_rgb(28, 40, 51);
+pub const TEXT: Color32 = Color32::from_rgb(244, 242, 233);
+pub const MUTED: Color32 = Color32::from_rgb(164, 176, 186);
+pub const ACCENT: Color32 = Color32::from_rgb(230, 180, 92);
+pub const SUCCESS: Color32 = Color32::from_rgb(143, 203, 160);
 
 pub fn apply(ctx: &egui::Context) {
     let mut style = (*ctx.style_of(egui::Theme::Dark)).clone();
@@ -21,6 +22,7 @@ pub fn apply(ctx: &egui::Context) {
     style.visuals.selection.bg_fill = ACCENT;
     style.visuals.selection.stroke = egui::Stroke::new(1.0, BACKGROUND);
     style.visuals.hyperlink_color = ACCENT;
+    style.visuals.widgets.noninteractive.bg_fill = SURFACE;
     style.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, SURFACE_HIGH);
     style.visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, MUTED);
     for widget in [
@@ -34,20 +36,21 @@ pub fn apply(ctx: &egui::Context) {
     }
     style.visuals.widgets.inactive.bg_fill = SURFACE_HIGH;
     style.visuals.widgets.inactive.weak_bg_fill = SURFACE;
-    style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(52, 66, 79);
+    style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, SURFACE_HIGH);
+    style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(40, 53, 65);
     style.visuals.widgets.hovered.weak_bg_fill = SURFACE_HIGH;
     style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, ACCENT);
-    style.visuals.widgets.active.bg_fill = Color32::from_rgb(74, 67, 49);
-    style.visuals.widgets.active.bg_stroke = egui::Stroke::new(2.0, ACCENT);
-    style.spacing.item_spacing = Vec2::new(12.0, 12.0);
-    style.spacing.button_padding = Vec2::new(14.0, 9.0);
+    style.visuals.widgets.active.bg_fill = Color32::from_rgb(73, 59, 39);
+    style.visuals.widgets.active.bg_stroke = egui::Stroke::new(1.5, ACCENT);
+    style.spacing.item_spacing = Vec2::new(10.0, 9.0);
+    style.spacing.button_padding = Vec2::new(13.0, 8.0);
     style.spacing.interact_size.y = 34.0;
     style.spacing.scroll = egui::style::ScrollStyle::solid();
     for (kind, size) in [
-        (egui::TextStyle::Heading, 28.0),
-        (egui::TextStyle::Body, 16.0),
-        (egui::TextStyle::Button, 16.0),
-        (egui::TextStyle::Small, 13.0),
+        (egui::TextStyle::Heading, 27.0),
+        (egui::TextStyle::Body, 15.5),
+        (egui::TextStyle::Button, 15.0),
+        (egui::TextStyle::Small, 12.5),
     ] {
         style.text_styles.insert(kind, FontId::proportional(size));
     }
@@ -55,13 +58,15 @@ pub fn apply(ctx: &egui::Context) {
     ctx.set_style_of(egui::Theme::Dark, style);
 }
 
+/// Compact keyboard/controller hints, styled like a small in-game control legend.
 pub fn key_hint(ui: &mut egui::Ui, key: &str, label: &str) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
         egui::Frame::new()
             .fill(SURFACE_HIGH)
-            .corner_radius(2)
-            .inner_margin(egui::Margin::symmetric(5, 2))
+            .stroke(egui::Stroke::new(1.0, Color32::from_rgb(54, 67, 77)))
+            .corner_radius(3)
+            .inner_margin(egui::Margin::symmetric(6, 3))
             .show(ui, |ui| {
                 ui.label(RichText::new(key).size(11.0).color(TEXT).strong());
             });
@@ -69,15 +74,15 @@ pub fn key_hint(ui: &mut egui::Ui, key: &str, label: &str) {
     });
 }
 
-/// Original vector artwork. No game assets, image downloads or animated effects.
+/// Original static artwork: a dusk sky, distant hills and a restrained city silhouette.
 pub fn horizon(painter: &egui::Painter, rect: Rect) {
     let painter = painter.with_clip_rect(rect);
     let mut sky = egui::Mesh::default();
     for (pos, color) in [
-        (rect.left_top(), BACKGROUND),
-        (rect.right_top(), Color32::from_rgb(51, 66, 83)),
-        (rect.right_bottom(), Color32::from_rgb(102, 81, 66)),
-        (rect.left_bottom(), SURFACE),
+        (rect.left_top(), Color32::from_rgb(12, 20, 30)),
+        (rect.right_top(), Color32::from_rgb(43, 54, 66)),
+        (rect.right_bottom(), Color32::from_rgb(119, 79, 54)),
+        (rect.left_bottom(), Color32::from_rgb(24, 32, 40)),
     ] {
         sky.colored_vertex(pos, color);
     }
@@ -90,18 +95,27 @@ pub fn horizon(painter: &egui::Painter, rect: Rect) {
             rect.top() + rect.height() * y,
         )
     };
-    let sun = at(0.76, 0.4);
-    painter.circle_filled(sun, rect.height() * 0.19, Color32::from_rgb(191, 150, 104));
+
+    // Warm sun and layered silhouettes create depth without costly post-processing.
+    let sun = at(0.77, 0.39);
+    painter.circle_filled(sun, rect.height() * 0.16, Color32::from_rgb(218, 157, 94));
+    painter.circle_filled(
+        sun,
+        rect.height() * 0.19,
+        Color32::from_rgba_unmultiplied(218, 157, 94, 35),
+    );
     for (ridge, color) in [
-        (0.63, Color32::from_rgb(41, 52, 62)),
-        (0.79, Color32::from_rgb(23, 33, 43)),
+        (0.61, Color32::from_rgb(45, 55, 63)),
+        (0.75, Color32::from_rgb(27, 37, 45)),
+        (0.84, Color32::from_rgb(16, 24, 31)),
     ] {
         let ridge_points = [
             at(0.0, ridge),
-            at(0.35, ridge - 0.15),
-            at(0.6, ridge + 0.03),
-            at(0.87, ridge - 0.11),
-            at(1.0, ridge),
+            at(0.22, ridge - 0.08),
+            at(0.43, ridge + 0.025),
+            at(0.64, ridge - 0.07),
+            at(0.82, ridge + 0.015),
+            at(1.0, ridge - 0.015),
         ];
         let mut land = egui::Mesh::default();
         for pair in ridge_points.windows(2) {
@@ -120,24 +134,29 @@ pub fn horizon(painter: &egui::Painter, rect: Rect) {
         painter.add(egui::Shape::mesh(land));
     }
     for (x, height, width) in [
-        (0.48, 0.16, 0.045),
-        (0.55, 0.25, 0.03),
-        (0.6, 0.13, 0.06),
-        (0.69, 0.2, 0.035),
-        (0.75, 0.12, 0.05),
+        (0.40, 0.13, 0.035),
+        (0.45, 0.21, 0.025),
+        (0.51, 0.16, 0.05),
+        (0.58, 0.25, 0.028),
+        (0.63, 0.12, 0.04),
+        (0.70, 0.19, 0.032),
+        (0.75, 0.14, 0.04),
     ] {
         painter.rect_filled(
             Rect::from_min_max(at(x, 0.88 - height), at(x + width, 1.0)),
             0,
-            BACKGROUND,
+            Color32::from_rgb(13, 20, 26),
         );
     }
-    for (x, y, height) in [(0.9, 0.43, 0.55), (0.99, 0.59, 0.4)] {
+    for (x, y, height) in [(0.92, 0.44, 0.48), (0.99, 0.57, 0.35)] {
         let crown = at(x, y);
         let bottom = at(x - 0.025, y + height);
         painter.line_segment(
             [bottom, crown],
-            egui::Stroke::new((rect.height() * 0.012).max(2.0), BACKGROUND),
+            egui::Stroke::new(
+                (rect.height() * 0.012).max(2.0),
+                Color32::from_rgb(9, 15, 20),
+            ),
         );
         for i in 0..7 {
             let angle = -2.8 + i as f32 * 0.47;
@@ -151,18 +170,19 @@ pub fn horizon(painter: &egui::Painter, rect: Rect) {
                     tip,
                     crown + Vec2::angled(angle - 0.2) * length * 0.48,
                 ],
-                BACKGROUND,
+                Color32::from_rgb(9, 15, 20),
                 egui::Stroke::NONE,
             ));
         }
     }
-    // Readable text on the left, with the scene left visible on the right.
+
+    // A stronger left-side vignette preserves text contrast and leaves the horizon visible.
     let mut shade = egui::Mesh::default();
     for (pos, color) in [
-        (rect.left_top(), Color32::from_black_alpha(155)),
-        (rect.right_top(), Color32::TRANSPARENT),
-        (rect.right_bottom(), Color32::TRANSPARENT),
-        (rect.left_bottom(), Color32::from_black_alpha(155)),
+        (rect.left_top(), Color32::from_black_alpha(195)),
+        (rect.right_top(), Color32::from_black_alpha(15)),
+        (rect.right_bottom(), Color32::from_black_alpha(15)),
+        (rect.left_bottom(), Color32::from_black_alpha(195)),
     ] {
         shade.colored_vertex(pos, color);
     }
