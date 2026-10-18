@@ -4,6 +4,8 @@ The launcher, title screen, pause menus and gameplay HUD share a native egui
 design. The layout takes its cues from San Andreas lettering and GTA's clear
 menu selections, with SARE's own palette and original vector artwork.
 
+Contributor guidance and the required visual/technical review gate are documented in the [UI design system guide](ui-design-system.md). The current implementation remains a foundation until visual sign-off is complete.
+
 ## Design direction
 
 | Token | Color | Role |
