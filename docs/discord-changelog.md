@@ -1,7 +1,6 @@
-**SARE 0.33.1 — pending release**
+**SARE 0.33.2 — pending release**
 
-- Fixed getting stuck while walking down slopes and across ramp edges.
-- Fixed overlapping terrain levels in nested LOD chains, one cause of surface flickering.
+- Missing texture files no longer remove otherwise valid world models and their collision.
+- Transparent surfaces no longer disable collision or depth writes for solid surfaces sharing the same texture.
 
-Regression tests pass. Platform CI and in-game checks at the reported locations are
-still pending; other collision and flickering issues may remain.
+Regression tests pass. The 0.33.2 platform build and in-game verification remain pending.
