@@ -80,29 +80,21 @@ impl Menu {
         let width = ((right - left - gap) * 0.55).min(610.0 * scale);
         let secondary_left = left + width + gap;
         let mut action = None;
-        let labels = [
-            if page == Page::Pause {
-                "Resume"
-            } else if self.has_checkpoint {
-                "Continue free roam"
-            } else {
-                "Explore San Andreas"
-            },
-            "Map & destinations",
-            "Settings",
-            "Controls",
-            "Resources",
-            "Wardrobe",
-            "Interiors",
-            "Vehicles",
-            "Player",
-            if page == Page::Main {
-                "Quit"
-            } else {
-                "Main menu"
-            },
-            "Multiplayer",
-        ];
+        // Reuse the pause-menu labels so navigation names stay consistent
+        // across screens. Only the context-sensitive actions differ here.
+        let mut labels = gta::PAUSE_ITEMS;
+        labels[0] = if page == Page::Pause {
+            "Resume"
+        } else if self.has_checkpoint {
+            "Continue free roam"
+        } else {
+            "Explore San Andreas"
+        };
+        labels[9] = if page == Page::Main {
+            "Quit"
+        } else {
+            "Main menu"
+        };
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
             self.selected = (self.selected + 1) % labels.len();
         }
