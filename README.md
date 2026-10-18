@@ -2,7 +2,7 @@
 
 # SARE - San Andreas Rust Edition
 
-Current development version: **0.33.2**. The base version 0.33.0 was set from the
+Current development version: **0.34.0**. The base version 0.33.0 was set from the
 33 published GitHub releases visible on 17 October 2026, including the first
 release. Small bugfix releases increment the last number: `0.33.1`, `0.33.2`,
 `0.33.3`, and so on. Larger feature updates increment the middle number and reset
@@ -18,6 +18,12 @@ build ID to distinguish builds. Existing commit-based release tags stay valid.
 
 > **💬 Join the community on Discord: <https://discord.gg/F8KwXJqw6D>**
 > Get help, report bugs, find people to play with and follow development.
+
+## Native interface refresh
+
+Launcher, title screen, pause menus and HUD now share SARE styling, with a warm
+accent, original vector artwork, readable focus states and compact gameplay
+status. See [design, native previews and validation](docs/native-ui-refresh.md).
 
 ## Native launcher (local review build)
 

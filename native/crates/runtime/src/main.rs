@@ -34,6 +34,8 @@ mod shared_traffic;
 mod skids;
 mod streaming;
 mod traffic;
+#[path = "../../../ui/theme.rs"]
+mod ui_theme;
 mod upload;
 mod weapons;
 mod zones;

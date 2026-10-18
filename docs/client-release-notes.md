@@ -1,6 +1,14 @@
 SARE free-roam test client, built and tested from the linked commit.
 
-Version 0.33.2 (pending platform CI):
+Version 0.34.0 (pending platform CI):
+- A consistent native interface across the launcher, main menu, pause menus and gameplay HUD.
+- Original sunset artwork, clearer navigation and compact clock, ammo and session status.
+- Responsive pause tabs and title actions, with zone notices kept clear of the speedometer.
+- Built-in interface text is in English. Custom local launcher artwork remains supported.
+
+See `docs/native-ui-refresh.md` for actual native previews and validation limits.
+
+Version 0.33.2:
 - Missing texture dictionaries no longer remove otherwise valid world models and collision.
 - Transparent surfaces no longer disable depth writes or fallback collision for opaque surfaces sharing the same texture.
 

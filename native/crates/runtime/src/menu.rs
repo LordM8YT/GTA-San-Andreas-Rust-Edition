@@ -5,10 +5,14 @@ use crate::{
 };
 use egui::{Color32, FontFamily, FontId, Pos2, Rect, RichText, Sense, Vec2};
 
-const GOLD: Color32 = Color32::from_rgb(223, 183, 120);
-const WHITE: Color32 = Color32::from_rgb(239, 233, 221);
-const MUTED: Color32 = Color32::from_rgb(162, 169, 162);
+use crate::ui_theme::{self, ACCENT as GOLD, MUTED, TEXT as WHITE};
+#[path = "menu/front.rs"]
+mod front;
+#[path = "menu/gta.rs"]
 mod gta;
+#[path = "menu/hud.rs"]
+mod hud;
+#[path = "menu/map.rs"]
 mod map;
 const RADAR_WORLD_MIN: f32 = -3000.0;
 const RADAR_WORLD_MAX: f32 = 3000.0;
@@ -126,7 +130,7 @@ fn clip_line_circle(points: &[Pos2], centre: Pos2, radius: f32) -> Vec<[Pos2; 2]
     }
     pieces
 }
-/// The radar's size: a GTA V-style rectangle in the bottom-left corner.
+/// The classic circular radar's size in the bottom-left corner.
 fn minimap_size(screen: Rect) -> Vec2 {
     Vec2::splat((screen.height() * 0.22).clamp(140.0, 230.0))
 }
@@ -594,7 +598,12 @@ impl Menu {
         let total = ui.available_width();
         let height = ui.available_height().max(160.0);
         let sidebar = (155.0 * scale).min(total * 0.2);
-        let list_width = (total - sidebar - 36.0 * scale) * 0.56;
+        let compact = total < 800.0;
+        let list_width = if compact {
+            total - sidebar - 18.0 * scale
+        } else {
+            (total - sidebar - 36.0 * scale) * 0.56
+        };
         let detail_width = (total - sidebar - list_width - 36.0 * scale).max(100.0);
         ui.spacing_mut().item_spacing = Vec2::new(18.0 * scale, 10.0 * scale);
         ui.horizontal_top(|ui| {
@@ -609,8 +618,10 @@ impl Menu {
                     }
                 }
                 if ui.button("Back").clicked() { self.back(); }
-                ui.add_space(20.0 * scale);
-                ui.label(RichText::new("Left / right: adjust\nUp / down: select\nSelect Category to switch tabs").size(12.0 * scale).color(MUTED));
+                if height > 310.0 {
+                    ui.add_space(20.0 * scale);
+                    ui.label(RichText::new("Left / right: adjust\nUp / down: select\nSelect Category to switch tabs").size(12.0).color(MUTED));
+                }
             });
             ui.allocate_ui_with_layout(Vec2::new(list_width, height), egui::Layout::top_down(egui::Align::Min), |ui| {
                 let mut scroll = egui::ScrollArea::vertical().id_salt("settings-list").max_height(height).auto_shrink([false, false]);
@@ -620,7 +631,7 @@ impl Menu {
                         let selected = index == self.selected;
                         let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 43.0 * scale), Sense::click());
                         if selected && reveal { response.scroll_to_me(Some(egui::Align::Center)); }
-                        let fill = if selected { Color32::from_rgb(77,64,44) } else if response.hovered() { Color32::from_rgb(46,46,43) } else { Color32::from_black_alpha(150) };
+                        let fill = if selected { ui_theme::SURFACE_HIGH } else if response.hovered() { ui_theme::SURFACE } else { Color32::from_rgba_unmultiplied(15,21,29,215) };
                         ui.painter().rect_filled(rect, 0.0, fill);
                         ui.painter().text(rect.left_center()+Vec2::new(12.0*scale,0.0), egui::Align2::LEFT_CENTER, name, FontId::proportional(16.0*scale), if selected { GOLD } else { WHITE });
                         let control_width = (list_width * 0.48).min(245.0 * scale);
@@ -635,6 +646,13 @@ impl Menu {
                         if response.clicked() || minus || plus { self.selected = index; }
                         if minus || plus { self.adjust_setting(minus); }
                     }
+                    if compact {
+                        ui.add_space(12.0);
+                        ui.collapsing("About this setting", |ui| {
+                            let description = &rows[self.selected.min(rows.len()-1)];
+                            self.setting_detail(ui, scale, description.0, description.2);
+                        });
+                    }
                     if self.settings_tab == SettingsTab::Graphics {
                         ui.add_space(12.0);
                         for name in ["NVIDIA DLSS", "AMD FSR 2 / 3", "Frame generation", "Ray tracing"] {
@@ -645,24 +663,34 @@ impl Menu {
                 #[cfg(test)] { self.settings_scroll_offset = output.state.offset.y; }
                 #[cfg(not(test))] { let _ = output; }
             });
-            ui.allocate_ui_with_layout(Vec2::new(detail_width, height), egui::Layout::top_down(egui::Align::Min), |ui| {
-                let description = &rows[self.selected.min(rows.len()-1)];
-                ui.label(RichText::new(description.0).size(23.0*scale).color(GOLD));
-                ui.label(description.2);
-                ui.add_space(20.0*scale);
-                ui.separator();
-                ui.label(RichText::new("Your system").strong());
-                ui.label(&self.graphics_device);
-                ui.label(&self.graphics_resolution);
-                ui.add_space(16.0*scale);
-                ui.label(RichText::new("Changes are saved automatically. Renderer changes require restart.").size(14.0*scale).color(MUTED));
-                // Restart and save-failure notices are raised while this page is open.
-                if !self.message.is_empty() {
-                    ui.add_space(12.0*scale);
-                    ui.label(RichText::new(&self.message).color(GOLD));
-                }
-            });
+            if !compact {
+                ui.allocate_ui_with_layout(Vec2::new(detail_width, height), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    egui::ScrollArea::vertical().id_salt("settings-detail").max_height(height).show(ui, |ui| {
+                        let description = &rows[self.selected.min(rows.len()-1)];
+                        self.setting_detail(ui, scale, description.0, description.2);
+                    });
+                });
+            }
         });
+    }
+    fn setting_detail(&self, ui: &mut egui::Ui, scale: f32, title: &str, description: &str) {
+        ui.label(RichText::new(title).size(23.0 * scale).color(GOLD));
+        ui.label(description);
+        ui.add_space(20.0 * scale);
+        ui.separator();
+        ui.label(RichText::new("Your system").strong());
+        ui.label(&self.graphics_device);
+        ui.label(&self.graphics_resolution);
+        ui.add_space(16.0 * scale);
+        ui.label(
+            RichText::new("Changes are saved automatically. Renderer changes require restart.")
+                .size((14.0 * scale).max(12.0))
+                .color(MUTED),
+        );
+        if !self.message.is_empty() {
+            ui.add_space(12.0 * scale);
+            ui.label(RichText::new(&self.message).color(GOLD));
+        }
     }
     pub fn open_graphics(&mut self) {
         self.open(Page::Settings);
@@ -695,21 +723,7 @@ impl Menu {
             );
         }
         ctx.set_fonts(fonts);
-        let mut style = (*ctx.style_of(egui::Theme::Dark)).clone();
-        style.visuals = egui::Visuals::dark();
-        style.visuals.override_text_color = Some(WHITE);
-        style.visuals.selection.bg_fill = GOLD;
-        style.visuals.widgets.active.bg_fill = Color32::from_rgb(120, 93, 47);
-        style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(77, 64, 44);
-        style.spacing.item_spacing = Vec2::new(18.0, 16.0);
-        style
-            .text_styles
-            .insert(egui::TextStyle::Body, FontId::proportional(17.0));
-        style
-            .text_styles
-            .insert(egui::TextStyle::Button, FontId::proportional(17.0));
-        ctx.set_style_of(egui::Theme::Dark, style);
-        ctx.set_theme(egui::Theme::Dark);
+        ui_theme::apply(ctx);
         Self {
             page: Some(Page::Main),
             settings: {
@@ -930,7 +944,7 @@ impl Menu {
             rect.min + Vec2::new(20.0 * scale, rect.height() / 2.0),
             egui::Align2::LEFT_CENTER,
             text,
-            FontId::new(28.0 * scale, FontFamily::Name("menu".into())),
+            FontId::new(20.0 * scale, FontFamily::Name("menu".into())),
             if active { GOLD } else { WHITE },
         );
         response.clicked()
@@ -1008,7 +1022,12 @@ impl Menu {
             waypoint_pin(&painter, at, 8.0);
         }
         player_arrow(&painter, origin, Vec2::new(0.0, -1.0), 8.0);
-        painter.circle_stroke(origin, radius + 1.5, egui::Stroke::new(4.0, Color32::BLACK));
+        painter.circle_stroke(
+            origin,
+            radius + 1.5,
+            egui::Stroke::new(5.0, ui_theme::BACKGROUND),
+        );
+        painter.circle_stroke(origin, radius + 3.0, egui::Stroke::new(1.0, GOLD));
         let north = origin + radar_offset(0.0, 1.0, yaw, 1.0).normalized() * (radius + 1.5);
         painter.circle_filled(north, 9.0, Color32::BLACK);
         painter.text(
@@ -1030,71 +1049,37 @@ impl Menu {
     ) -> Option<Action> {
         let mut action = None;
         let screen = ctx.content_rect();
-        let scale = (screen.height() / 900.0).clamp(0.65, 1.5);
+        let scale = (screen.height() / 900.0).clamp(0.8, 1.5);
         if self.page.is_none() {
-            if self.network_active {
-                egui::Area::new("multiplayer-status".into())
-                    .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-22.0, 22.0))
-                    .interactable(false)
-                    .show(ctx, |ui| {
-                        egui::Frame::new()
-                            .fill(Color32::from_black_alpha(190))
-                            .inner_margin(8)
-                            .show(ui, |ui| {
-                                ui.label(
-                                    RichText::new(format!(
-                                        "{} / 20 players  |  F5 Multiplayer",
-                                        self.network_players.len()
-                                    ))
-                                    .color(GOLD),
-                                );
-                                ui.label(RichText::new(&self.network_status).color(WHITE));
-                                ui.label(
-                                    RichText::new("G Passenger | F Enter / leave").color(WHITE),
-                                );
-                                if !self.ride_status.is_empty() {
-                                    ui.label(RichText::new(&self.ride_status).color(GOLD));
-                                }
-                            });
-                    });
-            }
             if self.settings.show_hud {
-                egui::Area::new("freeroam-clock".into())
-                    .anchor(
-                        egui::Align2::RIGHT_TOP,
-                        Vec2::new(-28.0, if self.network_active { 130.0 } else { 22.0 }),
-                    )
-                    .interactable(false)
-                    .show(ctx, |ui| {
-                        outlined_text(
-                            ui,
-                            &format!("{:02}:{:02}", self.clock.0, self.clock.1),
-                            FontId::new(34.0 * scale, FontFamily::Name("menu".into())),
-                            WHITE,
-                        );
-                    });
+                self.status_hud(ctx, scale);
                 egui::Area::new("freeroam-hud".into())
                     .fixed_pos(Pos2::new(
                         28.0,
-                        screen.bottom() - 96.0 - if self.settings.show_minimap { minimap_size(screen).y } else { 0.0 },
+                        screen.bottom()
+                            - 96.0
+                            - if self.settings.show_minimap {
+                                minimap_size(screen).y
+                            } else {
+                                0.0
+                            },
                     ))
                     .interactable(false)
                     .show(ctx, |ui| {
-                        ui.label(
-                            RichText::new(if loading {
-                                "Loading neighborhood..."
-                            } else {
-                                "Free Roam"
-                            })
-                            .size(20.0)
-                            .color(WHITE)
-                            .strong(),
-                        );
-                        ui.label(
-                            RichText::new("Esc  Menu    M  Map    T  Chat    F8  Console    F7  Cars    F4  Peds")
-                                .size(14.0)
-                                .color(MUTED),
-                        );
+                        if loading {
+                            ui.label(
+                                RichText::new("Loading neighborhood…")
+                                    .size(14.0)
+                                    .color(GOLD),
+                            );
+                        }
+                        ui.horizontal(|ui| {
+                            ui_theme::key_hint(ui, "Esc", "Menu");
+                            ui_theme::key_hint(ui, "M", "Map");
+                            if car_speed.is_some() {
+                                ui_theme::key_hint(ui, "F", "Leave vehicle");
+                            }
+                        });
                     });
             }
             if self.settings.show_hud && self.settings.show_minimap {
@@ -1124,14 +1109,24 @@ impl Menu {
                 if let (Some(zone), true) = (&self.zone, age < 5.0) {
                     let alpha = (((5.0 - age) / 0.8).min(1.0) * 255.0) as u8;
                     egui::Area::new("freeroam-zone".into())
-                        .anchor(egui::Align2::RIGHT_BOTTOM, Vec2::new(-30.0, -78.0 * scale))
+                        .anchor(
+                            egui::Align2::RIGHT_BOTTOM,
+                            Vec2::new(
+                                -30.0,
+                                -if self.settings.show_speedometer && car_speed.is_some() {
+                                    132.0 * scale
+                                } else {
+                                    44.0 * scale
+                                },
+                            ),
+                        )
                         .interactable(false)
                         .show(ctx, |ui| {
                             outlined_text(
                                 ui,
                                 zone,
                                 FontId::new(40.0 * scale, FontFamily::Name("street".into())),
-                                Color32::from_rgba_unmultiplied(160, 200, 255, alpha),
+                                Color32::from_rgba_unmultiplied(228, 188, 119, alpha),
                             );
                         });
                     ctx.request_repaint();
@@ -1142,7 +1137,7 @@ impl Menu {
                         .interactable(false)
                         .show(ctx, |ui| {
                             egui::Frame::new()
-                                .fill(Color32::from_black_alpha(170))
+                                .fill(Color32::from_rgba_unmultiplied(15, 21, 29, 210))
                                 .inner_margin(egui::Margin::symmetric(8, 2))
                                 .show(ui, |ui| {
                                     ui.set_width(minimap_size(screen).x - 16.0);
@@ -1155,36 +1150,7 @@ impl Menu {
                         });
                 }
             }
-            if let (true, Some((name, loaded, spare, aiming, reloading))) =
-                (self.settings.show_hud, &self.weapon_hud)
-            {
-                // San Andreas shows the gun and its ammo in the top right.
-                egui::Area::new("freeroam-weapon".into())
-                    .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-30.0, 30.0 * scale))
-                    .interactable(false)
-                    .show(ctx, |ui| {
-                        ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
-                            outlined_text(
-                                ui,
-                                name,
-                                FontId::new(22.0 * scale, FontFamily::Proportional),
-                                WHITE,
-                            );
-                            let ammo = if *reloading {
-                                "RELOADING".to_owned()
-                            } else if !*aiming {
-                                "Q / E or mouse wheel: switch weapon".to_owned()
-                            } else {
-                                format!("{loaded} - {spare}")
-                            };
-                            outlined_text(
-                                ui,
-                                &ammo,
-                                FontId::new(20.0 * scale, FontFamily::Proportional),
-                                Color32::from_rgb(160, 200, 255),
-                            );
-                        });
-                    });
+            if let (true, Some((_, _, _, aiming, _))) = (self.settings.show_hud, &self.weapon_hud) {
                 if *aiming {
                     let center = screen.center();
                     let painter = ctx.layer_painter(egui::LayerId::new(
@@ -1205,15 +1171,39 @@ impl Menu {
                         .anchor(egui::Align2::RIGHT_BOTTOM, Vec2::new(-28.0, -30.0))
                         .interactable(false)
                         .show(ctx, |ui| {
-                            ui.label(
-                                RichText::new(format!(
-                                    "{:03} KM/H",
-                                    (speed.abs() * 3.6).round() as u32
-                                ))
-                                .size(23.0)
-                                .color(GOLD)
-                                .strong(),
-                            );
+                            egui::Frame::new()
+                                .fill(Color32::from_rgba_unmultiplied(15, 21, 29, 205))
+                                .corner_radius(3)
+                                .inner_margin(egui::Margin::symmetric(16, 10))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            RichText::new(format!(
+                                                "{:03}",
+                                                (speed.abs() * 3.6).round() as u32
+                                            ))
+                                            .size(40.0 * scale)
+                                            .color(WHITE)
+                                            .strong(),
+                                        );
+                                        ui.vertical(|ui| {
+                                            ui.label(
+                                                RichText::new("km/h")
+                                                    .size(13.0 * scale)
+                                                    .color(GOLD),
+                                            );
+                                            ui.label(
+                                                RichText::new(if speed < -0.1 {
+                                                    "Reverse"
+                                                } else {
+                                                    "Driving"
+                                                })
+                                                .size(11.0 * scale)
+                                                .color(MUTED),
+                                            );
+                                        });
+                                    });
+                                });
                         });
                 }
             }
@@ -1247,49 +1237,21 @@ impl Menu {
             // In game the pause menu uses GTA V-style tabs; the title screen keeps San Andreas styling.
             let in_game=self.has_played && page!=Page::Main;
             let gta_content=in_game.then(|| self.gta_chrome(ui,screen,scale,page,coordinates));
-            if !in_game {
-            painter.text(Pos2::new(left,top),egui::Align2::LEFT_TOP,"San Andreas",FontId::new(80.0*scale,FontFamily::Name("street".into())),WHITE);
-            painter.text(Pos2::new(left+3.0,top+91.0*scale),egui::Align2::LEFT_TOP,"Freeroam",FontId::new(27.0*scale,FontFamily::Name("menu".into())),GOLD);
+            if !in_game && !matches!(page, Page::Main | Page::Pause) {
+            painter.text(Pos2::new(left,top),egui::Align2::LEFT_TOP,"SARE",FontId::new(52.0*scale,FontFamily::Name("street".into())),WHITE);
             let heading=match page{Page::Main=>"The whole state. Your way.",Page::Pause=>"Take a breath",Page::Map=>"Choose a destination",Page::Settings=>"Settings",Page::Controls=>"Controls",Page::Wardrobe=>"Wardrobe",Page::Interiors=>"Interiors",Page::Mods=>if self.network_active {"Server resources"} else {"Local resources"},Page::Cars=>"Spawn a vehicle",Page::Peds=>"Choose your player",Page::Commands=>"Commands",Page::Network=>"Multiplayer",Page::Quit=>"Leave free roam?"};
-            painter.text(Pos2::new(left,top+150.0*scale),egui::Align2::LEFT_TOP,heading,FontId::proportional(18.0*scale),MUTED);
+            painter.text(Pos2::new(left,top+68.0*scale),egui::Align2::LEFT_TOP,heading,FontId::proportional(26.0*scale),GOLD);
             painter.text(Pos2::new(left,footer),egui::Align2::LEFT_CENTER,"D-pad / arrows  Move     A / Enter  Select     B / Esc  Back",FontId::proportional(14.0*scale),MUTED);
-            painter.text(Pos2::new(screen.right()-40.0*scale,footer),egui::Align2::RIGHT_CENTER,"SA Runtime  •  Free Roam",FontId::proportional(14.0*scale),MUTED);
+            painter.text(Pos2::new(screen.right()-40.0*scale,footer),egui::Align2::RIGHT_CENTER,"SARE",FontId::proportional(14.0*scale),MUTED);
             }
             if let (Some(content), Page::Pause) = (gta_content, page) {
-                if let Some(chosen) = self.gta_pause(ui, content, scale, coordinates) { action = Some(chosen); }
+                if let Some(chosen) = self.gta_pause(ui, content, scale) { action = Some(chosen); }
             } else if let (Some(content), Page::Map) = (gta_content, page) {
                 if let Some(chosen) = self.gta_map(ui, content, scale, coordinates, yaw, radar_tiles) { action = Some(chosen); }
             } else if matches!(page,Page::Main|Page::Pause) {
-                let labels=if page==Page::Main{[if self.has_checkpoint { "Continue free roam" } else { "Explore San Andreas" },"Map & destinations","Settings","Controls","Mods","Wardrobe","Interiors","Cars","Peds","Quit","Multiplayer"]}else{["Resume","Map & destinations","Settings","Controls","Mods","Wardrobe","Interiors","Cars","Peds","Main menu","Multiplayer"]};
-                if ctx.input(|i|i.key_pressed(egui::Key::ArrowDown)){self.selected=(self.selected+1)%labels.len();}
-                if ctx.input(|i|i.key_pressed(egui::Key::ArrowUp)){self.selected=(self.selected+labels.len()-1)%labels.len();}
-                for (index,label) in labels.iter().enumerate() {
-                    let rect=Rect::from_min_size(
-                        if index==10 {Pos2::new(screen.right()-screen.width()*0.28,top+217.0*scale)}
-                        else {Pos2::new(left,top+(217.0+index as f32*45.0)*scale)},
-                        Vec2::new(if index==10{screen.width()*0.22}else{360.0*scale},39.0*scale));
-                    if Self::nav(ui,rect,label,self.selected==index,index,scale)||(self.selected==index&&ctx.input(|i|i.key_pressed(egui::Key::Enter))) {
-                        match index {
-                            0=>action=Some(Action::Play),1=>self.open(Page::Map),2=>self.open(Page::Settings),
-                            3=>self.open(Page::Controls),4=>self.open(Page::Mods),5=>self.open(Page::Wardrobe),6=>self.open(Page::Interiors),7=>self.open(Page::Cars),8=>self.open(Page::Peds),
-                            9=>if page==Page::Main{self.open(Page::Quit)}else{action=Some(Action::Main)},
-                            _=>self.open(Page::Network),
-                        }
-                    }
-                }
-                let right=screen.right()-screen.width()*0.28;
-                let location=DESTINATIONS.iter().min_by(|a,b| {
-                    let distance=|xy:[f32;2]|(xy[0]-coordinates[0]).powi(2)+(xy[1]-coordinates[1]).powi(2);
-                    distance(a.1).total_cmp(&distance(b.1))
-                }).map(|d|d.0).unwrap_or("San Andreas");
-                painter.text(Pos2::new(right,screen.bottom()-240.0*scale),egui::Align2::LEFT_TOP,location,FontId::new(32.0*scale,FontFamily::Name("street".into())),WHITE);
-                painter.text(Pos2::new(right,screen.bottom()-189.0*scale),egui::Align2::LEFT_TOP,"No missions. Just freedom.\nWalk, explore, and build on.",FontId::proportional(17.0*scale),MUTED);
-                // Checkpoint, map-loading and session notices also end on these pages.
-                if !self.message.is_empty() {
-                    painter.text(Pos2::new(left,footer-30.0*scale),egui::Align2::LEFT_CENTER,&self.message,FontId::proportional(15.0*scale),GOLD);
-                }
+                action = self.front_menu(ui, screen, scale, coordinates, page);
             } else {
-                let start=Pos2::new(left,top+210.0*scale);
+                let start=Pos2::new(left,top+116.0*scale);
                 let rect=gta_content.unwrap_or_else(|| Rect::from_min_max(start,Pos2::new(screen.right()-screen.width()*0.07,footer-36.0*scale)));
                 let mut child=ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::top_down(egui::Align::Min)));
                 if page == Page::Settings { self.draw_settings(&mut child, scale); } else {
@@ -1738,6 +1700,193 @@ mod tests {
         let old_fov = menu.settings.fov;
         menu.controller_input(false, false, false, true, false, false);
         assert_eq!(menu.settings.fov, old_fov + 1.0);
+    }
+    #[test]
+    fn title_actions_and_pause_tabs_stay_inside_small_and_wide_windows() {
+        for size in [
+            Vec2::new(640.0, 480.0),
+            Vec2::new(1280.0, 720.0),
+            Vec2::new(2560.0, 1080.0),
+        ] {
+            let ctx = egui::Context::default();
+            let mut menu = Menu::new(&ctx, Vec::new());
+            let screen = Rect::from_min_size(Pos2::ZERO, size);
+            let draw = |menu: &mut Menu, events: Vec<egui::Event>| {
+                let input = egui::RawInput {
+                    screen_rect: Some(screen),
+                    focused: true,
+                    events,
+                    ..Default::default()
+                };
+                let mut output = ctx.run_ui(input, |ui| {
+                    menu.draw(ui.ctx(), [0.0; 3], false, None, 0.0, &[]);
+                });
+                output.textures_delta.clear();
+            };
+            for _ in 0..3 {
+                draw(&mut menu, Vec::new());
+            }
+            for (id, indices) in [
+                ("front-play", vec![0usize, 1, 10]),
+                ("nav", (2..10).collect()),
+            ] {
+                for index in indices {
+                    let rect = ctx
+                        .read_response(egui::Id::new((id, index)))
+                        .expect("missing title action")
+                        .rect;
+                    assert!(
+                        screen.contains_rect(rect),
+                        "{id}/{index} is clipped at {size:?}: {rect:?}"
+                    );
+                }
+            }
+            // The quit entry was below the bottom edge in the old 480p title layout.
+            let quit = ctx
+                .read_response(egui::Id::new(("nav", 9usize)))
+                .unwrap()
+                .rect
+                .center();
+            for pressed in [true, false] {
+                draw(
+                    &mut menu,
+                    vec![
+                        egui::Event::PointerMoved(quit),
+                        egui::Event::PointerButton {
+                            pos: quit,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+            assert_eq!(menu.page, Some(Page::Quit));
+            menu.has_played = true;
+            menu.open(Page::Pause);
+            for _ in 0..3 {
+                draw(&mut menu, Vec::new());
+            }
+            for index in 0..gta::TABS.len() {
+                let rect = ctx
+                    .read_response(egui::Id::new(("gta-tab", index)))
+                    .unwrap()
+                    .rect;
+                assert!(screen.contains_rect(rect));
+                let scale = (size.y / 900.0).clamp(0.8, 1.5);
+                let width = ctx.fonts_mut(|fonts| {
+                    fonts
+                        .layout_no_wrap(
+                            gta::TABS[index].1.into(),
+                            FontId::new(18.0 * scale, FontFamily::Name("menu".into())),
+                            WHITE,
+                        )
+                        .size()
+                        .x
+                });
+                assert!(width < rect.width(), "tab label is clipped at {size:?}");
+            }
+            for index in 0..gta::PAUSE_ITEMS.len() {
+                assert!(screen.contains_rect(
+                    ctx.read_response(egui::Id::new(("gta-row", index)))
+                        .unwrap()
+                        .rect
+                ));
+            }
+            menu.open(Page::Settings);
+            for _ in 0..3 {
+                draw(&mut menu, Vec::new());
+            }
+            let rows = menu.setting_rows();
+            for ((left, right), (_, value, _)) in
+                menu.settings_controls.iter().zip(rows.iter().skip(1))
+            {
+                assert!(screen.contains_rect(*left) && screen.contains_rect(*right));
+                let scale = (size.y / 900.0).clamp(0.8, 1.5);
+                let width = ctx.fonts_mut(|fonts| {
+                    fonts
+                        .layout_no_wrap(value.clone(), FontId::proportional(14.0 * scale), WHITE)
+                        .size()
+                        .x
+                });
+                assert!(
+                    width + 28.0 * scale < right.left() - left.right(),
+                    "setting value is hidden by arrow buttons at {size:?}: {value}"
+                );
+            }
+        }
+    }
+    #[test]
+    fn focused_title_action_does_not_also_start_free_roam() {
+        for (page, row_id) in [(Page::Main, "nav"), (Page::Pause, "gta-row")] {
+            let ctx = egui::Context::default();
+            let mut menu = Menu::new(&ctx, Vec::new());
+            menu.has_played = page == Page::Pause;
+            menu.open(page);
+            for _ in 0..3 {
+                frame(&ctx, &mut menu, &[]);
+            }
+            ctx.memory_mut(|m| m.request_focus(egui::Id::new((row_id, 2usize))));
+            assert_eq!(frame(&ctx, &mut menu, &[egui::Key::Enter]), None);
+            assert_eq!(menu.page, Some(Page::Settings));
+            if page == Page::Pause {
+                menu.open(Page::Pause);
+                frame(&ctx, &mut menu, &[]);
+                ctx.memory_mut(|m| m.request_focus(egui::Id::new(("gta-tab", 1usize))));
+                frame(&ctx, &mut menu, &[egui::Key::E]);
+                assert_eq!(
+                    menu.page,
+                    Some(Page::Network),
+                    "focused tabs must still allow Q/E"
+                );
+            }
+        }
+    }
+    #[test]
+    fn gameplay_status_zone_and_speedometer_do_not_overlap() {
+        for size in [Vec2::new(640.0, 480.0), Vec2::new(1280.0, 720.0)] {
+            let ctx = egui::Context::default();
+            let mut menu = Menu::new(&ctx, Vec::new());
+            menu.page = None;
+            menu.settings.show_hud = true;
+            menu.settings.show_speedometer = true;
+            menu.zone = Some("Grove Street".into());
+            menu.network_active = true;
+            menu.network_players = vec!["Player".into()];
+            menu.weapon_hud = Some(("Micro SMG".into(), 32, 180, false, false));
+            let screen = Rect::from_min_size(Pos2::ZERO, size);
+            for frame in 0..4 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(screen),
+                        time: Some(frame as f64 / 60.0),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        menu.draw(ui.ctx(), [0.0; 3], false, Some(20.0), 0.0, &[]);
+                    },
+                );
+                output.textures_delta.clear();
+            }
+            let area = |id: &str| {
+                ctx.memory(|m| m.area_rect(egui::Id::new(id)))
+                    .expect("missing HUD area")
+            };
+            let zone = area("freeroam-zone");
+            let speed = area("freeroam-speedometer");
+            let status = area("sare-status");
+            assert!(
+                !zone.intersects(speed),
+                "zone and speed overlap at {size:?}"
+            );
+            assert!(!status.intersects(zone) && !status.intersects(speed));
+            for rect in [zone, speed, status] {
+                assert!(
+                    screen.contains_rect(rect),
+                    "HUD clipped at {size:?}: {rect:?}"
+                );
+            }
+        }
     }
     #[test]
     fn controller_navigation_toggles_selected_clothing() {

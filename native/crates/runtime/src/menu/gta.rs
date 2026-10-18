@@ -4,33 +4,33 @@
 use super::{Action, Menu, Page, DESTINATIONS, MUTED};
 use egui::{Color32, FontFamily, FontId, Pos2, Rect, Sense, Vec2};
 
-/// Grove Street green, used where GTA V shows the character colour.
-const STRIPE: Color32 = Color32::from_rgb(56, 160, 82);
-const PANEL: Color32 = Color32::from_black_alpha(175);
-const TEXT: Color32 = Color32::from_rgb(245, 245, 245);
+/// The shared SARE accent keeps launcher and game navigation consistent.
+const STRIPE: Color32 = crate::ui_theme::ACCENT;
+const PANEL: Color32 = crate::ui_theme::SURFACE;
+const TEXT: Color32 = crate::ui_theme::TEXT;
 
 pub(super) const TABS: [(Page, &str); 10] = [
-    (Page::Map, "MAP"),
-    (Page::Pause, "GAME"),
-    (Page::Network, "ONLINE"),
-    (Page::Cars, "CARS"),
-    (Page::Peds, "PLAYER"),
-    (Page::Wardrobe, "WARDROBE"),
-    (Page::Interiors, "INTERIORS"),
-    (Page::Settings, "SETTINGS"),
-    (Page::Controls, "CONTROLS"),
-    (Page::Mods, "MODS"),
+    (Page::Map, "Map"),
+    (Page::Pause, "Game"),
+    (Page::Network, "Online"),
+    (Page::Cars, "Vehicles"),
+    (Page::Peds, "Player"),
+    (Page::Wardrobe, "Wardrobe"),
+    (Page::Interiors, "Interiors"),
+    (Page::Settings, "Settings"),
+    (Page::Controls, "Controls"),
+    (Page::Mods, "Resources"),
 ];
 pub(super) const PAUSE_ITEMS: [&str; 11] = [
     "Resume",
     "Map & destinations",
     "Settings",
     "Controls",
-    "Mods",
+    "Resources",
     "Wardrobe",
     "Interiors",
-    "Cars",
-    "Peds",
+    "Vehicles",
+    "Player",
     "Main menu",
     "Multiplayer",
 ];
@@ -44,7 +44,7 @@ fn row(ui: &mut egui::Ui, rect: Rect, text: &str, selected: bool, id: usize, sca
     let response = ui.interact(rect, egui::Id::new(("gta-row", id)), Sense::click());
     let (fill, color) = if selected {
         (TEXT, Color32::from_rgb(20, 20, 20))
-    } else if response.hovered() {
+    } else if response.hovered() || response.has_focus() {
         (Color32::from_black_alpha(215), TEXT)
     } else {
         (PANEL, TEXT)
@@ -116,8 +116,8 @@ impl Menu {
         painter.text(
             Pos2::new(left, header),
             egui::Align2::LEFT_TOP,
-            "San Andreas",
-            menu_font(46.0 * scale),
+            "SARE",
+            FontId::new(46.0 * scale, FontFamily::Name("street".into())),
             TEXT,
         );
         let location = DESTINATIONS
@@ -138,14 +138,14 @@ impl Menu {
             TEXT,
         );
         let mode = if self.network_active {
-            format!("ONLINE  •  {} players", self.network_players.len())
+            format!("Online  /  {} players", self.network_players.len())
         } else {
-            "FREE ROAM".into()
+            "Free roam".into()
         };
         painter.text(
             Pos2::new(right, header + 32.0 * scale),
             egui::Align2::RIGHT_TOP,
-            format!("{}  •  {mode}", location.to_uppercase()),
+            format!("{location}  /  {mode}"),
             FontId::proportional(14.0 * scale),
             MUTED,
         );
@@ -154,9 +154,15 @@ impl Menu {
         let tabs_top = header + 66.0 * scale;
         let tab_height = 34.0 * scale;
         let gap = 3.0 * scale;
-        let tab_width = (right - left - gap * (TABS.len() - 1) as f32) / TABS.len() as f32;
+        let columns = if (right - left) / (TABS.len() as f32) < 85.0 * scale {
+            5
+        } else {
+            TABS.len()
+        };
+        let tab_rows = TABS.len().div_ceil(columns);
+        let tab_width = (right - left - gap * (columns - 1) as f32) / columns as f32;
         let active = TABS.iter().position(|(p, _)| *p == page);
-        if !ctx.egui_wants_keyboard_input() {
+        if !ctx.text_edit_focused() {
             let (previous, next) =
                 ctx.input(|i| (i.key_pressed(egui::Key::Q), i.key_pressed(egui::Key::E)));
             let current = active.unwrap_or(1);
@@ -168,14 +174,17 @@ impl Menu {
         }
         for (index, (tab, label)) in TABS.iter().enumerate() {
             let rect = Rect::from_min_size(
-                Pos2::new(left + index as f32 * (tab_width + gap), tabs_top),
+                Pos2::new(
+                    left + (index % columns) as f32 * (tab_width + gap),
+                    tabs_top + (index / columns) as f32 * (tab_height + gap),
+                ),
                 Vec2::new(tab_width, tab_height),
             );
             let response = ui.interact(rect, egui::Id::new(("gta-tab", index)), Sense::click());
             let selected = active == Some(index);
             let (fill, color) = if selected {
                 (TEXT, Color32::from_rgb(20, 20, 20))
-            } else if response.hovered() {
+            } else if response.hovered() || response.has_focus() {
                 (Color32::from_black_alpha(215), TEXT)
             } else {
                 (PANEL, TEXT)
@@ -194,7 +203,7 @@ impl Menu {
         }
         painter.rect_filled(
             Rect::from_min_size(
-                Pos2::new(left, tabs_top + tab_height + gap),
+                Pos2::new(left, tabs_top + (tab_height + gap) * tab_rows as f32),
                 Vec2::new(right - left, 4.0 * scale),
             ),
             0.0,
@@ -212,7 +221,10 @@ impl Menu {
             x = hint(&painter, x, footer, key, label, scale);
         }
         Rect::from_min_max(
-            Pos2::new(left, tabs_top + tab_height + 22.0 * scale),
+            Pos2::new(
+                left,
+                tabs_top + (tab_height + gap) * tab_rows as f32 + 18.0 * scale,
+            ),
             Pos2::new(right, footer - 30.0 * scale),
         )
     }
@@ -223,7 +235,6 @@ impl Menu {
         ui: &mut egui::Ui,
         content: Rect,
         scale: f32,
-        coordinates: [f32; 3],
     ) -> Option<Action> {
         let ctx = ui.ctx().clone();
         let mut action = None;
@@ -234,8 +245,11 @@ impl Menu {
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
             self.selected = (self.selected + count - 1) % count;
         }
-        let list_width = (content.width() * 0.34).max(260.0 * scale);
-        let row_height = 36.0 * scale;
+        let keyboard_select =
+            !ctx.egui_wants_keyboard_input() && ctx.input(|i| i.key_pressed(egui::Key::Enter));
+        let list_width = (content.width() * 0.36).clamp(230.0 * scale, 420.0 * scale);
+        let row_height =
+            ((content.height() - 2.0 * (count - 1) as f32) / count as f32).min(38.0 * scale);
         for (index, label) in PAUSE_ITEMS.iter().enumerate() {
             let rect = Rect::from_min_size(
                 Pos2::new(
@@ -245,9 +259,7 @@ impl Menu {
                 Vec2::new(list_width, row_height),
             );
             let selected = self.selected == index;
-            if row(ui, rect, label, selected, index, scale)
-                || (selected && ctx.input(|i| i.key_pressed(egui::Key::Enter)))
-            {
+            if row(ui, rect, label, selected, index, scale) || (selected && keyboard_select) {
                 self.selected = index;
                 match index {
                     0 => action = Some(Action::Play),
@@ -284,11 +296,14 @@ impl Menu {
                 "Display, graphics, gameplay, interface and audio.",
             ),
             3 => ("Controls", "Keyboard, mouse and controller bindings."),
-            4 => ("Mods", "Local or server resources that are loaded now."),
+            4 => (
+                "Resources",
+                "Local or server resources that are loaded now.",
+            ),
             5 => ("Wardrobe", "Choose which clothes your character wears."),
             6 => ("Interiors", "Visit the interiors that are available today."),
-            7 => ("Cars", "Spawn a vehicle nearby and get in."),
-            8 => ("Peds", "Change your player model or spawn a ped."),
+            7 => ("Vehicles", "Spawn a vehicle nearby and get in."),
+            8 => ("Player", "Change your player model or spawn a ped."),
             9 => (
                 "Main menu",
                 "Leave free roam for the main menu. Offline progress is saved.",
@@ -319,13 +334,18 @@ impl Menu {
         );
         let facts = [
             (
-                "Position",
-                format!(
-                    "{:.0}, {:.0}, {:.0}",
-                    coordinates[0], coordinates[1], coordinates[2]
-                ),
+                "Location",
+                self.zone.clone().unwrap_or_else(|| "San Andreas".into()),
             ),
-            ("Session", self.network_status.clone()),
+            (
+                "Session",
+                if self.network_active {
+                    "Multiplayer"
+                } else {
+                    "Free roam"
+                }
+                .into(),
+            ),
             (
                 "Players",
                 if self.network_active {

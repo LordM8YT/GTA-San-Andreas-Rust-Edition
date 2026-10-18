@@ -48,7 +48,7 @@ pub fn load(path: &Path) -> anyhow::Result<egui::ColorImage> {
 
 pub fn background(ui: &egui::Ui, rect: egui::Rect, image: Option<&egui::TextureHandle>) {
     let painter = ui.painter().with_clip_rect(rect);
-    painter.rect_filled(rect, 6, Color32::from_rgb(30, 22, 22));
+    painter.rect_filled(rect, 4, crate::ui_theme::BACKGROUND);
     if let Some(image) = image {
         let aspect = image.size_vec2().x / image.size_vec2().y;
         let target = rect.width() / rect.height();
@@ -66,35 +66,13 @@ pub fn background(ui: &egui::Ui, rect: egui::Rect, image: Option<&egui::TextureH
             |_| Color32::WHITE,
         )));
     } else {
-        // Original abstract hills: quiet depth when the player has not chosen artwork.
-        for (offset, color) in [
-            (0., Color32::from_rgb(70, 36, 24)),
-            (70., Color32::from_rgb(44, 26, 22)),
-        ] {
-            let points = vec![
-                rect.left_bottom(),
-                egui::pos2(rect.left(), rect.bottom() - 35. - offset),
-                egui::pos2(
-                    rect.left() + rect.width() * 0.50,
-                    rect.top() + 100. + offset * 0.3,
-                ),
-                egui::pos2(rect.right(), rect.top() + 55. + offset),
-                rect.right_bottom(),
-            ];
-            painter
-                .with_clip_rect(rect.shrink(10.))
-                .add(egui::Shape::convex_polygon(
-                    points,
-                    color,
-                    egui::Stroke::NONE,
-                ));
-        }
+        crate::ui_theme::horizon(&painter, rect);
     }
     painter.add(egui::Shape::mesh(rounded_mesh(
         rect,
         egui::TextureId::default(),
         egui::Rect::from_min_max(egui::epaint::WHITE_UV, egui::epaint::WHITE_UV),
-        |t| Color32::from_rgba_unmultiplied(10, 10, 13, (240. - 150. * t) as u8),
+        |t| Color32::from_rgba_unmultiplied(15, 21, 29, (220. - 190. * t) as u8),
     )));
 }
 
