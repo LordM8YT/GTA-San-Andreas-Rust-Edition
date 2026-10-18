@@ -1,5 +1,13 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.33.1:
+- Fixed on-foot movement getting blocked by walkable slopes and ramp-to-flat seams.
+- Prevented overlapping detail and coarser terrain models in nested IPL LOD chains.
+
+Regression tests cover generated slopes, real head-clearance blockers and overlapping
+terrain levels. The reported original-map locations still need in-game verification;
+this is not a claim that every collision or texture-flicker issue is resolved.
+
 Players: download the Windows, Linux, Apple Silicon macOS or Intel macOS ZIP and extract
 into a separate writable folder.
 Run `sa-launcher.exe` (Linux/macOS: `./sa-launcher`). Your own original PC San Andreas

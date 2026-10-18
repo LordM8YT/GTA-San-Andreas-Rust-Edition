@@ -2,9 +2,10 @@
 
 # SARE - San Andreas Rust Edition
 
-Current development version: **0.33.0**. This number was set from the 33 published
-GitHub releases visible on 17 October 2026, including the first release. It is a
-development release count, not a percentage complete. The shared version lives in
+Current development version: **0.33.1**. The base version 0.33.0 was set from the
+33 published GitHub releases visible on 17 October 2026, including the first
+release. Patch releases increment the last number. This is not a percentage complete.
+The shared version lives in
 `native/Cargo.toml` under `[workspace.package]`; the launcher also shows the Git
 build ID to distinguish builds. Existing commit-based release tags stay valid.
 

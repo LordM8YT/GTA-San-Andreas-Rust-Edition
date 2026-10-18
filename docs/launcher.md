@@ -24,7 +24,7 @@ in the runtime Multiplayer menu or the existing headless server.
 
 Settings, version/build ID and launch contract live in `sa-client`. The launcher
 shows the compiled version in its window title and a prominent version label
-(currently `SARE v0.33.0`)
+(currently `SARE v0.33.1`)
 label with the compiled Git build ID in the footer on every page. The version
 comes from the `sa-client` Cargo package; it is not a count of published builds.
 Multiple releases can share that version, so include the build ID in bug reports.

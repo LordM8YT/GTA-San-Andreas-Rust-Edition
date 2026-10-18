@@ -535,6 +535,31 @@ fn visible_region(distance_squared: f32, is_lod: bool, radius: f32) -> bool {
         distance_squared <= (radius + 100.0).powi(2)
     }
 }
+/// Suppress every coarser ancestor of visible geometry, including LOD-of-LOD
+/// terrain. Visiting each parent once also bounds work for malformed cycles.
+fn covered_lods<'a>(
+    rows: impl Iterator<Item = (&'a Placement, bool)>,
+) -> std::collections::HashSet<u32> {
+    let mut parents = HashMap::new();
+    let mut pending = Vec::new();
+    for (row, visible) in rows {
+        if row.uid != NO_ROW {
+            parents.insert(row.uid, row.parent);
+        }
+        if visible && row.parent != NO_ROW {
+            pending.push(row.parent);
+        }
+    }
+    let mut covered = std::collections::HashSet::new();
+    while let Some(uid) = pending.pop() {
+        if covered.insert(uid) {
+            if let Some(&parent) = parents.get(&uid).filter(|&&parent| parent != NO_ROW) {
+                pending.push(parent);
+            }
+        }
+    }
+    covered
+}
 impl WorldLoader {
     pub fn open(game: &Path) -> Result<Self> {
         let game = game.canonicalize()?;
@@ -767,16 +792,30 @@ impl WorldLoader {
             .map(|(r, ..)| r.parent)
             .collect();
         let group_limit = (radius + 700.0).powi(2);
-        for (r, def, is_lod, dff, distance_squared) in candidates {
-            let linked_lod = r.is_lod && r.uid != NO_ROW;
-            let visible = if linked_lod {
-                !detailed_groups.contains(&r.uid) && distance_squared <= DISTANT_RADIUS.powi(2)
-            } else if is_lod {
-                visible_region(distance_squared, true, radius)
-            } else {
-                distance_squared <= detail
-                    || (detailed_groups.contains(&r.parent) && distance_squared <= group_limit)
-            };
+        let visibility: Vec<_> = candidates
+            .iter()
+            .map(|(r, _, is_lod, _, distance_squared)| {
+                let linked_lod = r.is_lod && r.uid != NO_ROW;
+                if linked_lod {
+                    !detailed_groups.contains(&r.uid) && *distance_squared <= DISTANT_RADIUS.powi(2)
+                } else if *is_lod {
+                    visible_region(*distance_squared, true, radius)
+                } else {
+                    *distance_squared <= detail
+                        || (detailed_groups.contains(&r.parent) && *distance_squared <= group_limit)
+                }
+            })
+            .collect();
+        let covered = covered_lods(
+            candidates
+                .iter()
+                .zip(&visibility)
+                .map(|(c, visible)| (c.0, *visible)),
+        );
+        for ((r, def, is_lod, dff, distance_squared), visible) in
+            candidates.into_iter().zip(visibility)
+        {
+            let visible = visible && !covered.contains(&r.uid);
             if !is_lod {
                 if let Some(model) = self.collision_models.get(&def.model) {
                     // Collision-only objects and transparent surfaces remain solid.
@@ -1193,6 +1232,115 @@ pub fn load_prologue(game: &Path) -> Result<Scene> {
 #[cfg(test)]
 mod streaming_tests {
     use super::*;
+    #[test]
+    fn area_loader_emits_only_one_of_three_overlapping_terrain_levels() {
+        let folder = std::env::temp_dir().join(format!("sa-lod-overlap-{}", std::process::id()));
+        fs::create_dir_all(&folder).unwrap();
+        let archive = folder.join("empty.img");
+        fs::write(&archive, [b"VER2".as_slice(), &0u32.to_le_bytes()].concat()).unwrap();
+        let mut loader = WorldLoader {
+            img: WorldArchive {
+                exterior: Img::open(&archive).unwrap(),
+                interior: None,
+            },
+            defs: HashMap::new(),
+            rows: Vec::new(),
+            collision_models: HashMap::new(),
+            resources: mods::Resources::default(),
+            texture_parents: HashMap::new(),
+            water: std::sync::Arc::new(water::WaterMap::default()),
+            water_texture: None,
+            roadsign_font: None,
+            uv_tracks: HashMap::new(),
+        };
+        for (id, name, parent) in [
+            (1, "lod_coarse", NO_ROW),
+            (2, "lod_middle", 0),
+            (3, "detail", 1),
+        ] {
+            let mut row = placement(id, 0, [0.0; 3], [0.0, 0.0, 0.0, 1.0]).unwrap();
+            row.uid = (id - 1) as u32;
+            row.parent = parent;
+            row.is_lod = id != 3;
+            loader.rows.push(row);
+            loader.defs.insert(
+                id,
+                Definition {
+                    model: name.into(),
+                    txd: "test".into(),
+                },
+            );
+            loader.resources.geometry.insert(
+                format!("{name}.dff"),
+                vec![Geometry {
+                    positions: vec![[-10.0, -10.0, 0.0], [10.0, -10.0, 0.0], [0.0, 10.0, 0.0]],
+                    normals: vec![[0.0, 0.0, 1.0]; 3],
+                    uvs: vec![[0.0; 2]; 3],
+                    colors: vec![[255; 4]; 3],
+                    triangles: vec![[0, 1, 2, 0]],
+                    materials: vec![sa_assets::Material {
+                        color: [255; 4],
+                        texture: None,
+                        uv_animation: None,
+                    }],
+                    road_signs: Vec::new(),
+                    lights: Vec::new(),
+                }],
+            );
+        }
+        for center in [[0.0, 0.0], [500.0, 0.0]] {
+            let scene = loader.load_area(center, [0.0; 2], 50.0, 0).unwrap();
+            assert_eq!(scene.placements, 1, "overlapping LODs at {center:?}");
+            assert_eq!(scene.triangles, 1);
+        }
+        loader.rows.truncate(1);
+        assert_eq!(
+            loader
+                .load_area([0.0; 2], [0.0; 2], 50.0, 0)
+                .unwrap()
+                .placements,
+            1
+        );
+        drop(loader);
+        fs::remove_file(archive).unwrap();
+        fs::remove_dir(folder).unwrap();
+    }
+    #[test]
+    fn nested_terrain_lods_never_overlap_the_visible_detail_level() {
+        let mut coarse = placement(1, 0, [0.0; 3], [0.0, 0.0, 0.0, 1.0]).unwrap();
+        coarse.uid = 10;
+        coarse.is_lod = true;
+        let mut middle = coarse.clone();
+        middle.uid = 11;
+        middle.parent = coarse.uid;
+        let mut detail = middle.clone();
+        detail.uid = 12;
+        detail.parent = middle.uid;
+        detail.is_lod = false;
+        let mut other = coarse.clone();
+        other.uid = 20;
+        // Near: detail suppresses both ancestors. Far: the intermediate LOD
+        // suppresses the coarsest LOD. Without children, keep the coarse mesh.
+        for (selected, expected) in [
+            ([true, false, true, true], vec![12, 20]),
+            ([true, true, false, true], vec![11, 20]),
+            ([true, false, false, true], vec![10, 20]),
+        ] {
+            let rows = [&coarse, &middle, &detail, &other];
+            let covered = covered_lods(rows.into_iter().zip(selected));
+            let drawn: Vec<_> = rows
+                .into_iter()
+                .zip(selected)
+                .filter(|(row, visible)| *visible && !covered.contains(&row.uid))
+                .map(|(row, _)| row.uid)
+                .collect();
+            assert_eq!(drawn, expected);
+        }
+        // Invalid cyclic metadata must terminate instead of walking forever.
+        coarse.parent = middle.uid;
+        let covered = covered_lods([(&coarse, true), (&middle, true)].into_iter());
+        assert_eq!(covered.len(), 2);
+    }
     #[test]
     fn distant_models_stay_outside_detail_region() {
         assert!(visible_region(400.0f32.powi(2), false, 400.0));

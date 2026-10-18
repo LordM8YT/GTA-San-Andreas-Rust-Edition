@@ -207,7 +207,10 @@ impl CollisionWorld {
                     let center_y = t.a.y
                         - ((pos.x - t.a.x) * t.normal.x + (pos.z - t.a.z) * t.normal.z)
                             / t.normal.y;
-                    if (center_y - ground).abs() <= 0.01 {
+                    // At a ramp/flat seam, a neighboring ground triangle may
+                    // no longer cover the center. Its plane can still rise
+                    // into the body rim; it is not a roof above our feet.
+                    if center_y <= pos.y + 0.01 && (center_y - ground).abs() <= STEP_HEIGHT {
                         continue;
                     }
                 }
@@ -416,8 +419,13 @@ impl Player {
                 }
             }
             candidate = world.resolve_walls(candidate);
+            // A road's uphill rim can be above our feet while walking downhill.
+            // Exclude the nearby supporting plane, not a separate overhead roof.
+            let support = world
+                .ground_below(candidate, candidate.y + 0.01)
+                .filter(|ground| candidate.y - ground <= STEP_HEIGHT);
             if world
-                .ceiling_above(candidate, candidate.y + 0.01)
+                .ceiling_without_support(candidate, candidate.y + 0.01, support)
                 .is_none_or(|roof| roof >= candidate.y + HEIGHT - 0.001)
             {
                 self.feet = candidate;
@@ -559,6 +567,73 @@ mod tests {
                 );
             }
         }
+    }
+    #[test]
+    fn walking_up_and_down_slopes_does_not_mistake_the_road_for_a_roof() {
+        for grade in [-0.5, -0.2, 0.2, 0.5] {
+            for direction in [-1.0, 1.0] {
+                for reverse in [false, true] {
+                    let mut points = [
+                        [-5.0, -5.0 * grade, -5.0],
+                        [5.0, -5.0 * grade, -5.0],
+                        [5.0, 5.0 * grade, 5.0],
+                        [-5.0, -5.0 * grade, -5.0],
+                        [5.0, 5.0 * grade, 5.0],
+                        [-5.0, 5.0 * grade, 5.0],
+                    ];
+                    if reverse {
+                        points.swap(0, 1);
+                        points.swap(3, 4);
+                    }
+                    let world = CollisionWorld::from_batches(&[batch(&points)]);
+                    let start = -2.0 * direction;
+                    let mut player =
+                        Player::spawn(&world, Vec3::new(0.0, start * grade + 1.6, start));
+                    for _ in 0..60 {
+                        player.step(&world, Vec3::Z * direction * 4.0, false, 1.0 / 60.0);
+                        assert!(player.grounded);
+                        assert!((player.feet.y - player.feet.z * grade).abs() < 0.001);
+                    }
+                    assert!(
+                        player.feet.z * direction > 1.9,
+                        "road blocked walking: grade={grade}, direction={direction}, reverse={reverse}, feet={:?}",
+                        player.feet
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn walking_down_a_ramp_onto_flat_ground_does_not_catch_its_edge() {
+        let world = CollisionWorld::from_batches(&[
+            batch(&[
+                [-5.0, 0.0, 0.0],
+                [5.0, 0.0, 0.0],
+                [5.0, 2.5, 5.0],
+                [-5.0, 0.0, 0.0],
+                [5.0, 2.5, 5.0],
+                [-5.0, 2.5, 5.0],
+            ]),
+            batch(&[
+                [-5.0, 0.0, -5.0],
+                [5.0, 0.0, -5.0],
+                [5.0, 0.0, 0.0],
+                [-5.0, 0.0, -5.0],
+                [5.0, 0.0, 0.0],
+                [-5.0, 0.0, 0.0],
+            ]),
+        ]);
+        let mut player = Player::spawn(&world, Vec3::new(0.0, 2.6, 2.0));
+        for _ in 0..60 {
+            player.step(&world, -Vec3::Z * 4.0, false, 1.0 / 60.0);
+        }
+        assert!(
+            player.feet.z < -1.9,
+            "ramp edge blocked walking: {:?}",
+            player.feet
+        );
+        assert!(player.feet.y.abs() < 0.001);
+        assert!(player.grounded);
     }
     #[test]
     fn interior_open_portal_keeps_player_on_floor_and_allows_jumping() {
