@@ -549,13 +549,23 @@ impl Launcher {
                 .ok()
                 .flatten();
         let width = ui.available_width();
-        let height = (ui.available_height() * 0.52).clamp(260.0, 360.0);
+        let height = (ui.available_height() * 0.56).clamp(280.0, 390.0);
         let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
         artwork::background(ui, rect, self.hero.as_ref());
         let painter = ui.painter().with_clip_rect(rect);
-        let left = rect.left() + 28.0;
+        let inset = (width * 0.035).clamp(24.0, 56.0);
+        let left = rect.left() + inset;
+        // A restrained lower gradient improves title and action contrast over custom art.
+        painter.rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(rect.left(), rect.bottom() - 112.0),
+                rect.right_bottom(),
+            ),
+            0.0,
+            Color32::from_black_alpha(70),
+        );
         painter.text(
-            egui::pos2(left, rect.top() + 27.0),
+            egui::pos2(left, rect.top() + 30.0),
             egui::Align2::LEFT_TOP,
             "San Andreas",
             egui::FontId::new(
@@ -572,7 +582,7 @@ impl Launcher {
             MUTED,
         );
         let play = egui::Rect::from_min_size(
-            egui::pos2(left, rect.bottom() - 84.0),
+            egui::pos2(left, rect.bottom() - 88.0),
             egui::vec2(218.0, 44.0),
         );
         let label = if checkpoint.is_some() {
