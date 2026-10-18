@@ -100,7 +100,11 @@ pub fn horizon(painter: &egui::Painter, rect: Rect) {
     // Warm sun and layered silhouettes create depth without costly post-processing.
     let sun = at(0.77, 0.39);
     painter.circle_filled(sun, rect.height() * 0.16, Color32::from_rgb(218, 157, 94));
-    painter.circle_filled(sun, rect.height() * 0.19, Color32::from_rgba_unmultiplied(218, 157, 94, 35));
+    painter.circle_filled(
+        sun,
+        rect.height() * 0.19,
+        Color32::from_rgba_unmultiplied(218, 157, 94, 35),
+    );
     for (ridge, color) in [
         (0.61, Color32::from_rgb(45, 55, 63)),
         (0.75, Color32::from_rgb(27, 37, 45)),
@@ -150,7 +154,10 @@ pub fn horizon(painter: &egui::Painter, rect: Rect) {
         let bottom = at(x - 0.025, y + height);
         painter.line_segment(
             [bottom, crown],
-            egui::Stroke::new((rect.height() * 0.012).max(2.0), Color32::from_rgb(9, 15, 20)),
+            egui::Stroke::new(
+                (rect.height() * 0.012).max(2.0),
+                Color32::from_rgb(9, 15, 20),
+            ),
         );
         for i in 0..7 {
             let angle = -2.8 + i as f32 * 0.47;
