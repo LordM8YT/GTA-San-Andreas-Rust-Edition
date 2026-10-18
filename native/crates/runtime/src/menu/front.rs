@@ -121,9 +121,16 @@ impl Menu {
             };
             painter.rect_filled(rect, 2, fill);
             painter.rect_filled(
-                Rect::from_min_size(rect.min, Vec2::new(if active { 4.0 } else { 2.0 } * scale, rect.height())),
+                Rect::from_min_size(
+                    rect.min,
+                    Vec2::new(if active { 4.0 } else { 2.0 } * scale, rect.height()),
+                ),
                 0,
-                if active { ui_theme::ACCENT } else { Color32::from_rgb(66, 78, 86) },
+                if active {
+                    ui_theme::ACCENT
+                } else {
+                    Color32::from_rgb(66, 78, 86)
+                },
             );
             painter.line_segment(
                 [rect.left_bottom(), rect.right_bottom()],
@@ -158,7 +165,7 @@ impl Menu {
             painter.text(
                 rect.right_center() - Vec2::new(17.0 * scale, 0.0),
                 egui::Align2::RIGHT_CENTER,
-                if active { "›" } else { "›" },
+                "›",
                 FontId::proportional(25.0 * scale),
                 if active { ui_theme::ACCENT } else { MUTED },
             );
