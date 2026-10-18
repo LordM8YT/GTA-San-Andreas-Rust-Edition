@@ -9,7 +9,6 @@ pub const TEXT: Color32 = Color32::from_rgb(244, 242, 233);
 pub const MUTED: Color32 = Color32::from_rgb(164, 176, 186);
 pub const ACCENT: Color32 = Color32::from_rgb(230, 180, 92);
 pub const SUCCESS: Color32 = Color32::from_rgb(143, 203, 160);
-pub const WARNING: Color32 = Color32::from_rgb(237, 139, 105);
 
 pub fn apply(ctx: &egui::Context) {
     let mut style = (*ctx.style_of(egui::Theme::Dark)).clone();
@@ -100,7 +99,11 @@ pub fn horizon(painter: &egui::Painter, rect: Rect) {
     // Warm sun and layered silhouettes create depth without costly post-processing.
     let sun = at(0.77, 0.39);
     painter.circle_filled(sun, rect.height() * 0.16, Color32::from_rgb(218, 157, 94));
-    painter.circle_filled(sun, rect.height() * 0.19, Color32::from_rgba_unmultiplied(218, 157, 94, 35));
+    painter.circle_filled(
+        sun,
+        rect.height() * 0.19,
+        Color32::from_rgba_unmultiplied(218, 157, 94, 35),
+    );
     for (ridge, color) in [
         (0.61, Color32::from_rgb(45, 55, 63)),
         (0.75, Color32::from_rgb(27, 37, 45)),
@@ -150,7 +153,10 @@ pub fn horizon(painter: &egui::Painter, rect: Rect) {
         let bottom = at(x - 0.025, y + height);
         painter.line_segment(
             [bottom, crown],
-            egui::Stroke::new((rect.height() * 0.012).max(2.0), Color32::from_rgb(9, 15, 20)),
+            egui::Stroke::new(
+                (rect.height() * 0.012).max(2.0),
+                Color32::from_rgb(9, 15, 20),
+            ),
         );
         for i in 0..7 {
             let angle = -2.8 + i as f32 * 0.47;

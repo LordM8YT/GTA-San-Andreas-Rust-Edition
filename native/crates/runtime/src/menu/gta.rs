@@ -57,7 +57,11 @@ fn row(ui: &mut egui::Ui, rect: Rect, text: &str, selected: bool, id: usize, sca
             Vec2::new(if selected { 3.0 } else { 1.0 } * scale, rect.height()),
         ),
         0.0,
-        if selected { STRIPE } else { Color32::from_rgb(54, 67, 77) },
+        if selected {
+            STRIPE
+        } else {
+            Color32::from_rgb(54, 67, 77)
+        },
     );
     painter.text(
         rect.left_center() + Vec2::new(13.0 * scale, 0.0),

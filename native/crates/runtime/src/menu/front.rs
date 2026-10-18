@@ -50,8 +50,16 @@ impl Menu {
         );
 
         // A compact session indicator replaces a floating, unanchored status label.
-        let status = if self.network_active { "ONLINE SESSION" } else { "STORY MODE" };
-        let status_color = if self.network_active { ui_theme::SUCCESS } else { ui_theme::ACCENT };
+        let status = if self.network_active {
+            "ONLINE SESSION"
+        } else {
+            "STORY MODE"
+        };
+        let status_color = if self.network_active {
+            ui_theme::SUCCESS
+        } else {
+            ui_theme::ACCENT
+        };
         painter.text(
             Pos2::new(right, top + 7.0 * scale),
             egui::Align2::RIGHT_TOP,
@@ -273,7 +281,11 @@ impl Menu {
                 ui_theme::ACCENT,
                 right - left,
             );
-            painter.galley(Pos2::new(left, footer - 40.0 * scale), galley, ui_theme::ACCENT);
+            painter.galley(
+                Pos2::new(left, footer - 40.0 * scale),
+                galley,
+                ui_theme::ACCENT,
+            );
         }
         action
     }
