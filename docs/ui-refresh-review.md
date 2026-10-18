@@ -64,7 +64,7 @@ the interface refresh, not every gameplay, server or engine subsystem.
 - Native egui captures were inspected at standard, small-window and ultrawide sizes. The final launcher, title, pause and HUD captures are in `docs/images/native-ui/`.
 - All ten workspace packages resolve to 0.34.0. Third-party lockfile entries are unchanged.
 
-Verdict: Ship.
+Verdict: Technical checks documented above are useful baseline evidence, but visual sign-off is pending. The current interface is not considered final: the next pass must improve the art direction and screen composition, then re-capture the real launcher and in-game menus for review. Do not interpret this report as approval of the final AAA-quality target.
 
 Not checked: Windows/macOS builds, release-mode gameplay over original assets,
 physical controller operation, large custom UI scales, every long custom label,
