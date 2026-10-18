@@ -82,7 +82,7 @@ impl Menu {
         let mut action = None;
         // Reuse the pause-menu labels so navigation names stay consistent
         // across screens. Only the context-sensitive actions differ here.
-        let mut labels = gta::PAUSE_ITEMS;
+        let mut labels = super::gta::PAUSE_ITEMS;
         labels[0] = if page == Page::Pause {
             "Resume"
         } else if self.has_checkpoint {
