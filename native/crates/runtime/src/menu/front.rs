@@ -31,7 +31,7 @@ impl Menu {
             Pos2::new(left, top + 17.0 * scale),
             egui::Align2::LEFT_TOP,
             "SARE",
-            FontId::new(76.0 * scale, FontFamily::Name("street".into())),
+            FontId::new(76.0 * scale, FontFamily::Name("title".into())),
             WHITE,
         );
         painter.text(
@@ -250,7 +250,7 @@ impl Menu {
                 Pos2::new(left, footer - 59.0 * scale),
                 egui::Align2::LEFT_BOTTOM,
                 location.to_uppercase(),
-                FontId::new(26.0 * scale, FontFamily::Name("street".into())),
+                FontId::new(26.0 * scale, FontFamily::Name("title".into())),
                 ui_theme::ACCENT,
             );
         }

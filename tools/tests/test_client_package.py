@@ -18,7 +18,7 @@ class ClientPackageTests(unittest.TestCase):
             with self.subTest(platform=platform), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 for path in ['LICENSE', 'docs/client-package.md', 'native/Cargo.lock',
-                             'native/crates/runtime/assets/UnifrakturCook-OFL.txt',
+                             'native/crates/runtime/assets/ArchivoBlack-OFL.txt',
                              'native/crates/runtime/vendor/fsr1/license.txt']:
                     file = root / path
                     file.parent.mkdir(parents=True, exist_ok=True)
@@ -68,7 +68,7 @@ class ClientPackageTests(unittest.TestCase):
             with self.subTest(platform=platform), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 for path in ['LICENSE', 'docs/client-package.md', 'native/Cargo.lock',
-                             'native/crates/runtime/assets/UnifrakturCook-OFL.txt',
+                             'native/crates/runtime/assets/ArchivoBlack-OFL.txt',
                              'native/crates/runtime/vendor/fsr1/license.txt']:
                     file = root / path
                     file.parent.mkdir(parents=True, exist_ok=True)
@@ -90,7 +90,7 @@ class ClientPackageTests(unittest.TestCase):
     def test_explicit_allowlist_excludes_assets_settings_cache_and_logs(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            for path in ['LICENSE','docs/client-package.md','native/Cargo.lock','native/crates/runtime/assets/UnifrakturCook-OFL.txt','native/crates/runtime/vendor/fsr1/license.txt']:
+            for path in ['LICENSE','docs/client-package.md','native/Cargo.lock','native/crates/runtime/assets/ArchivoBlack-OFL.txt','native/crates/runtime/vendor/fsr1/license.txt']:
                 file = root / path
                 file.parent.mkdir(parents=True, exist_ok=True)
                 file.write_text('owned test support file', encoding='utf-8')
@@ -134,7 +134,7 @@ class ClientPackageTests(unittest.TestCase):
         import json
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            for path in ['LICENSE','docs/client-package.md','native/Cargo.lock','native/crates/runtime/assets/UnifrakturCook-OFL.txt','native/crates/runtime/vendor/fsr1/license.txt']:
+            for path in ['LICENSE','docs/client-package.md','native/Cargo.lock','native/crates/runtime/assets/ArchivoBlack-OFL.txt','native/crates/runtime/vendor/fsr1/license.txt']:
                 file = root / path
                 file.parent.mkdir(parents=True, exist_ok=True)
                 file.write_text('owned test support file', encoding='utf-8')
