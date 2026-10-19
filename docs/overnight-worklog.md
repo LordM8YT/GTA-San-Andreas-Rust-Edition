@@ -100,8 +100,6 @@ alle ni områder. Stranden økte til 1664 plasseringer/323515 trekanter,
 San Fierro til 1454/400599, ørkenen til 279/74650. 23 Rust-tester,
 Clippy med alle targets og release besto.
 
-Referanse for foreldresøk: [TxdStoreFindCB](https://github.com/gta-reversed/gta-reversed/blob/master/source/game_sa/TxdStore.cpp).
-
 ## Vann og overflatebevegelse
 
 Leser original `water.dat` med 301 firkanter og seks trekanter. Synlighetsflagg
@@ -115,8 +113,6 @@ besto 600 fysikksteg i original kystgeometri ved vannhøyde 0, med øyehøyde
 0,4 og omtrent 25 meter bevegelse. GPU-tour besto ni områder, med bilder
 i `native/target/captures-water/`. Strandbildet ble visuelt kontrollert.
 Bølger, dykking, strøm, båter og svømmeanimasjon gjenstår.
-
-Formatreferanse: [WaterLevel blokklesing, flagg og teksturer](https://github.com/gta-reversed/gta-reversed/blob/master/source/game_sa/WaterLevel.cpp).
 
 ## Fjern-LOD
 
@@ -240,10 +236,8 @@ fixtures verify compressed/float equivalence, translation /1024, times
 root looping. 37 workspace tests passed. Clippy passed after cleaning a
 fixture loop; release runtime built. Read-only command:
 `cargo run --release -p sa-assets --example audit_ifp -- <ped.ifp> <gta3.img> fam1.dff`.
-Primary format references:
-https://raw.githubusercontent.com/gta-reversed/gta-reversed/master/source/game_sa/Animation/AnimSequenceFrames.h
-https://raw.githubusercontent.com/gta-reversed/gta-reversed/master/source/game_sa/Animation/AnimManager.cpp
-The former confirms compressed translation scale 1024 (not 4096).
+Compressed translations use scale 1024 (not 4096), confirmed by the audit
+of the player's own ped.ifp.
 
 ## Live player figure
 

@@ -65,13 +65,5 @@ effects mute produces silence, unmute restores output and dropping the
 emitter stops output. These checks do not replace listening on different
 speakers/headphones or testing real network latency.
 
-Format and sound identifiers were checked against primary reverse-engineered
-structures, rather than inferred from file extensions:
-
-- [Bank/package structures](https://github.com/gta-reversed/gta-reversed/blob/master/source/game_sa/Audio/Loaders/AEBankLoader.h)
-- [PCM bounds, rates and loop units](https://github.com/gta-reversed/gta-reversed/blob/master/source/game_sa/Audio/Loaders/AEMP3BankLoader.cpp)
-- [Frontend sound pairs](https://github.com/gta-reversed/gta-reversed/blob/master/source/game_sa/Audio/Entities/AEFrontendAudioEntity.cpp)
-- [Sound-bank identifiers](https://github.com/gta-reversed/gta-reversed/blob/master/source/game_sa/Audio/Enums/eSoundBank.h)
-- [Vehicle-to-bank identifiers](https://github.com/gta-reversed/gta-reversed/blob/master/source/game_sa/Audio/Entities/AEVehicleAudioEntity.VehicleAudioSettings.h)
-- [Idle/rev sample identifiers](https://github.com/gta-reversed/gta-reversed/blob/master/source/game_sa/Audio/Entities/AEVehicleAudioEntity.cpp)
-- [Generic footstep identifiers](https://github.com/gta-reversed/gta-reversed/blob/master/source/game_sa/Audio/Entities/AEPedAudioEntity.cpp)
+Bank layouts, sample rates, loop points and sound slots are read from the
+player's own `audio/SFX` archives at runtime. Tests use original-free fixtures.

@@ -1180,6 +1180,7 @@ impl Launcher {
             sa_client::BUILD_ID,
             sa_net::VERSION
         ));
+        ui.label("Unofficial fan project, not affiliated with or endorsed by Rockstar Games or Take-Two Interactive. Requires your own copy of the PC game; no game files are included.");
         self.updates_ui(ui);
         ui.label("Use a complete client package containing both launcher and runtime. Packaged clients update from tested GitHub releases; source builds use Git/Cargo.");
         ui.hyperlink_to(

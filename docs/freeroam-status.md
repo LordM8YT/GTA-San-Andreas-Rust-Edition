@@ -107,8 +107,7 @@ cleared and an error message appears in the menu.
   The first UV channel is supported; full MatFX/dual-texture lighting and
   timed day/night objects are still not implemented.
   `--smoke-neon --capture-dir <directory>` tests the scrolling Las Venturas sign.
-  Format references: [original sign code](https://github.com/gta-reversed/gta-reversed/blob/master/source/game_sa/CustomRoadsignMgr.cpp)
-  and [RenderWare UV animations](https://github.com/aap/librw/blob/master/src/uvanim.cpp).
+  Format reference: [RenderWare UV animations](https://github.com/aap/librw/blob/master/src/uvanim.cpp).
 
 - A main menu inspired by San Andreas, adapted for freeroam, with the world as its background.
 - Pause, a map with nine destinations, settings, controls and a local mod overview
