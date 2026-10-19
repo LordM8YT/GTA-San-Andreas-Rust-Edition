@@ -1,6 +1,13 @@
 SARE free-roam test client, built and tested from the linked commit.
 
-Version 0.34.0 (pending platform CI):
+Version 0.34.1:
+- Joining or hosting a session while the first map area is still loading no longer drops that session's collision and water.
+- Faster area streaming: a texture shared by solid and transparent surfaces is decoded once instead of twice.
+- World streaming from 19 October: the first area loads in the background, identical textures upload once, and curbs, short stairs and small drops are easier to walk over.
+
+See `docs/review-2026-10-19.md`. GPU and original-map gameplay checks for these fixes are still pending.
+
+Version 0.34.0:
 - A consistent native interface across the launcher, main menu, pause menus and gameplay HUD.
 - Original sunset artwork, clearer navigation and compact clock, ammo and session status.
 - Responsive pause tabs and title actions, with zone notices kept clear of the speedometer.
