@@ -211,10 +211,19 @@ cleared and an error message appears in the menu.
 - Jumps are stopped by overhead ceilings, including hits at the body's outer edge.
   Pausing with a zero time step does not change the jumping/gravity state either.
 - Small steps up to 38 cm are checked at the body's leading edge before wall
-  collision resolution. Sideways entry is blocked if there is not enough
-  clearance for the body's full height.
+  collision resolution. Small drops are also walkable; adjacent ground within
+  one step of the feet is not mistaken for a low roof. Sideways entry is blocked
+  if there is not enough clearance for the body's full height.
+- Collision tests cover three short stairs in both directions, walking off a
+  platform and landing on a lower floor, and separate walkable levels for a
+  bridge deck and the tunnel below it.
 - `--probe-walk`: four directions from Grove Street using original collision,
   1200 physics steps per direction. Logs actual progress and ground contact.
+- `--probe-curbs-ramps`: samples ground-height transitions around all nine
+  smoke-tour destinations and walks across selected curb-like edges and
+  ramp-like slopes in both directions, including diagonal curb approaches.
+  Blocked samples report map coordinates for follow-up; sampled terrain alone
+  does not confirm that every candidate is a sidewalk or intentional ramp.
 - `--capture-dir PATH` used with a smoke test saves private rendered images.
 
 ## Verification
