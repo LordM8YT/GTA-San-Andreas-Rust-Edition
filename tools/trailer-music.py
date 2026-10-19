@@ -1,6 +1,6 @@
 """Original SARE trailer theme: a West Coast G-funk groove that builds into a
 cinematic drop. Everything is synthesized here, so there is no license to clear.
-96 BPM, C minor, 30 bars = 75 s. Usage: python tools/trailer-music.py theme.wav (needs numpy)"""
+96 BPM, C minor, 30 bars plus a short tail, 78 s. Usage: python tools/trailer-music.py theme.wav (needs numpy)"""
 import sys, wave
 import numpy as np
 
