@@ -10,6 +10,27 @@ pub fn save(
     format: wgpu::TextureFormat,
     path: &Path,
 ) -> Result<()> {
+    let rgba = read(device, queue, texture, width, height, format)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let file = std::fs::File::create(path)?;
+    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.write_header()?.write_image_data(&rgba)?;
+    println!("Captured {}", path.display());
+    Ok(())
+}
+/// Reads a rendered frame back as tightly packed RGBA rows.
+pub fn read(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    width: u32,
+    height: u32,
+    format: wgpu::TextureFormat,
+) -> Result<Vec<u8>> {
     let stride = (width * 4).div_ceil(256) * 256;
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("capture readback"),
@@ -61,14 +82,5 @@ pub fn save(
     }
     drop(bytes);
     buffer.unmap();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let file = std::fs::File::create(path)?;
-    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width, height);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    encoder.write_header()?.write_image_data(&rgba)?;
-    println!("Captured {}", path.display());
-    Ok(())
+    Ok(rgba)
 }

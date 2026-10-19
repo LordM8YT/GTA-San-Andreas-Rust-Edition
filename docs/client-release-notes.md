@@ -1,5 +1,11 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.35.0:
+- Optional temporal anti-aliasing (Graphics menu, off by default): smoother edges and less shimmer, and the groundwork for FSR 3 and DLSS.
+- Trailer camera: `--trailer` flies ten scripted shots across the map; `--trailer-record <folder>` saves them as 60 FPS MP4 clips through ffmpeg. See `docs/trailer.md`.
+
+Temporal anti-aliasing passed a GPU shader test on a software renderer; in-game image quality and the trailer shots still need checking on a real install.
+
 Version 0.34.1:
 - Joining or hosting a session while the first map area is still loading no longer drops that session's collision and water.
 - Faster area streaming: a texture shared by solid and transparent surfaces is decoded once instead of twice.

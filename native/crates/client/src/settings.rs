@@ -53,6 +53,9 @@ pub struct Settings {
     /// Wet roads that reflect the scene, softer sun shadows and sun glints on
     /// wet ground. Costs more GPU time, so it stays off unless picked.
     pub enhanced_lighting: bool,
+    /// Temporal anti-aliasing: blends jittered frames over time for smoother
+    /// edges and less shimmer. Off by default.
+    pub temporal_aa: bool,
     /// Fixed hour of day, or `None` for the running day/night cycle.
     pub fixed_hour: Option<u8>,
     /// Fixed timecyc weather, or `None` for weather that changes by area.
@@ -97,6 +100,7 @@ impl Default for Settings {
             sun_lighting: 0.35,
             sun_shadows: true,
             enhanced_lighting: false,
+            temporal_aa: false,
             fixed_hour: None,
             fixed_weather: None,
             fsr1: true,

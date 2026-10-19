@@ -33,7 +33,9 @@ mod shadow;
 mod shared_traffic;
 mod skids;
 mod streaming;
+mod temporal;
 mod traffic;
+mod trailer;
 #[path = "../../../ui/theme.rs"]
 mod ui_theme;
 mod upload;
@@ -201,6 +203,13 @@ struct State {
     frame_count: u32,
     destination: Option<[f32; 2]>,
     capture_next: Option<PathBuf>,
+    /// Read the next rendered frame back into `captured_frame` (trailer recording).
+    capture_raw: bool,
+    captured_frame: Option<([u32; 2], Vec<u8>)>,
+    /// Trailer camera eye, look-at target and field of view, replacing the
+    /// gameplay camera. The streamed region stays put while it is set, so a
+    /// shot never swaps neighbourhoods mid-take.
+    trailer_camera: Option<(Vec3, Vec3, f32)>,
     gui_context: egui::Context,
     gui_input: egui_winit::State,
     gui_renderer: egui_wgpu::Renderer,
@@ -1021,6 +1030,9 @@ impl State {
             frame_count: 0,
             destination: None,
             capture_next: None,
+            capture_raw: false,
+            captured_frame: None,
+            trailer_camera: None,
             gui_context,
             gui_input,
             gui_renderer,
@@ -1364,7 +1376,10 @@ impl State {
                         .map(|index| streaming::INTERIORS[index].id)
                         .unwrap_or(0),
                 });
-            } else if self.interior == 0 && streaming::distance(center, self.region) > 140.0 {
+            } else if self.interior == 0
+                && self.trailer_camera.is_none()
+                && streaming::distance(center, self.region) > 140.0
+            {
                 // Centre the next region ahead of a moving car. Loading takes a
                 // few seconds; at speed the car otherwise reaches the edge of the
                 // old region first and reloads again almost immediately.
@@ -1789,24 +1804,26 @@ impl State {
             self.queue
                 .write_buffer(&self.fire_glows, 0, bytemuck::cast_slice(&glows));
         }
-        let camera_time = self.animation.as_ref().and_then(|cut| {
-            let keys = cut.camera_keys.as_ref()?;
-            let duration = keys.last().unwrap().seconds.max(0.01);
-            let seconds = (now - self.started).as_secs_f32() % duration;
-            let after = keys.partition_point(|key| key.seconds < seconds);
-            let a = &keys[after.saturating_sub(1)];
-            let b = &keys[after.min(keys.len() - 1)];
-            let factor = if b.seconds > a.seconds {
-                (seconds - a.seconds) / (b.seconds - a.seconds)
-            } else {
-                0.0
-            };
-            let convert = |p: [f32; 3]| Vec3::new(p[0], p[2] + cut.height_offset, -p[1]);
-            Some((
-                convert(a.position).lerp(convert(b.position), factor),
-                convert(a.target).lerp(convert(b.target), factor),
-                a.fov + (b.fov - a.fov) * factor,
-            ))
+        let camera_time = self.trailer_camera.or_else(|| {
+            self.animation.as_ref().and_then(|cut| {
+                let keys = cut.camera_keys.as_ref()?;
+                let duration = keys.last().unwrap().seconds.max(0.01);
+                let seconds = (now - self.started).as_secs_f32() % duration;
+                let after = keys.partition_point(|key| key.seconds < seconds);
+                let a = &keys[after.saturating_sub(1)];
+                let b = &keys[after.min(keys.len() - 1)];
+                let factor = if b.seconds > a.seconds {
+                    (seconds - a.seconds) / (b.seconds - a.seconds)
+                } else {
+                    0.0
+                };
+                let convert = |p: [f32; 3]| Vec3::new(p[0], p[2] + cut.height_offset, -p[1]);
+                Some((
+                    convert(a.position).lerp(convert(b.position), factor),
+                    convert(a.target).lerp(convert(b.target), factor),
+                    a.fov + (b.fov - a.fov) * factor,
+                ))
+            })
         });
         if let Some((position, _, _)) = camera_time {
             self.position = position;
@@ -1890,10 +1907,17 @@ impl State {
         );
         let camera_matrix = projection * view;
         self.frustum = culling::Frustum::new(camera_matrix);
+        let jittered = self.menu.settings.temporal_aa.then(|| {
+            temporal::jittered(
+                camera_matrix,
+                self.postprocess.temporal.jitter(),
+                self.postprocess.size,
+            )
+        });
         self.queue.write_buffer(
             &self.camera,
             0,
-            bytemuck::cast_slice(&camera_matrix.to_cols_array()),
+            bytemuck::cast_slice(&jittered.unwrap_or(camera_matrix).to_cols_array()),
         );
         let hour = self
             .menu
@@ -1946,6 +1970,7 @@ impl State {
                 0.0
             },
             sky: lighting.sky,
+            jittered,
         };
         let light = shadow::light_matrix(self.position, lighting.sun);
         self.light_frustum = culling::Frustum::new(light);
@@ -2362,6 +2387,7 @@ impl State {
             _ => return false,
         };
         let capture_path = self.capture_next.take();
+        let capture_raw = std::mem::take(&mut self.capture_raw);
         if capture_path.is_some() {
             let visible = self
                 .batches
@@ -2374,7 +2400,7 @@ impl State {
                 self.culling_enabled
             );
         }
-        let capture_texture = capture_path.as_ref().map(|_| {
+        let capture_texture = (capture_path.is_some() || capture_raw).then(|| {
             self.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("verification capture"),
                 size: wgpu::Extent3d {
@@ -2680,6 +2706,21 @@ impl State {
         self.metrics.render_ms = render_started.elapsed().as_secs_f64() * 1000.;
         self.apply_menu_action(action);
         self.apply_settings();
+        if let Some(texture) = capture_texture.as_ref().filter(|_| capture_raw) {
+            let size = [self.size.width, self.size.height];
+            self.captured_frame = Some((
+                size,
+                capture::read(
+                    &self.device,
+                    &self.queue,
+                    texture,
+                    size[0],
+                    size[1],
+                    self.format,
+                )
+                .expect("GPU capture"),
+            ));
+        }
         if let (Some(texture), Some(path)) = (capture_texture, capture_path) {
             capture::save(
                 &self.device,
@@ -2757,6 +2798,7 @@ struct App {
     smoke_ped: bool,
     smoke_wardrobe: bool,
     smoke_interiors: bool,
+    trailer: Option<trailer::Director>,
     car_start: Vec3,
     smoke_returning: bool,
     smoke_center: [f32; 2],
@@ -2985,7 +3027,15 @@ impl ApplicationHandler for App {
                 state.roads = roads;
                 state.daycycle = daycycle::DayCycle::load(&self.game_dir);
                 state.zones = zones::Zones::load(&self.game_dir);
-                state.persist_settings = !self.smoke;
+                state.persist_settings = !self.smoke && self.trailer.is_none();
+                if let Some(director) = &self.trailer {
+                    // Best looks for the camera; recordings are not real time,
+                    // so they can afford supersampling.
+                    let settings = &mut state.menu.settings;
+                    settings.apply_preset(if director.record.is_some() { 3 } else { 2 });
+                    settings.temporal_aa = true;
+                    settings.enhanced_lighting = true;
+                }
                 if self.smoke_graphics {
                     state.menu.open_graphics();
                     state.menu.settings.apply_preset(2);
@@ -3613,8 +3663,30 @@ impl ApplicationHandler for App {
                         state.keys.insert(KeyCode::KeyW);
                     }
                 }
+                if let Some(director) = &mut self.trailer {
+                    if let Err(error) = state.direct_trailer(director) {
+                        self.failure = Some(format!("Trailer failed: {error:#}"));
+                        event_loop.exit();
+                        return;
+                    }
+                }
                 let previous_position = state.position;
                 let rendered = state.render();
+                if let Some(director) = self.trailer.as_mut().filter(|_| rendered) {
+                    match state.after_trailer_frame(director) {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            println!("Trailer finished");
+                            event_loop.exit();
+                            return;
+                        }
+                        Err(error) => {
+                            self.failure = Some(format!("Trailer failed: {error:#}"));
+                            event_loop.exit();
+                            return;
+                        }
+                    }
+                }
                 if self.smoke_neon {
                     if rendered {
                         self.smoke_frames += 1;
@@ -5475,6 +5547,7 @@ fn main() -> Result<()> {
             .any(|a| a == "--smoke-ped" || a == "--smoke-wardrobe"),
         smoke_wardrobe: args.iter().any(|a| a == "--smoke-wardrobe"),
         smoke_interiors: args.iter().any(|a| a == "--smoke-interiors"),
+        trailer: trailer::Director::from_args(&args)?,
         car_start: Vec3::ZERO,
         smoke_returning: false,
         smoke_center: ORIGIN,
@@ -5516,6 +5589,7 @@ mod shader_tests {
         for (name, source) in [
             ("shader.wgsl", include_str!("shader.wgsl")),
             ("postprocess.wgsl", include_str!("postprocess.wgsl")),
+            ("temporal.wgsl", include_str!("temporal.wgsl")),
         ] {
             let module = naga::front::wgsl::parse_str(source)
                 .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(source)));

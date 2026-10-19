@@ -435,6 +435,7 @@ impl Menu {
                 ("Texture filtering", if s.texture_anisotropy == 1 { "Trilinear".into() } else { format!("{}x anisotropic", s.texture_anisotropy) }, "Keeps road and building textures clearer at shallow angles. Mipmaps reduce distant texture shimmer. Requires restart."),
                 ("Weather", s.fixed_weather.map_or("Changes by area".into(), |w| crate::settings::WEATHER_NAMES[usize::from(w)].into()), "Weather follows the part of the map you are in and changes every few game hours, using your timecyc.dat. Pick one to keep it."),
                 ("Enhanced lighting", on(s.enhanced_lighting), "Rain leaves roads wet, with puddles that reflect cars, lights and buildings. Sun shadows get softer edges. Needs a strong graphics card; off by default."),
+                ("Temporal anti-aliasing", on(s.temporal_aa), "Blends several slightly shifted frames for smoother edges and less shimmer on fences, wires and distant buildings. Fast-moving objects can look softer. Off by default."),
             ],
             SettingsTab::Gameplay => vec![
                 ("Look sensitivity", format!("{:.1}", s.sensitivity), "Adjusts mouse and right-stick camera movement."),
@@ -554,6 +555,7 @@ impl Menu {
             }
             (SettingsTab::Graphics, 2) => s.fsr1 = !s.fsr1,
             (SettingsTab::Graphics, 16) => s.enhanced_lighting = !s.enhanced_lighting,
+            (SettingsTab::Graphics, 17) => s.temporal_aa = !s.temporal_aa,
             (SettingsTab::Display, 5) => {
                 let limits = [0, 30, 60, 90, 120, 144, 165, 240];
                 let index = limits.iter().position(|v| *v == s.fps_limit).unwrap_or(0);

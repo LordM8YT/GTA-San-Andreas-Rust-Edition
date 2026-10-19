@@ -68,13 +68,30 @@ live and persist, except renderer and texture-filter changes which require resta
 Original SA vertex lighting and textures remain the scene material basis.
 The post-processing pass does not replace them with PBR materials. No performance improvement percentage is claimed.
 
+## Temporal anti-aliasing
+
+Graphics → Temporal anti-aliasing (off by default) renders each frame with a
+sub-pixel Halton (2, 3) camera offset and blends it into a reprojected history
+at the scene resolution, before color grading, FXAA and FSR 1. Motion is
+reconstructed from depth and the previous camera: every SARE vertex is in world
+space, so static scenery needs no motion-vector target. Moving cars and peds are
+handled by a 3×3 variance clamp that rejects history that disagrees with the
+current frame, so they can look slightly softer while moving. The history
+restarts after a camera move over 8 m in one frame (teleport, respawn, interior
+travel, cutscene cuts) and when the scene resolution changes. Cost: one
+full-screen pass and two RGBA16F history images at the scene resolution.
+
+The jitter, history and depth reprojection are the shared foundation for FSR 3
+and DLSS. A GPU test runs the real shader (lavapipe works) and checks that a
+still image is reproduced exactly, including sky pixels. Image quality in the
+original map has not been compared against other games.
+
 ## DLSS and temporal FSR
 
-DLSS, FSR 2/3, frame generation and ray tracing are visibly unavailable. The
-project currently lacks per-object motion vectors, temporal history/jitter,
-reactive masks for transparency and the native SDK integration needed to
-reconstruct frames. The real depth buffer and separate scene/display targets
-are foundations, not completed support.
+DLSS, FSR 2/3, frame generation and ray tracing are visibly unavailable. They
+still need per-object motion vectors for moving cars and peds, reactive masks
+for transparency and, for DLSS, the native SDK integration. `dlss_wgpu` 6.0
+targets wgpu 30 on Vulkan, so no engine change is required.
 
 A future temporal implementation needs previous camera and animated object
 transforms, motion output, disocclusion handling and reset logic on teleport,
