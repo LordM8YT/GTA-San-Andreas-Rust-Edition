@@ -40,3 +40,16 @@ The built-in list is `SHOTS` in `native/crates/runtime/src/trailer.rs`.
 
 The built-in shots were placed from map coordinates without in-game review. Some
 may need adjusting after a first recording.
+
+## Edit the trailer
+
+`tools/trailer-music.py theme.wav` writes the trailer theme: an original 78 s
+West Coast groove that builds into a cinematic drop, synthesized in the script,
+so there is no music license to clear. It needs `numpy`.
+
+`tools/edit-trailer.py trailer/ theme.wav SARE-trailer.mp4` cuts the recorded
+clips to the bars of that theme: a calm intro, a groove of five-second shots,
+a build with feature captions, a drop of fast cuts and a closing logo with the
+repository link and a "not affiliated with Rockstar Games" notice. The cut list
+is `EDIT` at the top of the script. Missing clips are replaced by the nearest
+recorded one.
