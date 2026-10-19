@@ -5,6 +5,11 @@ GTA V Legacy** YFT (cars), YDR (props), YDD (players/clothes/drawables) and YTD 
 It does not run FiveM resources or their scripts. The game continues to load
 native DFF/TXD assets; this tool converts models before starting the game.
 
+> **Only convert models you created yourself or have permission to use.** Do
+> not convert or share models, textures or maps taken from GTA V or other
+> Rockstar games, and do not upload such conversions to servers or releases.
+> Encrypted (escrow) and RPF archives are rejected.
+
 ## Import a resource folder
 
 `tools/import-fivem.py` inspects an extracted FiveM resource with a root

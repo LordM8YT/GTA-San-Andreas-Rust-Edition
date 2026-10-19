@@ -19,6 +19,11 @@ build ID to distinguish builds. Existing commit-based release tags stay valid.
 > **💬 Join the community on Discord: <https://discord.gg/F8KwXJqw6D>**
 > Get help, report bugs, find people to play with and follow development.
 
+> **Legal:** SARE is an unofficial fan project. It is not affiliated with,
+> endorsed or sponsored by Rockstar Games or Take-Two Interactive. You need
+> your own legally purchased copy of the PC game; SARE ships no game files.
+> See [Legal](#legal).
+
 ## Native interface refresh
 
 Launcher, title screen, pause menus and HUD now share SARE styling, with a warm
@@ -150,3 +155,35 @@ DLSS and temporal FSR are not integrated yet.
 An offline [texture-upscaling tool](docs/texture-upscaling.md) produces optional
 native PNG overrides. Generated textures stay local; original game files are
 not modified or included in this repository.
+
+## Legal
+
+**Purpose.** SARE is an alternative engine for playing and modding your own
+copy of San Andreas, with native mod support, multiplayer and modern graphics.
+It is not a replacement for the game and does not recreate it: without the
+original PC files it has no world, characters, vehicles or sound, and it does
+not include the story, missions or cutscenes.
+
+SARE is an independent, non-commercial fan project. It is not affiliated with,
+endorsed or sponsored by Rockstar Games, Take-Two Interactive or Cfx.re.
+Grand Theft Auto, San Andreas and related names and logos are trademarks of
+their respective owners and are used here only to describe compatibility.
+
+- **No game content.** This repository and its releases contain no Rockstar
+  files: no models, textures, maps, audio, text or executables. SARE reads
+  them at runtime from the player's own legally purchased PC installation.
+  Converted, extracted or upscaled copies of original files must stay on your
+  own computer and must not be uploaded to this repository, releases or
+  servers.
+- **Original code.** The engine is written from scratch in Rust. It is not
+  based on, translated from or derived from the game's executable or from
+  decompiled or disassembled code (for example re3, reVC or gta-reversed).
+  See the clean-room rules in [AGENTS.md](AGENTS.md#clean-room-rules).
+- **Free.** SARE is free under the MIT license. The project accepts no
+  payments, donations or sponsorships, and nothing is sold.
+- **Third-party assets.** Only convert models you made yourself or have
+  permission to use. Do not convert content from GTA V or other Rockstar
+  games.
+
+Rights holders with a concern can open an issue or contact the maintainer on
+[Discord](https://discord.gg/F8KwXJqw6D), and we will respond quickly.
