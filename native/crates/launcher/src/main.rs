@@ -90,16 +90,15 @@ impl Launcher {
     ) -> Self {
         let mut fonts = egui::FontDefinitions::default();
         fonts.font_data.insert(
-            "street".into(),
+            "title".into(),
             egui::FontData::from_static(include_bytes!(
-                "../../runtime/assets/UnifrakturCook-Bold.ttf"
+                "../../runtime/assets/ArchivoBlack-Regular.ttf"
             ))
             .into(),
         );
-        fonts.families.insert(
-            egui::FontFamily::Name("street".into()),
-            vec!["street".into()],
-        );
+        fonts
+            .families
+            .insert(egui::FontFamily::Name("title".into()), vec!["title".into()]);
         ctx.set_fonts(fonts);
         ui_theme::apply(ctx);
         ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(egui::SystemTheme::Dark));
@@ -557,17 +556,17 @@ impl Launcher {
         painter.text(
             egui::pos2(left, rect.top() + 27.0),
             egui::Align2::LEFT_TOP,
-            "San Andreas",
+            "SARE",
             egui::FontId::new(
                 if width < 600.0 { 44.0 } else { 62.0 },
-                egui::FontFamily::Name("street".into()),
+                egui::FontFamily::Name("title".into()),
             ),
             TEXT,
         );
         painter.text(
             egui::pos2(left, rect.top() + if width < 600.0 { 94.0 } else { 112.0 }),
             egui::Align2::LEFT_TOP,
-            "An open world. A new beginning.",
+            "A modding platform for your own copy of the game.",
             egui::FontId::proportional(17.0),
             MUTED,
         );
@@ -1185,7 +1184,7 @@ impl Launcher {
         ui.label("Use a complete client package containing both launcher and runtime. Packaged clients update from tested GitHub releases; source builds use Git/Cargo.");
         ui.hyperlink_to(
             "Project and download information",
-            "https://github.com/LordM8YT/GTA-San-Andreas-Rust-Edition",
+            "https://github.com/LordM8YT/SARE",
         );
     }
 }
@@ -1353,7 +1352,7 @@ impl Launcher {
                         RichText::new("SARE")
                             .font(egui::FontId::new(
                                 32.,
-                                egui::FontFamily::Name("street".into()),
+                                egui::FontFamily::Name("title".into()),
                             ))
                             .color(ACCENT),
                     );

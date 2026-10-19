@@ -8,12 +8,12 @@ use egui::{Color32, FontFamily, FontId, Pos2, Rect, RichText, Sense, Vec2};
 use crate::ui_theme::{self, ACCENT as GOLD, MUTED, TEXT as WHITE};
 #[path = "menu/front.rs"]
 mod front;
-#[path = "menu/gta.rs"]
-mod gta;
 #[path = "menu/hud.rs"]
 mod hud;
 #[path = "menu/map.rs"]
 mod map;
+#[path = "menu/pause_tabs.rs"]
+mod pause_tabs;
 const RADAR_WORLD_MIN: f32 = -3000.0;
 const RADAR_WORLD_MAX: f32 = 3000.0;
 const RADAR_TILE_SIZE: f32 = (RADAR_WORLD_MAX - RADAR_WORLD_MIN) / 12.0;
@@ -134,7 +134,7 @@ fn clip_line_circle(points: &[Pos2], centre: Pos2, radius: f32) -> Vec<[Pos2; 2]
 fn minimap_size(screen: Rect) -> Vec2 {
     Vec2::splat((screen.height() * 0.22).clamp(140.0, 230.0))
 }
-/// A GTA V-style line: a dark outline under the colour.
+/// An outlined line: a dark outline under the colour.
 fn route_line(painter: &egui::Painter, pieces: &[[Pos2; 2]], color: Color32, width: f32) {
     for (width, color) in [
         (width + 2.5, Color32::from_black_alpha(200)),
@@ -705,12 +705,13 @@ impl Menu {
     pub fn new(ctx: &egui::Context, mods: Vec<String>) -> Self {
         let mut fonts = egui::FontDefinitions::default();
         fonts.font_data.insert(
-            "street".into(),
-            egui::FontData::from_static(include_bytes!("../assets/UnifrakturCook-Bold.ttf")).into(),
+            "title".into(),
+            egui::FontData::from_static(include_bytes!("../assets/ArchivoBlack-Regular.ttf"))
+                .into(),
         );
         fonts
             .families
-            .insert(FontFamily::Name("street".into()), vec!["street".into()]);
+            .insert(FontFamily::Name("title".into()), vec!["title".into()]);
         if let Ok(bytes) = std::fs::read("C:/Windows/Fonts/impact.ttf") {
             fonts
                 .font_data
@@ -1127,7 +1128,7 @@ impl Menu {
                             outlined_text(
                                 ui,
                                 zone,
-                                FontId::new(40.0 * scale, FontFamily::Name("street".into())),
+                                FontId::new(40.0 * scale, FontFamily::Name("title".into())),
                                 Color32::from_rgba_unmultiplied(228, 188, 119, alpha),
                             );
                         });
@@ -1236,11 +1237,11 @@ impl Menu {
             let left=screen.left()+screen.width()*0.065;
             let top=screen.top()+screen.height()*0.12;
             let footer=screen.bottom()-48.0*scale;
-            // In game the pause menu uses GTA V-style tabs; the title screen keeps San Andreas styling.
+            // In game the pause menu uses tabs; the title screen keeps its own layout.
             let in_game=self.has_played && page!=Page::Main;
             let gta_content=in_game.then(|| self.gta_chrome(ui,screen,scale,page,coordinates));
             if !in_game && !matches!(page, Page::Main | Page::Pause) {
-            painter.text(Pos2::new(left,top),egui::Align2::LEFT_TOP,"SARE",FontId::new(52.0*scale,FontFamily::Name("street".into())),WHITE);
+            painter.text(Pos2::new(left,top),egui::Align2::LEFT_TOP,"SARE",FontId::new(52.0*scale,FontFamily::Name("title".into())),WHITE);
             let heading=match page{Page::Main=>"The whole state. Your way.",Page::Pause=>"Take a breath",Page::Map=>"Choose a destination",Page::Settings=>"Settings",Page::Controls=>"Controls",Page::Wardrobe=>"Wardrobe",Page::Interiors=>"Interiors",Page::Mods=>if self.network_active {"Server resources"} else {"Local resources"},Page::Cars=>"Spawn a vehicle",Page::Peds=>"Choose your player",Page::Commands=>"Commands",Page::Network=>"Multiplayer",Page::Quit=>"Leave free roam?"};
             painter.text(Pos2::new(left,top+68.0*scale),egui::Align2::LEFT_TOP,heading,FontId::proportional(26.0*scale),GOLD);
             painter.text(Pos2::new(left,footer),egui::Align2::LEFT_CENTER,"D-pad / arrows  Move     A / Enter  Select     B / Esc  Back",FontId::proportional(14.0*scale),MUTED);
@@ -1452,7 +1453,7 @@ impl Menu {
                             } else {
                                 ui.label("Place each resource in its own folder under mods/. To enable or disable it, set enabled in resource.json or mod.json, then restart.");
                             }
-                            ui.label(RichText::new("Supports documented custom models, textures, buildings, cars, player characters, and skinned clothing. Scripts, DLL plugins, and arbitrary GTA/FiveM mods are not executed. Choose clothes in the wardrobe (F6).").color(MUTED));
+                            ui.label(RichText::new("Supports documented custom models, textures, buildings, cars, player characters, and skinned clothing. Scripts, DLL plugins, and arbitrary game or FiveM mods are not executed. Choose clothes in the wardrobe (F6).").color(MUTED));
                         },
                         Page::Quit=>{
                             ui.label("You can return to free roam from the SARE launcher or start the runtime directly.");
@@ -1769,7 +1770,7 @@ mod tests {
             for _ in 0..3 {
                 draw(&mut menu, Vec::new());
             }
-            for index in 0..gta::TABS.len() {
+            for index in 0..pause_tabs::TABS.len() {
                 let rect = ctx
                     .read_response(egui::Id::new(("gta-tab", index)))
                     .unwrap()
@@ -1779,7 +1780,7 @@ mod tests {
                 let width = ctx.fonts_mut(|fonts| {
                     fonts
                         .layout_no_wrap(
-                            gta::TABS[index].1.into(),
+                            pause_tabs::TABS[index].1.into(),
                             FontId::new(18.0 * scale, FontFamily::Name("menu".into())),
                             WHITE,
                         )
@@ -1788,7 +1789,7 @@ mod tests {
                 });
                 assert!(width < rect.width(), "tab label is clipped at {size:?}");
             }
-            for index in 0..gta::PAUSE_ITEMS.len() {
+            for index in 0..pause_tabs::PAUSE_ITEMS.len() {
                 assert!(screen.contains_rect(
                     ctx.read_response(egui::Id::new(("gta-row", index)))
                         .unwrap()

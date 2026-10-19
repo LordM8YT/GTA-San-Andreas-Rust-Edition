@@ -8,8 +8,8 @@ the status footer; build hash and network protocol are under Help.
 ## Visual direction
 
 Forest background `#0c1c16`, sidebar `#091711`, surface `#152b21`, warm gold
-`#dfb778`, offwhite `#efe9dd` and muted text `#a5b8a9`. The existing OFL gothic
-wordmark remains; other text uses egui's bundled proportional sans-serif.
+`#dfb778`, offwhite `#efe9dd` and muted text `#a5b8a9`. The wordmark uses the OFL
+Archivo Black font; other text uses egui's bundled proportional sans-serif.
 Wrapped card text is left-aligned to avoid stretched word spacing. Original
 outline icons, 6-point controls and 10-point cards/hero share hover/focus styling.
 The native window requests the OS dark theme; decorations remain platform-controlled.

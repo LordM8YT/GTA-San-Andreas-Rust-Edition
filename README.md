@@ -13,8 +13,8 @@ The shared version lives in
 build ID to distinguish builds. Existing commit-based release tags stay valid.
 
 [![Join the SARE Discord](https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/F8KwXJqw6D)
-[![Build status](https://img.shields.io/github/actions/workflow/status/LordM8YT/GTA-San-Andreas-Rust-Edition/native.yml?branch=main&style=for-the-badge&label=build)](https://github.com/LordM8YT/GTA-San-Andreas-Rust-Edition/actions/workflows/native.yml)
-[![Latest client](https://img.shields.io/badge/Download-latest%20client-2ea44f?style=for-the-badge)](https://github.com/LordM8YT/GTA-San-Andreas-Rust-Edition/releases/latest)
+[![Build status](https://img.shields.io/github/actions/workflow/status/LordM8YT/SARE/native.yml?branch=main&style=for-the-badge&label=build)](https://github.com/LordM8YT/SARE/actions/workflows/native.yml)
+[![Latest client](https://img.shields.io/badge/Download-latest%20client-2ea44f?style=for-the-badge)](https://github.com/LordM8YT/SARE/releases/latest)
 
 > **💬 Join the community on Discord: <https://discord.gg/F8KwXJqw6D>**
 > Get help, report bugs, find people to play with and follow development.
@@ -78,7 +78,7 @@ needs no port forwarding in relay mode. No public relay or Steam integration
 is configured; the prototype relay uses unencrypted TCP.
 For a server that stays running without a player's game, download
 **SARE-server-windows.zip** or **SARE-server-linux.zip** from the
-[latest release](https://github.com/LordM8YT/GTA-San-Andreas-Rust-Edition/releases/latest)
+[latest release](https://github.com/LordM8YT/SARE/releases/latest)
 and run **start-server.cmd**, or run it from a source checkout.
 The headless server is set up like a FiveM server: `server-data/server.cfg`,
 `resources/[category]/` with `fxmanifest.lua`, server-side Lua (events,

@@ -1787,7 +1787,7 @@ impl State {
                 let fps =
                     self.frame_count as f32 / now.duration_since(self.title_updated).as_secs_f32();
                 let pending = self.loading();
-                self.window.set_title(&format!("SA Freeroam | {:.0} FPS | GTA {:.0}, {:.0}, {:.1} | {}{} | WASD Shift Space | P fly | R reset", fps, center[0], center[1], self.position.y, if self.driving { "Drive" } else if self.walking { "Walk" } else { "Fly" }, if pending { " | loading map..." } else { "" }));
+                self.window.set_title(&format!("SARE | {:.0} FPS | {:.0}, {:.0}, {:.1} | {}{} | WASD Shift Space | P fly | R reset", fps, center[0], center[1], self.position.y, if self.driving { "Drive" } else if self.walking { "Walk" } else { "Fly" }, if pending { " | loading map..." } else { "" }));
                 self.frame_count = 0;
                 self.title_updated = now;
             }
@@ -2937,7 +2937,7 @@ impl ApplicationHandler for App {
         } else if self.first_model {
             "SA Native Runtime - First model"
         } else {
-            "SA Freeroam - loading"
+            "SARE - loading"
         };
         let window = Arc::new(
             event_loop
