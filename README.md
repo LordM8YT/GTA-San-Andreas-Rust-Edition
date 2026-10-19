@@ -158,9 +158,10 @@ not modified or included in this repository.
 
 ## Legal
 
-**Purpose.** SARE is an alternative engine for playing and modding your own
-copy of San Andreas, with native mod support, multiplayer and modern graphics.
-It is not a replacement for the game and does not recreate it: without the
+**Purpose.** SARE is a modding platform for your own copy of San Andreas: an
+engine that makes mods easier to build and share and that can handle more
+(bigger mods, multiplayer, modern graphics). It is not a remake and does not
+replace the game: without the
 original PC files it has no world, characters, vehicles or sound, and it does
 not include the story, missions or cutscenes.
 
