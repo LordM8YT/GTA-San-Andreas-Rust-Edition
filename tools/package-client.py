@@ -106,7 +106,7 @@ def package(target: Path, destination: Path, platform: str) -> Path:
             (REPO / 'LICENSE', 'LICENSE'),
             (REPO / 'docs/client-package.md', 'START-HERE.md'),
             (REPO / 'native/Cargo.lock', 'Cargo.lock'),
-            (REPO / 'native/crates/runtime/assets/UnifrakturCook-OFL.txt', 'licenses/UnifrakturCook-OFL.txt'),
+            (REPO / 'native/crates/runtime/assets/ArchivoBlack-OFL.txt', 'licenses/ArchivoBlack-OFL.txt'),
             (REPO / 'native/crates/runtime/vendor/fsr1/license.txt', 'licenses/FSR1.txt'),
         ]:
             archive.write(source, name)

@@ -9,7 +9,7 @@ Up to 20 players. Movement is still simulated by clients.
 ## Start
 
 **Download:** every tested main-branch build publishes `SARE-server-windows.zip`
-and `SARE-server-linux.zip` on the [latest release](https://github.com/LordM8YT/GTA-San-Andreas-Rust-Edition/releases/latest).
+and `SARE-server-linux.zip` on the [latest release](https://github.com/LordM8YT/SARE/releases/latest).
 Extract it and run `start-server.cmd` (Linux: `./start-server.sh`). The first
 start asks for a template, **Freeroam** or **[SARE Box](sarebox.md)**, and
 creates `server-data/server.cfg` (without a console: `+set sv_template sarebox`). The package keeps binaries in `server/` and your data in

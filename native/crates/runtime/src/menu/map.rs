@@ -1,4 +1,4 @@
-//! The MAP tab in the style of GTA V: the whole state to pan and zoom, with
+//! The MAP tab: the whole state to pan and zoom, with
 //! blips, a legend, the GPS route and a waypoint you place yourself.
 use super::{
     add_radar_tile, blip_dot, clip_line, player_arrow, route_line, waypoint_pin, Action, Menu,

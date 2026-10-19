@@ -17,7 +17,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-const REPO: &str = "LordM8YT/GTA-San-Andreas-Rust-Edition";
+const REPO: &str = "LordM8YT/SARE";
+/// The repository's name before the rename. GitHub redirects it, so builds
+/// from before the rename keep updating; accept it until the rename is done.
+const OLD_REPO: &str = "LordM8YT/GTA-San-Andreas-Rust-Edition";
 const BUILD: &str = "sare-build.json";
 const PREFIX: &str = "server/";
 const MAX_PACKAGE: u64 = 128 * 1024 * 1024;
@@ -346,8 +349,10 @@ fn select_asset(data: &[u8], current: &str) -> Result<Option<(String, Asset, Str
         "Invalid release asset"
     );
     ensure!(
-        asset.browser_download_url
-            == format!("https://github.com/{REPO}/releases/download/client-{commit}/{name}"),
+        [REPO, OLD_REPO]
+            .iter()
+            .any(|repo| asset.browser_download_url
+                == format!("https://github.com/{repo}/releases/download/client-{commit}/{name}")),
         "Unexpected update download source"
     );
     let digest = asset
@@ -362,14 +367,18 @@ fn select_asset(data: &[u8], current: &str) -> Result<Option<(String, Asset, Str
 fn prepare(root: &Path) -> Result<Option<(PathBuf, String)>> {
     let current = read_build(root)?;
     let http = agent();
-    let mut response = match http
-        .get(&format!(
-            "https://api.github.com/repos/{REPO}/releases/latest"
+    let latest = |repo: &str| {
+        http.get(&format!(
+            "https://api.github.com/repos/{repo}/releases/latest"
         ))
         .header("User-Agent", "SARE-server")
         .header("Accept", "application/vnd.github+json")
         .call()
-    {
+    };
+    let mut response = match latest(REPO).or_else(|e| match e {
+        ureq::Error::StatusCode(404) => latest(OLD_REPO),
+        e => Err(e),
+    }) {
         Ok(r) => r,
         Err(ureq::Error::StatusCode(404)) => bail!("No release has been published yet"),
         Err(e) => return Err(e.into()),

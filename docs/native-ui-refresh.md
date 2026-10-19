@@ -15,7 +15,7 @@ menu selections, with SARE's own palette and original vector artwork.
 | Accent | `#E4BC77` | Selection and primary actions |
 | Status | `#8FC2A5` | Online status |
 
-The existing OFL UnifrakturCook font carries the SARE wordmark. Body text uses
+The OFL Archivo Black font carries the SARE wordmark. Body text uses
 egui's bundled proportional font. The title screen puts play, map and multiplayer
 in a clear left column, with customization on the right. The pause screen keeps
 the familiar tab/list structure. Gameplay keeps the circular radar and groups

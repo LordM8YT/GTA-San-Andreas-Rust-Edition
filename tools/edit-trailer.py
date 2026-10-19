@@ -24,7 +24,7 @@ FONTS = [
     '/System/Library/Fonts/Supplemental/Arial Bold.ttf',
     '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
 ]
-REPO = 'github.com/LordM8YT/GTA-San-Andreas-Rust-Edition'
+REPO = 'github.com/LordM8YT/SARE'
 
 # (seconds, clip number or None for a black card, seconds into the clip, caption)
 # Intro 0-10 s, groove 10-40 s, build 40-50 s, drop 50-70 s, logo 70-78 s.

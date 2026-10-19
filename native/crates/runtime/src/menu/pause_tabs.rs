@@ -1,4 +1,4 @@
-//! In-game pause menu chrome in the style of GTA V: a title and player
+//! In-game pause menu chrome: a title and player
 //! header, a row of tabs with the selected tab in white, a coloured stripe,
 //! white-highlighted list rows and instructional key hints at the bottom.
 use super::{Action, Menu, Page, DESTINATIONS, MUTED};
@@ -39,7 +39,7 @@ fn menu_font(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name("menu".into()))
 }
 
-/// One GTA V list row: white with dark text when selected.
+/// One list row: white with dark text when selected.
 fn row(ui: &mut egui::Ui, rect: Rect, text: &str, selected: bool, id: usize, scale: f32) -> bool {
     let response = ui.interact(rect, egui::Id::new(("gta-row", id)), Sense::click());
     let (fill, color) = if selected {
@@ -130,7 +130,7 @@ impl Menu {
             Pos2::new(left, header),
             egui::Align2::LEFT_TOP,
             "SARE",
-            FontId::new(46.0 * scale, FontFamily::Name("street".into())),
+            FontId::new(46.0 * scale, FontFamily::Name("title".into())),
             TEXT,
         );
         let location = DESTINATIONS
@@ -163,7 +163,7 @@ impl Menu {
             MUTED,
         );
 
-        // Tabs. Q / E switch tabs, as on PC in GTA V.
+        // Tabs. Q / E switch tabs.
         let tabs_top = header + 66.0 * scale;
         let tab_height = 34.0 * scale;
         let gap = 3.0 * scale;

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate the SARE application icon from the bundled OFL title font.
+"""Regenerate the SARE application icon from the bundled OFL Archivo Black title font.
 
 Outputs (committed, so builds need neither Python nor Pillow):
   native/assets/icon.png        256 px master, also used in the README
@@ -15,7 +15,7 @@ import struct
 from PIL import Image, ImageDraw, ImageFont
 
 REPO = Path(__file__).resolve().parents[1]
-FONT = REPO / 'native/crates/runtime/assets/UnifrakturCook-Bold.ttf'
+FONT = REPO / 'native/crates/runtime/assets/ArchivoBlack-Regular.ttf'
 OUT = REPO / 'native/assets'
 GOLD, DARK, EDGE = (223, 183, 120, 255), (17, 15, 12, 255), (120, 93, 47, 255)
 SIZES = (16, 24, 32, 48, 64, 256)
@@ -27,9 +27,9 @@ def master(size=256, scale=4):
     draw = ImageDraw.Draw(image)
     pad, radius = side * 0.04, side * 0.2
     draw.rounded_rectangle((pad, pad, side - pad, side - pad), radius, fill=DARK, outline=EDGE, width=int(side * 0.035))
-    font = ImageFont.truetype(str(FONT), int(side * 0.5))
-    left, top, right, bottom = draw.textbbox((0, 0), 'SA', font=font)
-    draw.text(((side - (right - left)) / 2 - left, (side - (bottom - top)) / 2 - top), 'SA', font=font, fill=GOLD)
+    font = ImageFont.truetype(str(FONT), int(side * 0.27))
+    left, top, right, bottom = draw.textbbox((0, 0), 'SARE', font=font)
+    draw.text(((side - (right - left)) / 2 - left, (side - (bottom - top)) / 2 - top), 'SARE', font=font, fill=GOLD)
     return image.resize((size, size), Image.LANCZOS)
 
 
