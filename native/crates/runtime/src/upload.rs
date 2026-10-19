@@ -4,7 +4,8 @@ use anyhow::{Context, Result};
 use sa_assets::Texture;
 use sa_scene::{Batch, Scene};
 use std::{
-    collections::HashMap,
+    collections::{hash_map::DefaultHasher, HashMap},
+    hash::{Hash, Hasher},
     time::{Duration, Instant},
 };
 
@@ -25,32 +26,57 @@ struct BufferUpload {
     offset: usize,
     bounds: crate::culling::Bounds,
 }
+struct TextureSet {
+    textures: HashMap<String, Texture>,
+    aliases: HashMap<String, String>,
+    aliases_by_image: HashMap<String, Vec<String>>,
+    deduplicated_bytes: usize,
+}
+pub(super) struct PreparedScene {
+    pub(super) scene: Scene,
+    textures: TextureSet,
+}
 pub struct Upload {
     pub scene: Scene,
     textures: std::collections::hash_map::IntoIter<String, Texture>,
     batches: std::vec::IntoIter<Batch>,
     images: HashMap<String, wgpu::BindGroup>,
+    image_aliases: HashMap<String, String>,
+    aliases_by_image: HashMap<String, Vec<String>>,
     current_image: Option<ImageUpload>,
     current_buffer: Option<BufferUpload>,
     ready: Vec<GpuBatch>,
     frames: usize,
     peak_ms: f64,
+    peak_stage: &'static str,
     bytes: usize,
     reused_images: usize,
     reused_bytes: usize,
 }
 impl Upload {
-    pub fn new(mut scene: Scene) -> Self {
+    pub fn new(scene: Scene) -> Self {
+        Self::from_prepared(prepare_scene(scene))
+    }
+    fn from_prepared(mut prepared: PreparedScene) -> Self {
+        let TextureSet {
+            textures,
+            aliases,
+            aliases_by_image,
+            ..
+        } = prepared.textures;
         Self {
-            textures: std::mem::take(&mut scene.textures).into_iter(),
-            batches: std::mem::take(&mut scene.batches).into_iter(),
-            scene,
+            textures: textures.into_iter(),
+            batches: std::mem::take(&mut prepared.scene.batches).into_iter(),
+            scene: prepared.scene,
             images: HashMap::new(),
+            image_aliases: aliases,
+            aliases_by_image,
             current_image: None,
             current_buffer: None,
             ready: Vec::new(),
             frames: 0,
             peak_ms: 0.0,
+            peak_stage: "none",
             bytes: 0,
             reused_images: 0,
             reused_bytes: 0,
@@ -59,14 +85,24 @@ impl Upload {
     /// Texture keys are identities only within an immutable world loader.
     /// Never call this across a session/mod-resource switch: equal names may
     /// carry different pixels. BindGroup clones retain the actual GPU images.
-    pub fn reusing(scene: Scene, previous: &[GpuBatch]) -> Self {
-        let images = previous
-            .iter()
-            .filter(|batch| scene.textures.contains_key(&batch.texture_key))
-            .map(|batch| (batch.texture_key.clone(), batch.texture.clone()))
-            .collect();
-        let mut upload = Self::new(scene);
-        upload.images = images;
+    pub fn reusing(scene: PreparedScene, previous: &[GpuBatch]) -> Self {
+        let mut upload = Self::from_prepared(scene);
+        for batch in previous {
+            if let Some(representative) = upload.image_aliases.get(&batch.texture_key).cloned() {
+                upload
+                    .images
+                    .entry(representative.clone())
+                    .or_insert_with(|| batch.texture.clone());
+                if let Some(aliases) = upload.aliases_by_image.get(&representative) {
+                    for alias in aliases {
+                        upload
+                            .images
+                            .entry(alias.clone())
+                            .or_insert_with(|| batch.texture.clone());
+                    }
+                }
+            }
+        }
         upload
     }
     /// Returns true only when every image and vertex buffer has been uploaded.
@@ -95,7 +131,14 @@ impl Upload {
                         // Drop CPU pixels gradually under the same frame budget.
                         continue;
                     }
+                    let operation_started = Instant::now();
                     let texture = crate::mipmaps::texture(device, &key, image.width, image.height);
+                    Self::record_operation(
+                        &mut self.peak_ms,
+                        &mut self.peak_stage,
+                        "texture allocation",
+                        operation_started,
+                    );
                     self.current_image = Some(ImageUpload {
                         key,
                         image,
@@ -113,11 +156,19 @@ impl Upload {
                                 label: Some("Streamed texture mip levels"),
                             })
                         });
+                        let operation_started = Instant::now();
                         mipmaps.encode_level(device, encoder, &image.texture, image.mip);
+                        Self::record_operation(
+                            &mut self.peak_ms,
+                            &mut self.peak_stage,
+                            "mip encoding",
+                            operation_started,
+                        );
                         image.mip += 1;
                         continue;
                     }
                     let image = self.current_image.take().unwrap();
+                    let operation_started = Instant::now();
                     let view = image.texture.create_view(&Default::default());
                     let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some(&image.key),
@@ -133,14 +184,27 @@ impl Upload {
                             },
                         ],
                     });
-                    self.images.insert(image.key, group);
+                    Self::record_operation(
+                        &mut self.peak_ms,
+                        &mut self.peak_stage,
+                        "texture bind group",
+                        operation_started,
+                    );
+                    self.images.insert(image.key.clone(), group.clone());
+                    if let Some(aliases) = self.aliases_by_image.remove(&image.key) {
+                        for alias in aliases {
+                            self.images.insert(alias, group.clone());
+                        }
+                    }
                     continue;
                 }
+
                 let stride = image.image.width as usize * 4;
                 let rows =
                     ((PACKET_BYTES / stride).max(1) as u32).min(image.image.height - image.row);
                 let start = image.row as usize * stride;
                 let count = rows as usize * stride;
+                let operation_started = Instant::now();
                 queue.write_texture(
                     wgpu::TexelCopyTextureInfo {
                         texture: &image.texture,
@@ -164,6 +228,12 @@ impl Upload {
                         depth_or_array_layers: 1,
                     },
                 );
+                Self::record_operation(
+                    &mut self.peak_ms,
+                    &mut self.peak_stage,
+                    "texture write",
+                    operation_started,
+                );
                 image.row += rows;
                 bytes += count;
                 continue;
@@ -171,12 +241,19 @@ impl Upload {
             if self.current_buffer.is_none() {
                 if let Some(batch) = self.batches.next() {
                     let size = std::mem::size_of_val(batch.vertices.as_slice()) as u64;
+                    let operation_started = Instant::now();
                     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
                         label: Some(&batch.key),
                         size: size.max(4),
                         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                         mapped_at_creation: false,
                     });
+                    Self::record_operation(
+                        &mut self.peak_ms,
+                        &mut self.peak_stage,
+                        "vertex buffer allocation",
+                        operation_started,
+                    );
                     self.current_buffer = Some(BufferUpload {
                         batch,
                         buffer,
@@ -192,17 +269,31 @@ impl Upload {
                 let raw: &[u8] = bytemuck::cast_slice(&buffer.batch.vertices);
                 let end = (buffer.offset + PACKET_BYTES).min(raw.len());
                 if end > buffer.offset {
+                    let operation_started = Instant::now();
                     queue.write_buffer(
                         &buffer.buffer,
                         buffer.offset as u64,
                         &raw[buffer.offset..end],
                     );
+                    Self::record_operation(
+                        &mut self.peak_ms,
+                        &mut self.peak_stage,
+                        "vertex buffer write",
+                        operation_started,
+                    );
                 }
                 if !buffer.batch.animated {
+                    let operation_started = Instant::now();
                     let stride = std::mem::size_of::<sa_scene::Vertex>();
                     let first = buffer.offset / stride;
                     let last = end.div_ceil(stride).min(buffer.batch.vertices.len());
                     buffer.bounds.include(&buffer.batch.vertices[first..last]);
+                    Self::record_operation(
+                        &mut self.peak_ms,
+                        &mut self.peak_stage,
+                        "vertex bounds",
+                        operation_started,
+                    );
                 }
                 bytes += end - buffer.offset;
                 buffer.offset = end;
@@ -243,9 +334,133 @@ impl Upload {
         self.bytes += bytes;
         Ok(done)
     }
+    fn record_operation(
+        peak_ms: &mut f64,
+        peak_stage: &mut &'static str,
+        stage: &'static str,
+        started: Instant,
+    ) {
+        let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+        if elapsed_ms > *peak_ms {
+            *peak_ms = elapsed_ms;
+            *peak_stage = stage;
+        }
+    }
     pub fn finish(mut self) -> (Vec<GpuBatch>, Scene) {
         self.ready.sort_by_key(|batch| batch.alpha);
-        eprintln!("Incremental GPU upload: {} batches / {:.1} MiB over {} frames; peak CPU slice {:.2} ms; reused {} textures / {:.1} MiB", self.ready.len(), self.bytes as f64 / 1048576.0, self.frames, self.peak_ms, self.reused_images, self.reused_bytes as f64 / 1048576.0);
+        eprintln!("Incremental GPU upload: {} batches / {:.1} MiB over {} frames; peak CPU slice {:.2} ms ({}); reused {} textures / {:.1} MiB", self.ready.len(), self.bytes as f64 / 1048576.0, self.frames, self.peak_ms, self.peak_stage, self.reused_images, self.reused_bytes as f64 / 1048576.0);
         (self.ready, self.scene)
+    }
+}
+
+pub(super) fn prepare_scene(mut scene: Scene) -> PreparedScene {
+    let started = Instant::now();
+    let textures = deduplicate_textures(std::mem::take(&mut scene.textures));
+    eprintln!(
+        "Prepared {} unique GPU textures in {:.2} ms; deduplicated {:.1} MiB",
+        textures.textures.len(),
+        started.elapsed().as_secs_f64() * 1000.0,
+        textures.deduplicated_bytes as f64 / 1048576.0
+    );
+    PreparedScene { scene, textures }
+}
+
+fn deduplicate_textures(textures: HashMap<String, Texture>) -> TextureSet {
+    let mut unique: HashMap<String, Texture> = HashMap::with_capacity(textures.len());
+    let mut fingerprints: HashMap<(u32, u32, bool, bool, u64), Vec<String>> = HashMap::new();
+    let mut image_aliases = HashMap::new();
+    let mut aliases_by_image: HashMap<String, Vec<String>> = HashMap::new();
+    let mut deduplicated_bytes = 0;
+    for (key, image) in textures {
+        let mut hasher = DefaultHasher::new();
+        image.rgba.hash(&mut hasher);
+        let signature = (
+            image.width,
+            image.height,
+            image.has_alpha,
+            key == "runtime:roadsignfont",
+            hasher.finish(),
+        );
+        let representative = fingerprints.get(&signature).and_then(|keys| {
+            keys.iter()
+                .find(|candidate| unique[*candidate].rgba == image.rgba)
+                .cloned()
+        });
+        if let Some(representative) = representative {
+            deduplicated_bytes += image.rgba.len();
+            image_aliases.insert(key.clone(), representative.clone());
+            aliases_by_image
+                .entry(representative)
+                .or_default()
+                .push(key);
+        } else {
+            fingerprints.entry(signature).or_default().push(key.clone());
+            image_aliases.insert(key.clone(), key.clone());
+            unique.insert(key, image);
+        }
+    }
+    TextureSet {
+        textures: unique,
+        aliases: image_aliases,
+        aliases_by_image,
+        deduplicated_bytes,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn image(width: u32, height: u32, has_alpha: bool, rgba: &[u8]) -> Texture {
+        Texture {
+            width,
+            height,
+            rgba: rgba.to_vec(),
+            has_alpha,
+        }
+    }
+
+    #[test]
+    fn identical_texture_pixels_share_one_upload_and_keep_all_keys() {
+        let textures = HashMap::from([
+            ("city:wall".into(), image(1, 1, false, &[1, 2, 3, 255])),
+            ("suburb:wall".into(), image(1, 1, false, &[1, 2, 3, 255])),
+            ("city:road".into(), image(1, 1, false, &[4, 5, 6, 255])),
+        ]);
+        let deduplicated = deduplicate_textures(textures);
+        assert_eq!(deduplicated.textures.len(), 2);
+        assert_eq!(deduplicated.aliases.len(), 3);
+        assert_eq!(deduplicated.deduplicated_bytes, 4);
+        let (alias, representative) = deduplicated
+            .aliases
+            .iter()
+            .find(|(key, representative)| *key != *representative)
+            .unwrap();
+        assert_eq!(deduplicated.textures[representative].rgba, [1, 2, 3, 255]);
+        assert_eq!(deduplicated.aliases_by_image[representative].len(), 1);
+        assert!(deduplicated.aliases_by_image[representative].contains(alias));
+    }
+
+    #[test]
+    fn texture_deduplication_preserves_sampling_and_alpha_semantics() {
+        let textures = HashMap::from([
+            (
+                "runtime:roadsignfont".into(),
+                image(1, 1, false, &[1, 2, 3, 255]),
+            ),
+            ("city:atlas".into(), image(1, 1, false, &[1, 2, 3, 255])),
+            (
+                "city:transparent".into(),
+                image(1, 1, true, &[1, 2, 3, 255]),
+            ),
+            ("city:different".into(), image(1, 1, false, &[1, 2, 3, 254])),
+        ]);
+        let deduplicated = deduplicate_textures(textures);
+        assert_eq!(deduplicated.textures.len(), 4);
+        assert!(deduplicated
+            .aliases
+            .iter()
+            .all(|(key, representative)| key == representative));
+        assert_eq!(deduplicated.deduplicated_bytes, 0);
     }
 }

@@ -1,7 +1,7 @@
 //! One bounded background loader. The renderer keeps the old region until a
 //! complete replacement is ready; no GTA files are written.
 use anyhow::Result;
-use sa_scene::{Scene, WorldLoader};
+use sa_scene::WorldLoader;
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
 use std::time::{Duration, Instant};
 
@@ -24,7 +24,7 @@ enum Work {
 }
 pub struct Streamer {
     requests: SyncSender<Work>,
-    results: Receiver<(Region, Result<Scene>)>,
+    results: Receiver<(Region, Result<crate::upload::PreparedScene>)>,
     pending: Option<Region>,
     retry_after: Option<Instant>,
     connected: bool,
@@ -49,12 +49,13 @@ impl Streamer {
                         loader.load(region.center, ORIGIN, RADIUS)
                     } else {
                         loader.load_interior(region.center, ORIGIN, 50.0, region.interior)
-                    };
+                    }
+                    .map(crate::upload::prepare_scene);
                     if let Ok(ref scene) = scene {
                         eprintln!(
-                            "Loaded {} placements / {} triangles in {:.2}s",
-                            scene.placements,
-                            scene.triangles,
+                            "Loaded {} placements / {} triangles and prepared textures in {:.2}s",
+                            scene.scene.placements,
+                            scene.scene.triangles,
                             started.elapsed().as_secs_f32()
                         );
                     }
@@ -103,7 +104,7 @@ impl Streamer {
             self.pending = Some(region);
         }
     }
-    pub fn poll(&mut self) -> Option<(Region, Result<Scene>)> {
+    pub fn poll(&mut self) -> Option<(Region, Result<crate::upload::PreparedScene>)> {
         if !self.connected {
             return None;
         }

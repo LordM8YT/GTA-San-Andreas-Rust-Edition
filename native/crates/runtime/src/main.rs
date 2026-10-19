@@ -39,7 +39,7 @@ mod ui_theme;
 mod upload;
 mod weapons;
 mod zones;
-use streaming::{Streamer, ORIGIN, RADIUS};
+use streaming::{Streamer, DESTINATIONS, ORIGIN, RADIUS};
 use wgpu::util::DeviceExt;
 use winit::{
     application::ApplicationHandler,
@@ -192,6 +192,7 @@ struct State {
     mipmaps: mipmaps::Generator,
     streamer: Option<Streamer>,
     uploading: Option<(streaming::Region, upload::Upload)>,
+    initial_upload_pending: bool,
     retired: Vec<streaming::Retired>,
     region: [f32; 2],
     interior: u8,
@@ -588,6 +589,7 @@ impl State {
         mut scene: Scene,
         first_model: bool,
         radar_tiles: Vec<sa_scene::RadarTile>,
+        streamer: Option<Streamer>,
     ) -> Result<Self> {
         let mut startup_settings = settings::Settings::load();
         match sa_client::identity_secret() {
@@ -866,8 +868,15 @@ impl State {
         let collision = scene.collision.take();
         let water = scene.water.take();
         let mipmaps = mipmaps::Generator::new(&device);
-        let batches =
-            Self::upload_scene(&device, &queue, &image_layout, &sampler, &mipmaps, scene)?;
+        let initial_upload_pending = streamer.is_some() && !first_model && animation.is_none();
+        let (batches, initial_upload) = if initial_upload_pending {
+            (Vec::new(), Some(upload::Upload::new(scene)))
+        } else {
+            (
+                Self::upload_scene(&device, &queue, &image_layout, &sampler, &mipmaps, scene)?,
+                None,
+            )
+        };
         let gui_context = egui::Context::default();
         let mut radar_texture_handles = Vec::with_capacity(radar_tiles.len());
         let radar_tiles = radar_tiles
@@ -994,8 +1003,17 @@ impl State {
             image_layout,
             sampler,
             mipmaps,
-            streamer: None,
-            uploading: None,
+            streamer,
+            uploading: initial_upload.map(|upload| {
+                (
+                    streaming::Region {
+                        center: ORIGIN,
+                        interior: 0,
+                    },
+                    upload,
+                )
+            }),
+            initial_upload_pending,
             retired: Vec::new(),
             region: ORIGIN,
             interior: 0,
@@ -1222,24 +1240,24 @@ impl State {
             if !self.stale_region(region) {
                 match result {
                     Ok(scene) => {
-                        let valid_entry = if self.destination.is_some() && region.interior != 0 {
-                            self.interior_destination
-                                .and_then(|index| {
-                                    let destination = streaming::INTERIORS[index];
-                                    let point = Vec3::new(
-                                        destination.position[0] - ORIGIN[0],
-                                        destination.position[2],
-                                        ORIGIN[1] - destination.position[1],
-                                    );
-                                    scene
-                                        .collision
-                                        .as_ref()
-                                        .and_then(|world| world.standing_at(point, point.y + 1.0))
-                                })
-                                .is_some()
-                        } else {
-                            true
-                        };
+                        let valid_entry =
+                            if self.destination.is_some() && region.interior != 0 {
+                                self.interior_destination
+                                    .and_then(|index| {
+                                        let destination = streaming::INTERIORS[index];
+                                        let point = Vec3::new(
+                                            destination.position[0] - ORIGIN[0],
+                                            destination.position[2],
+                                            ORIGIN[1] - destination.position[1],
+                                        );
+                                        scene.scene.collision.as_ref().and_then(|world| {
+                                            world.standing_at(point, point.y + 1.0)
+                                        })
+                                    })
+                                    .is_some()
+                            } else {
+                                true
+                            };
                         if valid_entry {
                             // This streamer keeps one immutable resource loader.
                             // Reuse textures only within that loader's world;
@@ -1261,6 +1279,7 @@ impl State {
         }
         if let Some((region, mut upload)) = self.uploading.take() {
             if self.stale_region(region) {
+                self.initial_upload_pending = false;
                 self.retired
                     .extend(streamer.retire(streaming::Retired::Upload(Box::new(upload))));
             } else {
@@ -1274,13 +1293,19 @@ impl State {
                     Ok(false) => self.uploading = Some((region, upload)),
                     Ok(true) => {
                         let (batches, mut scene) = upload.finish();
+                        let (collision, water) = if self.initial_upload_pending {
+                            self.initial_upload_pending = false;
+                            (None, None)
+                        } else {
+                            (
+                                std::mem::replace(&mut self.collision, scene.collision.take()),
+                                std::mem::replace(&mut self.water, scene.water.take()),
+                            )
+                        };
                         let old = streaming::Retired::Scene {
                             batches: std::mem::replace(&mut self.batches, batches),
-                            collision: std::mem::replace(
-                                &mut self.collision,
-                                scene.collision.take(),
-                            ),
-                            water: std::mem::replace(&mut self.water, scene.water.take()),
+                            collision,
+                            water,
                         };
                         self.retired.extend(streamer.retire(old));
                         self.region = region.center;
@@ -1302,6 +1327,7 @@ impl State {
                         );
                     }
                     Err(error) => {
+                        self.initial_upload_pending = false;
                         streamer.retry_later();
                         self.menu.message = format!("GPU upload failed: {error}");
                         self.retired
@@ -2935,6 +2961,7 @@ impl ApplicationHandler for App {
             scene,
             self.first_model,
             radar_tiles,
+            self.streamer.take(),
         )) {
             Ok(mut state) => {
                 state.roads = roads;
@@ -2946,7 +2973,6 @@ impl ApplicationHandler for App {
                     state.menu.settings.apply_preset(2);
                 }
                 state.frontend_sounds = self.frontend_sounds.take();
-                state.streamer = self.streamer.take();
                 state.menu.mods = self.mod_names.clone();
                 if let Some(ped) = self.ped.take() {
                     match ped.scene().and_then(|scene| {
@@ -4491,6 +4517,349 @@ fn append_originals<T>(
     }
 }
 
+#[derive(Clone, Copy)]
+struct SurfaceTransition {
+    point: Vec3,
+    axis: Vec3,
+    axis_start: f32,
+    axis_end: f32,
+    low: f32,
+    high: f32,
+}
+
+#[derive(Default)]
+struct SurfaceProbeResult {
+    curb_runs: usize,
+    curb_failures: usize,
+    curb_skips: usize,
+    ramp_runs: usize,
+    ramp_failures: usize,
+    ramp_skips: usize,
+}
+
+enum SurfaceCaseResult {
+    Passed,
+    Blocked(String),
+    Skipped,
+}
+
+fn walk_surface_transition(
+    world: &CollisionWorld,
+    transition: SurfaceTransition,
+    direction: Vec3,
+    start_offset: f32,
+    distance: f32,
+    minimum_fraction: f32,
+    frames: usize,
+) -> SurfaceCaseResult {
+    let direction = direction.normalize();
+    let start = transition.point - direction * start_offset;
+    let expected_start = if direction.dot(transition.axis) > 0.0 {
+        transition.axis_start
+    } else {
+        transition.axis_end
+    };
+    let max_ground_height = expected_start + 0.25;
+    let Some(ground) = world.ground_below(
+        Vec3::new(start.x, max_ground_height, start.z),
+        max_ground_height,
+    ) else {
+        return SurfaceCaseResult::Skipped;
+    };
+    if (ground - expected_start).abs() > 0.5 {
+        return SurfaceCaseResult::Skipped;
+    }
+    let mut player = Player {
+        feet: Vec3::new(start.x, ground, start.z),
+        vertical_speed: 0.0,
+        grounded: true,
+    };
+    let mut grounded_frames = 0;
+    let mut max_vertical_step = 0.0f32;
+    let mut previous_y = player.feet.y;
+    for _ in 0..frames {
+        player.step(world, direction * 4.5, false, 1.0 / 60.0);
+        if !player.feet.is_finite() || player.feet.y < -100.0 {
+            return SurfaceCaseResult::Blocked("player left valid world coordinates".to_owned());
+        }
+        grounded_frames += usize::from(player.grounded);
+        max_vertical_step = max_vertical_step.max((player.feet.y - previous_y).abs());
+        previous_y = player.feet.y;
+    }
+    let progress = (player.feet - start).dot(direction);
+    if progress < distance * minimum_fraction
+        || grounded_frames < frames * 9 / 10
+        || max_vertical_step > 0.45
+    {
+        let next = player.feet + direction * (4.5 / 60.0);
+        let wall_push = (world.resolve_walls(next) - next).length();
+        let blocker = if wall_push > 0.05 {
+            format!("wall correction {wall_push:.2}m")
+        } else {
+            "no wall correction (possible ceiling or ground clearance)".to_owned()
+        };
+        return SurfaceCaseResult::Blocked(format!(
+            "travel {progress:.2}/{distance:.2}m, grounded {grounded_frames}/{frames}, max vertical step {max_vertical_step:.2}m, {blocker}"
+        ));
+    }
+    SurfaceCaseResult::Passed
+}
+
+fn probe_curbs_and_ramps(
+    world: &CollisionWorld,
+    center: [f32; 2],
+    name: &str,
+) -> Result<SurfaceProbeResult> {
+    const HALF_EXTENT: i32 = 25;
+    const SIZE: usize = (HALF_EXTENT * 2 + 1) as usize;
+    const MAX_CASES: usize = 48;
+    const ELEVATION_BAND: f32 = 20.0;
+    let mut heights = vec![vec![None; SIZE]; SIZE];
+    let mut elevations = Vec::with_capacity(SIZE * SIZE);
+    for x in -HALF_EXTENT..=HALF_EXTENT {
+        for z in -HALF_EXTENT..=HALF_EXTENT {
+            if let Some(height) = world.ground_below(Vec3::new(x as f32, 1000.0, z as f32), 1000.0)
+            {
+                elevations.push(height);
+            }
+        }
+    }
+    if elevations.is_empty() {
+        println!("{name} surface scan: no walkable ground samples");
+        return Ok(SurfaceProbeResult::default());
+    }
+    elevations.sort_by(f32::total_cmp);
+    let baseline = elevations[elevations.len() / 2];
+    let sample_ceiling = baseline + ELEVATION_BAND;
+    let mut grounded_samples = 0;
+    for x in -HALF_EXTENT..=HALF_EXTENT {
+        for z in -HALF_EXTENT..=HALF_EXTENT {
+            let height = world
+                .ground_below(
+                    Vec3::new(x as f32, sample_ceiling, z as f32),
+                    sample_ceiling,
+                )
+                .filter(|height| (height - baseline).abs() <= ELEVATION_BAND);
+            grounded_samples += usize::from(height.is_some());
+            heights[(x + HALF_EXTENT) as usize][(z + HALF_EXTENT) as usize] = height;
+        }
+    }
+
+    let mut curbs = Vec::new();
+    let mut curb_tiles = HashSet::new();
+    for x in 0..SIZE {
+        for z in 0..SIZE {
+            for (dx, dz, axis) in [(1usize, 0usize, Vec3::X), (0, 1usize, Vec3::Z)] {
+                let (nx, nz) = (x + dx, z + dz);
+                if nx >= SIZE || nz >= SIZE {
+                    continue;
+                }
+                let (Some(a), Some(b)) = (heights[x][z], heights[nx][nz]) else {
+                    continue;
+                };
+                let rise = b - a;
+                if !(0.08..=0.38).contains(&rise.abs()) {
+                    continue;
+                }
+                let (low_x, low_z, high_x, high_z) = if rise > 0.0 {
+                    (x, z, nx, nz)
+                } else {
+                    (nx, nz, x, z)
+                };
+                let (low_far_x, low_far_z) =
+                    (low_x as isize - dx as isize, low_z as isize - dz as isize);
+                let (high_far_x, high_far_z) =
+                    (high_x as isize + dx as isize, high_z as isize + dz as isize);
+                if low_far_x < 0
+                    || low_far_z < 0
+                    || high_far_x >= SIZE as isize
+                    || high_far_z >= SIZE as isize
+                {
+                    continue;
+                }
+                let (Some(low_far), Some(high_far)) = (
+                    heights[low_far_x as usize][low_far_z as usize],
+                    heights[high_far_x as usize][high_far_z as usize],
+                ) else {
+                    continue;
+                };
+                if (low_far - a.min(b)).abs() > 0.1 || (high_far - a.max(b)).abs() > 0.1 {
+                    continue;
+                }
+                let point = Vec3::new(
+                    x as f32 - HALF_EXTENT as f32 + dx as f32 * 0.5,
+                    0.0,
+                    z as f32 - HALF_EXTENT as f32 + dz as f32 * 0.5,
+                );
+                let tile = (
+                    (point.x / 6.0).floor() as i32,
+                    (point.z / 6.0).floor() as i32,
+                    if axis == Vec3::Z { 1 } else { 0 },
+                );
+                if curb_tiles.insert(tile) {
+                    curbs.push(SurfaceTransition {
+                        point,
+                        axis,
+                        axis_start: a,
+                        axis_end: b,
+                        low: a.min(b),
+                        high: a.max(b),
+                    });
+                }
+            }
+        }
+    }
+    let curb_stride = curbs.len().div_ceil(MAX_CASES).max(1);
+    let curbs: Vec<_> = curbs
+        .into_iter()
+        .step_by(curb_stride)
+        .take(MAX_CASES)
+        .collect();
+
+    let mut ramps = Vec::new();
+    let mut ramp_tiles = HashSet::new();
+    for x in 0..SIZE {
+        for z in 0..SIZE {
+            for axis in [Vec3::X, Vec3::Z] {
+                let (dx, dz) = if axis == Vec3::X { (1, 0) } else { (0, 1) };
+                let (end_x, end_z) = (x + dx * 4, z + dz * 4);
+                if end_x >= SIZE || end_z >= SIZE {
+                    continue;
+                }
+                let samples: Option<Vec<f32>> = (0..=4)
+                    .map(|step| heights[x + dx * step][z + dz * step])
+                    .collect();
+                let Some(samples) = samples else {
+                    continue;
+                };
+                let rise = samples[4] - samples[0];
+                if !(0.25..=1.5).contains(&rise.abs())
+                    || samples.windows(2).any(|pair| {
+                        let delta = pair[1] - pair[0];
+                        delta.abs() < 0.015 || delta.abs() > 0.38 || delta.signum() != rise.signum()
+                    })
+                {
+                    continue;
+                }
+                let point = Vec3::new(
+                    x as f32 - HALF_EXTENT as f32 + dx as f32 * 2.0,
+                    0.0,
+                    z as f32 - HALF_EXTENT as f32 + dz as f32 * 2.0,
+                );
+                let tile = (
+                    (point.x / 8.0).floor() as i32,
+                    (point.z / 8.0).floor() as i32,
+                    if axis == Vec3::Z { 1 } else { 0 },
+                );
+                if ramp_tiles.insert(tile) {
+                    ramps.push(SurfaceTransition {
+                        point,
+                        axis,
+                        axis_start: samples[0],
+                        axis_end: samples[4],
+                        low: samples[0].min(samples[4]),
+                        high: samples[0].max(samples[4]),
+                    });
+                }
+            }
+        }
+    }
+    let ramp_stride = ramps.len().div_ceil(MAX_CASES).max(1);
+    let ramps: Vec<_> = ramps
+        .into_iter()
+        .step_by(ramp_stride)
+        .take(MAX_CASES)
+        .collect();
+
+    println!(
+        "{name} surface scan: {grounded_samples}/{} ground samples around elevation {baseline:.1}; testing {} curb edges and {} ramps",
+        SIZE * SIZE,
+        curbs.len(),
+        ramps.len()
+    );
+    let mut curb_runs = 0;
+    let mut curb_failure_count = 0;
+    let mut curb_skips = 0;
+    let mut curb_failure_samples = Vec::new();
+    for edge in curbs {
+        let tangent = Vec3::new(-edge.axis.z, 0.0, edge.axis.x);
+        let diagonal = (edge.axis + tangent).normalize();
+        let reverse_diagonal = (edge.axis - tangent).normalize();
+        let axis_name = if edge.axis == Vec3::X { "X" } else { "Z" };
+        for (direction, name) in [
+            (edge.axis, "up"),
+            (-edge.axis, "down"),
+            (diagonal, "diagonal-up"),
+            (-diagonal, "diagonal-down"),
+            (reverse_diagonal, "diagonal-up"),
+            (-reverse_diagonal, "diagonal-down"),
+        ] {
+            match walk_surface_transition(world, edge, direction, 0.65, 1.5, 0.6, 30) {
+                SurfaceCaseResult::Passed => curb_runs += 1,
+                SurfaceCaseResult::Skipped => curb_skips += 1,
+                SurfaceCaseResult::Blocked(reason) => {
+                    curb_runs += 1;
+                    curb_failure_count += 1;
+                    if curb_failure_samples.len() < 6 {
+                        curb_failure_samples.push(format!(
+                            "curb {axis_name} {name} at map ({:.1}, {:.1}), height {:.2}->{:.2}: {reason}",
+                            center[0] + edge.point.x,
+                            center[1] - edge.point.z,
+                            edge.low,
+                            edge.high
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    let mut ramp_runs = 0;
+    let mut ramp_failure_count = 0;
+    let mut ramp_skips = 0;
+    let mut ramp_failure_samples = Vec::new();
+    for ramp in ramps {
+        let axis_name = if ramp.axis == Vec3::X { "X" } else { "Z" };
+        for (direction, name) in [(ramp.axis, "up"), (-ramp.axis, "down")] {
+            match walk_surface_transition(world, ramp, direction, 1.5, 5.0, 0.75, 72) {
+                SurfaceCaseResult::Passed => ramp_runs += 1,
+                SurfaceCaseResult::Skipped => ramp_skips += 1,
+                SurfaceCaseResult::Blocked(reason) => {
+                    ramp_runs += 1;
+                    ramp_failure_count += 1;
+                    if ramp_failure_samples.len() < 6 {
+                        ramp_failure_samples.push(format!(
+                            "ramp {axis_name} {name} at map ({:.1}, {:.1}), height {:.2}->{:.2}: {reason}",
+                            center[0] + ramp.point.x,
+                            center[1] - ramp.point.z,
+                            ramp.low,
+                            ramp.high
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    println!(
+        "Curb crossings: {}/{} passed, {curb_skips} ineligible starts skipped; ramp traversals: {}/{} passed, {ramp_skips} skipped",
+        curb_runs - curb_failure_count,
+        curb_runs,
+        ramp_runs - ramp_failure_count,
+        ramp_runs
+    );
+    for failure in curb_failure_samples.iter().chain(&ramp_failure_samples) {
+        eprintln!("{name} surface collision probe failed: {failure}");
+    }
+    Ok(SurfaceProbeResult {
+        curb_runs,
+        curb_failures: curb_failure_count,
+        curb_skips,
+        ramp_runs,
+        ramp_failures: ramp_failure_count,
+        ramp_skips,
+    })
+}
+
 fn main() -> Result<()> {
     let _session_intent =
         sa_client::launch::Session::from_args(&std::env::args().collect::<Vec<_>>())?;
@@ -4845,6 +5214,52 @@ fn main() -> Result<()> {
                 player.feet
             );
         }
+        return Ok(());
+    }
+    if args.iter().any(|a| a == "--probe-curbs-ramps") {
+        let mut totals = SurfaceProbeResult::default();
+        for (name, center) in DESTINATIONS {
+            let region_scene;
+            let probe_scene = if center == ORIGIN {
+                &scene
+            } else {
+                region_scene = loader
+                    .as_mut()
+                    .context("curb and ramp probe requires world loader")?
+                    .load(center, center, RADIUS)?;
+                &region_scene
+            };
+            let world = probe_scene
+                .collision
+                .as_ref()
+                .with_context(|| format!("{name} collision missing"))?;
+            let result = probe_curbs_and_ramps(world, center, name)?;
+            totals.curb_runs += result.curb_runs;
+            totals.curb_failures += result.curb_failures;
+            totals.curb_skips += result.curb_skips;
+            totals.ramp_runs += result.ramp_runs;
+            totals.ramp_failures += result.ramp_failures;
+            totals.ramp_skips += result.ramp_skips;
+        }
+        println!(
+            "All areas: curb crossings {}/{} passed, {} ineligible starts skipped; ramp traversals {}/{} passed, {} skipped",
+            totals.curb_runs - totals.curb_failures,
+            totals.curb_runs,
+            totals.curb_skips,
+            totals.ramp_runs - totals.ramp_failures,
+            totals.ramp_runs,
+            totals.ramp_skips
+        );
+        anyhow::ensure!(
+            totals.curb_runs > 0 && totals.ramp_runs > 0,
+            "surface scan found no curb or ramp samples to test"
+        );
+        anyhow::ensure!(
+            totals.curb_failures == 0 && totals.ramp_failures == 0,
+            "surface probe found {} blocked curb and {} blocked ramp traversals",
+            totals.curb_failures,
+            totals.ramp_failures
+        );
         return Ok(());
     }
     if probe {

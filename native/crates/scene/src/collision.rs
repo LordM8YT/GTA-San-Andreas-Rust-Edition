@@ -201,16 +201,15 @@ impl CollisionWorld {
                     continue;
                 }
                 if let Some(ground) = support.filter(|_| t.normal.y.abs() >= 0.55) {
-                    // The uphill body-rim sample can lie above the center feet.
-                    // A walkable plane supporting those feet is still ground,
-                    // while a separate low roof must retain its clearance test.
+                    // Nearby walkable planes within one step of the feet are
+                    // terrain, not roofs; separate low ceilings still block.
                     let center_y = t.a.y
                         - ((pos.x - t.a.x) * t.normal.x + (pos.z - t.a.z) * t.normal.z)
                             / t.normal.y;
                     // At a ramp/flat seam, a neighboring ground triangle may
                     // no longer cover the center. Its plane can still rise
                     // into the body rim; it is not a roof above our feet.
-                    if center_y <= pos.y + 0.01 && (center_y - ground).abs() <= STEP_HEIGHT {
+                    if center_y <= pos.y + STEP_HEIGHT && (center_y - ground).abs() <= STEP_HEIGHT {
                         continue;
                     }
                 }
@@ -423,7 +422,15 @@ impl Player {
             // Exclude the nearby supporting plane, not a separate overhead roof.
             let support = world
                 .ground_below(candidate, candidate.y + 0.01)
-                .filter(|ground| candidate.y - ground <= STEP_HEIGHT);
+                .filter(|ground| candidate.y - ground <= STEP_HEIGHT)
+                .or_else(|| {
+                    world
+                        .ground_below(
+                            candidate - movement.normalize_or_zero() * (RADIUS + 0.02),
+                            candidate.y + STEP_HEIGHT,
+                        )
+                        .filter(|ground| (candidate.y - ground).abs() <= STEP_HEIGHT)
+                });
             if world
                 .ceiling_without_support(candidate, candidate.y + 0.01, support)
                 .is_none_or(|roof| roof >= candidate.y + HEIGHT - 0.001)
@@ -800,5 +807,104 @@ mod tests {
                 assert!((player.feet.y - 0.3).abs() < 0.001);
             }
         }
+    }
+    #[test]
+    fn small_drop_is_walkable() {
+        let world = CollisionWorld::from_batches(&[
+            floor_patch(-5.0, 1.0, 0.0),
+            floor_patch(1.0, 5.0, -0.2),
+            batch(&[
+                [1.0, -0.2, -5.0],
+                [1.0, 0.0, -5.0],
+                [1.0, 0.0, 5.0],
+                [1.0, -0.2, -5.0],
+                [1.0, 0.0, 5.0],
+                [1.0, -0.2, 5.0],
+            ]),
+        ]);
+        let mut player = Player::spawn(&world, Vec3::new(0.0, 1.6, 0.0));
+        for _ in 0..60 {
+            player.step(&world, Vec3::X * 4.0, false, 1.0 / 60.0);
+        }
+        assert!(player.grounded);
+        assert!(player.feet.x > 3.0, "player stopped at {:?}", player.feet);
+        assert!((player.feet.y + 0.2).abs() < 0.001);
+    }
+    #[test]
+    fn three_short_stairs_are_walkable_in_both_directions() {
+        let mut geometry = vec![
+            floor_patch(-5.0, -1.0, 0.0),
+            floor_patch(-1.0, 1.0, 0.2),
+            floor_patch(1.0, 3.0, 0.4),
+            floor_patch(3.0, 5.0, 0.6),
+        ];
+        for (x, low, high) in [(-1.0, 0.0, 0.2), (1.0, 0.2, 0.4), (3.0, 0.4, 0.6)] {
+            geometry.push(batch(&[
+                [x, low, -5.0],
+                [x, high, -5.0],
+                [x, high, 5.0],
+                [x, low, -5.0],
+                [x, high, 5.0],
+                [x, low, 5.0],
+            ]));
+        }
+        let world = CollisionWorld::from_batches(&geometry);
+        let mut player = Player::spawn(&world, Vec3::new(-2.0, 1.6, 0.0));
+        for _ in 0..90 {
+            player.step(&world, Vec3::X * 4.0, false, 1.0 / 60.0);
+        }
+        assert!(player.grounded);
+        assert!(player.feet.x > 3.0, "upstairs stopped at {:?}", player.feet);
+        assert!((player.feet.y - 0.6).abs() < 0.001);
+        for _ in 0..90 {
+            player.step(&world, -Vec3::X * 4.0, false, 1.0 / 60.0);
+        }
+        assert!(player.grounded);
+        assert!(
+            player.feet.x < -1.0,
+            "downstairs stopped at {:?}",
+            player.feet
+        );
+        assert!(player.feet.y.abs() < 0.001);
+    }
+    #[test]
+    fn walking_off_a_platform_falls_to_the_lower_floor() {
+        let world = CollisionWorld::from_batches(&[
+            floor_patch(-5.0, 0.0, 0.0),
+            floor_patch(1.0, 10.0, -1.0),
+        ]);
+        let mut player = Player::spawn(&world, Vec3::new(-1.0, 1.6, 0.0));
+        for _ in 0..120 {
+            player.step(&world, Vec3::X * 4.0, false, 1.0 / 60.0);
+        }
+        assert!(player.grounded, "after drop, player at {:?}", player.feet);
+        assert!(
+            player.feet.x > 5.0,
+            "platform edge trapped player at {:?}",
+            player.feet
+        );
+        assert!((player.feet.y + 1.0).abs() < 0.001);
+    }
+    #[test]
+    fn bridge_and_tunnel_keep_separate_walkable_levels() {
+        let lower = floor_patch(-5.0, 5.0, 0.0);
+        let bridge = floor_patch(-5.0, 5.0, 4.0);
+        let world = CollisionWorld::from_batches(&[lower, bridge]);
+        assert_eq!(world.ground_below(Vec3::ZERO, 1.0), Some(0.0));
+        assert_eq!(world.ground_below(Vec3::ZERO, 5.0), Some(4.0));
+        let mut tunnel = Player::spawn(&world, Vec3::new(-2.0, 1.6, 0.0));
+        for _ in 0..60 {
+            tunnel.step(&world, Vec3::X * 4.0, false, 1.0 / 60.0);
+        }
+        assert!(tunnel.grounded);
+        assert!(tunnel.feet.x > 1.0);
+        assert!(tunnel.feet.y.abs() < 0.001);
+        let mut bridge_walker = Player::spawn(&world, Vec3::new(-2.0, 5.6, 0.0));
+        for _ in 0..60 {
+            bridge_walker.step(&world, Vec3::X * 4.0, false, 1.0 / 60.0);
+        }
+        assert!(bridge_walker.grounded);
+        assert!(bridge_walker.feet.x > 1.0);
+        assert!((bridge_walker.feet.y - 4.0).abs() < 0.001);
     }
 }
