@@ -33,6 +33,7 @@ mod shadow;
 mod shared_traffic;
 mod skids;
 mod streaming;
+mod temporal;
 mod traffic;
 #[path = "../../../ui/theme.rs"]
 mod ui_theme;
@@ -1890,10 +1891,17 @@ impl State {
         );
         let camera_matrix = projection * view;
         self.frustum = culling::Frustum::new(camera_matrix);
+        let jittered = self.menu.settings.temporal_aa.then(|| {
+            temporal::jittered(
+                camera_matrix,
+                self.postprocess.temporal.jitter(),
+                self.postprocess.size,
+            )
+        });
         self.queue.write_buffer(
             &self.camera,
             0,
-            bytemuck::cast_slice(&camera_matrix.to_cols_array()),
+            bytemuck::cast_slice(&jittered.unwrap_or(camera_matrix).to_cols_array()),
         );
         let hour = self
             .menu
@@ -1946,6 +1954,7 @@ impl State {
                 0.0
             },
             sky: lighting.sky,
+            jittered,
         };
         let light = shadow::light_matrix(self.position, lighting.sun);
         self.light_frustum = culling::Frustum::new(light);
@@ -5516,6 +5525,7 @@ mod shader_tests {
         for (name, source) in [
             ("shader.wgsl", include_str!("shader.wgsl")),
             ("postprocess.wgsl", include_str!("postprocess.wgsl")),
+            ("temporal.wgsl", include_str!("temporal.wgsl")),
         ] {
             let module = naga::front::wgsl::parse_str(source)
                 .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(source)));

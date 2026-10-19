@@ -12,6 +12,9 @@ pub struct Reflections {
     pub wetness: f32,
     /// Reflected where a ray leaves the screen.
     pub sky: Vec3,
+    /// The camera the scene was drawn with when temporal anti-aliasing
+    /// jittered it; `view_projection` stays unjittered.
+    pub jittered: Option<Mat4>,
 }
 /// Floats in the finishing controls uniform: three vec4s, two matrices and
 /// two more vec4s.
@@ -34,6 +37,9 @@ pub struct PostProcess {
     sampler: wgpu::Sampler,
     params: wgpu::Buffer,
     pipeline: wgpu::RenderPipeline,
+    pub temporal: crate::temporal::Temporal,
+    /// Finishing inputs that read each temporal history image.
+    temporal_groups: [wgpu::BindGroup; 2],
 }
 impl PostProcess {
     pub fn new(
@@ -186,7 +192,20 @@ impl PostProcess {
         let group = Self::bind(device, &layout, &color, &depth, &sampler, &params);
         let scale_group = Self::bind(device, &layout, &finished, &depth, &sampler, &params);
         let sharpen_group = Self::bind(device, &layout, &upscaled, &depth, &sampler, &params);
+        let temporal = crate::temporal::Temporal::new(device, SCENE_FORMAT, &color, &depth, size);
+        let temporal_groups = std::array::from_fn(|i| {
+            Self::bind(
+                device,
+                &layout,
+                &temporal.history[i],
+                &depth,
+                &sampler,
+                &params,
+            )
+        });
         Self {
+            temporal,
+            temporal_groups,
             display_size,
             finished,
             upscaled,
@@ -321,10 +340,22 @@ impl PostProcess {
             &self.sampler,
             &self.params,
         );
+        self.temporal
+            .resize(device, SCENE_FORMAT, &self.color, &self.depth, size);
+        self.temporal_groups = std::array::from_fn(|i| {
+            Self::bind(
+                device,
+                &self.layout,
+                &self.temporal.history[i],
+                &self.depth,
+                &self.sampler,
+                &self.params,
+            )
+        });
         self.size = size;
     }
     pub fn draw(
-        &self,
+        &mut self,
         encoder: &mut wgpu::CommandEncoder,
         queue: &wgpu::Queue,
         output: &wgpu::TextureView,
@@ -353,11 +384,28 @@ impl PostProcess {
         params.extend(reflections.sky.extend(0.0).to_array());
         debug_assert_eq!(params.len(), CONTROLS);
         queue.write_buffer(&self.params, 0, bytemuck::cast_slice(&params));
+        let scene = match reflections.jittered.filter(|_| settings.temporal_aa) {
+            Some(jittered) => {
+                let resolved = self.temporal.resolve(
+                    encoder,
+                    queue,
+                    self.size,
+                    jittered,
+                    reflections.view_projection,
+                    reflections.eye,
+                );
+                &self.temporal_groups[resolved]
+            }
+            None => {
+                self.temporal.reset();
+                &self.group
+            }
+        };
         for (target, pipeline, group, label) in [
             (
                 &self.finished,
                 &self.pipeline,
-                &self.group,
+                scene,
                 "FXAA and color grading",
             ),
             (
