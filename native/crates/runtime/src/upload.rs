@@ -52,6 +52,7 @@ pub struct Upload {
     bytes: usize,
     reused_images: usize,
     reused_bytes: usize,
+    installs_world: bool,
 }
 impl Upload {
     pub fn new(scene: Scene) -> Self {
@@ -80,7 +81,18 @@ impl Upload {
             bytes: 0,
             reused_images: 0,
             reused_bytes: 0,
+            installs_world: true,
         }
+    }
+    /// For a scene whose collision and water are already installed: finishing
+    /// only replaces the draw batches. The flag travels with the upload, so a
+    /// session world swap cannot apply it to another world's region.
+    pub fn batches_only(mut self) -> Self {
+        self.installs_world = false;
+        self
+    }
+    pub fn installs_world(&self) -> bool {
+        self.installs_world
     }
     /// Texture keys are identities only within an immutable world loader.
     /// Never call this across a session/mod-resource switch: equal names may
@@ -330,7 +342,12 @@ impl Upload {
             queue.submit([encoder.finish()]);
         }
         self.frames += 1;
-        self.peak_ms = self.peak_ms.max(started.elapsed().as_secs_f64() * 1000.0);
+        Self::record_operation(
+            &mut self.peak_ms,
+            &mut self.peak_stage,
+            "frame slice",
+            started,
+        );
         self.bytes += bytes;
         Ok(done)
     }

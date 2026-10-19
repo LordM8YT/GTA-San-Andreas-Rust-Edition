@@ -192,7 +192,6 @@ struct State {
     mipmaps: mipmaps::Generator,
     streamer: Option<Streamer>,
     uploading: Option<(streaming::Region, upload::Upload)>,
-    initial_upload_pending: bool,
     retired: Vec<streaming::Retired>,
     region: [f32; 2],
     interior: u8,
@@ -868,9 +867,9 @@ impl State {
         let collision = scene.collision.take();
         let water = scene.water.take();
         let mipmaps = mipmaps::Generator::new(&device);
-        let initial_upload_pending = streamer.is_some() && !first_model && animation.is_none();
-        let (batches, initial_upload) = if initial_upload_pending {
-            (Vec::new(), Some(upload::Upload::new(scene)))
+        let (batches, initial_upload) = if streamer.is_some() && !first_model && animation.is_none()
+        {
+            (Vec::new(), Some(upload::Upload::new(scene).batches_only()))
         } else {
             (
                 Self::upload_scene(&device, &queue, &image_layout, &sampler, &mipmaps, scene)?,
@@ -1013,7 +1012,6 @@ impl State {
                     upload,
                 )
             }),
-            initial_upload_pending,
             retired: Vec::new(),
             region: ORIGIN,
             interior: 0,
@@ -1226,6 +1224,28 @@ impl State {
             streaming::distance(target, region.center) >= 1.0 || wanted_interior != region.interior
         })
     }
+    /// Completes a pending region upload at once, for captures that run without
+    /// the streamer that would otherwise advance it frame by frame.
+    fn finish_upload_now(&mut self) -> Result<()> {
+        let Some((_, mut upload)) = self.uploading.take() else {
+            return Ok(());
+        };
+        while !upload.advance(
+            &self.device,
+            &self.queue,
+            &self.image_layout,
+            &self.sampler,
+            &self.mipmaps,
+        )? {}
+        let installs_world = upload.installs_world();
+        let (batches, mut scene) = upload.finish();
+        self.batches = batches;
+        if installs_world {
+            self.collision = scene.collision.take();
+            self.water = scene.water.take();
+        }
+        Ok(())
+    }
     fn stream_world(&mut self) {
         let Some(mut streamer) = self.streamer.take() else {
             return;
@@ -1279,7 +1299,6 @@ impl State {
         }
         if let Some((region, mut upload)) = self.uploading.take() {
             if self.stale_region(region) {
-                self.initial_upload_pending = false;
                 self.retired
                     .extend(streamer.retire(streaming::Retired::Upload(Box::new(upload))));
             } else {
@@ -1292,15 +1311,15 @@ impl State {
                 ) {
                     Ok(false) => self.uploading = Some((region, upload)),
                     Ok(true) => {
+                        let installs_world = upload.installs_world();
                         let (batches, mut scene) = upload.finish();
-                        let (collision, water) = if self.initial_upload_pending {
-                            self.initial_upload_pending = false;
-                            (None, None)
-                        } else {
+                        let (collision, water) = if installs_world {
                             (
                                 std::mem::replace(&mut self.collision, scene.collision.take()),
                                 std::mem::replace(&mut self.water, scene.water.take()),
                             )
+                        } else {
+                            (None, None)
                         };
                         let old = streaming::Retired::Scene {
                             batches: std::mem::replace(&mut self.batches, batches),
@@ -1327,7 +1346,6 @@ impl State {
                         );
                     }
                     Err(error) => {
-                        self.initial_upload_pending = false;
                         streamer.retry_later();
                         self.menu.message = format!("GPU upload failed: {error}");
                         self.retired
@@ -3165,6 +3183,11 @@ impl ApplicationHandler for App {
                 if let Some((eye, forward)) = sign_camera {
                     // Keep the capture camera on the scene under test. Streaming
                     // transitions are exercised separately by the region tour.
+                    if let Err(error) = state.finish_upload_now() {
+                        eprintln!("GPU upload failed: {error:#}");
+                        event_loop.exit();
+                        return;
+                    }
                     state.streamer = None;
                     state.walking = false;
                     state.third_person = false;

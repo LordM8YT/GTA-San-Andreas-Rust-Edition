@@ -916,12 +916,19 @@ impl WorldLoader {
         let mut inherited_textures = 0;
         let mut dictionaries = HashMap::<String, Vec<u8>>::new();
         let mut dictionary_bytes = 0;
+        // Draw-state variants ("|alpha", UV animation) share one decoded image,
+        // whichever variant the unordered batch map yields first.
+        let mut decoded = HashMap::<&str, Texture>::new();
         for key in batches.keys() {
             if textures.contains_key(key) {
                 continue;
             }
             let texture_key = texture_key(key);
-            if let Some(image) = textures.get(texture_key).cloned() {
+            if let Some(image) = textures
+                .get(texture_key)
+                .or_else(|| decoded.get(texture_key))
+                .cloned()
+            {
                 textures.insert(key.clone(), image);
                 continue;
             }
@@ -969,6 +976,9 @@ impl WorldLoader {
                     }
                 }
             };
+            if key != texture_key {
+                decoded.insert(texture_key, texture.clone());
+            }
             textures.insert(key.clone(), texture);
         }
         if fallback_textures > 0 {
