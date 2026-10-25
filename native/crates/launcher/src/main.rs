@@ -1023,7 +1023,9 @@ impl Launcher {
                 "Automatically download required server mods",
             );
         });
-        ui.collapsing("Client updates", |ui| {
+        egui::CollapsingHeader::new("Client updates")
+            .default_open(true)
+            .show(ui, |ui| {
             let mut channel = if self.config.update_channel == "vehicle-test" {
                 "vehicle-test".to_owned()
             } else {
