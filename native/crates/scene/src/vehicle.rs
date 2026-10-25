@@ -348,12 +348,16 @@ impl Handling {
     /// here; the full port will use GTA's converted maxVelocity directly.
     pub fn gear_band_top(&self, gear: u8) -> f32 {
         let count = self.gear_count();
-        let gear = f32::from(gear.min(count as u8));
+        let gear = gear.min(count as u8);
+        if f32::from(gear) >= count {
+            return self.top_speed;
+        }
         let ceiling = if self.gta_handling_loaded > 0.5 {
             self.top_speed
         } else {
             self.reachable_top_speed()
         };
+        let gear = f32::from(gear);
         let half = ceiling / (2.0 * count);
         gear * (ceiling - half) / count + half
     }
