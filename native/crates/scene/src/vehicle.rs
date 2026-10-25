@@ -211,6 +211,8 @@ pub struct Handling {
     /// Mass and turn mass are in the source file's units.
     /// 1 when values came from the original handling.cfg; 0 for hand-tuned fallback profiles.
     pub gta_handling_loaded: f32,
+    /// Original handling.cfg bit flags (stored exactly as a numeric value).
+    pub gta_handling_flags: f64,
     pub gta_mass: f32,
     pub gta_turn_mass: f32,
     pub gta_drag_multiplier: f32,
@@ -248,6 +250,7 @@ impl Default for Handling {
             suspension_damping: 22.0,
             aerodynamic_drag: 0.0035,
             gta_handling_loaded: 0.0,
+            gta_handling_flags: 0.0,
             gta_mass: 1500.0,
             gta_turn_mass: 3000.0,
             gta_drag_multiplier: 2.0,
@@ -311,6 +314,11 @@ impl Handling {
                 "vehicle handling {name} must be finite and between {low} and {high}"
             );
         }
+        anyhow::ensure!(
+            self.gta_handling_flags.is_finite()
+                && (0.0..=u32::MAX as f64).contains(&self.gta_handling_flags),
+            "vehicle handling gta_handling_flags must be a valid 32-bit flag value"
+        );
         Ok(())
     }
 }
@@ -831,7 +839,15 @@ impl Car {
         } else {
             let gear_number =
                 (1.0 - (f32::from(self.gear) - 1.0) / (tuning.gear_count() - 1.0)).max(0.0);
-            (gear_number * gear_number * 3.0 + 1.0) * 0.4
+            let handling_flags = tuning.gta_handling_flags as u32;
+            let boost = if handling_flags & 0x1 != 0 {
+                5.0
+            } else if handling_flags & 0x2 != 0 {
+                4.0
+            } else {
+                3.0
+            };
+            (gear_number * gear_number * boost + 1.0) * 0.4
         };
         if gta_transmission {
             // Port of cTransmission::CalculateDriveAcceleration's inertia
