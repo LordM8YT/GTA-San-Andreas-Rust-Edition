@@ -890,6 +890,21 @@ mod tests {
         assert!(loads[0] + loads[2] > loads[1] + loads[3]);
         assert_eq!(wheel_normal_loads([false; 4], 0.0, 0.0, 0.5), [0.0; 4]);
     }
+
+    #[test]
+    fn skid_latch_stays_set_during_slip_and_clears_after_recovery() {
+        let world = CollisionWorld::from_batches(&[floor(-100.0, 100.0, 0.0)]);
+        let mut car = Car::new(Vec3::Y * 0.6, 0.6);
+        car.speed = 10.0;
+        car.lateral_speed = 3.0;
+        car.step(&world, 0.0, 0.0, false, 1.0, 1.0 / 120.0);
+        assert!(car.skid_latched);
+
+        car.lateral_speed = 0.0;
+        car.yaw_rate = 0.0;
+        car.step(&world, 0.0, 0.0, false, 1.0, 1.0 / 120.0);
+        assert!(!car.skid_latched);
+    }
     #[test]
     fn a_crash_stops_the_closing_speed_and_bounces_a_little() {
         let world = CollisionWorld::from_batches(&[]);
