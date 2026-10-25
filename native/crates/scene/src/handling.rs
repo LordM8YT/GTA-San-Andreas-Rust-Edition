@@ -41,7 +41,7 @@ fn handling_id(ide: &str, model: &str) -> Option<String> {
 /// prototype feel.
 fn from_line(line: &str) -> Option<Handling> {
     let fields: Vec<_> = line.split_whitespace().collect();
-    if fields.len() < 32 {
+    if fields.len() < 33 {
         return None;
     }
     let number = |index: usize| fields.get(index)?.parse::<f32>().ok().filter(|v| v.is_finite());
@@ -83,6 +83,7 @@ fn from_line(line: &str) -> Option<Handling> {
     let suspension_lower_limit = number(25)?;
     let suspension_front_rear_bias = number(26)?;
     let suspension_anti_dive_multiplier = number(27)?;
+    let handling_flags = u32::from_str_radix(fields[32], 16).ok()?;
 
     // GTA's transmission uses a drag-limited maxFlat, not handling.cfg's
     // maxVelocity directly. These calculations follow the documented SA
@@ -102,7 +103,7 @@ fn from_line(line: &str) -> Option<Handling> {
     let handling = Handling {
         top_speed,
         acceleration,
-        reverse_acceleration: (acceleration * 0.5).clamp(0.5, 10.0),
+        reverse_acceleration: acceleration.clamp(0.5, 10.0),
         // GTA's converted brake deceleration is the raw handling value in m/s².
         brake_deceleration: brake_deceleration.clamp(1.0, 25.0),
         reverse_speed: reverse_speed.clamp(1.0, 25.0),
@@ -116,6 +117,7 @@ fn from_line(line: &str) -> Option<Handling> {
             .clamp(8.0, 40.0),
         aerodynamic_drag: (drag * 0.001).clamp(0.0, 0.02),
         gta_handling_loaded: 1.0,
+        gta_handling_flags: f64::from(handling_flags),
         gta_mass: mass,
         gta_turn_mass: turn_mass,
         gta_drag_multiplier: drag,
