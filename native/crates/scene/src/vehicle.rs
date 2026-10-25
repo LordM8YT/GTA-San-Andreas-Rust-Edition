@@ -216,6 +216,7 @@ pub struct Handling {
     pub gta_mass: f32,
     pub gta_turn_mass: f32,
     pub gta_drag_multiplier: f32,
+    pub gta_traction_multiplier: f32,
     pub gta_centre_of_mass_x: f32,
     pub gta_centre_of_mass_y: f32,
     pub gta_centre_of_mass_z: f32,
@@ -254,6 +255,7 @@ impl Default for Handling {
             gta_mass: 1500.0,
             gta_turn_mass: 3000.0,
             gta_drag_multiplier: 2.0,
+            gta_traction_multiplier: 0.75,
             gta_centre_of_mass_x: 0.0,
             gta_centre_of_mass_y: 0.0,
             gta_centre_of_mass_z: -0.2,
@@ -298,6 +300,7 @@ impl Handling {
             ("gta_abs", self.gta_abs, 0.0, 1.0),
             ("gta_turn_mass", self.gta_turn_mass, 1.0, 1000000.0),
             ("gta_drag_multiplier", self.gta_drag_multiplier, 0.0, 100.0),
+            ("gta_traction_multiplier", self.gta_traction_multiplier, 0.0, 5.0),
             ("gta_traction_loss", self.gta_traction_loss, 0.0, 5.0),
             ("gta_traction_bias", self.gta_traction_bias, 0.0, 1.0),
             ("gta_engine_inertia", self.gta_engine_inertia, 0.0, 100.0),
@@ -518,6 +521,8 @@ pub struct Car {
     transmission_a6: f32,
     transmission_a7: f32,
     transmission_initialized: bool,
+    /// GTA wheel states: 0 normal, 1 spinning, 2 skidding, 3 fixed/locked.
+    wheel_states: [u8; 4],
 }
 impl Car {
     pub fn new(position: Vec3, clearance: f32) -> Self {
@@ -544,6 +549,7 @@ impl Car {
             transmission_a6: 0.0,
             transmission_a7: 1.0,
             transmission_initialized: false,
+            wheel_states: [0; 4],
         }
     }
     pub fn with_handling(mut self, handling: Handling) -> Self {
