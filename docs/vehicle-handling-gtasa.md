@@ -170,20 +170,27 @@ nose-dive under hard braking. SARE already approximates this with the
 
 ## What SARE should take, in order of value per line of code
 
-1. **Gear bands and shift points** — done in this change, opt-in through the
-   `gears` field. A gearbox is the most noticeable missing behaviour in the
-   current model, and it costs about 40 lines.
-2. **Per-wheel normal load** — the suspension formula above, feeding the friction
-   circle per axle instead of one global budget. This is what makes a car lean,
-   lift a wheel and lose rear grip on a crest.
-3. **The skid latch** — one boolean per car, cleared when all wheels are
-   `Normal`. It turns a slide into something with a beginning and an end.
-4. **Per-surface adhesion** — GTA reads an adhesive limit per material plus a
+1. **Gear bands and shift points** — already represented in SARE through
+   the optional `gears` handling value. This is a simplified gearbox, not a
+   full port of GTA's transmission state.
+2. **Per-wheel normal load** — an experimental first-order load-transfer
+   approximation is now on `test/gtasa-wheel-load-skid-latch`. It estimates
+   front/rear and left/right load transfer from acceleration and cornering, then
+   feeds load-sensitive capacity into SARE's existing tire model. It does not
+   yet implement four independent springs or GTA's exact suspension solver.
+3. **The skid latch** — the same test branch adds a per-car latch that reduces
+   rear grip during a slide and clears when both axle slip values recover. This
+   is inspired by GTA's persistent skid state, not a literal port of the
+   process-global `bAlreadySkidding` flag.
+4. **GTA-style gear/drag balance** — still a follow-up. The current speed curve
+   uses SARE's top-speed asymptote, so a declared top speed is not a guaranteed
+   achieved speed. Tune the engine pull and drag together before replacing this
+   with GTA's `maxFlat` calculation.
+5. **Per-surface adhesion** — GTA reads an adhesive limit per material plus a
    wet multiplier. SARE has one grip value per car, so asphalt, grass and sand
    all feel the same.
-5. **The rest-stop snap** — below 0.0045 GTA units of speed with no pedal and
-   ground contact, velocity is zeroed and yaw is frozen. It removes the
-   perpetual crawl at idle.
+6. **The rest-stop snap** — GTA zeroes very low speed with no pedal and ground
+   contact. SARE still lacks this behavior, which can leave a slow idle crawl.
 
 ## What SARE does better, and should keep
 
