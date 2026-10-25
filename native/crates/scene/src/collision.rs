@@ -150,7 +150,15 @@ impl CollisionWorld {
         indices
     }
     pub fn ground_below(&self, pos: Vec3, max_y: f32) -> Option<f32> {
-        let mut best = None;
+        self.ground_contact_below(pos, max_y)
+            .map(|(height, _)| height)
+    }
+
+    /// Ground height and upward-facing contact normal for vehicle suspension.
+    /// Uses the same walkable-triangle selection as ground_below, so adding
+    /// normals does not change existing player or vehicle ground queries.
+    pub fn ground_contact_below(&self, pos: Vec3, max_y: f32) -> Option<(f32, Vec3)> {
+        let mut best: Option<(f32, Vec3)> = None;
         for i in self.nearby(pos, RADIUS) {
             let t = self.triangles[i];
             if t.normal.y.abs() < 0.55 {
@@ -173,8 +181,13 @@ impl CollisionWorld {
                 continue;
             }
             let y = t.a.y + u * (t.b.y - t.a.y) + v * (t.c.y - t.a.y);
-            if y <= max_y + 0.001 && best.is_none_or(|old| y > old) {
-                best = Some(y);
+            if y <= max_y + 0.001 && best.is_none_or(|(old, _)| y > old) {
+                let normal = if t.normal.y < 0.0 {
+                    -t.normal
+                } else {
+                    t.normal
+                };
+                best = Some((y, normal));
             }
         }
         best
@@ -469,6 +482,32 @@ impl Player {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ground_contact_returns_upward_normal_independent_of_triangle_winding() {
+        use glam::Vec3;
+        let ramp = [
+            [-5.0, -2.5, -5.0],
+            [5.0, -2.5, -5.0],
+            [5.0, 2.5, 5.0],
+            [-5.0, -2.5, -5.0],
+            [5.0, 2.5, 5.0],
+            [-5.0, 2.5, 5.0],
+        ];
+        for reverse in [false, true] {
+            let mut points = ramp;
+            if reverse {
+                points.swap(0, 1);
+                points.swap(3, 4);
+            }
+            let world = super::CollisionWorld::from_batches(&[batch(&points)]);
+            let (height, normal) = world.ground_contact_below(Vec3::ZERO, 0.1).unwrap();
+            assert!(height.abs() < 1e-6);
+            assert!(normal.y > 0.0);
+            assert!((normal - Vec3::new(0.0, 1.0, -0.5).normalize()).length() < 1e-5);
+            assert_eq!(world.ground_below(Vec3::ZERO, 0.1), Some(height));
+        }
+    }
+
     #[test]
     fn walkable_steep_roads_do_not_also_push_bodies_sideways() {
         use glam::Vec3;
