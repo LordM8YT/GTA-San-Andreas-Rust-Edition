@@ -89,15 +89,16 @@ fn from_line(line: &str) -> Option<Handling> {
     // maxVelocity directly. These calculations follow the documented SA
     // ConvertDataToGameUnits relationship; convert its per-tick speed to m/s.
     let drive_divisor = if drive_type == 2 { 4.0 } else { 2.0 };
-    let drive_acceleration = engine_acceleration * 0.4 / 2500.0 / drive_divisor;
+    let engine_acceleration_game = engine_acceleration * 0.4 / 2500.0;
     let mut max_flat = max_velocity * 0.277_778 / 50.0;
     while max_flat > 0.01
-        && max_flat * max_flat * drag / 2.0 / 1000.0 > drive_acceleration / 6.0
+        && max_flat * max_flat * drag / 2.0 / 1000.0 > engine_acceleration_game / 6.0
     {
         max_flat -= 0.01;
     }
     let top_speed = (max_flat.max(0.01) * 1.2 * 50.0).clamp(5.0, 90.0);
     let reverse_speed = (max_flat * 0.3).max(0.2) * 50.0;
+    let drive_acceleration = engine_acceleration_game / drive_divisor;
     let acceleration = (drive_acceleration * 50.0 * 50.0).clamp(0.5, 20.0);
 
     let handling = Handling {
@@ -151,7 +152,7 @@ mod tests {
         let taxi = "TAXI 1450.0 4056.4 2.2 0.0 0.3 -0.25 75 0.75 0.85 0.51 5 180.0 20.0 10.0 F P 7.0 0.60 0 30.0 1.4 0.1 0.0 0.28 -0.17 0.5 0.0 0.2 0.25 0.5 20000 0 200000 0 1 0";
         let infernus = "INFERNUS 1400.0 2725.3 1.5 0.0 0.0 -0.25 70 0.70 0.80 0.50 5 240.0 30.0 10.0 4 P 11.0 0.51 0 30.0 1.2 0.19 0.0 0.25 -0.10 0.5 0.4 0.37 0.72 95000 40002004 C04000 1 1 1";
         let taxi = from_line(taxi).unwrap();
-        assert!((20.0..30.0).contains(&taxi.top_speed), "{}", taxi.top_speed);
+        assert!((35.0..45.0).contains(&taxi.top_speed), "{}", taxi.top_speed);
         assert!((3.9..4.1).contains(&taxi.acceleration), "{}", taxi.acceleration);
         assert_eq!(taxi.gta_mass, 1450.0);
         assert_eq!(taxi.gta_turn_mass, 4056.4);
@@ -165,8 +166,10 @@ mod tests {
         assert_eq!(taxi.gta_abs, 0.0);
         let infernus = from_line(infernus).unwrap();
         assert!(infernus.top_speed > taxi.top_speed);
+        assert!((60.0..70.0).contains(&infernus.top_speed), "{}", infernus.top_speed);
         assert!((2.9..3.1).contains(&infernus.acceleration), "{}", infernus.acceleration);
         assert!(infernus.brake_deceleration > taxi.brake_deceleration);
+        assert_eq!(infernus.gta_handling_flags, f64::from(0xC04000_u32));
         assert!(from_line("SHORT 1 2 3").is_none());
     }
     #[test]
