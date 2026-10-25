@@ -331,19 +331,29 @@ impl Handling {
             .sqrt()
             .clamp(self.top_speed * 0.2, self.top_speed)
     }
-    /// Top of `gear`'s speed band in m/s, spaced the way SA's `cTransmission`
-    /// spaces its gear table: first gear covers more than an equal share, and
-    /// the top gear runs all the way to `top_speed` so a geared car keeps the
-    /// single-band car's top end.
+    /// Top of GTA:SA's `cTransmission` speed band for a gear, in m/s.
+    /// The first band starts at half of one equal gear interval; the final
+    /// band ends at the transmission's computed maxVelocity.
     pub fn gear_band_top(&self, gear: u8) -> f32 {
         let count = self.gear_count();
-        if f32::from(gear) >= count {
-            return self.top_speed;
-        }
-        let share = 0.5 / count;
-        let flat = 1.0 - share;
-        let fraction = f32::from(gear.clamp(1, count as u8)) * flat / count + share;
-        fraction * self.reachable_top_speed()
+        let gear = f32::from(gear.min(count as u8));
+        let half = self.top_speed / (2.0 * count);
+        gear * (self.top_speed - half) / count + half
+    }
+
+    /// GTA shifts up after crossing two thirds of the interval into the next
+    /// band (the binary's 0.6667 constant), rather than a fraction of band top.
+    pub fn gear_up_shift_speed(&self, gear: u8) -> f32 {
+        let lower = self.gear_band_top(gear.saturating_sub(1));
+        let upper = self.gear_band_top(gear);
+        lower + 0.6667 * (upper - lower)
+    }
+
+    /// GTA downshifts at 42% of the interval into the previous band.
+    pub fn gear_down_shift_speed(&self, gear: u8) -> f32 {
+        let lower = self.gear_band_top(gear.saturating_sub(2));
+        let upper = self.gear_band_top(gear.saturating_sub(1));
+        lower + 0.42 * (upper - lower)
     }
 }
 /// Body size used until a model is measured: an average saloon.
@@ -646,10 +656,10 @@ impl Car {
             self.gear = 1;
             return;
         }
-        while self.gear < count && self.speed > 0.6 * tuning.gear_band_top(self.gear) {
+        while self.gear < count && self.speed > tuning.gear_up_shift_speed(self.gear) {
             self.gear += 1;
         }
-        while self.gear > 1 && self.speed < 0.4 * tuning.gear_band_top(self.gear - 1) {
+        while self.gear > 1 && self.speed < tuning.gear_down_shift_speed(self.gear) {
             self.gear -= 1;
         }
     }
