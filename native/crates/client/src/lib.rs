@@ -88,6 +88,8 @@ pub fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
 #[serde(default)]
 pub struct LauncherConfig {
     pub disable_auto_updates: bool,
+    /// Client update channel: "stable" or "vehicle-test".
+    pub update_channel: String,
     /// Optional user-owned local artwork; never included in resource downloads.
     pub hero_image: Option<PathBuf>,
     pub last_session: Option<Favorite>,
