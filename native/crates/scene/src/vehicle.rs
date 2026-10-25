@@ -440,12 +440,6 @@ impl Handling {
         if self.gear_count() <= 1.0 {
             return -0.5;
         }
-        // Hand-tuned fallback profiles predate the GTA transmission table.
-        // Keep their established 40% downshift threshold so the first-to-second
-        // boundary has real hysteresis instead of collapsing onto band one.
-        if self.gta_handling_loaded <= 0.5 {
-            return 0.4 * self.gear_band_top(gear.saturating_sub(1));
-        }
         let lower = self.gear_band_top(gear.saturating_sub(2));
         let upper = self.gear_band_top(gear.saturating_sub(1));
         lower + 0.42 * (upper - lower)
@@ -764,10 +758,13 @@ impl Car {
                 self.gear = 1;
                 return;
             }
-            while self.gear < count && self.speed > tuning.gear_up_shift_speed(self.gear) {
+            // Preserve the 60% upshift / 40% downshift bands from the
+            // already-merged fallback gearbox; GTA-loaded handling uses its
+            // separate source-derived transmission table below.
+            while self.gear < count && self.speed > 0.6 * tuning.gear_band_top(self.gear) {
                 self.gear += 1;
             }
-            while self.gear > 1 && self.speed < tuning.gear_down_shift_speed(self.gear) {
+            while self.gear > 1 && self.speed < 0.4 * tuning.gear_band_top(self.gear - 1) {
                 self.gear -= 1;
             }
             return;
@@ -1774,7 +1771,7 @@ mod tests {
         // Crossing GTA's upshift point selects exactly the next gear.
         for gear in 1..5u8 {
             car.gear = gear;
-            car.speed = tuning.gear_up_shift_speed(gear) + 0.05;
+            car.speed = 0.6 * tuning.gear_band_top(gear) + 0.05;
             car.shift_gears(&tuning, 1.0);
             assert_eq!(car.gear, gear + 1, "did not leave gear {gear}");
         }
@@ -1802,13 +1799,13 @@ mod tests {
             gears: 5.0,
             ..Handling::default()
         };
-        let up = tuning.gear_up_shift_speed(1);
+        let up = 0.6 * tuning.gear_band_top(1);
         car.gear = 1;
         car.speed = up + 0.05;
         car.shift_gears(&tuning, 1.0);
         assert_eq!(car.gear, 2);
         // Either side of the first gear's up point stays in second because
-        // the down point is lower, preserving the gearbox's shift hysteresis.
+        // the 40% downshift point is lower, preserving the merged fallback behaviour.
         for speed in [up - 0.05f32, up + 0.05, up - 0.05, up + 0.05] {
             car.speed = speed;
             car.shift_gears(&tuning, 1.0);
