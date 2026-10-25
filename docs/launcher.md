@@ -60,10 +60,11 @@ Offline checkpoints now attempt every 60 seconds in addition to menu/exit/join.
 The existing safe-ground validation and multiplayer separation are preserved.
 
 Packaged clients automatically check and download tested GitHub releases, then
-replace program files and restart once the game closes. Disable this under
-Settings > Downloads > Client updates, or use the manual download/install controls there or
-under Help. Source builds do not overwrite the checkout. See [update pipeline,
-verification and recovery](client-updates.md).
+replace program files and restart once the game closes. Settings > Downloads > Client updates
+offers Stable and Vehicle physics test channels. The test channel tracks the
+`test/vanilla-handling-launcher-channel` branch and only accepts the prerelease for its exact
+current commit after the cross-platform CI package job succeeds. Test builds may be unfinished.
+Source builds do not overwrite the checkout. See [update pipeline, verification and recovery](client-updates.md).
 
 CI publishes a separate release per main-branch commit after both platforms pass.
 Packages contain allowlisted binaries, build/file hashes and legal notices, with
