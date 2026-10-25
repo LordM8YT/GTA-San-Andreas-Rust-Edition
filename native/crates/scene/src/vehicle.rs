@@ -440,6 +440,12 @@ impl Handling {
         if self.gear_count() <= 1.0 {
             return -0.5;
         }
+        // Hand-tuned fallback profiles predate the GTA transmission table.
+        // Keep their established 40% downshift threshold so the first-to-second
+        // boundary has real hysteresis instead of collapsing onto band one.
+        if self.gta_handling_loaded <= 0.5 {
+            return 0.4 * self.gear_band_top(gear.saturating_sub(1));
+        }
         let lower = self.gear_band_top(gear.saturating_sub(2));
         let upper = self.gear_band_top(gear.saturating_sub(1));
         lower + 0.42 * (upper - lower)
