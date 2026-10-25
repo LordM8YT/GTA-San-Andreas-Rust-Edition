@@ -343,12 +343,16 @@ impl Handling {
             .sqrt()
             .clamp(self.top_speed * 0.2, self.top_speed)
     }
-    /// Top of a transmission speed band in m/s. The interval layout matches
-    /// GTA:SA, but the legacy integrator still uses its reachable-speed ceiling
-    /// here; the full port will use GTA's converted maxVelocity directly.
+    /// GTA's transmission band endpoint in m/s. Gear zero is reverse; gears
+    /// one through N use the original equal-interval table. Hand-tuned fallback
+    /// profiles retain the legacy reachable-speed ceiling.
     pub fn gear_band_top(&self, gear: u8) -> f32 {
         let count = self.gear_count();
         let gear = gear.min(count as u8);
+        if gear == 0 && self.gta_handling_loaded > 0.5 {
+            // GTA's gear-zero band is reverse, not a positive half-band.
+            return -self.reverse_speed;
+        }
         if f32::from(gear) >= count {
             return self.top_speed;
         }
