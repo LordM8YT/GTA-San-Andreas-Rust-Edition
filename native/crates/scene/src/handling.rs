@@ -164,7 +164,7 @@ mod tests {
         assert_eq!(taxi.gta_abs, 0.0);
         let infernus = from_line(infernus).unwrap();
         assert!(infernus.top_speed > taxi.top_speed);
-        assert!(infernus.acceleration > taxi.acceleration);
+        assert!((2.9..3.1).contains(&infernus.acceleration), "{}", infernus.acceleration);
         assert!(infernus.brake_deceleration > taxi.brake_deceleration);
         assert!(from_line("SHORT 1 2 3").is_none());
     }
