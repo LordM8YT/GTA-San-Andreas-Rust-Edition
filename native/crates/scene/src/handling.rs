@@ -4,9 +4,7 @@
 use crate::vehicle::Handling;
 use std::path::Path;
 
-/// The original taxi values SARE's defaults were tuned against.
-const BASE_TOP_SPEED: f32 = 180.0;
-const BASE_ACCELERATION: f32 = 20.0;
+/// Reference values used only by the temporary adapter for the legacy simulator.
 const BASE_BRAKE: f32 = 7.0;
 const BASE_TRACTION: f32 = 0.75;
 
@@ -144,14 +142,20 @@ fn from_line(line: &str) -> Option<Handling> {
 mod tests {
     use super::*;
     #[test]
-    fn faster_cars_get_more_speed_and_taxi_matches_defaults() {
+    fn handling_rows_convert_units_and_preserve_original_values() {
         let taxi = "TAXI 1450.0 4056.4 2.2 0.0 0.3 -0.25 75 0.75 0.85 0.51 5 180.0 20.0 10.0 F P 7.0 0.60 0 30.0 1.4 0.1 0.0 0.28 -0.17 0.5 0.0 0.2 0.25 0.5 20000 0 200000 0 1 0";
         let infernus = "INFERNUS 1400.0 2725.3 1.5 0.0 0.0 -0.25 70 0.70 0.80 0.50 5 240.0 30.0 10.0 4 P 11.0 0.51 0 30.0 1.2 0.19 0.0 0.25 -0.10 0.5 0.4 0.37 0.72 95000 40002004 C04000 1 1 1";
         let taxi = from_line(taxi).unwrap();
-        let base = Handling::default();
-        assert_eq!(taxi.top_speed, base.top_speed);
-        assert_eq!(taxi.acceleration, base.acceleration);
-        assert_eq!(taxi.tire_grip, base.tire_grip);
+        assert!((20.0..30.0).contains(&taxi.top_speed), "{}", taxi.top_speed);
+        assert!((3.9..4.1).contains(&taxi.acceleration), "{}", taxi.acceleration);
+        assert_eq!(taxi.gta_mass, 1450.0);
+        assert_eq!(taxi.gta_turn_mass, 4056.4);
+        assert_eq!(taxi.gta_centre_of_mass, [0.0, 0.3, -0.25]);
+        assert_eq!(taxi.gta_drive_type, 0);
+        assert_eq!(taxi.gta_engine_type, 0);
+        assert_eq!(taxi.gta_traction_loss, 0.85);
+        assert_eq!(taxi.gta_traction_bias, 0.51);
+        assert!(!taxi.gta_abs);
         let infernus = from_line(infernus).unwrap();
         assert!(infernus.top_speed > taxi.top_speed);
         assert!(infernus.acceleration > taxi.acceleration);
@@ -161,7 +165,10 @@ mod tests {
     #[test]
     fn the_row_gear_count_reaches_the_gearbox() {
         let infernus = "INFERNUS 1400.0 2725.3 1.5 0.0 0.0 -0.25 70 0.70 0.80 0.50 5 240.0 30.0 10.0 4 P 11.0 0.51 0 30.0 1.2 0.19 0.0 0.25 -0.10 0.5 0.4 0.37 0.72 95000 40002004 C04000 1 1 1";
-        assert_eq!(from_line(infernus).unwrap().gears, 5.0);
+        let infernus = from_line(infernus).unwrap();
+        assert_eq!(infernus.gears, 5.0);
+        assert_eq!(infernus.gta_drive_type, 2);
+        assert!(infernus.top_speed > from_line("TAXI 1450.0 4056.4 2.2 0.0 0.3 -0.25 75 0.75 0.85 0.51 5 180.0 20.0 10.0 F P 7.0 0.60 0 30.0 1.4 0.1 0.0 0.28 -0.17 0.5 0.0 0.2 0.25 0.5 20000 0 200000 0 1 0").unwrap().top_speed);
         let four = "SENTINEL 1400.0 2725.3 1.5 0.0 0.0 -0.25 70 0.70 0.8 0.50 4 240.0 30.0 10.0 R P 11.0 0.51 0 30.0 1.2 0.19 0.0 0.25 -0.10 0.5 0.4 0.37 0.72 95000 0 0 1 1 1";
         assert_eq!(from_line(four).unwrap().gears, 4.0);
         let clamped = "ODD 1400.0 2725.3 1.5 0.0 0.0 -0.25 70 0.70 0.8 0.50 9 240.0 30.0 10.0 4 P 11.0 0.51 0 30.0 1.2 0.19 0.0 0.25 -0.10 0.5 0.4 0.37 0.72 95000 0 0 1 1 1";
