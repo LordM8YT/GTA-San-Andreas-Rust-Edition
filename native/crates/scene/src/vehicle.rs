@@ -878,7 +878,7 @@ impl Car {
                 right = right.clamp(-adhesion, adhesion);
             } else if contact_speed_forward != 0.0 {
                 fwd = -contact_speed_forward / wheels_on_ground;
-                if !braking && throttle.abs() < 0.01 && !handbrake {
+                if !braking && throttle.abs() < 0.01 && !(handbrake && rear_wheel) {
                     // GTA's global wheel friction is 0.9; convert its per-tick
                     // correction to m/s for this SI integrator.
                     brake = 0.9 / tuning.gta_mass * dt * 2_500.0;
