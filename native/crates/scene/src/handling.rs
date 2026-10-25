@@ -174,7 +174,8 @@ mod tests {
         let infernus = "INFERNUS 1400.0 2725.3 1.5 0.0 0.0 -0.25 70 0.70 0.80 0.50 5 240.0 30.0 10.0 4 P 11.0 0.51 0 30.0 1.2 0.19 0.0 0.25 -0.10 0.5 0.4 0.37 0.72 95000 40002004 C04000 1 1 1";
         let infernus = from_line(infernus).unwrap();
         assert_eq!(infernus.gears, 5.0);
-        assert_eq!(infernus.gta_drive_type, 2);
+        assert_eq!(infernus.gta_drive_type, 2.0);
+        assert_eq!(infernus.gta_handling_flags, f64::from(0xC04000_u32));
         assert!(infernus.top_speed > from_line("TAXI 1450.0 4056.4 2.2 0.0 0.3 -0.25 75 0.75 0.85 0.51 5 180.0 20.0 10.0 F P 7.0 0.60 0 30.0 1.4 0.1 0.0 0.28 -0.17 0.5 0.0 0.2 0.25 0.5 20000 0 200000 0 1 0").unwrap().top_speed);
         let four = "SENTINEL 1400.0 2725.3 1.5 0.0 0.0 -0.25 70 0.70 0.8 0.50 4 240.0 30.0 10.0 R P 11.0 0.51 0 30.0 1.2 0.19 0.0 0.25 -0.10 0.5 0.4 0.37 0.72 95000 0 0 1 1 1";
         assert_eq!(from_line(four).unwrap().gears, 4.0);
