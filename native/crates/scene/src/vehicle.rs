@@ -861,14 +861,19 @@ impl Car {
             let wheel_braking = braking || (handbrake && rear_wheel);
             let driving =
                 !wheel_braking && throttle != 0.0 && drive_wheels[index];
-            let mut brake = if handbrake && rear_wheel {
+            let brake_bias = if front_wheel {
+                2.0 * tuning.gta_brake_bias
+            } else {
+                2.0 - 2.0 * tuning.gta_brake_bias
+            };
+            let mut brake = (if handbrake && rear_wheel {
                 // 20,000 game-speed units per tick, converted to SI velocity change.
                 20_000.0 * dt * 2_500.0
             } else if braking {
                 tuning.brake_deceleration * throttle.abs() * dt
             } else {
                 0.0
-            };
+            }) * brake_bias;
             let mut right = if contact_speed_right != 0.0 {
                 -contact_speed_right / wheels_on_ground
             } else {
