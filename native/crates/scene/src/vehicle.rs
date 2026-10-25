@@ -1061,7 +1061,7 @@ impl Car {
             .clamp(-tuning.steering_rate * dt, tuning.steering_rate * dt);
         // A gearbox pulls against the current gear's band; with one gear the
         // band is the whole top-speed range, exactly as the prototype had it.
-        if tuning.gears > 1.0 {
+        if tuning.gears > 1.0 || tuning.gta_handling_loaded > 0.5 {
             self.shift_gears(&tuning, throttle);
         }
         let band_top = if tuning.gears > 1.0 {
