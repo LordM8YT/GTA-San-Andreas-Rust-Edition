@@ -37,6 +37,10 @@ fn handling_id(ide: &str, model: &str) -> Option<String> {
 /// (3), submerged, traction multiplier, loss, bias, gears, max velocity,
 /// engine acceleration, inertia, drive, engine type, brake deceleration,
 /// brake bias, ABS, steering lock, ...
+///
+/// The gear count is the car's real one, so a stock five-speed shifts through
+/// five bands. Add `"gears": 1` to a resource profile to keep the single-band
+/// prototype feel.
 fn from_line(line: &str) -> Option<Handling> {
     let fields: Vec<_> = line.split_whitespace().collect();
     if fields.len() < 21 {
@@ -52,6 +56,7 @@ fn from_line(line: &str) -> Option<Handling> {
         brake_deceleration: base.brake_deceleration * ratio(number(17)?, BASE_BRAKE, 0.4, 2.0),
         tire_grip: base.tire_grip * ratio(number(8)?, BASE_TRACTION, 0.5, 1.6),
         steering_lock: number(20)?.to_radians().clamp(0.3, 0.9),
+        gears: number(11).map_or(1.0, |count| count.round().clamp(1.0, 6.0)),
         ..base
     };
     handling.validate().ok()?;
@@ -75,6 +80,15 @@ mod tests {
         assert!(infernus.acceleration > taxi.acceleration);
         assert!(infernus.brake_deceleration > taxi.brake_deceleration);
         assert!(from_line("SHORT 1 2 3").is_none());
+    }
+    #[test]
+    fn the_row_gear_count_reaches_the_gearbox() {
+        let infernus = "INFERNUS 1400.0 2725.3 1.5 0.0 0.0 -0.25 70 0.70 0.80 0.50 5 240.0 30.0 10.0 4 P 11.0 0.51 0 30.0 1.2 0.19 0.0 0.25 -0.10 0.5 0.4 0.37 0.72 95000 40002004 C04000 1 1 1";
+        assert_eq!(from_line(infernus).unwrap().gears, 5.0);
+        let four = "SENTINEL 1400.0 2725.3 1.5 0.0 0.0 -0.25 70 0.70 0.8 0.50 4 240.0 30.0 10.0 R P 11.0 0.51 0 30.0 1.2 0.19 0.0 0.25 -0.10 0.5 0.4 0.37 0.72 95000 0 0 1 1 1";
+        assert_eq!(from_line(four).unwrap().gears, 4.0);
+        let clamped = "ODD 1400.0 2725.3 1.5 0.0 0.0 -0.25 70 0.70 0.8 0.50 9 240.0 30.0 10.0 4 P 11.0 0.51 0 30.0 1.2 0.19 0.0 0.25 -0.10 0.5 0.4 0.37 0.72 95000 0 0 1 1 1";
+        assert_eq!(from_line(clamped).unwrap().gears, 6.0);
     }
     #[test]
     fn finds_the_handling_id_of_a_car_model() {

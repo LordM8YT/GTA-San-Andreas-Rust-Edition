@@ -82,6 +82,8 @@ impl RigPiece {
         )
     }
 }
+/// Rolling resistance in m/s^2 the car always pays, before aerodynamic drag.
+const ROLLING_RESISTANCE: f32 = 0.28;
 /// Health a car starts with, as in SA.
 pub const FULL_HEALTH: f32 = 1000.0;
 /// Below this the engine catches fire and the car burns until it blows up.
@@ -199,6 +201,8 @@ pub struct Handling {
     pub tire_grip: f32,
     pub steering_lock: f32,
     pub steering_rate: f32,
+    /// Gears the gearbox pulls through; 1 keeps the single-band prototype feel.
+    pub gears: f32,
     pub suspension_spring: f32,
     pub suspension_damping: f32,
     pub aerodynamic_drag: f32,
@@ -214,6 +218,7 @@ impl Default for Handling {
             tire_grip: 4.6,
             steering_lock: 0.55,
             steering_rate: 1.7,
+            gears: 1.0,
             suspension_spring: 140.0,
             suspension_damping: 22.0,
             aerodynamic_drag: 0.0035,
@@ -234,6 +239,7 @@ impl Handling {
             ("suspension_spring", self.suspension_spring, 40.0, 250.0),
             ("suspension_damping", self.suspension_damping, 8.0, 40.0),
             ("aerodynamic_drag", self.aerodynamic_drag, 0.0, 0.02),
+            ("gears", self.gears, 1.0, 6.0),
         ] {
             anyhow::ensure!(
                 value.is_finite() && (low..=high).contains(&value),
@@ -241,6 +247,42 @@ impl Handling {
             );
         }
         Ok(())
+    }
+}
+impl Handling {
+    /// Whole gears to pull through, clamped to the validated range.
+    pub fn gear_count(&self) -> f32 {
+        self.gears.round().clamp(1.0, 6.0)
+    }
+    /// Speed where the engine balances rolling and aerodynamic drag.
+    ///
+    /// `top_speed` is an asymptote the car never reaches because drag grows
+    /// with the square of speed, so the lower gear bands are spaced against
+    /// this speed instead. Otherwise a middle gear could top out below its own
+    /// shift point and the car would stick there.
+    pub fn reachable_top_speed(&self) -> f32 {
+        let engine = self.acceleration - ROLLING_RESISTANCE;
+        if engine <= 0.0 {
+            return self.top_speed * 0.5;
+        }
+        let drag = self.aerodynamic_drag + self.acceleration / self.top_speed.powi(2);
+        (engine / drag.max(1e-6))
+            .sqrt()
+            .clamp(self.top_speed * 0.2, self.top_speed)
+    }
+    /// Top of `gear`'s speed band in m/s, spaced the way SA's `cTransmission`
+    /// spaces its gear table: first gear covers more than an equal share, and
+    /// the top gear runs all the way to `top_speed` so a geared car keeps the
+    /// single-band car's top end.
+    pub fn gear_band_top(&self, gear: u8) -> f32 {
+        let count = self.gear_count();
+        if f32::from(gear) >= count {
+            return self.top_speed;
+        }
+        let share = 0.5 / count;
+        let flat = 1.0 - share;
+        let fraction = f32::from(gear.clamp(1, count as u8)) * flat / count + share;
+        fraction * self.reachable_top_speed()
     }
 }
 /// Body size used until a model is measured: an average saloon.
@@ -269,6 +311,8 @@ pub struct Car {
     pub position: Vec3,
     pub yaw: f32,
     pub speed: f32,
+    /// Selected gear, from 1. Always 1 for a single-band car.
+    pub gear: u8,
     pub clearance: f32,
     pub pitch: f32,
     pub roll: f32,
@@ -294,6 +338,7 @@ impl Car {
             position,
             yaw: 0.0,
             speed: 0.0,
+            gear: 1,
             clearance,
             pitch: 0.0,
             roll: 0.0,
@@ -447,6 +492,23 @@ impl Car {
         }
         None
     }
+    /// Shift by road speed only: up at 60% of the current band, down at 40% of
+    /// the one below, so a car sitting on a boundary cannot hunt between gears.
+    /// 60% keeps every shift point below the speed where drag cancels the
+    /// gear's pull, even for a car running on two wheels.
+    fn shift_gears(&mut self, tuning: &Handling) {
+        let count = tuning.gear_count() as u8;
+        if self.speed <= 0.0 {
+            self.gear = 1;
+            return;
+        }
+        while self.gear < count && self.speed > 0.6 * tuning.gear_band_top(self.gear) {
+            self.gear += 1;
+        }
+        while self.gear > 1 && self.speed < 0.4 * tuning.gear_band_top(self.gear - 1) {
+            self.gear -= 1;
+        }
+    }
     pub fn step(
         &mut self,
         world: &CollisionWorld,
@@ -579,13 +641,23 @@ impl Car {
         let target_steering = steer.clamp(-1.0, 1.0) * lock;
         self.steering_angle += (target_steering - self.steering_angle)
             .clamp(-tuning.steering_rate * dt, tuning.steering_rate * dt);
+        // A gearbox pulls against the current gear's band; with one gear the
+        // band is the whole top-speed range, exactly as the prototype had it.
+        if tuning.gears > 1.0 {
+            self.shift_gears(&tuning);
+        }
+        let band_top = if tuning.gears > 1.0 {
+            tuning.gear_band_top(self.gear)
+        } else {
+            tuning.top_speed
+        };
         let braking = throttle * self.speed < -0.15;
         let acceleration = if braking {
             -self.speed.signum() * tuning.brake_deceleration * throttle.abs()
         } else if throttle >= 0.0 {
             throttle
                 * tuning.acceleration
-                * (1.0 - (self.speed.max(0.0) / tuning.top_speed).powi(2)).max(0.0)
+                * (1.0 - (self.speed.max(0.0) / band_top).powi(2)).max(0.0)
         } else {
             throttle
                 * tuning.reverse_acceleration
@@ -596,7 +668,7 @@ impl Car {
         if braking && self.speed.signum() != old_speed.signum() {
             self.speed = 0.0;
         }
-        let resistance = (0.28
+        let resistance = (ROLLING_RESISTANCE
             + tuning.aerodynamic_drag * self.speed * self.speed
             + if handbrake { 7.0 * grip } else { 0.0 })
             * dt;
@@ -869,6 +941,117 @@ mod tests {
                 "{key}"
             );
         }
+    }
+    #[test]
+    fn one_gear_keeps_the_single_band_curve() {
+        let tuning = Handling::default();
+        assert_eq!(tuning.gear_count(), 1.0);
+        // The one band ends at the top speed, so the prototype curve the
+        // project was tuned around is untouched.
+        assert_eq!(tuning.gear_band_top(1), tuning.top_speed);
+        let mut car = Car::new(Vec3::Y * 0.6, 0.6);
+        car.handling = tuning;
+        car.speed = 30.0;
+        car.shift_gears(&tuning);
+        assert_eq!(car.gear, 1);
+    }
+    #[test]
+    fn five_gears_shift_up_through_the_bands_and_back_down() {
+        let mut car = Car::new(Vec3::Y * 0.6, 0.6);
+        let tuning = Handling {
+            gears: 5.0,
+            ..Handling::default()
+        };
+        car.handling = tuning;
+        // Bands widen towards the top and the last one reaches `top_speed`.
+        assert!(tuning.gear_band_top(1) < tuning.gear_band_top(2));
+        assert_eq!(tuning.gear_band_top(5), tuning.top_speed);
+        // Each band pulls past its own shift point, so no gear can stall.
+        for gear in 1..5u8 {
+            assert!(
+                tuning.reachable_top_speed() > 0.6 * tuning.gear_band_top(gear),
+                "gear {gear} stalls"
+            );
+        }
+        // 65% of a band is past its shift point but short of the next one, so
+        // exactly one gear is selected.
+        for gear in 1..5u8 {
+            car.gear = gear;
+            car.speed = 0.65 * tuning.gear_band_top(gear);
+            car.shift_gears(&tuning);
+            assert_eq!(car.gear, gear + 1, "did not leave gear {gear}");
+        }
+        // Well inside the first band the car drops back to first.
+        car.speed = 0.3 * tuning.gear_band_top(1);
+        car.shift_gears(&tuning);
+        assert_eq!(car.gear, 1);
+        // Reversing stays in first, where the reverse curve lives.
+        car.speed = -3.0;
+        car.shift_gears(&tuning);
+        assert_eq!(car.gear, 1);
+    }
+    #[test]
+    fn a_car_sitting_on_a_shift_point_does_not_hunt_between_gears() {
+        let mut car = Car::new(Vec3::Y * 0.6, 0.6);
+        let tuning = Handling {
+            gears: 5.0,
+            ..Handling::default()
+        };
+        let up = 0.6 * tuning.gear_band_top(1);
+        car.gear = 1;
+        car.speed = up + 0.05;
+        car.shift_gears(&tuning);
+        assert_eq!(car.gear, 2);
+        // Either side of the first gear's up point now stays in second,
+        // because the down point is a lower fraction of the band below.
+        for speed in [up - 0.05f32, up + 0.05, up - 0.05, up + 0.05] {
+            car.speed = speed;
+            car.shift_gears(&tuning);
+            assert_eq!(car.gear, 2, "gear hunted at {speed}");
+        }
+    }
+    #[test]
+    fn gears_shift_while_driving_and_keep_the_top_speed() {
+        let world = CollisionWorld::from_batches(&[floor(-2000.0, 2000.0, 0.0)]);
+        let geared = Handling {
+            gears: 5.0,
+            ..Handling::default()
+        };
+        let mut single = Car::new(Vec3::Y * 0.6, 0.6);
+        let mut shifting = Car::new(Vec3::Y * 0.6, 0.6).with_handling(geared);
+        for _ in 0..3600 {
+            single.step(&world, 1.0, 0.0, false, 1.0, 1.0 / 120.0);
+            shifting.step(&world, 1.0, 0.0, false, 1.0, 1.0 / 120.0);
+        }
+        assert_eq!(shifting.gear, 5, "never reached top gear");
+        assert!(shifting.speed > 25.0, "speed {}", shifting.speed);
+        // The top band is the whole range, so the geared car still ends up at
+        // the same drag-limited speed; it is only slower on the way there.
+        assert!(
+            (shifting.speed - single.speed).abs() < 0.15 * single.speed.max(1.0),
+            "geared {} vs single {}",
+            shifting.speed,
+            single.speed
+        );
+    }
+    #[test]
+    fn a_half_grounded_car_still_reaches_top_gear() {
+        // Grip at half means only two wheels carry the car, so every gear pulls
+        // less. The shift points have to stay below that reduced pull or the
+        // car would sit in a middle gear forever.
+        let world = CollisionWorld::from_batches(&[floor(-2000.0, 2000.0, 0.0)]);
+        let mut car = Car::new(Vec3::Y * 0.6, 0.6).with_handling(Handling {
+            gears: 5.0,
+            ..Handling::default()
+        });
+        for _ in 0..3600 {
+            car.step(&world, 1.0, 0.0, false, 0.5, 1.0 / 120.0);
+        }
+        assert_eq!(
+            car.gear, 5,
+            "stuck in gear {} at {} m/s",
+            car.gear, car.speed
+        );
     }
     #[test]
     fn tuning_changes_acceleration_and_braking_without_losing_support() {
