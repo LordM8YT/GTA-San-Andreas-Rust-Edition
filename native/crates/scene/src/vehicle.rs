@@ -338,7 +338,7 @@ impl Handling {
         let count = self.gear_count();
         let gear = f32::from(gear.min(count as u8));
         let half = self.top_speed / (2.0 * count);
-        gear * (self.top_speed - half) / count + half
+        gear * (self.reachable_top_speed() - half) / count + half
     }
 
     /// GTA shifts up after crossing two thirds of the interval into the next
@@ -1200,7 +1200,7 @@ mod tests {
         // exactly one gear is selected.
         for gear in 1..5u8 {
             car.gear = gear;
-            car.speed = 0.65 * tuning.gear_band_top(gear);
+            car.speed = tuning.gear_up_shift_speed(gear) + 0.05;
             car.shift_gears(&tuning);
             assert_eq!(car.gear, gear + 1, "did not leave gear {gear}");
         }
@@ -1220,7 +1220,7 @@ mod tests {
             gears: 5.0,
             ..Handling::default()
         };
-        let up = 0.6 * tuning.gear_band_top(1);
+        let up = tuning.gear_up_shift_speed(1);
         car.gear = 1;
         car.speed = up + 0.05;
         car.shift_gears(&tuning);
