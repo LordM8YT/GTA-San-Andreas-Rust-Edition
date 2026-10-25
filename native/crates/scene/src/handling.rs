@@ -132,6 +132,7 @@ fn from_line(line: &str) -> Option<Handling> {
         gta_mass: mass,
         gta_turn_mass: turn_mass,
         gta_drag_multiplier: drag,
+        gta_traction_multiplier: traction_multiplier,
         gta_centre_of_mass_x: centre_of_mass_x,
         gta_centre_of_mass_y: centre_of_mass_y,
         gta_centre_of_mass_z: centre_of_mass_z,
@@ -171,6 +172,7 @@ mod tests {
         assert_eq!(taxi.gta_centre_of_mass_z, -0.25);
         assert_eq!(taxi.gta_drive_type, 0);
         assert_eq!(taxi.gta_engine_type, 0);
+        assert_eq!(taxi.gta_traction_multiplier, 0.75);
         assert_eq!(taxi.gta_traction_loss, 0.85);
         assert_eq!(taxi.gta_traction_bias, 0.51);
         assert_eq!(taxi.gta_abs, 0.0);
