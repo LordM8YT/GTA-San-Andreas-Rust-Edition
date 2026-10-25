@@ -57,7 +57,9 @@ fn from_line(line: &str) -> Option<Handling> {
     let mass = number(1)?;
     let turn_mass = number(2)?;
     let drag = number(3)?;
-    let centre_of_mass = [number(4)?, number(5)?, number(6)?];
+    let centre_of_mass_x = number(4)?;
+    let centre_of_mass_y = number(5)?;
+    let centre_of_mass_z = number(6)?;
     let traction_multiplier = number(8)?;
     let traction_loss = number(9)?;
     let traction_bias = number(10)?;
@@ -70,8 +72,8 @@ fn from_line(line: &str) -> Option<Handling> {
     let brake_deceleration = number(17)?;
     let brake_bias = number(18)?;
     let abs = match fields.get(19)? {
-        &"0" => false,
-        &"1" => true,
+        &"0" => 0.0,
+        &"1" => 1.0,
         _ => return None,
     };
     let steering_lock = number(20)?;
@@ -118,11 +120,13 @@ fn from_line(line: &str) -> Option<Handling> {
         gta_mass: mass,
         gta_turn_mass: turn_mass,
         gta_drag_multiplier: drag,
-        gta_centre_of_mass: centre_of_mass,
+        gta_centre_of_mass_x: centre_of_mass_x,
+        gta_centre_of_mass_y: centre_of_mass_y,
+        gta_centre_of_mass_z: centre_of_mass_z,
         gta_traction_loss: traction_loss,
         gta_traction_bias: traction_bias,
-        gta_drive_type: drive_type,
-        gta_engine_type: engine_type,
+        gta_drive_type: f32::from(drive_type),
+        gta_engine_type: f32::from(engine_type),
         gta_engine_inertia: engine_inertia,
         gta_brake_bias: brake_bias,
         gta_abs: abs,
@@ -150,12 +154,14 @@ mod tests {
         assert!((3.9..4.1).contains(&taxi.acceleration), "{}", taxi.acceleration);
         assert_eq!(taxi.gta_mass, 1450.0);
         assert_eq!(taxi.gta_turn_mass, 4056.4);
-        assert_eq!(taxi.gta_centre_of_mass, [0.0, 0.3, -0.25]);
+        assert_eq!(taxi.gta_centre_of_mass_x, 0.0);
+        assert_eq!(taxi.gta_centre_of_mass_y, 0.3);
+        assert_eq!(taxi.gta_centre_of_mass_z, -0.25);
         assert_eq!(taxi.gta_drive_type, 0);
         assert_eq!(taxi.gta_engine_type, 0);
         assert_eq!(taxi.gta_traction_loss, 0.85);
         assert_eq!(taxi.gta_traction_bias, 0.51);
-        assert!(!taxi.gta_abs);
+        assert_eq!(taxi.gta_abs, 0.0);
         let infernus = from_line(infernus).unwrap();
         assert!(infernus.top_speed > taxi.top_speed);
         assert!(infernus.acceleration > taxi.acceleration);
