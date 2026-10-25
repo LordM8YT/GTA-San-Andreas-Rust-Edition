@@ -814,6 +814,29 @@ impl Car {
         } else {
             0.0
         };
+        let supported_wheels = [
+            supports.iter().any(|(x, z, _)| *x < 0.0 && *z < 0.0),
+            supports.iter().any(|(x, z, _)| *x < 0.0 && *z > 0.0),
+            supports.iter().any(|(x, z, _)| *x > 0.0 && *z < 0.0),
+            supports.iter().any(|(x, z, _)| *x > 0.0 && *z > 0.0),
+        ];
+        let drive_wheels = match tuning.gta_drive_type as u8 {
+            0 => [false, true, false, true], // front-wheel drive
+            1 => [true, false, true, false], // rear-wheel drive
+            2 => [true; 4],                  // four-wheel drive
+            _ => [true; 4],
+        };
+        let drive_wheel_count = drive_wheels.iter().filter(|&&drive| drive).count();
+        let supported_drive_count = drive_wheels
+            .iter()
+            .zip(supported_wheels)
+            .filter(|(drive, supported)| **drive && *supported)
+            .count();
+        let drive_grip = if tuning.gta_handling_loaded > 0.5 {
+            supported_drive_count as f32 / drive_wheel_count.max(1) as f32
+        } else {
+            grip
+        };
         // Steering lock falls with speed; wheel input and body rotation both have inertia.
         let lock = tuning.steering_lock / (1.0 + (self.speed.abs() / 16.0).powi(2));
         let target_steering = steer.clamp(-1.0, 1.0) * lock;
@@ -883,7 +906,7 @@ impl Car {
                 self.transmission_a7 = 1.0;
                 self.transmission_initialized = true;
             }
-            if grip > 0.0 {
+            if drive_grip > 0.0 {
                 let inertia_delta = ratio - self.transmission_a6;
                 let engine_response =
                     (1.0 - inertia_delta * tuning.gta_engine_inertia).clamp(0.1, 1.0);
@@ -927,7 +950,8 @@ impl Car {
                 * (1.0 - (-self.speed / tuning.reverse_speed).powi(2)).max(0.0)
         };
         let old_speed = self.speed;
-        self.speed += acceleration * grip * dt;
+        let longitudinal_grip = if braking { grip } else { drive_grip };
+        self.speed += acceleration * longitudinal_grip * dt;
         if braking && self.speed.signum() != old_speed.signum() {
             self.speed = 0.0;
         }
@@ -940,12 +964,6 @@ impl Car {
         // Approximate per-wheel normal load and load transfer while retaining
         // SARE's friction-circle tire response. A lifted wheel contributes no grip;
         // acceleration and cornering unload the appropriate wheels/axle.
-        let supported_wheels = [
-            supports.iter().any(|(x, z, _)| *x < 0.0 && *z < 0.0),
-            supports.iter().any(|(x, z, _)| *x < 0.0 && *z > 0.0),
-            supports.iter().any(|(x, z, _)| *x > 0.0 && *z < 0.0),
-            supports.iter().any(|(x, z, _)| *x > 0.0 && *z > 0.0),
-        ];
         let approximate_lateral_acceleration = self.speed * self.yaw_rate;
         // Geometric probes can still see the road during takeoff. Only
         // wheels with active suspension support should contribute tire load.
@@ -961,7 +979,7 @@ impl Car {
         let front_load_capacity = wheel_loads[1].sqrt() + wheel_loads[3].sqrt();
         let rear_load_capacity = wheel_loads[0].sqrt() + wheel_loads[2].sqrt();
         let tire_budget =
-            (tuning.tire_grip * handling).powi(2) - (acceleration * grip * 0.5).powi(2);
+            (tuning.tire_grip * handling).powi(2) - (acceleration * longitudinal_grip * 0.5).powi(2);
         let front_limit = tire_budget.max(0.5).sqrt() * front_load_capacity;
         let mut rear_limit = tuning.tire_grip * handling * rear_load_capacity;
         if handbrake {
