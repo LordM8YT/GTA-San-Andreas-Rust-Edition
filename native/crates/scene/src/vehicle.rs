@@ -830,22 +830,26 @@ impl Car {
             let contact_speed_forward = contact_velocity.dot(wheel_forward);
             let contact_speed_right = contact_velocity.dot(wheel_right);
             let was_skidding = self.wheel_states[index] != 0;
+            let traction_bias = if front_wheel {
+                (2.0 * tuning.gta_traction_bias).clamp(0.0, 2.0)
+            } else {
+                (2.0 - 2.0 * tuning.gta_traction_bias).clamp(0.0, 2.0)
+            };
+            let suspension_bias = if front_wheel {
+                2.0 * tuning.gta_suspension_front_rear_bias
+            } else {
+                2.0 - 2.0 * tuning.gta_suspension_front_rear_bias
+            };
+            // Compression is not yet exposed by SARE's collision query, so use
+            // the mid-travel value until per-wheel suspension is ported.
+            let suspension_adhesion =
+                (suspension_bias * tuning.gta_suspension_force_level * 2.0).clamp(0.0, 2.0);
             let mut adhesion = tuning.gta_traction_multiplier
                 * 2.5
                 * dt
                 * handling
-                * if front_wheel {
-                    (2.0 * tuning.gta_traction_bias).clamp(0.0, 2.0)
-                } else {
-                    (2.0 - 2.0 * tuning.gta_traction_bias).clamp(0.0, 2.0)
-                }
-                * (if front_wheel {
-                    2.0 * tuning.gta_suspension_front_rear_bias
-                } else {
-                    2.0 - 2.0 * tuning.gta_suspension_front_rear_bias
-                })
-                .mul_add(tuning.gta_suspension_force_level * 2.0, 0.0)
-                .clamp(0.0, 2.0);
+                * traction_bias
+                * suspension_adhesion;
             if was_skidding {
                 already_skidding = true;
                 adhesion *= tuning.gta_traction_loss;
