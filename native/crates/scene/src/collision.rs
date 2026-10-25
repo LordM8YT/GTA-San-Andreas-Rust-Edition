@@ -150,7 +150,8 @@ impl CollisionWorld {
         indices
     }
     pub fn ground_below(&self, pos: Vec3, max_y: f32) -> Option<f32> {
-        self.ground_contact_below(pos, max_y).map(|(height, _)| height)
+        self.ground_contact_below(pos, max_y)
+            .map(|(height, _)| height)
     }
 
     /// Ground height and upward-facing contact normal for vehicle suspension.
@@ -181,7 +182,11 @@ impl CollisionWorld {
             }
             let y = t.a.y + u * (t.b.y - t.a.y) + v * (t.c.y - t.a.y);
             if y <= max_y + 0.001 && best.is_none_or(|(old, _)| y > old) {
-                let normal = if t.normal.y < 0.0 { -t.normal } else { t.normal };
+                let normal = if t.normal.y < 0.0 {
+                    -t.normal
+                } else {
+                    t.normal
+                };
                 best = Some((y, normal));
             }
         }
