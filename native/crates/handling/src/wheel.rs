@@ -189,7 +189,8 @@ pub fn process_wheel(
     if handling.suspension_anti_dive > 0.0 {
         if braking {
             separate_turn = true;
-            angular_total = angular_total - args.wheel_forward * (handling.suspension_anti_dive * fwd);
+            angular_total =
+                angular_total - args.wheel_forward * (handling.suspension_anti_dive * fwd);
         } else if driving {
             separate_turn = true;
             angular_total =
@@ -215,10 +216,8 @@ pub fn process_wheel(
         // Multiply by mass and let ApplyMoveForce divide it back out: the
         // resulting velocity delta is exactly `speed` along `direction`.
         linear_delta = body.apply_move_force(direction * (speed * handling.mass), handling);
-        let turn_force =
-            turn_speed * body.wheel_effective_mass(point, turn_direction, handling);
-        angular_delta =
-            body.apply_turn_force(turn_direction * turn_force, point, handling);
+        let turn_force = turn_speed * body.wheel_effective_mass(point, turn_direction, handling);
+        angular_delta = body.apply_turn_force(turn_direction * turn_force, point, handling);
     }
 
     *state = state_value;
@@ -264,7 +263,14 @@ mod tests {
             index: 1,
             ctimer_step: 0.5,
         };
-        let r = process_wheel(&mut b, &h, Vec3::new(0.0, -1.7, -0.25), &mut st, &mut skid, &args);
+        let r = process_wheel(
+            &mut b,
+            &h,
+            Vec3::new(0.0, -1.7, -0.25),
+            &mut st,
+            &mut skid,
+            &args,
+        );
         assert!((r.linear_delta.length() - r.total.length()).abs() < 1e-6);
         assert!(b.move_speed.y > 0.0);
     }

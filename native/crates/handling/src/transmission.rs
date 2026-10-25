@@ -101,7 +101,11 @@ impl Transmission {
         }
 
         let (max_velocity, max_flat_velocity, max_reverse) = if h.uses_maxsp_limit() {
-            (converted_max, max_flat / 1.2, (-max_flat / 1.2 / 4.0).min(-0.2))
+            (
+                converted_max,
+                max_flat / 1.2,
+                (-max_flat / 1.2 / 4.0).min(-0.2),
+            )
         } else {
             (max_flat * 1.2, max_flat, (-max_flat * 0.3).min(-0.2))
         };
@@ -235,7 +239,14 @@ impl Transmission {
         let before_a7 = self.inertia_value2;
 
         if current_velocity < self.max_reverse_velocity {
-            return self.result(gear_before, before_a6, before_a7, 0.0, nitro, "below-reverse");
+            return self.result(
+                gear_before,
+                before_a6,
+                before_a7,
+                0.0,
+                nitro,
+                "below-reverse",
+            );
         }
         let mut all_ground = all_wheels_on_ground;
         let mut pointers = true;
@@ -269,7 +280,11 @@ impl Transmission {
             }
 
             if accelerate {
-                let nitros_multiplier = if handling_nitros { GTA_NITROS_MULTIPLIER } else { 1.0 };
+                let nitros_multiplier = if handling_nitros {
+                    GTA_NITROS_MULTIPLIER
+                } else {
+                    1.0
+                };
                 let speed_multiplier = if self.number_of_gears == 1 {
                     1.0
                 } else if self.current_gear >= 1 {

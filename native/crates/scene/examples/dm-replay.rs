@@ -25,11 +25,7 @@ fn gta_to_scene(p: [f32; 3]) -> Vec3 {
 
 /// MTA stores `R = Rz(rz) * Ry(ry) * Rx(rx)` in degrees; columns are the basis.
 fn euler_basis(rx: f32, ry: f32, rz: f32) -> [Vec3; 3] {
-    let (rx, ry, rz) = (
-        rx.to_radians(),
-        ry.to_radians(),
-        rz.to_radians(),
-    );
+    let (rx, ry, rz) = (rx.to_radians(), ry.to_radians(), rz.to_radians());
     let (cx, sx) = (rx.cos(), rx.sin());
     let (cy, sy) = (ry.cos(), ry.sin());
     let (cz, sz) = (rz.cos(), rz.sin());
@@ -80,9 +76,18 @@ fn load_map(
     };
     // Box faces as index triples into the 8 corners.
     const BOX_FACES: [[usize; 3]; 12] = [
-        [0, 1, 2], [0, 2, 3], [4, 6, 5], [4, 7, 6],
-        [0, 4, 5], [0, 5, 1], [1, 5, 6], [1, 6, 2],
-        [2, 6, 7], [2, 7, 3], [3, 7, 4], [3, 4, 0],
+        [0, 1, 2],
+        [0, 2, 3],
+        [4, 6, 5],
+        [4, 7, 6],
+        [0, 4, 5],
+        [0, 5, 1],
+        [1, 5, 6],
+        [1, 6, 2],
+        [2, 6, 7],
+        [2, 7, 3],
+        [3, 7, 4],
+        [3, 4, 0],
     ];
     // The collision export does not carry the original's per-object "solid"
     // flag, so decorative geometry (the gates over the start line) becomes
@@ -128,16 +133,32 @@ fn load_map(
         // World-space bounds of this instance, from the model's own bounds.
         if let Some(local) = collision.get("bounds") {
             let read = |value: &serde_json::Value, i: usize| {
-                value.as_array().and_then(|v| v.get(i)).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32
+                value
+                    .as_array()
+                    .and_then(|v| v.get(i))
+                    .and_then(|x| x.as_f64())
+                    .unwrap_or(0.0) as f32
             };
             let (min, max) = (&local["min"], &local["max"]);
             let mut low = Vec3::splat(f32::INFINITY);
             let mut high = Vec3::splat(f32::NEG_INFINITY);
             for i in 0..8 {
                 let corner = [
-                    if i & 1 == 0 { read(min, 0) } else { read(max, 0) },
-                    if i & 2 == 0 { read(min, 1) } else { read(max, 1) },
-                    if i & 4 == 0 { read(min, 2) } else { read(max, 2) },
+                    if i & 1 == 0 {
+                        read(min, 0)
+                    } else {
+                        read(max, 0)
+                    },
+                    if i & 2 == 0 {
+                        read(min, 1)
+                    } else {
+                        read(max, 1)
+                    },
+                    if i & 4 == 0 {
+                        read(min, 2)
+                    } else {
+                        read(max, 2)
+                    },
                 ];
                 let world = gta_to_scene([
                     m[0][0] * corner[0] + m[0][1] * corner[1] + m[0][2] * corner[2] + m[0][3],
@@ -211,11 +232,19 @@ fn load_map(
                     place([lo[0], hi[1], hi[2]]),
                 ];
                 for face in BOX_FACES {
-                    push(&mut vertices, corners[face[0]], corners[face[1]], corners[face[2]]);
+                    push(
+                        &mut vertices,
+                        corners[face[0]],
+                        corners[face[1]],
+                        corners[face[2]],
+                    );
                 }
             }
         }
-        let model_vertices = collision["vertices"].as_array().cloned().unwrap_or_default();
+        let model_vertices = collision["vertices"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
         let points: Vec<Vec3> = model_vertices
             .iter()
             .filter_map(|v| v.as_array())
@@ -228,9 +257,11 @@ fn load_map(
             for face in faces {
                 let read = |key: &str| face[key].as_u64().unwrap_or(0) as usize;
                 let (a, b, c) = (read("a"), read("b"), read("c"));
-                if let (Some(a), Some(b), Some(c)) =
-                    (points.get(a).copied(), points.get(b).copied(), points.get(c).copied())
-                {
+                if let (Some(a), Some(b), Some(c)) = (
+                    points.get(a).copied(),
+                    points.get(b).copied(),
+                    points.get(c).copied(),
+                ) {
                     push(&mut vertices, a, b, c);
                 }
             }
@@ -302,9 +333,9 @@ fn load_tas(path: &str) -> anyhow::Result<Vec<Frame>> {
 
 fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
-    let map_path = args.next().unwrap_or_else(|| {
-        "../../browser-three/dist/maps/dm-skynet-vol6-profeta.json".into()
-    });
+    let map_path = args
+        .next()
+        .unwrap_or_else(|| "../../browser-three/dist/maps/dm-skynet-vol6-profeta.json".into());
     let tas_path = args.next().unwrap_or_else(|| "profeta_slip.tas".into());
     let limit: usize = args
         .next()
@@ -330,14 +361,20 @@ fn main() -> anyhow::Result<()> {
         frames.len() as f32 * 0.02
     );
     let first = &frames[0];
-    let basis = euler_basis(first.rotation_deg[0], first.rotation_deg[1], first.rotation_deg[2]);
+    let basis = euler_basis(
+        first.rotation_deg[0],
+        first.rotation_deg[1],
+        first.rotation_deg[2],
+    );
     let forward = gta_to_scene(basis[1].to_array());
     let yaw = forward.x.atan2(forward.z);
     let mut car = Car::new(first.position, 0.6);
     // Optional fourth argument: the game folder, so the recording's model
     // (the Infernus, 411) drives with its own handling.cfg row.
     if let Some(folder) = args.next() {
-        if let Some(handling) = sa_scene::handling::for_model(std::path::Path::new(&folder), "infernus") {
+        if let Some(handling) =
+            sa_scene::handling::for_model(std::path::Path::new(&folder), "infernus")
+        {
             println!("handling: infernus row from {folder}");
             car = car.with_handling(handling);
         } else {
@@ -396,7 +433,8 @@ fn main() -> anyhow::Result<()> {
         };
         let handbrake = held.iter().any(|k| k == "handbrake");
         car.set_nitro(held.iter().any(|k| k == "vehicle_fire"));
-        car.step(&map.collision, throttle, steer, handbrake, 1.0, dt);
+        car.step_tick(&map.collision, throttle, steer, handbrake, 1.0);
+        let _ = dt;
         let error = car.position.distance(frames[index].position);
         errors.push(error);
         max_speed = max_speed.max(car.speed * 3.6);

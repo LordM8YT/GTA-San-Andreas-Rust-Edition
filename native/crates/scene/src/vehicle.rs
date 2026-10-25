@@ -2,11 +2,11 @@
 //! Position is the model origin; speed and slip are in metres per second.
 use crate::collision::CollisionWorld;
 use glam::{Affine3A, Quat, Vec3};
+pub use sa_assets::{Panel, VehiclePart};
 use sa_handling::{
     Basis as KernelBasis, Controls, Handling as KernelHandling, Vec3 as KVec3,
     Vehicle as KernelVehicle,
 };
-pub use sa_assets::{Panel, VehiclePart};
 /// Render the original model's -Z front in the simulated +Z-forward body frame.
 pub fn model_rotation(yaw: f32, pitch: f32, roll: f32) -> Quat {
     // Simulation stores independent forward/side grade angles. Euler bank
@@ -214,6 +214,12 @@ pub struct Handling {
     pub suspension_spring: f32,
     pub suspension_damping: f32,
     pub aerodynamic_drag: f32,
+    /// The stock `handling.cfg` row this profile came from, already parsed into
+    /// GTA's own units. When present the kernel runs the original numbers
+    /// instead of the ratios above, so a model drives in SARE exactly as it
+    /// does in the game; `None` keeps the SARE-tuned derivation.
+    #[serde(skip)]
+    pub source: Option<sa_handling::Handling>,
 }
 impl Default for Handling {
     fn default() -> Self {
@@ -233,6 +239,7 @@ impl Default for Handling {
             suspension_spring: 140.0,
             suspension_damping: 22.0,
             aerodynamic_drag: 0.0035,
+            source: None,
         }
     }
 }
@@ -281,6 +288,13 @@ impl Handling {
     /// and suspension values GTA uses for a saloon.
     #[allow(clippy::field_reassign_with_default)] // 40-field record, mapped field by field
     pub fn to_kernel(&self) -> KernelHandling {
+        // A profile read from the player's own handling.cfg carries the parsed
+        // GTA row: run those numbers verbatim. Everything below is the fallback
+        // for profiles authored in SARE's own units, which has to re-derive the
+        // kernel's tuning and therefore cannot match the game exactly.
+        if let Some(source) = self.source {
+            return source;
+        }
         let mut kernel = KernelHandling::default();
         kernel.mass = self.mass.max(1.0);
         kernel.turn_mass = self.turn_mass.max(1.0);
@@ -293,7 +307,11 @@ impl Handling {
         // A GTA velocity unit is 1/50 s of travel, so an acceleration in m/s^2
         // is 2500x the same number per tick per tick. Work backwards from the
         // first-gear launch to the handling.cfg engine acceleration.
-        let first_gear_multiplier = if kernel.number_of_gears == 1 { 1.0 } else { 4.0 };
+        let first_gear_multiplier = if kernel.number_of_gears == 1 {
+            1.0
+        } else {
+            4.0
+        };
         // Per driven wheel the kernel adds
         //   mult * (engine * 0.4 / 2500 / split) * 0.4 * 2500  m/s^2
         // and `split` wheels are driven, so the split cancels and the car gets
@@ -329,19 +347,22 @@ impl Handling {
     fn calibrate_drag(&self, base: &KernelHandling) -> f32 {
         let target = (self.top_speed / 50.0).max(0.02);
         let settle = |drag: f32| -> f32 {
-            let mut candidate = base.clone();
+            let mut candidate = *base;
             candidate.drag_coefficient = drag;
             let mut gearbox = sa_handling::Transmission::from_handling(&candidate);
             gearbox.set_step(0.5);
             // The gearbox returns one driven wheel's share; the car gets one
             // share per driven wheel, which is what the drive split divided by.
-            let driven = if candidate.drive_type == '4' { 4.0 } else { 2.0 };
+            let driven = if candidate.drive_type == '4' {
+                4.0
+            } else {
+                2.0
+            };
             let mut v = 0.0f32;
             for _ in 0..2400 {
                 let step = gearbox.calculate_drive_acceleration(1.0, v, 4, false);
                 v += step.drive_acceleration * driven;
-                let drag_factor =
-                    (1.0 - base.raw_drag_factor * drag * v.abs().max(0.0)).max(0.0);
+                let drag_factor = (1.0 - base.raw_drag_factor * drag * v.abs().max(0.0)).max(0.0);
                 v *= drag_factor.powf(0.5);
             }
             v
@@ -390,7 +411,6 @@ fn from_kernel(v: KVec3) -> Vec3 {
     Vec3::new(v.x, v.z, v.y)
 }
 /// One suspension line in model space: chassis top and the fully extended end.
-const SUSPENSION_TRAVEL: f32 = 0.34;
 /// Kernel internals, for tooling and tests.
 #[derive(Clone, Debug)]
 pub struct CarDebug {
@@ -433,6 +453,9 @@ pub struct Car {
     pub damage: Damage,
     /// Metres rolled, for turning the wheels.
     travel: f32,
+    /// Frame time not yet simulated, so physics always advances in whole 1/50 s
+    /// ticks regardless of the frame rate.
+    pending: f32,
     /// The GTA:SA automobile kernel: body, gearbox, springs, tyre states.
     kernel: KernelVehicle,
     /// Front wheel angle in radians, mirrored from the kernel for rendering.
@@ -461,10 +484,11 @@ impl Car {
         };
         let handling = Handling::default();
         let profile = handling.to_kernel();
-        let mut kernel = KernelVehicle::new(profile.clone(), to_kernel(position), 1.0);
+        let mut kernel = KernelVehicle::new(profile, to_kernel(position), 1.0);
         // A car that has just spawned is at rest with settled engine history.
         kernel.transmission.settle_history(0.0);
         let mut car = Self {
+            pending: 0.0,
             handling,
             position,
             yaw: 0.0,
@@ -499,7 +523,7 @@ impl Car {
     /// Keep the kernel's tuning in step with `handling`, preserving pose.
     fn rebuild_kernel(&mut self) {
         let profile = self.handling.to_kernel();
-        self.profile = Some(profile.clone());
+        self.profile = Some(profile);
         self.kernel = KernelVehicle::new(profile, self.kernel_position(), self.step_scale());
         self.kernel.body.basis = self.kernel_basis();
     }
@@ -561,55 +585,58 @@ impl Car {
     fn velocity_kernel(&self) -> Vec3 {
         from_kernel(self.kernel.body.move_speed) * self.metres_per_step()
     }
+    /// The automobile kernel as it stands, for tooling and headless parity
+    /// runs that need the raw per-tick state rather than the rendered summary.
+    pub fn kernel(&self) -> &KernelVehicle {
+        &self.kernel
+    }
+
     /// Four suspension lines cast through the world, in GTA's wheel order.
+    ///
+    /// The lines and the wheel layout come from the handling record, exactly as
+    /// `CAutomobile::SetupSuspensionLines` builds them, and the fraction along
+    /// each line is what the kernel normalises into a compression. Deriving
+    /// them from the model's bounding box instead (the earlier shortcut) made a
+    /// car whose model was scaled differently sit at a different height and
+    /// load its springs differently from the same car in the original game.
     fn wheel_contacts(&self, world: &CollisionWorld) -> sa_handling::contact::WheelContactSet {
-        let basis = KernelBasis::new(
-            to_kernel(Vec3::new(self.yaw.cos(), 0.0, -self.yaw.sin())),
-            to_kernel(Vec3::new(self.yaw.sin(), 0.0, self.yaw.cos())),
-            to_kernel(Vec3::Y),
-        );
-        // Kernel basis vectors in SARE space, for placing the lines.
-        let right = from_kernel(basis.right);
-        let forward = from_kernel(basis.forward);
-        let up = from_kernel(basis.up);
-        let half_track = (self.size[0] * 0.80).max(0.35);
-        let half_base = (self.size[1] * 0.72).max(0.6);
-        // Probe well past the resting height rather than exactly to it. The
-        // ride height comes from the model's lowest vertex, and when that is
-        // wrong (a model that failed to load, a resource car with no geometry,
-        // a truck measured from the wrong pivot) a short probe finds no ground,
-        // the car gets no wheel contact and it cannot be driven at all.
-        let probe = self.clearance.max(0.05) + SUSPENSION_TRAVEL + 2.0;
-        let mut set = sa_handling::contact::WheelContactSet::default();
-        // (x, forward offset) per GTA wheel index: front-left, rear-left,
-        // front-right, rear-right.
+        let body = &self.kernel.body;
+        let basis = body.basis;
+        let origin = body.position;
+        let handling = &self.kernel.handling;
+        let half_track = handling.wheel_track * 0.5;
+        // (x, y) per GTA wheel index: front-left, rear-left, front-right,
+        // rear-right. The native order, not a mirrored one: the left side is
+        // -x in GTA's own frame.
         let layout = [
-            (-half_track, half_base),
-            (-half_track, -half_base),
-            (half_track, half_base),
-            (half_track, -half_base),
+            (-half_track, handling.wheel_front_y),
+            (-half_track, handling.wheel_rear_y),
+            (half_track, handling.wheel_front_y),
+            (half_track, handling.wheel_rear_y),
         ];
+        let mut set = sa_handling::contact::WheelContactSet::default();
         for (index, (x, y)) in layout.iter().enumerate() {
-            let top = self.position + right * *x + forward * *y;
-            let direction = -up * probe;
-            match world.segment_hit(top, direction, probe) {
+            let (start, end) = handling.suspension_line(*x, *y);
+            let world_start = origin + basis.transform_local(start);
+            let world_end = origin + basis.transform_local(end);
+            let scene_start = from_kernel(world_start);
+            let offset = from_kernel(world_end) - scene_start;
+            let length = offset.length();
+            let hit = if length > 1.0e-4 {
+                world.segment_hit(scene_start, offset, length)
+            } else {
+                None
+            };
+            match hit {
                 Some(hit) => {
-                    let point = to_kernel(hit.point - self.position);
+                    let point = to_kernel(hit.point) - origin;
                     let normal = to_kernel(hit.normal);
-                    // GTA's normalised compression runs 0 fully compressed to
-                    // 1 fully extended, and the spring force is (1 - it). The
-                    // ground `clearance` below the origin is the rest height:
-                    // half compression there, so the car sits where it was
-                    // authored to sit and pushes back when it sinks.
-                    let distance = hit.fraction * probe;
-                    let compression = 0.5 + (distance - self.clearance) / SUSPENSION_TRAVEL;
-                    if compression < 1.0 {
-                        set.wheels[index] = Some(sa_handling::contact::WheelContact::compressed(
-                            index, point, normal, compression,
-                        ));
-                    } else {
-                        set.wheels[index] = Some(sa_handling::contact::WheelContact::miss(index));
-                    }
+                    set.wheels[index] = Some(sa_handling::contact::WheelContact::hit(
+                        index,
+                        point,
+                        normal,
+                        hit.fraction.clamp(0.0, 1.0),
+                    ));
                 }
                 None => set.wheels[index] = Some(sa_handling::contact::WheelContact::miss(index)),
             }
@@ -697,8 +724,7 @@ impl Car {
         let velocity = self.velocity_kernel();
         let closing = velocity.dot(normal);
         if closing < 0.0 {
-            self.damage
-                .crash(-closing, to_model(self.yaw, -normal));
+            self.damage.crash(-closing, to_model(self.yaw, -normal));
             // A little bounce, as the old model had.
             self.add_velocity(normal * (-closing * 1.3));
         }
@@ -724,9 +750,8 @@ impl Car {
             // Glancing blows spin the body a little.
             let spin = self.forward().cross(normal).y * closing * 0.15;
             let scale = self.metres_per_step();
-            self.kernel.body.turn_speed.y = (self.kernel.body.turn_speed.y
-                + spin * scale)
-                .clamp(-2.0 * scale, 2.0 * scale);
+            self.kernel.body.turn_speed.y =
+                (self.kernel.body.turn_speed.y + spin * scale).clamp(-2.0 * scale, 2.0 * scale);
         }
         self.read_back();
     }
@@ -769,6 +794,48 @@ impl Car {
         self.nitro_pressed = pressed;
     }
 
+    /// Place the car with a full state: orientation as a forward/up pair, a
+    /// world velocity in m/s and an angular velocity in rad/s.
+    ///
+    /// Replays start from a recorded mid-run frame, so they need more than
+    /// [`Car::set_state`] can express.
+    pub fn set_full_state(
+        &mut self,
+        position: Vec3,
+        forward: Vec3,
+        up: Vec3,
+        velocity: Vec3,
+        angular: Vec3,
+    ) {
+        let forward = forward.normalize_or_zero();
+        let forward = if forward == Vec3::ZERO {
+            Vec3::Z
+        } else {
+            forward
+        };
+        let up = up.normalize_or_zero();
+        let up = if up == Vec3::ZERO { Vec3::Y } else { up };
+        let right = up.cross(forward).normalize_or_zero();
+        let right = if right == Vec3::ZERO { Vec3::X } else { right };
+        self.position = position;
+        self.yaw = forward.x.atan2(forward.z);
+        self.kernel.body.position = to_kernel(position);
+        self.kernel.body.basis =
+            KernelBasis::new(to_kernel(right), to_kernel(forward), to_kernel(up));
+        self.kernel.body.move_speed = to_kernel(velocity) * (1.0 / self.metres_per_step());
+        // `angular` arrives in rad/s; the kernel stores radians per CTimer step.
+        self.kernel.body.turn_speed = to_kernel(angular) * (1.0 / 50.0);
+        self.kernel.body.friction_move_speed = KVec3::default();
+        self.kernel.body.friction_turn_speed = KVec3::default();
+        let forward_speed = self
+            .kernel
+            .body
+            .move_speed
+            .dot(self.kernel.body.basis.forward);
+        self.kernel.transmission.settle_history(forward_speed);
+        self.read_back();
+    }
+
     /// Move the car to an absolute pose and stop it there.
     ///
     /// The pose lives in the kernel, so writing `position` or `yaw` from outside
@@ -806,7 +873,11 @@ impl Car {
         // Placing a car at a speed must also place the gearbox at that speed,
         // or its inertia history reads as "engine at rest" and the car coasts
         // down instead of driving.
-        let forward_speed = self.kernel.body.move_speed.dot(self.kernel.body.basis.forward);
+        let forward_speed = self
+            .kernel
+            .body
+            .move_speed
+            .dot(self.kernel.body.basis.forward);
         self.kernel.transmission.settle_history(forward_speed);
         self.speed = velocity.dot(self.forward());
         self.lateral_speed = velocity.dot(Vec3::new(self.yaw.cos(), 0.0, -self.yaw.sin()));
@@ -918,6 +989,27 @@ impl Car {
         }
         None
     }
+    /// Advance exactly one 50 Hz tick, ignoring the frame clock.
+    ///
+    /// Replays and tests that must line up with a recorded tick use this;
+    /// [`Car::step`] is the frame-rate-independent path the game calls.
+    pub fn step_tick(
+        &mut self,
+        world: &CollisionWorld,
+        throttle: f32,
+        steer: f32,
+        handbrake: bool,
+        handling: f32,
+    ) {
+        let (throttle, steer, handbrake) = if self.damage.wrecked {
+            (0.0, 0.0, true)
+        } else {
+            (throttle.clamp(-1.0, 1.0), steer, handbrake)
+        };
+        self.substep(world, throttle, steer, handbrake, handling, 1.0 / 50.0);
+        self.airborne = self.kernel.wheel_counts.iter().all(|count| *count <= 0.0);
+    }
+
     pub fn step(
         &mut self,
         world: &CollisionWorld,
@@ -937,14 +1029,27 @@ impl Car {
         } else {
             (throttle.clamp(-1.0, 1.0), steer, handbrake)
         };
-        // Fixed maximum substep keeps grip consistent across frame rates.
-        let steps = (dt / (1.0 / 120.0)).ceil().max(1.0) as usize;
-        let substep = dt / steps as f32;
-        for _ in 0..steps {
-            self.substep(world, throttle, steer, handbrake, handling, substep);
+        // The car is simulated at GTA's own 50 Hz, whatever the frame rate.
+        // Stepping the kernel by the frame time instead makes grip, damping and
+        // the gearbox depend on the monitor: the same input corners differently
+        // at 60 and at 144 fps. Whole ticks are drawn from an accumulator and
+        // the leftover stays for the next frame, so a slow frame catches up and
+        // a fast one simply does not tick yet.
+        const TICK: f32 = 1.0 / 50.0;
+        const MAX_TICKS_PER_FRAME: u32 = 4;
+        self.pending = (self.pending + dt).min(TICK * MAX_TICKS_PER_FRAME as f32);
+        let mut ticks = 0u32;
+        while self.pending >= TICK && ticks < MAX_TICKS_PER_FRAME {
+            self.substep(world, throttle, steer, handbrake, handling, TICK);
+            self.pending -= TICK;
+            ticks += 1;
+        }
+        if ticks == MAX_TICKS_PER_FRAME {
+            // A long stall (alt-tab, loading) must not queue a burst of physics.
+            self.pending = 0.0;
         }
         let velocity = self.velocity_kernel();
-        self.travel += Vec3::new(velocity.x, 0.0, velocity.z).length() * dt;
+        self.travel += Vec3::new(velocity.x, 0.0, velocity.z).length() * (ticks as f32 * TICK);
         self.airborne = self.kernel.wheel_counts.iter().all(|count| *count <= 0.0);
     }
 }
@@ -1130,14 +1235,12 @@ mod tests {
             radius: 0.0,
         };
         assert!(piece.transform(&Look::default()).is_some());
-        assert!(
-            piece
-                .transform(&Look {
-                    dents: dent_bit(VehiclePart::Panel(Panel::Bonnet)),
-                    ..Look::default()
-                })
-                .is_none()
-        );
+        assert!(piece
+            .transform(&Look {
+                dents: dent_bit(VehiclePart::Panel(Panel::Bonnet)),
+                ..Look::default()
+            })
+            .is_none());
     }
     #[test]
     fn measured_size_follows_the_model_and_stays_sane() {
@@ -1170,7 +1273,11 @@ mod tests {
         assert!(resting > 0.3 && resting < 0.9, "ride height {resting}");
         // It must not sink over time, and must not creep.
         drive(&mut car, &world, 3.0, |_| (0.0, 0.0, false));
-        assert!((car.position.y - resting).abs() < 0.05, "sank to {}", car.position.y);
+        assert!(
+            (car.position.y - resting).abs() < 0.05,
+            "sank to {}",
+            car.position.y
+        );
         assert!(car.speed.abs() < 0.15, "crept at {} m/s", car.speed);
     }
     #[test]
@@ -1318,7 +1425,11 @@ mod tests {
         set_speed(&mut car, 20.0);
         drive(&mut car, &world, 2.0, |_| (1.0, 0.0, false));
         assert!(car.damage.health < FULL_HEALTH, "no damage");
-        assert!(car.position.z < 8.0, "went through the wall: {:?}", car.position);
+        assert!(
+            car.position.z < 8.0,
+            "went through the wall: {:?}",
+            car.position
+        );
         assert!(car.speed.abs() < 4.0, "still speeding: {}", car.speed);
     }
     #[test]
@@ -1395,7 +1506,11 @@ mod tests {
         drive(&mut car, &world, 1.0, |_| (1.0, 0.0, false));
         let before = car.yaw;
         drive(&mut car, &world, 1.0, |_| (1.0, 1.0, false));
-        assert!((car.yaw - before).abs() > 0.1, "no turn: {}", car.yaw - before);
+        assert!(
+            (car.yaw - before).abs() > 0.1,
+            "no turn: {}",
+            car.yaw - before
+        );
     }
     #[test]
     fn frame_rate_does_not_change_the_distance_driven() {

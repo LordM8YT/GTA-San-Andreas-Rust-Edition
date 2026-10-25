@@ -29,16 +29,12 @@
 //! the input shape it produces.
 
 use crate::contact::WheelContactSet;
-use crate::handling::{
-    Handling, FRONT_WHEELS, HANDLING_FLAG_REAR_WHEEL_FIRST, WHEEL_NAMES,
-};
+use crate::handling::{Handling, FRONT_WHEELS, HANDLING_FLAG_REAR_WHEEL_FIRST, WHEEL_NAMES};
 use crate::math::{clamp, Vec3, ZERO};
 use crate::physical::Body;
 use crate::suspension::{advance_wheel_counts, apply_suspension, SuspensionTrace};
 use crate::transmission::{DriveAcceleration, Transmission};
-use crate::wheel::{
-    process_wheel, wheel_basis, ProcessWheelArgs, ProcessWheelResult, WheelState,
-};
+use crate::wheel::{process_wheel, wheel_basis, ProcessWheelArgs, ProcessWheelResult, WheelState};
 
 /// `CPhysical` gravity in raw units per CTimer step. Note how small it is: GTA
 /// velocity is not m/s, so this is *not* 9.81.
@@ -66,7 +62,10 @@ pub struct Controls {
     pub accelerate: f32,
     pub brake_reverse: f32,
     pub handbrake: f32,
-    /// -1 (right) .. +1 (left), the raw GTA steering axis.
+    /// The raw GTA steering axis, `vehicle_right - vehicle_left`, so **+1 is a
+    /// right turn** and -1 is left — the same axis `ProcessControlInputs`
+    /// consumes (`m_fRawSteerAngle` ramps towards its negation). Callers whose
+    /// own convention is positive-for-left must negate, as `sa_scene` does.
     pub steering: f32,
     /// Analog "steer up/down" (pad look), used only by the airborne branch.
     pub steer_forward: f32,
@@ -218,7 +217,9 @@ impl Vehicle {
         self.body.move_speed =
             self.body.move_speed - Vec3::new(0.0, 0.0, GTA_GRAVITY_RAW_PER_CTIME * dt);
         let drag_base = (1.0
-            - self.handling.raw_drag_factor * self.handling.drag_coefficient * self.body.move_speed.length())
+            - self.handling.raw_drag_factor
+                * self.handling.drag_coefficient
+                * self.body.move_speed.length())
         .max(0.0);
         let drag_multiplier = drag_base.powf(dt);
         self.body.move_speed = self.body.move_speed * drag_multiplier;
@@ -237,8 +238,13 @@ impl Vehicle {
             .to_string();
 
         // 9. Suspension.
-        let suspension_trace: SuspensionTrace =
-            apply_suspension(&mut self.body, &self.handling, contacts, &self.compressions, dt);
+        let suspension_trace: SuspensionTrace = apply_suspension(
+            &mut self.body,
+            &self.handling,
+            contacts,
+            &self.compressions,
+            dt,
+        );
         trace.spring_forces = suspension_trace
             .wheels
             .iter()
@@ -270,8 +276,14 @@ impl Vehicle {
         // 11. Steering angle and the speed limiter.
         let steer_lock = self.handling.steering_lock_degrees.to_radians();
         let mut steering_angle = if self.raw_steer_angle.abs() > 1e-12 {
-            steer_lock * self.raw_steer_angle * self.raw_steer_angle
-                * if self.raw_steer_angle < 0.0 { -1.0 } else { 1.0 }
+            steer_lock
+                * self.raw_steer_angle
+                * self.raw_steer_angle
+                * if self.raw_steer_angle < 0.0 {
+                    -1.0
+                } else {
+                    1.0
+                }
         } else {
             0.0
         };
@@ -281,7 +293,8 @@ impl Vehicle {
             // ground: this is why you can turn the wheel fully in mid-air.
         } else {
             let speed_right = self.body.move_speed.dot(self.body.right());
-            let traction = 0.004 * self.handling.traction_multiplier / 4.0
+            let traction = 0.004 * self.handling.traction_multiplier
+                / 4.0
                 / self.handling.velocity_frequency.max(1e-12);
             let surface = self.handling.surface_adhesive_limit;
             let mut limiter =
@@ -311,16 +324,15 @@ impl Vehicle {
 
         // 12. Wheel pairs.
         let base_brake = self.brake_pedal * self.handling.brake_deceleration * dt.min(3.0);
-        let traction_global = 0.004 * self.handling.traction_multiplier / 4.0
+        let traction_global = 0.004 * self.handling.traction_multiplier
+            / 4.0
             / self.handling.velocity_frequency.max(1e-12);
-        let order: [(bool, [usize; 2]); 2] = if self.handling.handling_flags
-            & HANDLING_FLAG_REAR_WHEEL_FIRST
-            != 0
-        {
-            [(false, [1, 3]), (true, [0, 2])]
-        } else {
-            [(true, [0, 2]), (false, [1, 3])]
-        };
+        let order: [(bool, [usize; 2]); 2] =
+            if self.handling.handling_flags & HANDLING_FLAG_REAR_WHEEL_FIRST != 0 {
+                [(false, [1, 3]), (true, [0, 2])]
+            } else {
+                [(true, [0, 2]), (false, [1, 3])]
+            };
 
         let mut wheel_results: Vec<ProcessWheelResult> = Vec::with_capacity(4);
         let contact_speeds = suspension_trace.contact_speeds;
@@ -330,19 +342,16 @@ impl Vehicle {
             } else {
                 2.0 - 2.0 * self.handling.suspension_bias
             };
-            let mut brake_for_pair = if !is_front && self.handbrake_on
-                && !self.handling.rear_steer_by_handbrake()
-            {
-                HANDBRAKE_BRAKE_TORQUE
-            } else {
-                base_brake
-            };
+            let mut brake_for_pair =
+                if !is_front && self.handbrake_on && !self.handling.rear_steer_by_handbrake() {
+                    HANDBRAKE_BRAKE_TORQUE
+                } else {
+                    base_brake
+                };
             let mut pair_traction = traction_global;
 
             if !is_front && (!self.handbrake_on || self.handling.rear_steer_by_handbrake()) {
-                if self.doing_burnout
-                    && matches!(self.handling.drive_type, '4' | 'R')
-                {
+                if self.doing_burnout && matches!(self.handling.drive_type, '4' | 'R') {
                     // Automobile.cpp applies this turn force once, at the left
                     // rear contact, before processing the rear pair.
                     brake_for_pair = 0.0;
@@ -358,9 +367,7 @@ impl Vehicle {
                     // Do not "correct" this argument order: swapping it reverses
                     // burnout yaw and changes the centre-of-mass torque.
                     self.body.apply_turn_force(point, force, &self.handling);
-                } else if matches!(self.handling.drive_type, '4' | 'R')
-                    && !self.nitro_installed
-                {
+                } else if matches!(self.handling.drive_type, '4' | 'R') && !self.nitro_installed {
                     // The source tests the persistent NOS-installed bit, not
                     // whether boost is requested this tick.
                     pair_traction *= self.tire_temperature;
@@ -395,8 +402,7 @@ impl Vehicle {
                 } else {
                     0.0
                 };
-                let (wheel_forward, wheel_right) =
-                    wheel_basis(self.body.forward(), normal, steer);
+                let (wheel_forward, wheel_right) = wheel_basis(self.body.forward(), normal, steer);
 
                 let surface = contact
                     .surface_adhesive_limit
@@ -408,13 +414,17 @@ impl Vehicle {
                     * self.handling.suspension_force_level
                     * 4.0
                     * (1.0 - self.compressions[index]))
-                .min(2.0);
+                    .min(2.0);
                 adhesion *= traction_bias;
 
                 let driven = self.handling.drive_type == '4'
                     || (self.handling.drive_type == 'F' && is_front)
                     || (self.handling.drive_type == 'R' && !is_front);
-                let thrust = if driven { drive.drive_acceleration } else { 0.0 };
+                let thrust = if driven {
+                    drive.drive_acceleration
+                } else {
+                    0.0
+                };
 
                 let args = ProcessWheelArgs {
                     contact_speed: contact_speeds[index] - contact.relative_velocity,
@@ -438,8 +448,7 @@ impl Vehicle {
                 );
                 // ProcessCarWheelPair clears a reverse-driven spinning state for
                 // the drive pair immediately after ProcessWheel returns.
-                if thrust != 0.0 && self.gas_pedal < 0.0 && r.state_after == WheelState::Spinning
-                {
+                if thrust != 0.0 && self.gas_pedal < 0.0 && r.state_after == WheelState::Spinning {
                     self.wheel_states[index] = WheelState::Normal;
                     r.state_after = WheelState::Normal;
                 }
@@ -453,8 +462,7 @@ impl Vehicle {
             let rear_spinning = self.wheel_states[1] == WheelState::Spinning
                 || self.wheel_states[3] == WheelState::Spinning;
             if self.doing_burnout && rear_spinning {
-                self.tire_temperature =
-                    (self.tire_temperature + dt.min(3.0) / 1000.0).min(3.0);
+                self.tire_temperature = (self.tire_temperature + dt.min(3.0) / 1000.0).min(3.0);
             } else if self.tire_temperature > 1.0 {
                 self.tire_temperature =
                     0.995f32.powf(dt.min(3.0)) * (self.tire_temperature - 1.0) + 1.0;
@@ -562,20 +570,16 @@ impl Vehicle {
 
     /// The player airborne-control branch of `ProcessAI`. Only reachable when
     /// the previous tick had no contacting wheels.
-    fn apply_airborne_control_forces(
-        &mut self,
-        controls: &Controls,
-        dt: f32,
-        was_supported: bool,
-    ) {
+    fn apply_airborne_control_forces(&mut self, controls: &Controls, dt: f32, was_supported: bool) {
         // Deliberate asymmetry: the handbrake impulse still fires while
         // accelerating, but the coast and pitch impulses are gated by
         // `!GetAccelerate()`.
         if was_supported || (controls.accelerate > 0.0 && controls.handbrake <= 0.0) {
             return;
         }
-        let weight =
-            0.0007 * (3000.0 / self.handling.turn_mass.max(1e-12)).min(1.0) * self.handling.turn_mass;
+        let weight = 0.0007
+            * (3000.0 / self.handling.turn_mass.max(1e-12)).min(1.0)
+            * self.handling.turn_mass;
         let steer_lr = controls.steering_input();
         let com_local = self.body.center_of_mass_local(&self.handling);
         let right = self.body.right();
@@ -583,18 +587,51 @@ impl Vehicle {
         let up = self.body.up();
 
         if controls.handbrake > 0.0 {
-            apply_air_impulse(&mut self.body, &self.handling, com_local, weight, dt, right, forward, steer_lr, up);
+            apply_air_impulse(
+                &mut self.body,
+                &self.handling,
+                com_local,
+                weight,
+                dt,
+                right,
+                forward,
+                steer_lr,
+                up,
+            );
         } else if controls.accelerate <= 0.0 {
-            apply_air_impulse(&mut self.body, &self.handling, com_local, weight, dt, right, up, steer_lr, forward);
+            apply_air_impulse(
+                &mut self.body,
+                &self.handling,
+                com_local,
+                weight,
+                dt,
+                right,
+                up,
+                steer_lr,
+                forward,
+            );
         }
         if controls.accelerate <= 0.0 {
             let steer_ud = controls.steer_back - controls.steer_forward;
-            apply_air_impulse(&mut self.body, &self.handling, com_local, weight, dt, up, forward, steer_ud, right);
+            apply_air_impulse(
+                &mut self.body,
+                &self.handling,
+                com_local,
+                weight,
+                dt,
+                up,
+                forward,
+                steer_ud,
+                right,
+            );
         }
     }
 
     /// Normalise this tick's contacts into logical wheel contacts.
-    fn prepare_contacts(&mut self, contacts: &WheelContactSet) -> Vec<crate::contact::WheelContact> {
+    fn prepare_contacts(
+        &mut self,
+        contacts: &WheelContactSet,
+    ) -> Vec<crate::contact::WheelContact> {
         let mut out = Vec::with_capacity(4);
         for index in 0..4 {
             let Some(contact) = contacts.get(index) else {
@@ -615,8 +652,7 @@ impl Vehicle {
             if compression < 1.0 {
                 self.wheel_counts[index] = WHEEL_COUNT_PERSIST;
             } else {
-                self.wheel_counts[index] =
-                    (self.wheel_counts[index] - self.ctimer_step).max(0.0);
+                self.wheel_counts[index] = (self.wheel_counts[index] - self.ctimer_step).max(0.0);
             }
             if self.wheel_counts[index] > 0.0 {
                 let mut logical = contact.clone();
@@ -736,12 +772,7 @@ mod tests {
             if t >= 1.0 {
                 set.wheels[i] = Some(WheelContact::miss(i));
             } else {
-                let mut c = WheelContact::hit(
-                    i,
-                    hit_world - pos,
-                    Vec3::new(0.0, 0.0, 1.0),
-                    t,
-                );
+                let mut c = WheelContact::hit(i, hit_world - pos, Vec3::new(0.0, 0.0, 1.0), t);
                 c.point = hit_world - pos;
                 set.wheels[i] = Some(c);
             }
@@ -762,7 +793,11 @@ mod tests {
             assert!(*c > 0.2 && *c < 0.95, "wheel {i} compression {c}");
         }
         assert!(v.body.position.z > -0.5, "car sank: {}", v.body.position.z);
-        assert!(v.body.position.z < 0.8, "car launched: {}", v.body.position.z);
+        assert!(
+            v.body.position.z < 0.8,
+            "car launched: {}",
+            v.body.position.z
+        );
         assert!(
             v.body.move_speed.length() < 0.05,
             "car never came to rest: {:?}",
@@ -782,7 +817,11 @@ mod tests {
             let contacts = flat_ground_contacts(v.body.position);
             v.tick(&controls, &contacts);
         }
-        assert!(v.body.position.y > 1.0, "no forward motion: {:?}", v.body.position);
+        assert!(
+            v.body.position.y > 1.0,
+            "no forward motion: {:?}",
+            v.body.position
+        );
         assert!(v.transmission.current_gear > 1, "never shifted");
     }
 
@@ -791,7 +830,13 @@ mod tests {
         let mut v = Vehicle::new(Handling::default(), Vec3::new(0.0, 0.0, 0.4), 0.5);
         for _ in 0..200 {
             let contacts = flat_ground_contacts(v.body.position);
-            v.tick(&Controls { accelerate: 1.0, ..Default::default() }, &contacts);
+            v.tick(
+                &Controls {
+                    accelerate: 1.0,
+                    ..Default::default()
+                },
+                &contacts,
+            );
         }
         let turn_before = v.body.turn_speed.z;
         for _ in 0..40 {
@@ -819,12 +864,7 @@ mod hold_tests {
     fn four_wheels(compression: f32) -> WheelContactSet {
         let mut set = WheelContactSet::default();
         // Model-relative points in GTA space: x right, y forward, z up.
-        let layout = [
-            (-0.76, 1.73),
-            (-0.76, -1.73),
-            (0.76, 1.73),
-            (0.76, -1.73),
-        ];
+        let layout = [(-0.76, 1.73), (-0.76, -1.73), (0.76, 1.73), (0.76, -1.73)];
         for (index, (x, y)) in layout.iter().enumerate() {
             set.wheels[index] = Some(WheelContact::compressed(
                 index,
@@ -839,7 +879,7 @@ mod hold_tests {
     #[test]
     fn a_car_with_contacts_holds_itself_up() {
         let handling = Handling::default();
-        let mut vehicle = Vehicle::new(handling.clone(), Vec3::new(0.0, 0.0, 0.6), 0.4167);
+        let mut vehicle = Vehicle::new(handling, Vec3::new(0.0, 0.0, 0.6), 0.4167);
         let controls = Controls::default();
         let contacts = four_wheels(0.5);
         let mut trace = None;

@@ -60,7 +60,7 @@ pub const MODEL_FLAG_FORCE_GROUND_CLEARANCE: u32 = 0x4000_0000;
 ///
 /// Defaults are the stock INFERNUS row (model 411), so `Handling::default()`
 /// is a driveable car and tests need no fixture file.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Handling {
     pub model_id: i32,
     /// `m_fMass` — kg-ish. `ApplyMoveForce` divides by this.
@@ -211,7 +211,10 @@ impl Handling {
         let body = line.split('#').next().unwrap_or("");
         let f: Vec<&str> = body.split_whitespace().collect();
         if f.len() < 33 {
-            return Err(format!("handling.cfg row needs >= 33 fields, got {}", f.len()));
+            return Err(format!(
+                "handling.cfg row needs >= 33 fields, got {}",
+                f.len()
+            ));
         }
         let num = |i: usize| -> Result<f32, String> {
             f[i].parse::<f32>().map_err(|e| format!("field {}: {e}", i))
@@ -333,8 +336,8 @@ pub fn parse_handling_flag(text: &str) -> Result<u32, String> {
         .strip_prefix("0x")
         .or_else(|| digits.strip_prefix("0X"))
         .unwrap_or(digits);
-    let value = u32::from_str_radix(digits, 16)
-        .map_err(|e| format!("bad hex flag {text:?}: {e}"))?;
+    let value =
+        u32::from_str_radix(digits, 16).map_err(|e| format!("bad hex flag {text:?}: {e}"))?;
     Ok(if neg { (!value).wrapping_add(1) } else { value })
 }
 

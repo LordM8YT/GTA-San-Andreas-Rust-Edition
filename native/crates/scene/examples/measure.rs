@@ -59,7 +59,8 @@ fn measure(model: &str, folder: &Path) {
     let mut top = 0.0f32;
     let mut gears_seen = 0u8;
     for step in 0..2400 {
-        car.step(&world, 1.0, 0.0, false, 1.0, dt);
+        car.step_tick(&world, 1.0, 0.0, false, 1.0);
+        let _ = dt;
         if step == 60 {
             let d = car.debug();
             println!(
@@ -81,7 +82,8 @@ fn measure(model: &str, folder: &Path) {
     let start = car.position;
     let mut distance = 0.0;
     for _ in 0..1200 {
-        car.step(&world, -1.0, 0.0, false, 1.0, dt);
+        car.step_tick(&world, -1.0, 0.0, false, 1.0);
+        let _ = dt;
         distance = (car.position - start).length();
         if car.speed.abs() < 0.2 {
             break;
@@ -103,7 +105,14 @@ fn main() {
         .unwrap_or_else(|| "F:/GTA San Andreas".to_string());
     let folder = Path::new(&folder);
     println!("handling rows from {}", folder.display());
-    for model in ["infernus", "taxi", "comet", "admiral", "sentinel", "roadtrain"] {
+    for model in [
+        "infernus",
+        "taxi",
+        "comet",
+        "admiral",
+        "sentinel",
+        "roadtrain",
+    ] {
         measure(model, folder);
     }
 }

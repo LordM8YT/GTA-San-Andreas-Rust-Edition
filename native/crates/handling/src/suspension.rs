@@ -158,8 +158,7 @@ pub fn apply_suspension(
         let point_speed = body.get_speed(points[index], handling);
         let collision_point_speed = point_speed.dot(direction);
 
-        let mut damping_timestep =
-            ctimer_step.min(3.0) * handling.suspension_damping_level;
+        let mut damping_timestep = ctimer_step.min(3.0) * handling.suspension_damping_level;
         damping_timestep = clamp(
             damping_timestep,
             -GTA_DAMPING_LIMIT_IN_FRAME,
@@ -183,7 +182,8 @@ pub fn apply_suspension(
 
         let effective_mass = body.contact_effective_mass(points[index], direction, handling);
         let mut damping_force = effective_mass * damping_speed;
-        let force_limit = trace.wheels[index].spring_limit.abs() * GTA_DAMPING_LIMIT_OF_SPRING_FORCE;
+        let force_limit =
+            trace.wheels[index].spring_limit.abs() * GTA_DAMPING_LIMIT_OF_SPRING_FORCE;
         if damping_force > force_limit {
             damping_force = force_limit;
         }
@@ -281,6 +281,10 @@ pub fn basis_from_euler(pitch: f32, roll: f32, yaw: f32) -> Basis {
     let (sy, cy) = yaw.sin_cos();
     let forward = Vec3::new(cy * cp, sy * cp, sp);
     let right = Vec3::new(cy * sr * sp + sy * cr, sy * sr * sp - cy * cr, -sr * cp);
-    let up = Vec3::new(-(cy * cr * sp) + sy * sr, -(sy * cr * sp) - cy * sr, cr * cp);
+    let up = Vec3::new(
+        -(cy * cr * sp) + sy * sr,
+        -(sy * cr * sp) - cy * sr,
+        cr * cp,
+    );
     Basis::new(right, forward, up).reorthogonalise()
 }

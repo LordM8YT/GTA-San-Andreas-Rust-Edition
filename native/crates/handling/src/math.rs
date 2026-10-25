@@ -137,11 +137,7 @@ impl Default for Basis {
 
 impl Basis {
     pub fn new(right: Vec3, forward: Vec3, up: Vec3) -> Self {
-        Self {
-            right,
-            forward,
-            up,
-        }
+        Self { right, forward, up }
     }
 
     /// Build from a row-major 3x3 matrix whose *columns* are the basis vectors.
@@ -179,11 +175,7 @@ impl Basis {
         let up = self.right.cross(self.forward).normalized(GTA_UP);
         let right = self.forward.cross(up).normalized(GTA_RIGHT);
         let forward = up.cross(right);
-        Self {
-            right,
-            forward,
-            up,
-        }
+        Self { right, forward, up }
     }
 
     /// Rotate the basis by one angular step: `v' = v + ω × v` for each axis.
@@ -253,7 +245,9 @@ mod tests {
 
     #[test]
     fn transform_round_trip() {
-        let b = Basis::default().rotate_by(Vec3::new(0.01, 0.02, 0.03)).reorthogonalise();
+        let b = Basis::default()
+            .rotate_by(Vec3::new(0.01, 0.02, 0.03))
+            .reorthogonalise();
         let local = Vec3::new(1.0, -2.0, 0.5);
         let back = b.transform_world_to_local(b.transform_local(local));
         assert!((back - local).length() < 1e-4);

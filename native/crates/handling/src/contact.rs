@@ -81,6 +81,55 @@ impl WheelContact {
     }
 }
 
+/// Four suspension lines against an infinite plane at `plane_z`.
+///
+/// This is the shape a flat world hands the kernel, built from the handling's
+/// own line geometry exactly as `CAutomobile::SetupSuspensionLines` places it.
+/// Tests and replays that have no map use it so their contacts are the same
+/// ones a flat road would produce; a real world raycasts its own triangles.
+pub fn plane_contacts(
+    handling: &crate::handling::Handling,
+    position: Vec3,
+    basis: crate::math::Basis,
+    plane_z: f32,
+) -> WheelContactSet {
+    let half_track = handling.wheel_track * 0.5;
+    // Native order: front-left, rear-left, front-right, rear-right.
+    let layout = [
+        (-half_track, handling.wheel_front_y),
+        (-half_track, handling.wheel_rear_y),
+        (half_track, handling.wheel_front_y),
+        (half_track, handling.wheel_rear_y),
+    ];
+    let mut wheels: [Option<WheelContact>; 4] = Default::default();
+    for (index, (x, y)) in layout.iter().enumerate() {
+        let (start, end) = handling.suspension_line(*x, *y);
+        let world_start = position + basis.transform_local(start);
+        let world_end = position + basis.transform_local(end);
+        let drop = world_start.z - world_end.z;
+        if drop.abs() <= 1.0e-6 {
+            wheels[index] = Some(WheelContact::miss(index));
+            continue;
+        }
+        // The line runs from the mount to the line end; the plane is crossed
+        // where z(lambda) = plane_z.
+        let fraction = (world_start.z - plane_z) / drop;
+        if !(0.0..=1.0).contains(&fraction) {
+            wheels[index] = Some(WheelContact::miss(index));
+            continue;
+        }
+        let hit = world_start + (world_end - world_start) * fraction;
+        let local = basis.transform_world_to_local(hit - position);
+        wheels[index] = Some(WheelContact::hit(
+            index,
+            local,
+            Vec3::new(0.0, 0.0, 1.0),
+            fraction,
+        ));
+    }
+    WheelContactSet { wheels }
+}
+
 /// A body contact from the map or another entity.
 #[derive(Clone, Debug)]
 pub struct BodyContact {

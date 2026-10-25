@@ -69,6 +69,9 @@ fn from_line(line: &str) -> Option<Handling> {
         tire_grip: base.tire_grip * ratio(number(8)?, BASE_TRACTION, 0.5, 1.6),
         steering_lock: number(20)?.to_radians().clamp(0.3, 0.9),
         gears: number(11).map_or(1.0, |count| count.round().clamp(1.0, 6.0)),
+        // The kernel's own parse of the same row: mass, drag, gear table,
+        // springs, tyre grip and flags exactly as the game reads them.
+        source: sa_handling::Handling::from_cfg_line(line).ok(),
         ..base
     };
     handling.validate().ok()?;

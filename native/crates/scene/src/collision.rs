@@ -167,7 +167,11 @@ impl CollisionWorld {
         best.map(|(distance, normal)| {
             // Face the normal back along the ray so a wheel under a ceiling
             // still gets a push toward its spring.
-            let normal = if normal.dot(direction) > 0.0 { -normal } else { normal };
+            let normal = if normal.dot(direction) > 0.0 {
+                -normal
+            } else {
+                normal
+            };
             SegmentHit {
                 point: origin + segment * (distance / max),
                 normal,
