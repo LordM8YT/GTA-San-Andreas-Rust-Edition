@@ -492,6 +492,10 @@ pub struct Car {
     airborne: bool,
     /// Stays set through a slide until both axles have recovered their grip.
     skid_latched: bool,
+    /// GTA cTransmission's two per-car inertia smoothing values.
+    transmission_a6: f32,
+    transmission_a7: f32,
+    transmission_initialized: bool,
 }
 impl Car {
     pub fn new(position: Vec3, clearance: f32) -> Self {
@@ -515,6 +519,9 @@ impl Car {
             ground_roll: 0.0,
             airborne: false,
             skid_latched: false,
+            transmission_a6: 0.0,
+            transmission_a7: 1.0,
+            transmission_initialized: false,
         }
     }
     pub fn with_handling(mut self, handling: Handling) -> Self {
@@ -816,6 +823,7 @@ impl Car {
         };
         let braking = throttle * self.speed < -0.15;
         let gta_transmission = tuning.gta_handling_loaded > 0.5;
+        let mut transmission_inertia = 1.0;
         let gear_acceleration_multiplier = if !gta_transmission {
             1.0
         } else if tuning.gear_count() <= 1.0 {
@@ -825,10 +833,62 @@ impl Car {
                 (1.0 - (f32::from(self.gear) - 1.0) / (tuning.gear_count() - 1.0)).max(0.0);
             (gear_number * gear_number * 3.0 + 1.0) * 0.4
         };
+        if gta_transmission {
+            // Port of cTransmission::CalculateDriveAcceleration's inertia
+            // smoothing (a6/a7). Speeds are SI here, but the ratio is unitless.
+            let gear_count = tuning.gear_count();
+            let max_velocity_change = tuning.top_speed / gear_count / 3.0;
+            let (current_down_diff, up_down_diff) = if self.speed < 0.0 {
+                (
+                    max_velocity_change + self.speed.abs(),
+                    max_velocity_change + tuning.reverse_speed,
+                )
+            } else if self.gear <= 1 {
+                (
+                    max_velocity_change + self.speed.max(0.0),
+                    max_velocity_change + tuning.gear_up_shift_speed(1),
+                )
+            } else {
+                (
+                    self.speed - tuning.gear_down_shift_speed(self.gear),
+                    tuning.gear_up_shift_speed(self.gear)
+                        - tuning.gear_down_shift_speed(self.gear),
+                )
+            };
+            let ratio = if up_down_diff.abs() > 1e-5 {
+                (current_down_diff / up_down_diff).clamp(-2.0, 2.0)
+            } else {
+                1.0
+            };
+            if !self.transmission_initialized {
+                // GTA's inertia variables are already settled after a car has
+                // been sitting on the ground since map load.
+                self.transmission_a6 = ratio;
+                self.transmission_a7 = 1.0;
+                self.transmission_initialized = true;
+            }
+            if grip > 0.0 {
+                let inertia_delta = ratio - self.transmission_a6;
+                let engine_response =
+                    (1.0 - inertia_delta * tuning.gta_engine_inertia).clamp(0.1, 1.0);
+                self.transmission_a6 = ratio;
+                self.transmission_a7 =
+                    engine_response * 0.15 + 0.85 * self.transmission_a7;
+            } else {
+                self.transmission_a6 += throttle.abs()
+                    / tuning.gta_engine_inertia.max(0.001)
+                    * (dt * 50.0)
+                    * 0.1;
+                self.transmission_a6 = self.transmission_a6.min(1.0);
+                self.transmission_a7 = 0.1;
+            }
+            transmission_inertia = self.transmission_a7;
+        }
         let acceleration = if braking {
             -self.speed.signum() * tuning.brake_deceleration * throttle.abs()
         } else if throttle >= 0.0 {
-            let engine_force = throttle * tuning.acceleration * gear_acceleration_multiplier;
+            let engine_force =
+                throttle * tuning.acceleration * gear_acceleration_multiplier * transmission_inertia;
             if gta_transmission {
                 // GTA tapers drive force only after this gear's MaxVelocity;
                 // 0.05 game-units/tick equals 2.5 m/s at 50 Hz.
@@ -843,6 +903,7 @@ impl Car {
             throttle
                 * tuning.reverse_acceleration
                 * 1.8
+                * transmission_inertia
                 * (1.0 - (excess_speed / 2.5).min(1.0))
         } else {
             throttle
