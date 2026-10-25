@@ -150,7 +150,14 @@ impl CollisionWorld {
         indices
     }
     pub fn ground_below(&self, pos: Vec3, max_y: f32) -> Option<f32> {
-        let mut best = None;
+        self.ground_contact_below(pos, max_y).map(|(height, _)| height)
+    }
+
+    /// Ground height and upward-facing contact normal for vehicle suspension.
+    /// Uses the same walkable-triangle selection as ground_below, so adding
+    /// normals does not change existing player or vehicle ground queries.
+    pub fn ground_contact_below(&self, pos: Vec3, max_y: f32) -> Option<(f32, Vec3)> {
+        let mut best: Option<(f32, Vec3)> = None;
         for i in self.nearby(pos, RADIUS) {
             let t = self.triangles[i];
             if t.normal.y.abs() < 0.55 {
@@ -173,8 +180,9 @@ impl CollisionWorld {
                 continue;
             }
             let y = t.a.y + u * (t.b.y - t.a.y) + v * (t.c.y - t.a.y);
-            if y <= max_y + 0.001 && best.is_none_or(|old| y > old) {
-                best = Some(y);
+            if y <= max_y + 0.001 && best.is_none_or(|(old, _)| y > old) {
+                let normal = if t.normal.y < 0.0 { -t.normal } else { t.normal };
+                best = Some((y, normal));
             }
         }
         best
