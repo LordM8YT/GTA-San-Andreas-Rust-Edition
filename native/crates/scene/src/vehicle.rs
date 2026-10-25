@@ -331,9 +331,9 @@ impl Handling {
             .sqrt()
             .clamp(self.top_speed * 0.2, self.top_speed)
     }
-    /// Top of GTA:SA's `cTransmission` speed band for a gear, in m/s.
-    /// The first band starts at half of one equal gear interval; the final
-    /// band ends at the transmission's computed maxVelocity.
+    /// Top of a transmission speed band in m/s. The interval layout matches
+    /// GTA:SA, but the legacy integrator still uses its reachable-speed ceiling
+    /// here; the full port will use GTA's converted maxVelocity directly.
     pub fn gear_band_top(&self, gear: u8) -> f32 {
         let count = self.gear_count();
         let gear = f32::from(gear.min(count as u8));
@@ -341,15 +341,15 @@ impl Handling {
         gear * (self.reachable_top_speed() - half) / count + half
     }
 
-    /// GTA shifts up after crossing two thirds of the interval into the next
-    /// band (the binary's 0.6667 constant), rather than a fraction of band top.
+    /// GTA's upshift fraction (0.6667) applied to the current adapter band.
+    /// The band endpoint remains transitional until the drive-force curve is ported.
     pub fn gear_up_shift_speed(&self, gear: u8) -> f32 {
         let lower = self.gear_band_top(gear.saturating_sub(1));
         let upper = self.gear_band_top(gear);
         lower + 0.6667 * (upper - lower)
     }
 
-    /// GTA downshifts at 42% of the interval into the previous band.
+    /// GTA's downshift fraction (0.42) applied to the current adapter band.
     pub fn gear_down_shift_speed(&self, gear: u8) -> f32 {
         let lower = self.gear_band_top(gear.saturating_sub(2));
         let upper = self.gear_band_top(gear.saturating_sub(1));
@@ -1196,8 +1196,7 @@ mod tests {
                 "gear {gear} stalls"
             );
         }
-        // 65% of a band is past its shift point but short of the next one, so
-        // exactly one gear is selected.
+        // Crossing GTA's upshift point selects exactly the next gear.
         for gear in 1..5u8 {
             car.gear = gear;
             car.speed = tuning.gear_up_shift_speed(gear) + 0.05;
@@ -1225,8 +1224,8 @@ mod tests {
         car.speed = up + 0.05;
         car.shift_gears(&tuning);
         assert_eq!(car.gear, 2);
-        // Either side of the first gear's up point now stays in second,
-        // because the down point is a lower fraction of the band below.
+        // Either side of the first gear's up point stays in second because
+        // the down point is lower, preserving the gearbox's shift hysteresis.
         for speed in [up - 0.05f32, up + 0.05, up - 0.05, up + 0.05] {
             car.speed = speed;
             car.shift_gears(&tuning);
