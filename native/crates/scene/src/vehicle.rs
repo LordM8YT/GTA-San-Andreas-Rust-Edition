@@ -193,6 +193,7 @@ pub fn to_model(yaw: f32, towards: Vec3) -> Vec3 {
 #[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Handling {
+    /// Current simulation parameters, in SI units.
     pub acceleration: f32,
     pub reverse_acceleration: f32,
     pub brake_deceleration: f32,
@@ -201,11 +202,31 @@ pub struct Handling {
     pub tire_grip: f32,
     pub steering_lock: f32,
     pub steering_rate: f32,
-    /// Gears the gearbox pulls through; 1 keeps the single-band prototype feel.
+    /// Gear count from handling.cfg.
     pub gears: f32,
     pub suspension_spring: f32,
     pub suspension_damping: f32,
     pub aerodynamic_drag: f32,
+    /// Original GTA:SA handling.cfg values retained for a faithful physics port.
+    /// Mass and turn mass are in the source file's units.
+    pub gta_mass: f32,
+    pub gta_turn_mass: f32,
+    pub gta_drag_multiplier: f32,
+    pub gta_centre_of_mass: [f32; 3],
+    pub gta_traction_loss: f32,
+    pub gta_traction_bias: f32,
+    /// Encoded original values: drive F=0/R=1/4=2; engine P=0/D=1/E=2.
+    pub gta_drive_type: u8,
+    pub gta_engine_type: u8,
+    pub gta_engine_inertia: f32,
+    pub gta_brake_bias: f32,
+    pub gta_abs: bool,
+    pub gta_suspension_force_level: f32,
+    pub gta_suspension_high_speed_damping: f32,
+    pub gta_suspension_upper_limit: f32,
+    pub gta_suspension_lower_limit: f32,
+    pub gta_suspension_front_rear_bias: f32,
+    pub gta_suspension_anti_dive_multiplier: f32,
 }
 impl Default for Handling {
     fn default() -> Self {
@@ -222,6 +243,23 @@ impl Default for Handling {
             suspension_spring: 140.0,
             suspension_damping: 22.0,
             aerodynamic_drag: 0.0035,
+            gta_mass: 1500.0,
+            gta_turn_mass: 3000.0,
+            gta_drag_multiplier: 2.0,
+            gta_centre_of_mass: [0.0, 0.0, -0.2],
+            gta_traction_loss: 0.8,
+            gta_traction_bias: 0.5,
+            gta_drive_type: 0,
+            gta_engine_type: 0,
+            gta_engine_inertia: 10.0,
+            gta_brake_bias: 0.5,
+            gta_abs: false,
+            gta_suspension_force_level: 1.0,
+            gta_suspension_high_speed_damping: 0.0,
+            gta_suspension_upper_limit: 0.3,
+            gta_suspension_lower_limit: -0.15,
+            gta_suspension_front_rear_bias: 0.5,
+            gta_suspension_anti_dive_multiplier: 0.0,
         }
     }
 }
@@ -240,6 +278,19 @@ impl Handling {
             ("suspension_damping", self.suspension_damping, 8.0, 40.0),
             ("aerodynamic_drag", self.aerodynamic_drag, 0.0, 0.02),
             ("gears", self.gears, 1.0, 6.0),
+            ("gta_mass", self.gta_mass, 1.0, 100000.0),
+            ("gta_turn_mass", self.gta_turn_mass, 1.0, 1000000.0),
+            ("gta_drag_multiplier", self.gta_drag_multiplier, 0.0, 100.0),
+            ("gta_traction_loss", self.gta_traction_loss, 0.0, 5.0),
+            ("gta_traction_bias", self.gta_traction_bias, 0.0, 1.0),
+            ("gta_engine_inertia", self.gta_engine_inertia, 0.0, 100.0),
+            ("gta_brake_bias", self.gta_brake_bias, 0.0, 1.0),
+            ("gta_suspension_force_level", self.gta_suspension_force_level, 0.0, 20.0),
+            ("gta_suspension_high_speed_damping", self.gta_suspension_high_speed_damping, 0.0, 100.0),
+            ("gta_suspension_upper_limit", self.gta_suspension_upper_limit, -5.0, 5.0),
+            ("gta_suspension_lower_limit", self.gta_suspension_lower_limit, -5.0, 5.0),
+            ("gta_suspension_front_rear_bias", self.gta_suspension_front_rear_bias, 0.0, 1.0),
+            ("gta_suspension_anti_dive_multiplier", self.gta_suspension_anti_dive_multiplier, 0.0, 10.0),
         ] {
             anyhow::ensure!(
                 value.is_finite() && (low..=high).contains(&value),
