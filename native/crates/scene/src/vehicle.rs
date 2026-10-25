@@ -767,8 +767,11 @@ impl Car {
             supports.iter().any(|(x, z, _)| *x > 0.0 && *z > 0.0),
         ];
         let approximate_lateral_acceleration = self.speed * self.yaw_rate;
+        // Geometric probes can still see the road during takeoff. Only
+        // wheels with active suspension support should contribute tire load.
+        let loaded_wheels = supported_wheels.map(|supported| supported && grip > 0.0);
         let wheel_loads = wheel_normal_loads(
-            supported_wheels,
+            loaded_wheels,
             acceleration,
             approximate_lateral_acceleration,
             (self.clearance * 0.8).clamp(0.25, 0.8),
