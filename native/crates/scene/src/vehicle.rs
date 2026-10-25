@@ -682,8 +682,36 @@ impl Car {
     /// the one below, so a car sitting on a boundary cannot hunt between gears.
     /// 60% keeps every shift point below the speed where drag cancels the
     /// gear's pull, even for a car running on two wheels.
-    fn shift_gears(&mut self, tuning: &Handling) {
+    fn shift_gears(&mut self, tuning: &Handling, throttle: f32) {
         let count = tuning.gear_count() as u8;
+        if tuning.gta_handling_loaded <= 0.5 {
+            if self.speed <= 0.0 {
+                self.gear = 1;
+                return;
+            }
+            while self.gear < count && self.speed > tuning.gear_up_shift_speed(self.gear) {
+                self.gear += 1;
+            }
+            while self.gear > 1 && self.speed < tuning.gear_down_shift_speed(self.gear) {
+                self.gear -= 1;
+            }
+            return;
+        }
+
+        // GTA has a distinct reverse gear at index zero. It remains selected
+        // while reversing or while reverse torque is being used to stop forward
+        // motion, and returns to first once forward throttle is requested.
+        if self.gear == 0 {
+            if self.speed > -0.5 && throttle >= 0.0 {
+                self.gear = 1;
+            } else {
+                return;
+            }
+        }
+        if self.speed < 0.0 || (self.speed <= 0.0 && throttle < 0.0) {
+            self.gear = 0;
+            return;
+        }
         if self.speed <= 0.0 {
             self.gear = 1;
             return;
@@ -853,7 +881,7 @@ impl Car {
         // A gearbox pulls against the current gear's band; with one gear the
         // band is the whole top-speed range, exactly as the prototype had it.
         if tuning.gears > 1.0 {
-            self.shift_gears(&tuning);
+            self.shift_gears(&tuning, throttle);
         }
         let band_top = if tuning.gears > 1.0 {
             tuning.gear_band_top(self.gear)
@@ -1361,10 +1389,18 @@ mod tests {
         car.speed = 0.3 * tuning.gear_band_top(1);
         car.shift_gears(&tuning);
         assert_eq!(car.gear, 1);
-        // Reversing stays in first, where the reverse curve lives.
+        // Legacy fallback keeps reverse in first; GTA-loaded handling uses gear zero.
         car.speed = -3.0;
-        car.shift_gears(&tuning);
+        car.shift_gears(&tuning, -1.0);
         assert_eq!(car.gear, 1);
+        let gta_tuning = Handling {
+            gears: 5.0,
+            gta_handling_loaded: 1.0,
+            ..Handling::default()
+        };
+        car.gear = 1;
+        car.shift_gears(&gta_tuning, -1.0);
+        assert_eq!(car.gear, 0);
     }
     #[test]
     fn a_car_sitting_on_a_shift_point_does_not_hunt_between_gears() {
