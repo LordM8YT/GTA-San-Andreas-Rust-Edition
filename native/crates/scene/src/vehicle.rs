@@ -831,7 +831,8 @@ impl Car {
             }
             let contact_speed_forward = contact_velocity.dot(wheel_forward);
             let contact_speed_right = contact_velocity.dot(wheel_right);
-            let was_skidding = self.wheel_states[index] != 0;
+            let previous_wheel_state = self.wheel_states[index];
+            let was_skidding = previous_wheel_state != 0;
             let traction_bias = if front_wheel {
                 (2.0 * tuning.gta_traction_bias).clamp(0.0, 2.0)
             } else {
@@ -855,6 +856,9 @@ impl Car {
             if was_skidding {
                 already_skidding = true;
                 adhesion *= tuning.gta_traction_loss;
+                if previous_wheel_state == 1 {
+                    adhesion *= 1.0 - throttle.abs() * 0.2;
+                }
             }
             self.wheel_states[index] = 0;
 
@@ -902,14 +906,22 @@ impl Car {
             let speed_squared = right * right + fwd * fwd;
             if speed_squared > adhesion * adhesion {
                 if self.wheel_states[index] != 3 {
-                    self.wheel_states[index] = if driving && 0.3 * adhesion < fwd.abs() {
-                        1
+                    let traction_limit = if contact_speed_forward > 0.15 && front_wheel {
+                        0.6
                     } else {
-                        2
+                        0.3
                     };
+                    self.wheel_states[index] =
+                        if driving && traction_limit * adhesion < fwd.abs() {
+                            1
+                        } else {
+                            2
+                        };
                 }
                 let loss = if already_skidding {
                     1.0
+                } else if self.wheel_states[index] == 1 {
+                    tuning.gta_traction_loss * (1.0 - throttle.abs() * 0.2)
                 } else {
                     tuning.gta_traction_loss
                 };
