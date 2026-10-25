@@ -60,7 +60,11 @@ struct MapScene {
 
 /// Keep only the map around the recorded path: a DM map is hundreds of
 /// thousands of triangles and the replay never leaves one stretch of it.
-fn load_map(path: &str, bounds: Option<(Vec3, Vec3)>) -> anyhow::Result<MapScene> {
+fn load_map(
+    path: &str,
+    bounds: Option<(Vec3, Vec3)>,
+    recorded_path: &[Vec3],
+) -> anyhow::Result<MapScene> {
     let text = fs::read_to_string(path)?;
     let map: serde_json::Value = serde_json::from_str(&text)?;
     let empty = serde_json::Map::new();
@@ -80,6 +84,27 @@ fn load_map(path: &str, bounds: Option<(Vec3, Vec3)>) -> anyhow::Result<MapScene
         [0, 4, 5], [0, 5, 1], [1, 5, 6], [1, 6, 2],
         [2, 6, 7], [2, 7, 3], [3, 7, 4], [3, 4, 0],
     ];
+    // The collision export does not carry the original's per-object "solid"
+    // flag, so decorative geometry (the gates over the start line) becomes
+    // walls. For a replay the recording is the authority on what was solid:
+    // skip any instance the recorded car passes through.
+    let corridor = {
+        let mut sampled = Vec::new();
+        for (i, point) in recorded_path.iter().enumerate() {
+            if i % 4 == 0 {
+                sampled.push(*point);
+            }
+        }
+        sampled
+    };
+    let passes_through = |low: Vec3, high: Vec3| {
+        let pad = Vec3::splat(1.2);
+        let (low, high) = (low - pad, high + pad);
+        corridor
+            .iter()
+            .any(|p| p.cmpge(low).all() && p.cmple(high).all())
+    };
+    let mut skipped = 0usize;
     let instances = map["instances"].as_array().cloned().unwrap_or_default();
     for instance in &instances {
         if instance["collisions"].as_bool() == Some(false) {
@@ -91,6 +116,33 @@ fn load_map(path: &str, bounds: Option<(Vec3, Vec3)>) -> anyhow::Result<MapScene
         let Some(collision) = models.get(&model).map(|m| &m["collision"]) else {
             continue;
         };
+        // World-space bounds of this instance, from the model's own bounds.
+        if let Some(local) = collision.get("bounds") {
+            let read = |value: &serde_json::Value, i: usize| {
+                value.as_array().and_then(|v| v.get(i)).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32
+            };
+            let (min, max) = (&local["min"], &local["max"]);
+            let mut low = Vec3::splat(f32::INFINITY);
+            let mut high = Vec3::splat(f32::NEG_INFINITY);
+            for i in 0..8 {
+                let corner = [
+                    if i & 1 == 0 { read(min, 0) } else { read(max, 0) },
+                    if i & 2 == 0 { read(min, 1) } else { read(max, 1) },
+                    if i & 4 == 0 { read(min, 2) } else { read(max, 2) },
+                ];
+                let world = gta_to_scene([
+                    m[0][0] * corner[0] + m[0][1] * corner[1] + m[0][2] * corner[2] + m[0][3],
+                    m[1][0] * corner[0] + m[1][1] * corner[1] + m[1][2] * corner[2] + m[1][3],
+                    m[2][0] * corner[0] + m[2][1] * corner[1] + m[2][2] * corner[2] + m[2][3],
+                ]);
+                low = low.min(world);
+                high = high.max(world);
+            }
+            if passes_through(low, high) {
+                skipped += 1;
+                continue;
+            }
+        }
         if let Some((low, high)) = bounds {
             let okay = instance["position"]
                 .as_array()
@@ -141,6 +193,13 @@ fn load_map(path: &str, bounds: Option<(Vec3, Vec3)>) -> anyhow::Result<MapScene
                     ]
                 };
                 let (lo, hi) = (f(&min), f(&max));
+                // A panel thinner than a tyre is a gate or a sign, not ground:
+                // in the source map these are decorative and non-solid, and a
+                // car cannot rest on nine centimetres of plastic.
+                let thinnest = (hi[0] - lo[0]).min(hi[1] - lo[1]).min(hi[2] - lo[2]);
+                if thinnest < 0.4 {
+                    continue;
+                }
                 let corners: [Vec3; 8] = [
                     place([lo[0], lo[1], lo[2]]),
                     place([hi[0], lo[1], lo[2]]),
@@ -185,6 +244,9 @@ fn load_map(path: &str, bounds: Option<(Vec3, Vec3)>) -> anyhow::Result<MapScene
         uv_animation: None,
         vertices,
     }]);
+    if skipped > 0 {
+        println!("skipped {skipped} instances the recorded car passes through");
+    }
     Ok(MapScene {
         collision,
         triangles,
@@ -259,7 +321,8 @@ fn main() -> anyhow::Result<()> {
         let margin = Vec3::splat(80.0);
         Some((low - margin, high + margin))
     };
-    let map = load_map(&map_path, bounds)?;
+    let recorded: Vec<Vec3> = frames.iter().map(|frame| frame.position).collect();
+    let map = load_map(&map_path, bounds, &recorded)?;
     println!(
         "map {} triangles, {} recorded frames ({:.1} s)",
         map.triangles,

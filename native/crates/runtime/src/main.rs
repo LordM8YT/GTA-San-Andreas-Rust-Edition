@@ -582,9 +582,8 @@ impl State {
         let Some((car, _)) = &mut self.car else {
             return;
         };
-        car.stop();
-        car.position = stolen.position + Vec3::Y * car.clearance;
-        car.yaw = stolen.yaw;
+        let clearance = car.clearance;
+        car.teleport(stolen.position + Vec3::Y * clearance, stolen.yaw);
         // Dents and lost health come along with the car.
         car.damage = stolen.damage;
         self.car_render_pose = None;
@@ -1582,15 +1581,14 @@ impl State {
                     self.menu.settings.vehicle_handling,
                     dt,
                 );
-                }
                 if dt > 0.0 {
                     self.skids
                         .update(car, skids::intensity(car, throttle, handbrake));
                 }
                 let center = [ORIGIN[0] + car.position.x, ORIGIN[1] - car.position.z];
                 if streaming::distance(center, self.region) > RADIUS - 60.0 {
-                    car.position = previous;
-                    car.stop();
+                    let yaw = car.yaw;
+                    car.teleport(previous, yaw);
                 }
                 // Ease the chase camera and radar heading behind the car instead
                 // of locking them to every small yaw correction of the body.

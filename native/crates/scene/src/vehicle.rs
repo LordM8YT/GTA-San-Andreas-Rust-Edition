@@ -769,6 +769,27 @@ impl Car {
         self.nitro_pressed = pressed;
     }
 
+    /// Move the car to an absolute pose and stop it there.
+    ///
+    /// The pose lives in the kernel, so writing `position` or `yaw` from outside
+    /// does not move the car: the next tick reads the kernel back over it. Any
+    /// teleport (car jacking, a streaming reset, a respawn) goes through here.
+    pub fn teleport(&mut self, position: Vec3, yaw: f32) {
+        self.position = position;
+        self.yaw = yaw;
+        self.kernel.body.position = to_kernel(position);
+        self.kernel.body.basis = self.kernel_basis();
+        self.kernel.body.move_speed = KVec3::default();
+        self.kernel.body.turn_speed = KVec3::default();
+        self.kernel.body.friction_move_speed = KVec3::default();
+        self.kernel.body.friction_turn_speed = KVec3::default();
+        self.kernel.transmission.settle_history(0.0);
+        self.speed = 0.0;
+        self.lateral_speed = 0.0;
+        self.pitch = 0.0;
+        self.roll = 0.0;
+    }
+
     /// Place the car with an explicit world velocity, in m/s.
     ///
     /// Used by respawns and by replays that start from a recorded state; the
