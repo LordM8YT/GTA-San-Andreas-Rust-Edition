@@ -783,6 +783,7 @@ impl Car {
         &mut self,
         velocity: &mut Vec3,
         supported: [bool; 4],
+        suspension_compression: [f32; 4],
         drive_wheels: [bool; 4],
         throttle: f32,
         braking: bool,
@@ -843,10 +844,12 @@ impl Car {
             } else {
                 2.0 - 2.0 * tuning.gta_suspension_front_rear_bias
             };
-            // Compression is not yet exposed by SARE's collision query, so use
-            // the mid-travel value until per-wheel suspension is ported.
-            let suspension_adhesion =
-                (suspension_bias * tuning.gta_suspension_force_level * 2.0).clamp(0.0, 2.0);
+            // GTA scales wheel adhesion by suspension force and remaining travel.
+            let suspension_adhesion = (suspension_bias
+                * tuning.gta_suspension_force_level
+                * 4.0
+                * (1.0 - suspension_compression[index]))
+                .clamp(0.0, 2.0);
             let mut adhesion = tuning.gta_traction_multiplier
                 * 2.5
                 * dt
@@ -994,6 +997,15 @@ impl Car {
                 )
             })
             .collect::<Vec<_>>();
+        let suspension_range =
+            (tuning.gta_suspension_upper_limit - tuning.gta_suspension_lower_limit).abs().max(0.01);
+        let suspension_compression: [f32; 4] = std::array::from_fn(|index| {
+            let (x, z) = wheels[index];
+            let distance = contacts[index]
+                .map(|ground| expected_height(x, z) - ground)
+                .unwrap_or(tuning.gta_suspension_upper_limit);
+            ((distance - tuning.gta_suspension_lower_limit) / suspension_range).clamp(0.0, 1.0)
+        });
         // Wheel offsets and ground heights of the wheels carrying the car.
         let supports: Vec<(f32, f32, f32)> = wheels
             .iter()
@@ -1226,6 +1238,7 @@ impl Car {
             lateral_acceleration = self.apply_gtasa_wheel_forces(
                 &mut velocity,
                 supported_wheels,
+                suspension_compression,
                 drive_wheels,
                 throttle,
                 braking,
