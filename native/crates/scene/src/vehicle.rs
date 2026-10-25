@@ -1164,84 +1164,112 @@ impl Car {
                 * tuning.reverse_acceleration
                 * (1.0 - (-self.speed / tuning.reverse_speed).powi(2)).max(0.0)
         };
-        let old_speed = self.speed;
-        let longitudinal_grip = if braking { grip } else { drive_grip };
-        self.speed += acceleration * longitudinal_grip * dt;
-        if braking && self.speed.signum() != old_speed.signum() {
-            self.speed = 0.0;
-        }
-        let resistance = (ROLLING_RESISTANCE
-            + tuning.aerodynamic_drag * self.speed * self.speed
-            + if handbrake { 7.0 * grip } else { 0.0 })
-            * dt;
-        self.speed = self.speed.signum() * (self.speed.abs() - resistance).max(0.0);
-        velocity += self.forward() * (self.speed - old_speed);
-        // Approximate per-wheel normal load and load transfer while retaining
-        // SARE's friction-circle tire response. A lifted wheel contributes no grip;
-        // acceleration and cornering unload the appropriate wheels/axle.
-        let approximate_lateral_acceleration = self.speed * self.yaw_rate;
-        // Geometric probes can still see the road during takeoff. Only
-        // wheels with active suspension support should contribute tire load.
-        let loaded_wheels = supported_wheels.map(|supported| supported && grip > 0.0);
-        let wheel_loads = wheel_normal_loads(
-            loaded_wheels,
-            acceleration,
-            approximate_lateral_acceleration,
-            (self.clearance * 0.8).clamp(0.25, 0.8),
-        );
-        // Tire capacity is load-sensitive: two equally loaded wheels sum to one
-        // axle's baseline capacity; unloading a wheel reduces that axle's grip.
-        let front_load_capacity = wheel_loads[1].sqrt() + wheel_loads[3].sqrt();
-        let rear_load_capacity = wheel_loads[0].sqrt() + wheel_loads[2].sqrt();
-        let tire_budget =
-            (tuning.tire_grip * handling).powi(2) - (acceleration * longitudinal_grip * 0.5).powi(2);
-        let front_traction_bias = if gta_transmission {
-            (2.0 * tuning.gta_traction_bias).clamp(0.0, 2.0)
+        let lateral_acceleration;
+        let body_acceleration = if braking {
+            acceleration * grip
         } else {
-            1.0
+            acceleration * drive_grip
         };
-        let rear_traction_bias = if gta_transmission {
-            (2.0 - 2.0 * tuning.gta_traction_bias).clamp(0.0, 2.0)
+        if gta_transmission {
+            lateral_acceleration = self.apply_gtasa_wheel_forces(
+                &mut velocity,
+                supported_wheels,
+                drive_wheels,
+                throttle,
+                braking,
+                handbrake,
+                acceleration,
+                handling,
+                dt,
+            );
+            // CPhysical::ApplyAirResistance: drag scales with game velocity
+            // (units/tick), then is raised to the timestep. Convert SI speed
+            // back to game units/tick for the formula.
+            let game_speed = velocity.length() / 50.0;
+            let timestep = dt * 50.0;
+            let drag_factor =
+                (1.0 - 0.0005 * tuning.gta_drag_multiplier * game_speed)
+                    .max(0.0)
+                    .powf(timestep);
+            velocity *= drag_factor;
         } else {
-            1.0
-        };
-        let mut front_limit =
-            tire_budget.max(0.5).sqrt() * front_load_capacity * front_traction_bias;
-        let mut rear_limit =
-            tuning.tire_grip * handling * rear_load_capacity * rear_traction_bias;
-        if handbrake {
-            rear_limit *= 0.12;
-        }
-        let front_slip =
-            self.lateral_speed + 1.35 * self.yaw_rate - self.speed * self.steering_angle.tan();
-        let rear_slip = self.lateral_speed - 1.35 * self.yaw_rate;
-        // Latch a skid when the requested axle force exceeds its load-dependent
-        // limit. Keep rear grip reduced until both axles settle, rather than
-        // allowing the model to snap instantly back to full grip each tick.
-        if grounded
-            && ((front_slip * 5.5).abs() > front_limit || (rear_slip * 5.5).abs() > rear_limit)
-        {
-            self.skid_latched = true;
-        }
-        if grounded && front_slip.abs() < 0.35 && rear_slip.abs() < 0.35 {
-            self.skid_latched = false;
-        }
-        if self.skid_latched && !handbrake {
-            if gta_transmission {
-                // handling.cfg tractionLoss applies once a wheel is skidding;
-                // this axle-level adapter uses it until the skid state recovers.
-                front_limit *= tuning.gta_traction_loss;
-                rear_limit *= tuning.gta_traction_loss;
-            } else {
-                rear_limit *= 0.82;
+            let longitudinal_grip = if braking { grip } else { drive_grip };
+            self.speed += acceleration * longitudinal_grip * dt;
+            if braking && self.speed.signum() != old_speed.signum() {
+                self.speed = 0.0;
             }
+            let resistance = (ROLLING_RESISTANCE
+                + tuning.aerodynamic_drag * self.speed * self.speed
+                + if handbrake { 7.0 * grip } else { 0.0 })
+                * dt;
+            self.speed = self.speed.signum() * (self.speed.abs() - resistance).max(0.0);
+            velocity += self.forward() * (self.speed - old_speed);
+            // Approximate per-wheel normal load and load transfer while retaining
+            // SARE's friction-circle tire response. A lifted wheel contributes no grip;
+            // acceleration and cornering unload the appropriate wheels/axle.
+            let approximate_lateral_acceleration = self.speed * self.yaw_rate;
+            // Geometric probes can still see the road during takeoff. Only
+            // wheels with active suspension support should contribute tire load.
+            let loaded_wheels = supported_wheels.map(|supported| supported && grip > 0.0);
+            let wheel_loads = wheel_normal_loads(
+                loaded_wheels,
+                acceleration,
+                approximate_lateral_acceleration,
+                (self.clearance * 0.8).clamp(0.25, 0.8),
+            );
+            // Tire capacity is load-sensitive: two equally loaded wheels sum to one
+            // axle's baseline capacity; unloading a wheel reduces that axle's grip.
+            let front_load_capacity = wheel_loads[1].sqrt() + wheel_loads[3].sqrt();
+            let rear_load_capacity = wheel_loads[0].sqrt() + wheel_loads[2].sqrt();
+            let tire_budget =
+                (tuning.tire_grip * handling).powi(2) - (acceleration * longitudinal_grip * 0.5).powi(2);
+            let front_traction_bias = if gta_transmission {
+                (2.0 * tuning.gta_traction_bias).clamp(0.0, 2.0)
+            } else {
+                1.0
+            };
+            let rear_traction_bias = if gta_transmission {
+                (2.0 - 2.0 * tuning.gta_traction_bias).clamp(0.0, 2.0)
+            } else {
+                1.0
+            };
+            let mut front_limit =
+                tire_budget.max(0.5).sqrt() * front_load_capacity * front_traction_bias;
+            let mut rear_limit =
+                tuning.tire_grip * handling * rear_load_capacity * rear_traction_bias;
+            if handbrake {
+                rear_limit *= 0.12;
+            }
+            let front_slip =
+                self.lateral_speed + 1.35 * self.yaw_rate - self.speed * self.steering_angle.tan();
+            let rear_slip = self.lateral_speed - 1.35 * self.yaw_rate;
+            // Latch a skid when the requested axle force exceeds its load-dependent
+            // limit. Keep rear grip reduced until both axles settle, rather than
+            // allowing the model to snap instantly back to full grip each tick.
+            if grounded
+                && ((front_slip * 5.5).abs() > front_limit || (rear_slip * 5.5).abs() > rear_limit)
+            {
+                self.skid_latched = true;
+            }
+            if grounded && front_slip.abs() < 0.35 && rear_slip.abs() < 0.35 {
+                self.skid_latched = false;
+            }
+            if self.skid_latched && !handbrake {
+                if gta_transmission {
+                    // handling.cfg tractionLoss applies once a wheel is skidding;
+                    // this axle-level adapter uses it until the skid state recovers.
+                    front_limit *= tuning.gta_traction_loss;
+                    rear_limit *= tuning.gta_traction_loss;
+                } else {
+                    rear_limit *= 0.82;
+                }
+            }
+            let front_force = (-front_slip * 5.5).clamp(-front_limit, front_limit);
+            let rear_force = (-rear_slip * 5.5).clamp(-rear_limit, rear_limit);
+            lateral_acceleration = front_force + rear_force;
+            velocity += side * lateral_acceleration * dt;
+    
         }
-        let front_force = (-front_slip * 5.5).clamp(-front_limit, front_limit);
-        let rear_force = (-rear_slip * 5.5).clamp(-rear_limit, rear_limit);
-        let lateral_acceleration = front_force + rear_force;
-        velocity += side * lateral_acceleration * dt;
-        self.yaw_rate += (1.35 * (front_force - rear_force) / 2.2 - self.yaw_rate * 0.22) * dt;
-        self.yaw_rate = self.yaw_rate.clamp(-2.0, 2.0);
         let old_yaw = self.yaw;
         self.yaw += self.yaw_rate * dt;
         if !self.body_clear(world, self.position) {
@@ -1253,7 +1281,7 @@ impl Car {
         self.lateral_speed = velocity.dot(side);
         let blend = 1.0 - (-8.0 * dt).exp();
         self.pitch +=
-            ((slope_pitch + acceleration * grip * 0.012).clamp(-0.6, 0.6) - self.pitch) * blend;
+            ((slope_pitch + body_acceleration * 0.012).clamp(-0.6, 0.6) - self.pitch) * blend;
         self.roll +=
             ((slope_roll + lateral_acceleration * 0.016).clamp(-0.5, 0.5) - self.roll) * blend;
         let motion = (self.forward() * self.speed + side * self.lateral_speed) * dt;
