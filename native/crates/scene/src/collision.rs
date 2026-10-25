@@ -478,6 +478,32 @@ impl Player {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn ground_contact_returns_upward_normal_independent_of_triangle_winding() {
+        use glam::Vec3;
+        let ramp = [
+            [-5.0, -2.5, -5.0],
+            [5.0, -2.5, -5.0],
+            [5.0, 2.5, 5.0],
+            [-5.0, -2.5, -5.0],
+            [5.0, 2.5, 5.0],
+            [-5.0, 2.5, 5.0],
+        ];
+        for reverse in [false, true] {
+            let mut points = ramp;
+            if reverse {
+                points.swap(0, 1);
+                points.swap(3, 4);
+            }
+            let world = super::CollisionWorld::from_batches(&[batch(&points)]);
+            let (height, normal) = world.ground_contact_below(Vec3::ZERO, 0.1).unwrap();
+            assert!(height.abs() < 1e-6);
+            assert!(normal.y > 0.0);
+            assert!((normal - Vec3::new(-0.0, 1.0, -0.5).normalize()).length() < 1e-5);
+            assert_eq!(world.ground_below(Vec3::ZERO, 0.1), Some(height));
+        }
+    }
+
+    #[test]
     fn walkable_steep_roads_do_not_also_push_bodies_sideways() {
         use glam::Vec3;
         // Normal Y is 0.64: walkable, but previously treated as a wall.
