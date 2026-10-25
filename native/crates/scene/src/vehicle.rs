@@ -323,7 +323,13 @@ fn wheel_normal_loads(
     if count == 0 {
         return [0.0; 4];
     }
-    let mut loads = supported.map(|is_supported| if is_supported { 1.0 / count as f32 } else { 0.0 });
+    let mut loads = supported.map(|is_supported| {
+        if is_supported {
+            1.0 / count as f32
+        } else {
+            0.0
+        }
+    });
 
     // Index layout follows the wheel probe order: rear-left, front-left,
     // rear-right, front-right.
@@ -331,9 +337,8 @@ fn wheel_normal_loads(
     let front = [1, 3];
     let left = [0, 1];
     let right = [2, 3];
-    let transfer = |indices: [usize; 2], loads: &[f32; 4]| {
-        indices.iter().map(|&i| loads[i]).sum::<f32>()
-    };
+    let transfer =
+        |indices: [usize; 2], loads: &[f32; 4]| indices.iter().map(|&i| loads[i]).sum::<f32>();
     let front_count = front.iter().filter(|&&i| supported[i]).count();
     let rear_count = rear.iter().filter(|&&i| supported[i]).count();
     if front_count > 0 && rear_count > 0 {
@@ -342,10 +347,14 @@ fn wheel_normal_loads(
         let moved = (longitudinal_acceleration * cg_height / (GRAVITY * WHEELBASE))
             .clamp(-rear_load, front_load);
         for i in front {
-            if supported[i] { loads[i] -= moved / front_count as f32; }
+            if supported[i] {
+                loads[i] -= moved / front_count as f32;
+            }
         }
         for i in rear {
-            if supported[i] { loads[i] += moved / rear_count as f32; }
+            if supported[i] {
+                loads[i] += moved / rear_count as f32;
+            }
         }
     }
     let left_count = left.iter().filter(|&&i| supported[i]).count();
@@ -353,18 +362,24 @@ fn wheel_normal_loads(
     if left_count > 0 && right_count > 0 {
         let left_load = transfer(left, &loads);
         let right_load = transfer(right, &loads);
-        let moved = (lateral_acceleration * cg_height / (GRAVITY * TRACK))
-            .clamp(-left_load, right_load);
+        let moved =
+            (lateral_acceleration * cg_height / (GRAVITY * TRACK)).clamp(-left_load, right_load);
         for i in left {
-            if supported[i] { loads[i] += moved / left_count as f32; }
+            if supported[i] {
+                loads[i] += moved / left_count as f32;
+            }
         }
         for i in right {
-            if supported[i] { loads[i] -= moved / right_count as f32; }
+            if supported[i] {
+                loads[i] -= moved / right_count as f32;
+            }
         }
     }
     let total = loads.iter().sum::<f32>();
     if total > 0.0 {
-        for load in &mut loads { *load = load.max(0.0) / total; }
+        for load in &mut loads {
+            *load = load.max(0.0) / total;
+        }
     }
     loads
 }
@@ -773,8 +788,7 @@ impl Car {
         // limit. Keep rear grip reduced until both axles settle, rather than
         // allowing the model to snap instantly back to full grip each tick.
         if grounded
-            && ((front_slip * 5.5).abs() > front_limit
-                || (rear_slip * 5.5).abs() > rear_limit)
+            && ((front_slip * 5.5).abs() > front_limit || (rear_slip * 5.5).abs() > rear_limit)
         {
             self.skid_latched = true;
         }
