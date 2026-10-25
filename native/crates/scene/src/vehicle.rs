@@ -566,7 +566,7 @@ pub struct Car {
     ground_pitch: f32,
     ground_roll: f32,
     airborne: bool,
-    /// Stays set through a slide until both axles have recovered their grip.
+    /// Legacy axle-model skid latch; GTA-loaded cars use per-wheel states.
     skid_latched: bool,
     /// GTA cTransmission's two per-car inertia smoothing values.
     transmission_a6: f32,
@@ -766,7 +766,7 @@ impl Car {
         // while reversing or while reverse torque is being used to stop forward
         // motion, and returns to first once forward throttle is requested.
         if self.gear == 0 {
-            if self.speed > -0.5 && throttle >= 0.0 {
+            if self.speed > -0.5 && throttle > 0.0 {
                 self.gear = 1;
             } else {
                 return;
@@ -829,6 +829,7 @@ impl Car {
     /// This replaces the legacy axle friction-circle model for cars loaded from
     /// the original handling.cfg. Material adhesion is still a provisional
     /// tarmac value until SARE's collision surfaces expose GTA surface types.
+    #[allow(clippy::too_many_arguments)]
     fn apply_gtasa_wheel_forces(
         &mut self,
         velocity: &mut Vec3,
@@ -1054,9 +1055,9 @@ impl Car {
             .max(0.01);
         let suspension_compression: [f32; 4] = std::array::from_fn(|index| {
             let (x, z) = wheels[index];
-            let distance = contacts[index]
-                .map(|ground| expected_height(x, z) - ground)
-                .unwrap_or(tuning.gta_suspension_upper_limit);
+            let distance = contacts[index].map_or(tuning.gta_suspension_upper_limit, |ground| {
+                expected_height(x, z) - ground
+            });
             ((distance - tuning.gta_suspension_lower_limit) / suspension_range).clamp(0.0, 1.0)
         });
         // Wheel offsets and ground heights of the wheels carrying the car.
