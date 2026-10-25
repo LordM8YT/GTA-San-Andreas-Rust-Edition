@@ -118,13 +118,16 @@ force/moment calculations rather than substitute a visually similar approximatio
 
 ```
 engineAcceleration *= 0.4                       // at load
-accel = engineAcceleration * (1/2500) / (4 for 4WD, else 2)
-maxFlat: start at km/h * 0.277778/50, subtract 0.01 until
-         maxFlat^2 * drag/2 / 1000 <= accel / 6
+engineAccelGame = engineAcceleration / 2500
+maxFlat: start at km/h * 0.277778/50, subtract 0.01
+         until maxFlat^2 * drag/2 / 1000 <= engineAccelGame / 6
 maxVelocity = maxFlat * 1.2                     // 4WD/2WD cars
-gears: band(g) = g * (maxVelocity - half) / n + half, half = maxVelocity / 2n
-       up(g)   = 0.6667 * (band(g) - band(g-1)) + band(g-1)
-       down(g) = 0.42   * (band(g-1) - band(g-2)) + band(g-2)
+engineAccelGame /= 4 for 4WD, else 2            // after maxFlat calculation
+engineAccelerationSI = engineAccelGame * 50^2
+gears 1..N: band(g) = g * (maxVelocity - half) / n + half, half = maxVelocity / 2n
+gear 0 is reverse, with maxVelocity = -maxFlat * 0.3 (minimum magnitude 0.2)
+up(g)   = 0.6667 * (band(g) - band(g-1)) + band(g-1)
+down(g) = 0.42   * (band(g-1) - band(g-2)) + band(g-2)
 ```
 
 Two details that cost days in the reference implementation:
@@ -169,31 +172,51 @@ is applied at the contact point with a reduced, differently-directed moment
 nose-dive under hard braking. SARE already approximates this with the
 `acceleration * grip * 0.012` pitch term, so the shapes are compatible.
 
-## Required port work, in behavioural order
+## Port status and remaining fidelity gaps
 
-The existing implementation is not the standard to preserve. The following are
-compatibility requirements because they affect observable GTA:SA behaviour:
+The current main branch has begun replacing the old axle model for vehicles loaded
+from GTA:SA handling.cfg. This is a staged port, not yet full behavioural parity.
 
-1. **Rigid-body state and force application:** port GTA's scalar `mass`/`turnMass`,
-   centre-of-mass offset, move/turn force accumulation and integration order.
-2. **Per-wheel suspension:** four contact points, GTA spring and damper passes,
-   contact-point velocity, effective mass and the original force clamps.
-3. **Transmission:** consume the original `handling.cfg` fields using GTA's unit
-   conversion, drive layout, engine type, inertia smoothing, gear bands and shift
-   windows. The current `gears` count and speed-band curve are only placeholders.
-4. **Wheel forces and state:** port the per-wheel forward/lateral correction,
-   adhesion clipping, braking/coasting distinction, traction loss and persistent
-   skid/spin state. Do not replace this with a different friction-circle model.
-5. **Steering and airborne behaviour:** match input ramp, steering lock curve,
-   yaw response, air torque and the original tick order.
-6. **Surface response and low-speed behaviour:** use material adhesion/wetness and
-   reproduce GTA's rest-stop rules.
-7. **Differential and regression tests:** compare recorded reference scenarios
-   against GTA:SA/MTA telemetry (speed traces, shift times, turning radius, braking
-   distance, lateral slip, suspension travel and landing response).
+Implemented in the current code:
+- Preserve original mass, turn mass, centre of mass, drag, traction multiplier/loss/bias,
+  drive type, engine type/inertia, brake bias/ABS, steering lock and suspension values.
+- Convert maxVelocity, engine acceleration, brake deceleration and reverse speed
+  using GTA's unit conversion and drag-limited maxFlat calculation.
+- Use GTA's gear-band and shift-window fractions, separate reverse gear, handling-flag
+  acceleration boost, and the two per-car transmission inertia smoothing values.
+- Use the sign-preserving squared steering input, steering-lock conversion and
+  tarmac speed limiter.
+- Use a per-wheel correction model for loaded handling: drive layout, traction and
+  brake bias, wheel state, traction-loss clipping, handbrake, anti-dive moment,
+  centre-of-mass offset, effective mass and turn force.
+- Use GTA's velocity-based linear drag formula for loaded handling records.
 
-The current SARE implementation only approximates several of these systems. A
-passing unit-test suite is necessary but does not establish behavioural parity.
+Still required before claiming a faithful port:
+1. **Per-wheel suspension forces:** replace the shared body spring/damper with GTA's
+   four spring passes followed by four damper passes, using collision normals,
+   contact-point velocities, surface velocity and the original force clamps.
+2. **Rigid-body state:** store linear and angular velocity as vectors; preserve GTA's
+   model-origin/centre-of-mass distinction, integrate turn forces on all axes, and
+   re-orthonormalise the body basis in the original order. The current body still
+   uses scalar yaw plus approximate pitch/roll.
+3. **Real collision surfaces:** feed actual material adhesion, wetness, wheel normals
+   and contact entities into steering and wheel forces. The current GTA wheel branch
+   uses a provisional tarmac adhesion value and estimated suspension compression.
+4. **Wheel lifecycle and special cases:** port wheel-count persistence, tyre temperature,
+   burst tyres, burnout, NOS, rear-wheel steering, off-road flags and vehicle-specific
+   exceptions. The current four contact probes are not the original suspension lines.
+5. **Low-speed and airborne rules:** port the rest-stop snap, air resistance/torque,
+   wheel contact grace period, ramps, landing response and exact collision ordering.
+6. **Reference tests:** compare telemetry against GTA:SA/MTA for acceleration traces,
+   shift points, coast-down, braking distance, turning radius, countersteering, wheel
+   lift, suspension travel and landings. Unit tests alone cannot prove parity.
+
+The reference implementation used while porting is the open-source GTA Reversed
+decompilation, especially cHandlingDataMgr::ConvertDataToGameUnits,
+cTransmission::CalculateDriveAcceleration, CAutomobile::ProcessControlInputs,
+CAutomobile::ProcessCarWheelPair, CVehicle::ProcessWheel,
+CAutomobile::ProcessSuspension and CPhysical::ApplyTurnForce. The target is the
+original game's observable behaviour, not a redesign of the physics.
 
 ## Compatibility rules
 
