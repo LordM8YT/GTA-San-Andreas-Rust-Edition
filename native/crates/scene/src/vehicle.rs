@@ -401,22 +401,27 @@ impl Handling {
     /// profiles retain the legacy reachable-speed ceiling.
     pub fn gear_band_top(&self, gear: u8) -> f32 {
         let count = self.gear_count();
+        if self.gta_handling_loaded <= 0.5 {
+            if f32::from(gear) >= count {
+                return self.top_speed;
+            }
+            let share = 0.5 / count;
+            let flat = 1.0 - share;
+            let fraction = f32::from(gear.clamp(1, count as u8)) * flat / count + share;
+            return fraction * self.reachable_top_speed();
+        }
+
         let gear = gear.min(count as u8);
-        if gear == 0 && self.gta_handling_loaded > 0.5 {
+        if gear == 0 {
             // GTA's gear-zero band is reverse, not a positive half-band.
             return -self.reverse_speed;
         }
         if f32::from(gear) >= count {
             return self.top_speed;
         }
-        let ceiling = if self.gta_handling_loaded > 0.5 {
-            self.top_speed
-        } else {
-            self.reachable_top_speed()
-        };
         let gear = f32::from(gear);
-        let half = ceiling / (2.0 * count);
-        gear * (ceiling - half) / count + half
+        let half = self.top_speed / (2.0 * count);
+        gear * (self.top_speed - half) / count + half
     }
 
     /// GTA's upshift fraction (0.6667) applied to the current adapter band.
@@ -753,10 +758,10 @@ impl Car {
                 self.gear = 1;
                 return;
             }
-            while self.gear < count && self.speed > tuning.gear_up_shift_speed(self.gear) {
+            while self.gear < count && self.speed > 0.6 * tuning.gear_band_top(self.gear) {
                 self.gear += 1;
             }
-            while self.gear > 1 && self.speed < tuning.gear_down_shift_speed(self.gear) {
+            while self.gear > 1 && self.speed < 0.4 * tuning.gear_band_top(self.gear - 1) {
                 self.gear -= 1;
             }
             return;
