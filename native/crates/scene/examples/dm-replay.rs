@@ -116,6 +116,15 @@ fn load_map(
         let Some(collision) = models.get(&model).map(|m| &m["collision"]) else {
             continue;
         };
+        // Row-major 4x4 with translation in the last column.
+        let mut m = [[0.0f32; 4]; 4];
+        if let Some(rows) = instance["transform"].as_array() {
+            for (i, row) in rows.iter().take(4).enumerate() {
+                for (j, value) in row.as_array().into_iter().flatten().take(4).enumerate() {
+                    m[i][j] = value.as_f64().unwrap_or(0.0) as f32;
+                }
+            }
+        }
         // World-space bounds of this instance, from the model's own bounds.
         if let Some(local) = collision.get("bounds") {
             let read = |value: &serde_json::Value, i: usize| {
@@ -160,15 +169,6 @@ fn load_map(
         }
         if collision.is_null() {
             continue;
-        }
-        // Row-major 4x4 with translation in the last column.
-        let mut m = [[0.0f32; 4]; 4];
-        if let Some(rows) = instance["transform"].as_array() {
-            for (i, row) in rows.iter().take(4).enumerate() {
-                for (j, value) in row.as_array().into_iter().flatten().take(4).enumerate() {
-                    m[i][j] = value.as_f64().unwrap_or(0.0) as f32;
-                }
-            }
         }
         let place = |v: [f32; 3]| {
             let x = m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2] + m[0][3];

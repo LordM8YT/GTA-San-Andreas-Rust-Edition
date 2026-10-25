@@ -1581,6 +1581,26 @@ impl State {
                     self.menu.settings.vehicle_handling,
                     dt,
                 );
+                // Opt-in trace (`SARE_DEBUG_DRIVE=1`): one line every 20 frames
+                // with everything needed to tell a contact problem from an
+                // input or spawn-height problem.
+                if std::env::var_os("SARE_DEBUG_DRIVE").is_some() && self.frame_count % 20 == 0 {
+                    let d = car.debug();
+                    eprintln!(
+                        "DRIVE throttle={throttle:.2} dt={dt:.4} v={:.2} gear={} air={} comp={:?} counts={:?} clearance={:.2} size={:?} handling={:.2} pos=({:.1},{:.1},{:.1})",
+                        d.speed,
+                        d.gear,
+                        d.airborne,
+                        d.compression,
+                        d.wheel_counts,
+                        car.clearance,
+                        car.size,
+                        self.menu.settings.vehicle_handling,
+                        d.position.x,
+                        d.position.y,
+                        d.position.z
+                    );
+                }
                 if dt > 0.0 {
                     self.skids
                         .update(car, skids::intensity(car, throttle, handbrake));
