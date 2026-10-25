@@ -1,5 +1,6 @@
-//! Per-model driving feel from the player's own `data/handling.cfg`, scaled
-//! onto SARE's car model so the default taxi still drives as before.
+//! Loads the original GTA:SA per-model handling data.
+//! Raw values are retained while SI adapter values bridge to the current simulator;
+//! the adapter is transitional until the original force model is fully ported.
 use crate::vehicle::Handling;
 use std::path::Path;
 
@@ -43,20 +44,96 @@ fn handling_id(ide: &str, model: &str) -> Option<String> {
 /// prototype feel.
 fn from_line(line: &str) -> Option<Handling> {
     let fields: Vec<_> = line.split_whitespace().collect();
-    if fields.len() < 21 {
+    if fields.len() < 32 {
         return None;
     }
-    let number = |index: usize| fields[index].parse::<f32>().ok().filter(|v| v.is_finite());
+    let number = |index: usize| fields.get(index)?.parse::<f32>().ok().filter(|v| v.is_finite());
+    let code = |index: usize, values: &[(&str, u8)]| {
+        let value = *fields.get(index)?;
+        values.iter().find_map(|(name, code)| (*name == value).then_some(*code))
+    };
     let base = Handling::default();
-    let ratio =
-        |value: f32, reference: f32, low: f32, high: f32| (value / reference).clamp(low, high);
+
+    // Keep the original values intact. SARE's simulation is SI-based, while
+    // GTA stores maxVelocity in km/h and engineAcceleration in its own scale.
+    let mass = number(1)?;
+    let turn_mass = number(2)?;
+    let drag = number(3)?;
+    let centre_of_mass = [number(4)?, number(5)?, number(6)?];
+    let traction_multiplier = number(8)?;
+    let traction_loss = number(9)?;
+    let traction_bias = number(10)?;
+    let gears = number(11)?.round().clamp(1.0, 6.0);
+    let max_velocity = number(12)?;
+    let engine_acceleration = number(13)?;
+    let engine_inertia = number(14)?;
+    let drive_type = code(15, &[("F", 0), ("R", 1), ("4", 2)])?;
+    let engine_type = code(16, &[("P", 0), ("D", 1), ("E", 2)])?;
+    let brake_deceleration = number(17)?;
+    let brake_bias = number(18)?;
+    let abs = match fields.get(19)? {
+        &"0" => false,
+        &"1" => true,
+        _ => return None,
+    };
+    let steering_lock = number(20)?;
+    let suspension_force_level = number(21)?;
+    let suspension_damping = number(22)?;
+    let suspension_high_speed_damping = number(23)?;
+    let suspension_upper_limit = number(24)?;
+    let suspension_lower_limit = number(25)?;
+    let suspension_front_rear_bias = number(26)?;
+    let suspension_anti_dive_multiplier = number(27)?;
+
+    // GTA's transmission uses a drag-limited maxFlat, not handling.cfg's
+    // maxVelocity directly. These calculations follow the documented SA
+    // ConvertDataToGameUnits relationship; convert its per-tick speed to m/s.
+    let drive_divisor = if drive_type == 2 { 4.0 } else { 2.0 };
+    let drive_acceleration = engine_acceleration * 0.4 / 2500.0 / drive_divisor;
+    let mut max_flat = max_velocity * 0.277_778 / 50.0;
+    while max_flat > 0.01
+        && max_flat * max_flat * drag / 2.0 / 1000.0 > drive_acceleration / 6.0
+    {
+        max_flat -= 0.01;
+    }
+    let top_speed = (max_flat.max(0.01) * 1.2 * 50.0).clamp(5.0, 90.0);
+    let acceleration = (drive_acceleration * 50.0 * 50.0).clamp(0.5, 20.0);
+
     let handling = Handling {
-        top_speed: base.top_speed * ratio(number(12)?, BASE_TOP_SPEED, 0.4, 1.8),
-        acceleration: base.acceleration * ratio(number(13)?, BASE_ACCELERATION, 0.3, 2.5),
-        brake_deceleration: base.brake_deceleration * ratio(number(17)?, BASE_BRAKE, 0.4, 2.0),
-        tire_grip: base.tire_grip * ratio(number(8)?, BASE_TRACTION, 0.5, 1.6),
-        steering_lock: number(20)?.to_radians().clamp(0.3, 0.9),
-        gears: number(11).map_or(1.0, |count| count.round().clamp(1.0, 6.0)),
+        top_speed,
+        acceleration,
+        reverse_acceleration: (acceleration * 0.5).clamp(0.5, 10.0),
+        // These are still adapter values for the legacy vehicle integrator.
+        // The raw GTA values below are authoritative inputs for the ongoing port.
+        brake_deceleration: (base.brake_deceleration
+            * (brake_deceleration / BASE_BRAKE).clamp(0.4, 2.0))
+            .clamp(1.0, 25.0),
+        tire_grip: (base.tire_grip
+            * (traction_multiplier / BASE_TRACTION).clamp(0.5, 1.6))
+            .clamp(1.0, 12.0),
+        steering_lock: steering_lock.to_radians().clamp(0.1, 0.9),
+        gears,
+        suspension_spring: (base.suspension_spring * suspension_force_level).clamp(40.0, 250.0),
+        suspension_damping: (base.suspension_damping * (1.0 + suspension_damping / 20.0))
+            .clamp(8.0, 40.0),
+        aerodynamic_drag: (drag * 0.001).clamp(0.0, 0.02),
+        gta_mass: mass,
+        gta_turn_mass: turn_mass,
+        gta_drag_multiplier: drag,
+        gta_centre_of_mass: centre_of_mass,
+        gta_traction_loss: traction_loss,
+        gta_traction_bias: traction_bias,
+        gta_drive_type: drive_type,
+        gta_engine_type: engine_type,
+        gta_engine_inertia: engine_inertia,
+        gta_brake_bias: brake_bias,
+        gta_abs: abs,
+        gta_suspension_force_level: suspension_force_level,
+        gta_suspension_high_speed_damping: suspension_high_speed_damping,
+        gta_suspension_upper_limit: suspension_upper_limit,
+        gta_suspension_lower_limit: suspension_lower_limit,
+        gta_suspension_front_rear_bias: suspension_front_rear_bias,
+        gta_suspension_anti_dive_multiplier: suspension_anti_dive_multiplier,
         ..base
     };
     handling.validate().ok()?;
