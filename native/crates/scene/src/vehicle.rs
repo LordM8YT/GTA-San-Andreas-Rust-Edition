@@ -882,6 +882,14 @@ impl Car {
 mod tests {
     use super::*;
     use crate::{Batch, Vertex};
+
+    #[test]
+    fn wheel_loads_transfer_under_acceleration() {
+        let loads = wheel_normal_loads([true; 4], 6.0, 0.0, 0.5);
+        assert!((loads.iter().sum::<f32>() - 1.0).abs() < 1e-5);
+        assert!(loads[0] + loads[2] > loads[1] + loads[3]);
+        assert_eq!(wheel_normal_loads([false; 4], 0.0, 0.0, 0.5), [0.0; 4]);
+    }
     #[test]
     fn a_crash_stops_the_closing_speed_and_bounces_a_little() {
         let world = CollisionWorld::from_batches(&[]);
