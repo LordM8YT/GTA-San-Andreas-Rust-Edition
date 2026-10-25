@@ -319,7 +319,10 @@ fn wheel_normal_loads(
     const WHEELBASE: f32 = 2.7;
     const TRACK: f32 = 1.44;
     const GRAVITY: f32 = 9.81;
-    let count = supported.iter().filter(|&&is_supported| is_supported).count();
+    let count = supported
+        .iter()
+        .filter(|&&is_supported| is_supported)
+        .count();
     if count == 0 {
         return [0.0; 4];
     }
