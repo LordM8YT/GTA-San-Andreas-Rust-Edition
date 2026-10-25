@@ -1355,6 +1355,43 @@ mod tests {
     use crate::{Batch, Vertex};
 
     #[test]
+    fn gta_handling_uses_per_wheel_drive_and_reverse_gear() {
+        let world = CollisionWorld::from_batches(&[floor(-100.0, 100.0, 0.0)]);
+        let tuning = Handling {
+            acceleration: 4.0,
+            reverse_acceleration: 4.0,
+            brake_deceleration: 7.0,
+            top_speed: 41.4,
+            reverse_speed: 10.35,
+            gears: 5.0,
+            gta_handling_loaded: 1.0,
+            gta_handling_flags: 0.0,
+            gta_mass: 1450.0,
+            gta_turn_mass: 4056.4,
+            gta_drag_multiplier: 2.2,
+            gta_traction_multiplier: 0.75,
+            gta_traction_loss: 0.85,
+            gta_traction_bias: 0.51,
+            gta_drive_type: 0.0,
+            gta_engine_inertia: 10.0,
+            gta_suspension_force_level: 1.4,
+            gta_suspension_front_rear_bias: 0.5,
+            ..Handling::default()
+        };
+        let mut forward = Car::new(Vec3::Y * 0.6, 0.6).with_handling(tuning);
+        for _ in 0..30 {
+            forward.step(&world, 1.0, 0.0, false, 1.0, 1.0 / 50.0);
+        }
+        assert!(forward.speed > 0.0, "GTA-loaded car did not accelerate");
+        assert!(forward.gear >= 1, "forward throttle selected reverse");
+
+        let mut reverse = Car::new(Vec3::Y * 0.6, 0.6).with_handling(tuning);
+        reverse.step(&world, -1.0, 0.0, false, 1.0, 1.0 / 50.0);
+        assert_eq!(reverse.gear, 0, "reverse must be a distinct gear");
+        assert!(reverse.speed < 0.0, "reverse throttle did not move backward");
+    }
+
+    #[test]
     fn wheel_loads_transfer_under_acceleration() {
         let loads = wheel_normal_loads([true; 4], 6.0, 0.0, 0.5);
         assert!((loads.iter().sum::<f32>() - 1.0).abs() < 1e-5);
