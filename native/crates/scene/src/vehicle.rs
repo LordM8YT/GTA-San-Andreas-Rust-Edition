@@ -772,6 +772,169 @@ impl Car {
             - (self.vertical_speed - ground_velocity) * self.handling.suspension_damping)
             .max(0.0)
     }
+
+    /// Apply GTA:SA's per-wheel velocity corrections and turn forces.
+    /// This replaces the legacy axle friction-circle model for cars loaded from
+    /// the original handling.cfg. Material adhesion is still a provisional
+    /// tarmac value until SARE's collision surfaces expose GTA surface types.
+    fn apply_gtasa_wheel_forces(
+        &mut self,
+        velocity: &mut Vec3,
+        supported: [bool; 4],
+        drive_wheels: [bool; 4],
+        throttle: f32,
+        braking: bool,
+        handbrake: bool,
+        acceleration: f32,
+        handling: f32,
+        dt: f32,
+    ) -> f32 {
+        let tuning = self.handling;
+        let forward = self.forward();
+        let side = Vec3::new(self.yaw.cos(), 0.0, -self.yaw.sin());
+        let before = *velocity;
+        let wheels_on_ground = supported.iter().filter(|&&is_supported| is_supported).count();
+        if wheels_on_ground == 0 {
+            self.wheel_states = [0; 4];
+            return 0.0;
+        }
+        let wheels_on_ground = wheels_on_ground as f32;
+        let centre_of_mass =
+            side * -tuning.gta_centre_of_mass_x + forward * -tuning.gta_centre_of_mass_z;
+        const WHEEL_OFFSETS: [(f32, f32); 4] = [
+            (-0.72, -1.35), // rear left
+            (-0.72, 1.35),  // front left
+            (0.72, -1.35),  // rear right
+            (0.72, 1.35),   // front right
+        ];
+        let mut already_skidding = self.wheel_states.iter().any(|state| *state != 0);
+
+        for (index, &(x, z)) in WHEEL_OFFSETS.iter().enumerate() {
+            if !supported[index] {
+                self.wheel_states[index] = 0;
+                continue;
+            }
+            let front_wheel = index == 1 || index == 3;
+            let rear_wheel = !front_wheel;
+            let point = side * x + forward * z - centre_of_mass;
+            let contact_velocity =
+                *velocity + Vec3::new(self.yaw_rate * point.z, 0.0, -self.yaw_rate * point.x);
+            let mut wheel_forward = forward;
+            let mut wheel_right = side;
+            if front_wheel {
+                let (sin_steer, cos_steer) = self.steering_angle.sin_cos();
+                let rotated_forward = cos_steer * wheel_forward - sin_steer * wheel_right;
+                wheel_right = sin_steer * wheel_forward + cos_steer * wheel_right;
+                wheel_forward = rotated_forward;
+            }
+            let contact_speed_forward = contact_velocity.dot(wheel_forward);
+            let contact_speed_right = contact_velocity.dot(wheel_right);
+            let was_skidding = self.wheel_states[index] != 0;
+            let mut adhesion = tuning.gta_traction_multiplier
+                * 2.5
+                * dt
+                * handling
+                * if front_wheel {
+                    (2.0 * tuning.gta_traction_bias).clamp(0.0, 2.0)
+                } else {
+                    (2.0 - 2.0 * tuning.gta_traction_bias).clamp(0.0, 2.0)
+                }
+                * (if front_wheel {
+                    2.0 * tuning.gta_suspension_front_rear_bias
+                } else {
+                    2.0 - 2.0 * tuning.gta_suspension_front_rear_bias
+                })
+                .mul_add(tuning.gta_suspension_force_level * 2.0, 0.0)
+                .clamp(0.0, 2.0);
+            if was_skidding {
+                already_skidding = true;
+                adhesion *= tuning.gta_traction_loss;
+            }
+            self.wheel_states[index] = 0;
+
+            let driving = !braking && throttle != 0.0 && drive_wheels[index];
+            let mut brake = if handbrake && rear_wheel {
+                // 20,000 game-speed units per tick, converted to SI velocity change.
+                20_000.0 * dt * 2_500.0
+            } else if braking {
+                tuning.brake_deceleration * throttle.abs() * dt
+            } else {
+                0.0
+            };
+            let mut right = if contact_speed_right != 0.0 {
+                -contact_speed_right / wheels_on_ground
+            } else {
+                0.0
+            };
+            let mut fwd = 0.0;
+            if driving {
+                fwd = acceleration * dt;
+                right = right.clamp(-adhesion, adhesion);
+            } else if contact_speed_forward != 0.0 {
+                fwd = -contact_speed_forward / wheels_on_ground;
+                if !braking && throttle.abs() < 0.01 && !handbrake {
+                    // GTA's global wheel friction is 0.9; convert its per-tick
+                    // correction to m/s for this SI integrator.
+                    brake = 0.9 / tuning.gta_mass * dt * 2_500.0;
+                }
+                if brake > adhesion {
+                    if contact_speed_forward.abs() > 0.005 {
+                        self.wheel_states[index] = 3;
+                    }
+                } else {
+                    fwd = fwd.clamp(-brake, brake);
+                }
+            }
+
+            let speed_squared = right * right + fwd * fwd;
+            if speed_squared > adhesion * adhesion {
+                if self.wheel_states[index] != 3 {
+                    self.wheel_states[index] = if driving && 0.3 * adhesion < fwd.abs() {
+                        1
+                    } else {
+                        2
+                    };
+                }
+                let loss = if already_skidding {
+                    1.0
+                } else {
+                    tuning.gta_traction_loss
+                };
+                let length = speed_squared.sqrt();
+                fwd *= adhesion * loss / length;
+                right *= adhesion * loss / length;
+            }
+
+            if self.wheel_states[index] != 0 {
+                already_skidding = true;
+            }
+            if fwd == 0.0 && right == 0.0 {
+                continue;
+            }
+
+            let total_speed = fwd * wheel_forward + right * wheel_right;
+            let mut turn_direction = total_speed;
+            if braking {
+                turn_direction -= tuning.gta_suspension_anti_dive_multiplier * wheel_forward * fwd;
+            } else if driving {
+                turn_direction -=
+                    0.5 * tuning.gta_suspension_anti_dive_multiplier * wheel_forward * fwd;
+            }
+            let speed = total_speed.length();
+            let turn_speed = turn_direction.length();
+            let direction = total_speed / speed.max(1e-6);
+            let turn_direction = turn_direction / turn_speed.max(1e-6);
+            let cross_direction = point.z * direction.x - point.x * direction.z;
+            let effective_mass = 1.0
+                / (cross_direction * cross_direction / tuning.gta_turn_mass
+                    + 1.0 / tuning.gta_mass);
+            let turn_cross = point.z * turn_direction.x - point.x * turn_direction.z;
+            *velocity += total_speed;
+            self.yaw_rate += turn_cross * turn_speed * effective_mass / tuning.gta_turn_mass;
+        }
+
+        ((*velocity - before).dot(side) / dt).clamp(-100.0, 100.0)
+    }
     fn integrate(
         &mut self,
         world: &CollisionWorld,
