@@ -1193,6 +1193,7 @@ impl Car {
                     .powf(timestep);
             velocity *= drag_factor;
         } else {
+            let old_speed = self.speed;
             let longitudinal_grip = if braking { grip } else { drive_grip };
             self.speed += acceleration * longitudinal_grip * dt;
             if braking && self.speed.signum() != old_speed.signum() {
@@ -1268,7 +1269,9 @@ impl Car {
             let rear_force = (-rear_slip * 5.5).clamp(-rear_limit, rear_limit);
             lateral_acceleration = front_force + rear_force;
             velocity += side * lateral_acceleration * dt;
-    
+            self.yaw_rate +=
+                (1.35 * (front_force - rear_force) / 2.2 - self.yaw_rate * 0.22) * dt;
+            self.yaw_rate = self.yaw_rate.clamp(-2.0, 2.0);
         }
         let old_yaw = self.yaw;
         self.yaw += self.yaw_rate * dt;
