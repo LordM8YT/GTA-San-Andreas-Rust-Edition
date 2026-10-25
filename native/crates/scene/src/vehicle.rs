@@ -209,6 +209,8 @@ pub struct Handling {
     pub aerodynamic_drag: f32,
     /// Original GTA:SA handling.cfg values retained for a faithful physics port.
     /// Mass and turn mass are in the source file's units.
+    /// 1 when values came from the original handling.cfg; 0 for hand-tuned fallback profiles.
+    pub gta_handling_loaded: f32,
     pub gta_mass: f32,
     pub gta_turn_mass: f32,
     pub gta_drag_multiplier: f32,
@@ -245,6 +247,7 @@ impl Default for Handling {
             suspension_spring: 140.0,
             suspension_damping: 22.0,
             aerodynamic_drag: 0.0035,
+            gta_handling_loaded: 0.0,
             gta_mass: 1500.0,
             gta_turn_mass: 3000.0,
             gta_drag_multiplier: 2.0,
@@ -282,6 +285,7 @@ impl Handling {
             ("suspension_damping", self.suspension_damping, 8.0, 40.0),
             ("aerodynamic_drag", self.aerodynamic_drag, 0.0, 0.02),
             ("gears", self.gears, 1.0, 6.0),
+            ("gta_handling_loaded", self.gta_handling_loaded, 0.0, 1.0),
             ("gta_mass", self.gta_mass, 1.0, 100000.0),
             ("gta_centre_of_mass_x", self.gta_centre_of_mass_x, -10.0, 10.0),
             ("gta_centre_of_mass_y", self.gta_centre_of_mass_y, -10.0, 10.0),
@@ -337,8 +341,13 @@ impl Handling {
     pub fn gear_band_top(&self, gear: u8) -> f32 {
         let count = self.gear_count();
         let gear = f32::from(gear.min(count as u8));
-        let half = self.top_speed / (2.0 * count);
-        gear * (self.reachable_top_speed() - half) / count + half
+        let ceiling = if self.gta_handling_loaded > 0.5 {
+            self.top_speed
+        } else {
+            self.reachable_top_speed()
+        };
+        let half = ceiling / (2.0 * count);
+        gear * (ceiling - half) / count + half
     }
 
     /// GTA's upshift fraction (0.6667) applied to the current adapter band.
@@ -806,12 +815,35 @@ impl Car {
             tuning.top_speed
         };
         let braking = throttle * self.speed < -0.15;
+        let gta_transmission = tuning.gta_handling_loaded > 0.5;
+        let gear_acceleration_multiplier = if !gta_transmission {
+            1.0
+        } else if tuning.gear_count() <= 1.0 {
+            0.4
+        } else {
+            let gear_number =
+                (1.0 - (f32::from(self.gear) - 1.0) / (tuning.gear_count() - 1.0)).max(0.0);
+            (gear_number * gear_number * 3.0 + 1.0) * 0.4
+        };
         let acceleration = if braking {
             -self.speed.signum() * tuning.brake_deceleration * throttle.abs()
         } else if throttle >= 0.0 {
+            let engine_force = throttle * tuning.acceleration * gear_acceleration_multiplier;
+            if gta_transmission {
+                // GTA tapers drive force only after this gear's MaxVelocity;
+                // 0.05 game-units/tick equals 2.5 m/s at 50 Hz.
+                let excess_speed = (self.speed.max(0.0) - band_top).max(0.0);
+                engine_force * (1.0 - (excess_speed / 2.5).min(1.0))
+            } else {
+                engine_force
+                    * (1.0 - (self.speed.max(0.0) / band_top).powi(2)).max(0.0)
+            }
+        } else if gta_transmission {
+            let excess_speed = (-self.speed - tuning.reverse_speed).max(0.0);
             throttle
-                * tuning.acceleration
-                * (1.0 - (self.speed.max(0.0) / band_top).powi(2)).max(0.0)
+                * tuning.reverse_acceleration
+                * 1.8
+                * (1.0 - (excess_speed / 2.5).min(1.0))
         } else {
             throttle
                 * tuning.reverse_acceleration
