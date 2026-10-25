@@ -1357,7 +1357,7 @@ mod tests {
         let mut car = Car::new(Vec3::Y * 0.6, 0.6);
         car.handling = tuning;
         car.speed = 30.0;
-        car.shift_gears(&tuning);
+        car.shift_gears(&tuning, 1.0);
         assert_eq!(car.gear, 1);
     }
     #[test]
@@ -1382,12 +1382,12 @@ mod tests {
         for gear in 1..5u8 {
             car.gear = gear;
             car.speed = tuning.gear_up_shift_speed(gear) + 0.05;
-            car.shift_gears(&tuning);
+            car.shift_gears(&tuning, 1.0);
             assert_eq!(car.gear, gear + 1, "did not leave gear {gear}");
         }
         // Well inside the first band the car drops back to first.
         car.speed = 0.3 * tuning.gear_band_top(1);
-        car.shift_gears(&tuning);
+        car.shift_gears(&tuning, 1.0);
         assert_eq!(car.gear, 1);
         // Legacy fallback keeps reverse in first; GTA-loaded handling uses gear zero.
         car.speed = -3.0;
@@ -1412,13 +1412,13 @@ mod tests {
         let up = tuning.gear_up_shift_speed(1);
         car.gear = 1;
         car.speed = up + 0.05;
-        car.shift_gears(&tuning);
+        car.shift_gears(&tuning, 1.0);
         assert_eq!(car.gear, 2);
         // Either side of the first gear's up point stays in second because
         // the down point is lower, preserving the gearbox's shift hysteresis.
         for speed in [up - 0.05f32, up + 0.05, up - 0.05, up + 0.05] {
             car.speed = speed;
-            car.shift_gears(&tuning);
+            car.shift_gears(&tuning, 1.0);
             assert_eq!(car.gear, 2, "gear hunted at {speed}");
         }
     }
