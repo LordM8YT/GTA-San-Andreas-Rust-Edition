@@ -1768,7 +1768,7 @@ mod tests {
         // Crossing GTA's upshift point selects exactly the next gear.
         for gear in 1..5u8 {
             car.gear = gear;
-            car.speed = tuning.gear_up_shift_speed(gear) + 0.05;
+            car.speed = 0.6 * tuning.gear_band_top(gear) + 0.05;
             car.shift_gears(&tuning, 1.0);
             assert_eq!(car.gear, gear + 1, "did not leave gear {gear}");
         }
@@ -1796,13 +1796,13 @@ mod tests {
             gears: 5.0,
             ..Handling::default()
         };
-        let up = tuning.gear_up_shift_speed(1);
+        let up = 0.6 * tuning.gear_band_top(1);
         car.gear = 1;
         car.speed = up + 0.05;
         car.shift_gears(&tuning, 1.0);
         assert_eq!(car.gear, 2);
-        // Either side of the first gear's up point stays in second because
-        // the down point is lower, preserving the gearbox's shift hysteresis.
+        // The 40% downshift threshold stays below this 60% upshift point,
+        // preserving the merged fallback gearbox's hysteresis.
         for speed in [up - 0.05f32, up + 0.05, up - 0.05, up + 0.05] {
             car.speed = speed;
             car.shift_gears(&tuning, 1.0);
