@@ -44,10 +44,18 @@ fn from_line(line: &str) -> Option<Handling> {
     if fields.len() < 33 {
         return None;
     }
-    let number = |index: usize| fields.get(index)?.parse::<f32>().ok().filter(|v| v.is_finite());
+    let number = |index: usize| {
+        fields
+            .get(index)?
+            .parse::<f32>()
+            .ok()
+            .filter(|v| v.is_finite())
+    };
     let code = |index: usize, values: &[(&str, u8)]| {
         let value = *fields.get(index)?;
-        values.iter().find_map(|(name, code)| (*name == value).then_some(*code))
+        values
+            .iter()
+            .find_map(|(name, code)| (*name == value).then_some(*code))
     };
     let base = Handling::default();
 
@@ -118,8 +126,7 @@ fn from_line(line: &str) -> Option<Handling> {
         // GTA's converted brake deceleration is the raw handling value in m/s².
         brake_deceleration: brake_deceleration.clamp(1.0, 25.0),
         reverse_speed: reverse_speed.clamp(1.0, 25.0),
-        tire_grip: (base.tire_grip
-            * (traction_multiplier / BASE_TRACTION).clamp(0.5, 1.6))
+        tire_grip: (base.tire_grip * (traction_multiplier / BASE_TRACTION).clamp(0.5, 1.6))
             .clamp(1.0, 12.0),
         steering_lock: steering_lock.to_radians().clamp(0.1, 0.9),
         gears,
@@ -164,7 +171,11 @@ mod tests {
         let infernus = "INFERNUS 1400.0 2725.3 1.5 0.0 0.0 -0.25 70 0.70 0.80 0.50 5 240.0 30.0 10.0 4 P 11.0 0.51 0 30.0 1.2 0.19 0.0 0.25 -0.10 0.5 0.4 0.37 0.72 95000 40002004 C04000 1 1 1";
         let taxi = from_line(taxi).unwrap();
         assert!((35.0..45.0).contains(&taxi.top_speed), "{}", taxi.top_speed);
-        assert!((3.9..4.1).contains(&taxi.acceleration), "{}", taxi.acceleration);
+        assert!(
+            (3.9..4.1).contains(&taxi.acceleration),
+            "{}",
+            taxi.acceleration
+        );
         assert_eq!(taxi.gta_mass, 1450.0);
         assert_eq!(taxi.gta_turn_mass, 4056.4);
         assert_eq!(taxi.gta_centre_of_mass_x, 0.0);
@@ -178,8 +189,16 @@ mod tests {
         assert_eq!(taxi.gta_abs, 0.0);
         let infernus = from_line(infernus).unwrap();
         assert!(infernus.top_speed > taxi.top_speed);
-        assert!((60.0..70.0).contains(&infernus.top_speed), "{}", infernus.top_speed);
-        assert!((2.9..3.1).contains(&infernus.acceleration), "{}", infernus.acceleration);
+        assert!(
+            (60.0..70.0).contains(&infernus.top_speed),
+            "{}",
+            infernus.top_speed
+        );
+        assert!(
+            (2.9..3.1).contains(&infernus.acceleration),
+            "{}",
+            infernus.acceleration
+        );
         assert!(infernus.brake_deceleration > taxi.brake_deceleration);
         assert_eq!(infernus.gta_handling_flags, f64::from(0xC04000_u32));
         assert!(from_line("SHORT 1 2 3").is_none());
