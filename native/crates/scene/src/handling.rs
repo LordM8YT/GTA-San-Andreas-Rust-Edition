@@ -181,8 +181,8 @@ mod tests {
         assert_eq!(taxi.gta_centre_of_mass_x, 0.0);
         assert_eq!(taxi.gta_centre_of_mass_y, 0.3);
         assert_eq!(taxi.gta_centre_of_mass_z, -0.25);
-        assert_eq!(taxi.gta_drive_type, 0);
-        assert_eq!(taxi.gta_engine_type, 0);
+        assert_eq!(taxi.gta_drive_type, 0.0);
+        assert_eq!(taxi.gta_engine_type, 0.0);
         assert_eq!(taxi.gta_traction_multiplier, 0.75);
         assert_eq!(taxi.gta_traction_loss, 0.85);
         assert_eq!(taxi.gta_traction_bias, 0.51);
