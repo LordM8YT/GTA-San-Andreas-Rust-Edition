@@ -306,6 +306,68 @@ pub fn measure(points: impl IntoIterator<Item = [f32; 3]>) -> [f32; 3] {
         extent.y.clamp(0.5, 5.0),
     ]
 }
+/// Estimate normalized load at the four contact points (rear-left, front-left,
+/// rear-right, front-right). This is a first-order load-transfer model, not a
+/// literal port of GTA's suspension solver. Positive longitudinal acceleration
+/// transfers load rearward; lateral acceleration transfers it across the body.
+fn wheel_normal_loads(
+    supported: [bool; 4],
+    longitudinal_acceleration: f32,
+    lateral_acceleration: f32,
+    cg_height: f32,
+) -> [f32; 4] {
+    const WHEELBASE: f32 = 2.7;
+    const TRACK: f32 = 1.44;
+    const GRAVITY: f32 = 9.81;
+    let count = supported.iter().filter(|&&is_supported| is_supported).count();
+    if count == 0 {
+        return [0.0; 4];
+    }
+    let mut loads = supported.map(|is_supported| if is_supported { 1.0 / count as f32 } else { 0.0 });
+
+    // Index layout follows the wheel probe order: rear-left, front-left,
+    // rear-right, front-right.
+    let rear = [0, 2];
+    let front = [1, 3];
+    let left = [0, 1];
+    let right = [2, 3];
+    let transfer = |indices: [usize; 2], loads: &[f32; 4]| {
+        indices.iter().map(|&i| loads[i]).sum::<f32>()
+    };
+    let front_count = front.iter().filter(|&&i| supported[i]).count();
+    let rear_count = rear.iter().filter(|&&i| supported[i]).count();
+    if front_count > 0 && rear_count > 0 {
+        let front_load = transfer(front, &loads);
+        let rear_load = transfer(rear, &loads);
+        let moved = (longitudinal_acceleration * cg_height / (GRAVITY * WHEELBASE))
+            .clamp(-rear_load, front_load);
+        for i in front {
+            if supported[i] { loads[i] -= moved / front_count as f32; }
+        }
+        for i in rear {
+            if supported[i] { loads[i] += moved / rear_count as f32; }
+        }
+    }
+    let left_count = left.iter().filter(|&&i| supported[i]).count();
+    let right_count = right.iter().filter(|&&i| supported[i]).count();
+    if left_count > 0 && right_count > 0 {
+        let left_load = transfer(left, &loads);
+        let right_load = transfer(right, &loads);
+        let moved = (lateral_acceleration * cg_height / (GRAVITY * TRACK))
+            .clamp(-left_load, right_load);
+        for i in left {
+            if supported[i] { loads[i] += moved / left_count as f32; }
+        }
+        for i in right {
+            if supported[i] { loads[i] -= moved / right_count as f32; }
+        }
+    }
+    let total = loads.iter().sum::<f32>();
+    if total > 0.0 {
+        for load in &mut loads { *load = load.max(0.0) / total; }
+    }
+    loads
+}
 pub struct Car {
     pub handling: Handling,
     pub position: Vec3,
@@ -330,6 +392,8 @@ pub struct Car {
     ground_pitch: f32,
     ground_roll: f32,
     airborne: bool,
+    /// Stays set through a slide until both axles have recovered their grip.
+    skid_latched: bool,
 }
 impl Car {
     pub fn new(position: Vec3, clearance: f32) -> Self {
@@ -352,6 +416,7 @@ impl Car {
             ground_pitch: 0.0,
             ground_roll: 0.0,
             airborne: false,
+            skid_latched: false,
         }
     }
     pub fn with_handling(mut self, handling: Handling) -> Self {
@@ -674,15 +739,51 @@ impl Car {
             * dt;
         self.speed = self.speed.signum() * (self.speed.abs() - resistance).max(0.0);
         velocity += self.forward() * (self.speed - old_speed);
-        // Axle slip generates both lateral force and yaw torque. Forces are bounded
-        // by a friction circle so braking and cornering share the available grip.
+        // Approximate per-wheel normal load and load transfer while retaining
+        // SARE's friction-circle tire response. A lifted wheel contributes no grip;
+        // acceleration and cornering unload the appropriate wheels/axle.
+        let supported_wheels = [
+            supports.iter().any(|(x, z, _)| *x < 0.0 && *z < 0.0),
+            supports.iter().any(|(x, z, _)| *x < 0.0 && *z > 0.0),
+            supports.iter().any(|(x, z, _)| *x > 0.0 && *z < 0.0),
+            supports.iter().any(|(x, z, _)| *x > 0.0 && *z > 0.0),
+        ];
+        let approximate_lateral_acceleration = self.speed * self.yaw_rate;
+        let wheel_loads = wheel_normal_loads(
+            supported_wheels,
+            acceleration,
+            approximate_lateral_acceleration,
+            (self.clearance * 0.8).clamp(0.25, 0.8),
+        );
+        // Tire capacity is load-sensitive: two equally loaded wheels sum to one
+        // axle's baseline capacity; unloading a wheel reduces that axle's grip.
+        let front_load_capacity = wheel_loads[1].sqrt() + wheel_loads[3].sqrt();
+        let rear_load_capacity = wheel_loads[0].sqrt() + wheel_loads[2].sqrt();
         let tire_budget =
             (tuning.tire_grip * handling).powi(2) - (acceleration * grip * 0.5).powi(2);
-        let front_limit = tire_budget.max(0.5).sqrt() * grip;
-        let rear_limit = tuning.tire_grip * handling * grip * if handbrake { 0.12 } else { 1.0 };
+        let front_limit = tire_budget.max(0.5).sqrt() * front_load_capacity;
+        let mut rear_limit = tuning.tire_grip * handling * rear_load_capacity;
+        if handbrake {
+            rear_limit *= 0.12;
+        }
         let front_slip =
             self.lateral_speed + 1.35 * self.yaw_rate - self.speed * self.steering_angle.tan();
         let rear_slip = self.lateral_speed - 1.35 * self.yaw_rate;
+        // Latch a skid when the requested axle force exceeds its load-dependent
+        // limit. Keep rear grip reduced until both axles settle, rather than
+        // allowing the model to snap instantly back to full grip each tick.
+        if grounded
+            && ((front_slip * 5.5).abs() > front_limit
+                || (rear_slip * 5.5).abs() > rear_limit)
+        {
+            self.skid_latched = true;
+        }
+        if grounded && front_slip.abs() < 0.35 && rear_slip.abs() < 0.35 {
+            self.skid_latched = false;
+        }
+        if self.skid_latched && !handbrake {
+            rear_limit *= 0.82;
+        }
         let front_force = (-front_slip * 5.5).clamp(-front_limit, front_limit);
         let rear_force = (-rear_slip * 5.5).clamp(-rear_limit, rear_limit);
         let lateral_acceleration = front_force + rear_force;
