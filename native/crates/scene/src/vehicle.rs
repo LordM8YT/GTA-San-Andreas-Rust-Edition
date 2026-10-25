@@ -980,8 +980,20 @@ impl Car {
         let rear_load_capacity = wheel_loads[0].sqrt() + wheel_loads[2].sqrt();
         let tire_budget =
             (tuning.tire_grip * handling).powi(2) - (acceleration * longitudinal_grip * 0.5).powi(2);
-        let front_limit = tire_budget.max(0.5).sqrt() * front_load_capacity;
-        let mut rear_limit = tuning.tire_grip * handling * rear_load_capacity;
+        let front_traction_bias = if gta_transmission {
+            (2.0 * tuning.gta_traction_bias).clamp(0.0, 2.0)
+        } else {
+            1.0
+        };
+        let rear_traction_bias = if gta_transmission {
+            (2.0 - 2.0 * tuning.gta_traction_bias).clamp(0.0, 2.0)
+        } else {
+            1.0
+        };
+        let mut front_limit =
+            tire_budget.max(0.5).sqrt() * front_load_capacity * front_traction_bias;
+        let mut rear_limit =
+            tuning.tire_grip * handling * rear_load_capacity * rear_traction_bias;
         if handbrake {
             rear_limit *= 0.12;
         }
@@ -1000,7 +1012,14 @@ impl Car {
             self.skid_latched = false;
         }
         if self.skid_latched && !handbrake {
-            rear_limit *= 0.82;
+            if gta_transmission {
+                // handling.cfg tractionLoss applies once a wheel is skidding;
+                // this axle-level adapter uses it until the skid state recovers.
+                front_limit *= tuning.gta_traction_loss;
+                rear_limit *= tuning.gta_traction_loss;
+            } else {
+                rear_limit *= 0.82;
+            }
         }
         let front_force = (-front_slip * 5.5).clamp(-front_limit, front_limit);
         let rear_force = (-rear_slip * 5.5).clamp(-rear_limit, rear_limit);
