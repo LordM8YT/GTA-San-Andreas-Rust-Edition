@@ -758,10 +758,10 @@ impl Car {
                 self.gear = 1;
                 return;
             }
-            while self.gear < count && self.speed > 0.6 * tuning.gear_band_top(self.gear) {
+            while self.gear < count && self.speed > tuning.gear_up_shift_speed(self.gear) {
                 self.gear += 1;
             }
-            while self.gear > 1 && self.speed < 0.4 * tuning.gear_band_top(self.gear - 1) {
+            while self.gear > 1 && self.speed < tuning.gear_down_shift_speed(self.gear) {
                 self.gear -= 1;
             }
             return;
