@@ -510,6 +510,7 @@ pub struct Car {
     vertical_speed: f32,
     lateral_speed: f32,
     steering_angle: f32,
+    raw_steering: f32,
     yaw_rate: f32,
     /// Grade of the last road surface under all four wheels.
     ground_pitch: f32,
@@ -541,6 +542,7 @@ impl Car {
             vertical_speed: 0.0,
             lateral_speed: 0.0,
             steering_angle: 0.0,
+            raw_steering: 0.0,
             yaw_rate: 0.0,
             ground_pitch: 0.0,
             ground_roll: 0.0,
@@ -1054,11 +1056,42 @@ impl Car {
         } else {
             grip
         };
-        // Steering lock falls with speed; wheel input and body rotation both have inertia.
-        let lock = tuning.steering_lock / (1.0 + (self.speed.abs() / 16.0).powi(2));
-        let target_steering = steer.clamp(-1.0, 1.0) * lock;
-        self.steering_angle += (target_steering - self.steering_angle)
-            .clamp(-tuning.steering_rate * dt, tuning.steering_rate * dt);
+        if tuning.gta_handling_loaded > 0.5 {
+            // CAutomobile::ProcessControlInputs: raw steering approaches input
+            // at one fifth of the difference per GTA timestep, then applies a
+            // sign-preserving square and the handling.cfg steering lock.
+            self.raw_steering +=
+                (steer.clamp(-1.0, 1.0) - self.raw_steering) * (dt * 50.0 / 5.0);
+            self.raw_steering = self.raw_steering.clamp(-1.0, 1.0);
+            let signed_square = self.raw_steering.signum() * self.raw_steering.powi(2);
+            let lock = tuning.steering_lock;
+            let speed_forward = self.speed / 50.0;
+            let mut steering_limiter = 1.0;
+            if speed_forward > 0.01 && grounded {
+                // CAutomobile::ProcessControl's tarmac steering limit. Surface
+                // adhesion is currently 1.0 until collision materials are ported.
+                let traction = tuning.gta_traction_multiplier / 250.0 * 0.25;
+                let available = (traction * 16.0 / speed_forward.powi(2)).clamp(0.0, 1.0);
+                steering_limiter = available.asin() / lock;
+                if steering_limiter > 1.0
+                    || self.raw_steering < 0.0 && self.lateral_speed > 0.05
+                    || self.raw_steering > 0.0 && self.lateral_speed < -0.05
+                    || handbrake
+                {
+                    steering_limiter = 1.0;
+                } else {
+                    steering_limiter = steering_limiter.min(1.0);
+                }
+            }
+            self.steering_angle = lock * signed_square * steering_limiter;
+        } else {
+            // Legacy fallback for profiles not loaded from GTA:SA handling.cfg.
+            let lock = tuning.steering_lock
+                / (1.0 + (self.speed.abs() / 16.0).powi(2));
+            let target_steering = steer.clamp(-1.0, 1.0) * lock;
+            self.steering_angle += (target_steering - self.steering_angle)
+                .clamp(-tuning.steering_rate * dt, tuning.steering_rate * dt);
+        }
         // A gearbox pulls against the current gear's band; with one gear the
         // band is the whole top-speed range, exactly as the prototype had it.
         if tuning.gears > 1.0 || tuning.gta_handling_loaded > 0.5 {
