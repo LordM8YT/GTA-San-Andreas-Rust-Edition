@@ -118,12 +118,14 @@ impl Launcher {
             .as_ref()
             .and_then(|path| artwork::load(path).ok())
             .map(|image| ctx.load_texture("hero", image, egui::TextureOptions::LINEAR));
+        let update_channel = config.update_channel.clone();
         let mut app = Self {
             config,
             hero,
             pending_artwork: None,
             updates: updater::Updates::new(
                 detect && std::env::var_os("SARE_SCREENSHOT_TO").is_none(),
+                &update_channel,
             ),
             settings,
             page: Page::Home,
@@ -1022,6 +1024,31 @@ impl Launcher {
             );
         });
         ui.collapsing("Client updates", |ui| {
+            let mut channel = if self.config.update_channel == "vehicle-test" {
+                "vehicle-test".to_owned()
+            } else {
+                "stable".to_owned()
+            };
+            ui.add_enabled_ui(!self.updates.busy() && !self.updates.has_staged() && !self.updates.restarting, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Update channel");
+                    egui::ComboBox::from_id_salt("client-update-channel")
+                        .selected_text(if channel == "vehicle-test" { "Vehicle physics test" } else { "Stable" })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut channel, "stable".to_owned(), "Stable");
+                            ui.selectable_value(&mut channel, "vehicle-test".to_owned(), "Vehicle physics test");
+                        });
+                });
+            });
+            if channel != self.config.update_channel {
+                self.config.update_channel = channel;
+                self.updates.set_channel(&self.config.update_channel);
+                self.message = match self.config.save() {
+                    Ok(()) => format!("Update channel set to {}. Check for an update to switch builds.", if self.config.update_channel == "vehicle-test" { "Vehicle physics test" } else { "Stable" }),
+                    Err(error) => format!("Could not save update channel: {error}"),
+                };
+            }
+            ui.small("Vehicle physics test builds may contain unfinished changes. Switch back to Stable to return to the normal release channel.");
             let mut automatic = !self.config.disable_auto_updates;
             if ui
                 .checkbox(
