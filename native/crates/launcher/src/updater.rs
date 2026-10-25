@@ -300,16 +300,33 @@ impl Updates {
                     .flatten()
             })
             .unwrap_or_default();
-        let channel = if channel == "vehicle-test" { "vehicle-test" } else { "stable" }.to_owned();
+        let channel = if channel == "vehicle-test" {
+            "vehicle-test"
+        } else {
+            "stable"
+        }
+        .to_owned();
         Self {status:if recovery_blocked {"Interrupted update journal is invalid. Extract a fresh client package to recover."}else if recovery.is_some(){"Recovering interrupted client update..."}else if usable {"Updates ready to check."}else{"Automatic updates require an extracted client package in a writable folder. Source builds use Git/Cargo."}.into(),root:if usable && !recovery_blocked {root}else{None},lease,rx:None,staged:None,recovery,last_result,next:Instant::now()+Duration::from_secs(3),restarting:false,recovery_blocked,channel}
     }
     pub fn set_channel(&mut self, channel: &str) {
         if self.rx.is_some() || self.staged.is_some() || self.restarting {
             return;
         }
-        self.channel = if channel == "vehicle-test" { "vehicle-test" } else { "stable" }.to_owned();
+        self.channel = if channel == "vehicle-test" {
+            "vehicle-test"
+        } else {
+            "stable"
+        }
+        .to_owned();
         self.next = Instant::now();
-        self.status = format!("Update channel: {}. Ready to check.", if self.channel == "vehicle-test" { "Vehicle physics test" } else { "Stable" });
+        self.status = format!(
+            "Update channel: {}. Ready to check.",
+            if self.channel == "vehicle-test" {
+                "Vehicle physics test"
+            } else {
+                "Stable"
+            }
+        );
     }
     pub fn check(&mut self) {
         if self.rx.is_some() || self.staged.is_some() || self.restarting {
@@ -321,7 +338,14 @@ impl Updates {
         let (tx, rx) = mpsc::channel();
         self.rx = Some(rx);
         let channel = self.channel.clone();
-        self.status = format!("Checking GitHub for a {} client update...", if channel == "vehicle-test" { "vehicle physics test" } else { "stable" });
+        self.status = format!(
+            "Checking GitHub for a {} client update...",
+            if channel == "vehicle-test" {
+                "vehicle physics test"
+            } else {
+                "stable"
+            }
+        );
         self.next = Instant::now() + Duration::from_secs(1800);
         std::thread::spawn(move || {
             let result = prepare(&root, &tx, &channel);
@@ -421,14 +445,24 @@ fn agent() -> ureq::Agent {
         .build()
         .into()
 }
-fn select_asset(data: &[u8], current: &str, channel: &str) -> Result<Option<(String, Asset, String)>> {
+fn select_asset(
+    data: &[u8],
+    current: &str,
+    channel: &str,
+) -> Result<Option<(String, Asset, String)>> {
     let release: Release = serde_json::from_slice(data)?;
     ensure!(!release.draft, "Release is still a draft");
     let prefix = if channel == "vehicle-test" {
-        ensure!(release.prerelease, "Vehicle test release is not marked as a prerelease");
+        ensure!(
+            release.prerelease,
+            "Vehicle test release is not marked as a prerelease"
+        );
         "test-client-"
     } else {
-        ensure!(!release.prerelease, "Stable release must not be a prerelease");
+        ensure!(
+            !release.prerelease,
+            "Stable release must not be a prerelease"
+        );
         "client-"
     };
     let commit = release
@@ -468,16 +502,26 @@ fn prepare(root: &Path, tx: &mpsc::Sender<Event>, channel: &str) -> Result<Optio
     let http = agent();
     let release_url = if channel == "vehicle-test" {
         let mut response = http
-            .get(&format!("https://api.github.com/repos/{REPO}/commits/{}", TEST_BRANCH.replace('/', "%2F")))
+            .get(&format!(
+                "https://api.github.com/repos/{REPO}/commits/{}",
+                TEST_BRANCH.replace('/', "%2F")
+            ))
             .header("User-Agent", "SARE-launcher")
             .header("Accept", "application/vnd.github+json")
             .call()
             .context("Could not resolve the vehicle-test branch head")?;
         let mut body = Vec::new();
-        response.body_mut().as_reader().take(64 * 1024 + 1).read_to_end(&mut body)?;
+        response
+            .body_mut()
+            .as_reader()
+            .take(64 * 1024 + 1)
+            .read_to_end(&mut body)?;
         ensure!(body.len() <= 64 * 1024, "Branch metadata too large");
         let commit: serde_json::Value = serde_json::from_slice(&body)?;
-        let sha = commit.get("sha").and_then(serde_json::Value::as_str).context("Branch head has no commit SHA")?;
+        let sha = commit
+            .get("sha")
+            .and_then(serde_json::Value::as_str)
+            .context("Branch head has no commit SHA")?;
         ensure!(hex(sha, 40), "Invalid test branch commit SHA");
         format!("https://api.github.com/repos/{REPO}/releases/tags/test-client-{sha}")
     } else {
@@ -955,11 +999,13 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-        assert!(
-            select_asset(&serde_json::to_vec(&release).unwrap(), &"c".repeat(40), "stable")
-                .unwrap()
-                .is_some()
-        );
+        assert!(select_asset(
+            &serde_json::to_vec(&release).unwrap(),
+            &"c".repeat(40),
+            "stable"
+        )
+        .unwrap()
+        .is_some());
         release["assets"][0]["browser_download_url"] = "https://evil.example/client.zip".into();
         assert!(select_asset(&serde_json::to_vec(&release).unwrap(), "old", "stable").is_err());
         release["draft"] = true.into();
@@ -967,8 +1013,16 @@ mod tests {
         release["draft"] = false.into();
         release["tag_name"] = format!("test-client-{commit}").into();
         release["prerelease"] = true.into();
-        release["assets"][0]["browser_download_url"] = format!("https://github.com/{REPO}/releases/download/test-client-{commit}/{name}").into();
-        assert!(select_asset(&serde_json::to_vec(&release).unwrap(), &"c".repeat(40), "vehicle-test").unwrap().is_some());
+        release["assets"][0]["browser_download_url"] =
+            format!("https://github.com/{REPO}/releases/download/test-client-{commit}/{name}")
+                .into();
+        assert!(select_asset(
+            &serde_json::to_vec(&release).unwrap(),
+            &"c".repeat(40),
+            "vehicle-test"
+        )
+        .unwrap()
+        .is_some());
         assert!(select_asset(&serde_json::to_vec(&release).unwrap(), "old", "stable").is_err());
     }
     #[test]
