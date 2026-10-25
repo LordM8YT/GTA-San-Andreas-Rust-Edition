@@ -281,6 +281,26 @@ fn main() -> anyhow::Result<()> {
             println!("handling: could not read the infernus row from {folder}");
         }
     }
+    // DM race cars run a nitro bottle; the recordings hold `vehicle_fire`
+    // through the speed sections, which is what makes them so fast.
+    car.install_nitro(10);
+    // The map's own handling is not in the collision export; the recorded car
+    // clearly runs a faster one than stock (it is a speed map). Take the
+    // recorded top speed as the profile's, or the replay is capped below the
+    // recording and the car coasts once it is over its own limiter.
+    let recorded_top = frames
+        .iter()
+        .map(|frame| frame.velocity.length() * 50.0)
+        .fold(0.0f32, f32::max);
+    let mut handling = car.handling;
+    if recorded_top > handling.top_speed {
+        println!(
+            "handling: recorded top {:.0} m/s exceeds the row's {:.0}, using the recorded one",
+            recorded_top, handling.top_speed
+        );
+        handling.top_speed = recorded_top;
+        car = car.with_handling(handling);
+    }
     car.set_state(first.position, yaw, first.velocity * 50.0);
     let ground = map
         .collision
@@ -312,6 +332,7 @@ fn main() -> anyhow::Result<()> {
             0.0
         };
         let handbrake = held.iter().any(|k| k == "handbrake");
+        car.set_nitro(held.iter().any(|k| k == "vehicle_fire"));
         car.step(&map.collision, throttle, steer, handbrake, 1.0, dt);
         let error = car.position.distance(frames[index].position);
         errors.push(error);
@@ -319,12 +340,12 @@ fn main() -> anyhow::Result<()> {
         if car.airborne() {
             airborne += 1;
         }
-        if index <= 12 {
+        if index <= 10 {
             let d = car.debug();
             println!(
-                "  f{index:03} pos=({:.1},{:.1},{:.1}) comp={:.2} air={} v={:.1} km/h",
-                car.position.x, car.position.y, car.position.z,
-                d.compression[0], d.airborne, car.speed * 3.6
+                "  f{index:03} v={:6.1} km/h gear={} gas={:.2} brake={:.2} drive={:.6} comp={:.2} counts={:?} air={}",
+                car.speed * 3.6, d.gear, d.gas_pedal, d.brake_pedal, d.drive_acceleration,
+                d.compression[0], d.wheel_counts, d.airborne
             );
         }
         if index % 250 == 0 {

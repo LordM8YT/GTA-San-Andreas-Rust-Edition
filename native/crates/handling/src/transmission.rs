@@ -202,6 +202,19 @@ impl Transmission {
         self.inertia_value2 = a7;
     }
 
+    /// Bring the private `a6`/`a7` history to the state it would be in after
+    /// driving at `velocity` for a while.
+    ///
+    /// The game never constructs a car that is already moving, so its history
+    /// always matches its speed. A replay, a respawn on a motorway or a
+    /// teleport does not, and starting from zero history makes the engine feel
+    /// dead: the multiplier is clamped to 0.1 until the smoother catches up.
+    pub fn settle_history(&mut self, velocity: f32) {
+        for _ in 0..240 {
+            let _ = self.calculate_drive_acceleration(1.0, velocity, 4, false);
+        }
+    }
+
     /// `cTransmission::CalculateDriveAcceleration`, 0x6D05E0.
     ///
     /// * `velocity` — forward component of `move_speed`, raw units.

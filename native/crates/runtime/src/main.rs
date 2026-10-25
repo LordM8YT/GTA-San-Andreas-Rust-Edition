@@ -1582,6 +1582,7 @@ impl State {
                     self.menu.settings.vehicle_handling,
                     dt,
                 );
+                }
                 if dt > 0.0 {
                     self.skids
                         .update(car, skids::intensity(car, throttle, handbrake));

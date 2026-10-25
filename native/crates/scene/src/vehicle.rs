@@ -410,6 +410,9 @@ pub struct CarDebug {
     pub drag: f32,
     pub max_velocity: f32,
     pub spring_forces: Vec<f32>,
+    pub gas_pedal: f32,
+    pub drive_acceleration: f32,
+    pub brake_pedal: f32,
     pub logical_contacts: String,
     pub step: f32,
 }
@@ -440,14 +443,27 @@ pub struct Car {
     airborne: bool,
     /// Cached kernel tuning derived from `handling`.
     profile: Option<KernelHandling>,
+    /// Whether the nitro control is held this frame.
+    nitro_pressed: bool,
     /// Last tick's trace, for tooling.
     last: sa_handling::VehicleTickTrace,
 }
 impl Car {
     pub fn new(position: Vec3, clearance: f32) -> Self {
+        // The caller derives this from the model's lowest vertex, which is
+        // `-inf` when a model fails to load or has no geometry. A car with a
+        // nonsense ride height gets no wheel contact at all (every suspension
+        // line misses), so it cannot be driven - clamp it here instead.
+        let clearance = if clearance.is_finite() {
+            clearance.clamp(0.05, 3.0)
+        } else {
+            0.5
+        };
         let handling = Handling::default();
         let profile = handling.to_kernel();
-        let kernel = KernelVehicle::new(profile.clone(), to_kernel(position), 1.0);
+        let mut kernel = KernelVehicle::new(profile.clone(), to_kernel(position), 1.0);
+        // A car that has just spawned is at rest with settled engine history.
+        kernel.transmission.settle_history(0.0);
         let mut car = Self {
             handling,
             position,
@@ -465,6 +481,7 @@ impl Car {
             lateral_speed: 0.0,
             airborne: true,
             profile: Some(profile),
+            nitro_pressed: false,
             last: sa_handling::VehicleTickTrace::default(),
         };
         car.set_yaw(0.0);
@@ -557,7 +574,12 @@ impl Car {
         let up = from_kernel(basis.up);
         let half_track = (self.size[0] * 0.80).max(0.35);
         let half_base = (self.size[1] * 0.72).max(0.6);
-        let probe = self.clearance.max(0.1) + SUSPENSION_TRAVEL;
+        // Probe well past the resting height rather than exactly to it. The
+        // ride height comes from the model's lowest vertex, and when that is
+        // wrong (a model that failed to load, a resource car with no geometry,
+        // a truck measured from the wrong pivot) a short probe finds no ground,
+        // the car gets no wheel contact and it cannot be driven at all.
+        let probe = self.clearance.max(0.05) + SUSPENSION_TRAVEL + 2.0;
         let mut set = sa_handling::contact::WheelContactSet::default();
         // (x, forward offset) per GTA wheel index: front-left, rear-left,
         // front-right, rear-right.
@@ -611,6 +633,7 @@ impl Car {
             brake_reverse: (-throttle).max(0.0),
             handbrake: if handbrake { 1.0 } else { 0.0 },
             steering: -steer.clamp(-1.0, 1.0) * handling.clamp(0.5, 1.5),
+            nitro: self.nitro_pressed,
             ..Controls::default()
         };
         self.last = self.kernel.tick(&controls, &contacts);
@@ -727,9 +750,23 @@ impl Car {
             drag: self.kernel.handling.drag_coefficient,
             max_velocity: self.kernel.handling.max_velocity,
             spring_forces: self.last.spring_forces.clone(),
+            gas_pedal: self.last.gas_pedal,
+            drive_acceleration: self.last.drive_acceleration,
+            brake_pedal: self.last.brake_pedal,
             logical_contacts: self.last.logical_contacts.clone(),
             step: self.kernel.ctimer_step,
         }
+    }
+
+    /// Install a nitro bottle, in the game's charge counts (a Race pickup's
+    /// double bottle is 10).
+    pub fn install_nitro(&mut self, charges: i32) {
+        self.kernel.install_nitro(charges);
+    }
+
+    /// Hold or release the nitro control.
+    pub fn set_nitro(&mut self, pressed: bool) {
+        self.nitro_pressed = pressed;
     }
 
     /// Place the car with an explicit world velocity, in m/s.
@@ -745,6 +782,11 @@ impl Car {
         self.kernel.body.turn_speed = KVec3::default();
         self.kernel.body.friction_move_speed = KVec3::default();
         self.kernel.body.friction_turn_speed = KVec3::default();
+        // Placing a car at a speed must also place the gearbox at that speed,
+        // or its inertia history reads as "engine at rest" and the car coasts
+        // down instead of driving.
+        let forward_speed = self.kernel.body.move_speed.dot(self.kernel.body.basis.forward);
+        self.kernel.transmission.settle_history(forward_speed);
         self.speed = velocity.dot(self.forward());
         self.lateral_speed = velocity.dot(Vec3::new(self.yaw.cos(), 0.0, -self.yaw.sin()));
     }
@@ -976,6 +1018,24 @@ mod tests {
         assert!(!damage.update(0.1), "explodes only once");
         assert_eq!(damage.hurt(100.0), 0.0);
     }
+    #[test]
+    fn a_car_with_a_broken_ride_height_still_drives() {
+        // `clearance` comes from the model's lowest vertex; a model that failed
+        // to load yields a non-finite value, and a car built with it used to
+        // sit there with no wheel contact and no throttle response.
+        let world = CollisionWorld::from_batches(&[floor(-2000.0, 2000.0, 0.0)]);
+        for clearance in [f32::NEG_INFINITY, f32::INFINITY, f32::NAN, 0.0] {
+            let mut car = Car::new(Vec3::Y * 0.6, clearance);
+            assert!(car.clearance.is_finite() && car.clearance > 0.0);
+            drive(&mut car, &world, 1.0, |_| (1.0, 0.0, false));
+            assert!(
+                car.speed > 1.0,
+                "clearance {clearance} left the car stuck at {} m/s",
+                car.speed
+            );
+        }
+    }
+
     #[test]
     fn the_rendered_body_matches_the_kernel_orientation() {
         // The renderer turns `yaw/pitch/roll` into a rotation; those angles are
