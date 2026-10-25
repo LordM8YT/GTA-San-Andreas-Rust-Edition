@@ -62,6 +62,41 @@ jobs:
           name: SARE-${{ matrix.platform }}-test
           path: native/target/packages/*.zip
           if-no-files-found: error
+  publish-vehicle-test-client:
+    needs: native
+    if: github.event_name == 'push' && github.ref == 'refs/heads/test/vanilla-handling-launcher-channel'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: SARE-*-test
+          merge-multiple: true
+          path: client-packages
+      - name: Publish vehicle-test prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/test%2Fvanilla-handling-launcher-channel" --jq .sha)" = "$GITHUB_SHA"
+          test -f client-packages/SARE-windows-test.zip
+          test -f client-packages/SARE-linux-test.zip
+          test -f client-packages/SARE-macos-aarch64-test.zip
+          test -f client-packages/SARE-macos-x86_64-test.zip
+          tag="test-client-$GITHUB_SHA"
+          existing=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null || true)
+          if [ "$existing" = "false" ]; then
+            echo "Vehicle-test release already exists. Keeping its original packages."
+            exit 0
+          fi
+          if [ "$existing" != "true" ]; then
+            gh release create "$tag" --target "$GITHUB_SHA" --prerelease --title "SARE vehicle test ${GITHUB_SHA:0:12}" --notes "Experimental vehicle handling test build. May contain unfinished changes; not a stable release."
+          fi
+          gh release upload "$tag" --clobber client-packages/SARE-windows-test.zip client-packages/SARE-linux-test.zip \
+            client-packages/SARE-macos-aarch64-test.zip client-packages/SARE-macos-x86_64-test.zip
+
   publish-client:
     needs: native
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
