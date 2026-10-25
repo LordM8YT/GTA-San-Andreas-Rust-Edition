@@ -807,7 +807,7 @@ impl Car {
             (0.72, -1.35),  // rear right
             (0.72, 1.35),   // front right
         ];
-        let mut already_skidding = self.wheel_states.iter().any(|state| *state != 0);
+        let mut already_skidding = false;
 
         for (index, &(x, z)) in WHEEL_OFFSETS.iter().enumerate() {
             if !supported[index] {
@@ -856,7 +856,9 @@ impl Car {
             }
             self.wheel_states[index] = 0;
 
-            let driving = !braking && throttle != 0.0 && drive_wheels[index];
+            let wheel_braking = braking || (handbrake && rear_wheel);
+            let driving =
+                !wheel_braking && throttle != 0.0 && drive_wheels[index];
             let mut brake = if handbrake && rear_wheel {
                 // 20,000 game-speed units per tick, converted to SI velocity change.
                 20_000.0 * dt * 2_500.0
@@ -918,7 +920,7 @@ impl Car {
 
             let total_speed = fwd * wheel_forward + right * wheel_right;
             let mut turn_direction = total_speed;
-            if braking {
+            if wheel_braking {
                 turn_direction -= tuning.gta_suspension_anti_dive_multiplier * wheel_forward * fwd;
             } else if driving {
                 turn_direction -=
