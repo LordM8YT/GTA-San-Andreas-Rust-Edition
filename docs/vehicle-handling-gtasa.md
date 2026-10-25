@@ -161,16 +161,17 @@ if fwd^2 + right^2 > adhesion^2:
     scale both axes to adhesion * tractionLoss / length
 ```
 
-The state latches: once any wheel is `Spinning`, `Skidding` or `Fixed`, the
-process-global `bAlreadySkidding` is set, traction loss stops applying, and the
-tyre-temperature penalty is skipped. That latch is what makes a slide *dig in*
-instead of instantly recovering.
+The original state latches: once any wheel is `Spinning`, `Skidding` or `Fixed`,
+the process-global `bAlreadySkidding` is set, traction loss stops applying for
+subsequent wheels that tick, and the tyre-temperature penalty is skipped. SARE now
+keeps per-wheel states and mirrors this ordering with a per-car per-tick latch; it
+does not yet reproduce the original process-global storage or tyre temperature.
 
-`ProcessWheel` also applies anti-dive: the braking or driving part of the force
-is applied at the contact point with a reduced, differently-directed moment
-(`0.4x` when braking, `0.2x` when driving), which is why GTA cars do not
-nose-dive under hard braking. SARE already approximates this with the
-`acceleration * grip * 0.012` pitch term, so the shapes are compatible.
+`ProcessWheel` also applies anti-dive by changing the force direction used for
+turn-force calculation (full multiplier when braking, half when driving). SARE's
+loaded-handling path now applies that contact-point turn-force correction, but
+the body's pitch and roll still use an approximate shared spring/damper model;
+that is not yet a complete suspension/anti-dive port.
 
 ## Port status and remaining fidelity gaps
 
