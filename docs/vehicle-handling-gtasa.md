@@ -1,10 +1,11 @@
 # GTA:SA automobile handling, for SARE's car model
 
-SARE's car is an original approximation, and a good one: a lateral-slip model
-with a friction circle, independent momentum and a suspension that cannot pull a
-car down. This document is not a proposal to replace it with a port of GTA:SA.
-It is a map of what the original game actually does, which parts of it are worth
-stealing, and how those parts map onto `crates/scene/src/vehicle.rs`.
+SARE's current car is a temporary approximation, not the target implementation.
+The project goal is a faithful remaster/port: preserve GTA:SA vehicle behaviour while
+replacing the original engine implementation with modern Rust code. The original
+game is the behavioural specification; SARE's existing model must not be treated
+as the reference when it disagrees with GTA:SA. This document records the reference
+behaviour and the gaps that must be closed in `crates/scene/src/vehicle.rs`.
 
 The numbers and formulas here come from the US 1.0 build, cross-checked against
 recorded MTA:SA telemetry by an independent reimplementation. Every claim that
@@ -106,10 +107,10 @@ The `0.999 * springLimit` clamp is what stops a hard landing from injecting
 energy, and the `normal.z > 0.35` switch is what makes a car settle on a slope
 instead of skating.
 
-SARE has a per-body spring/damper rather than four independent wheels. If you
-want the next step up in fidelity, per-wheel load is the one to take: it gives
-body roll, diagonal load transfer and lift-off oversteer without changing the
-tire model.
+SARE currently has a per-body spring/damper rather than GTA:SA's four-wheel
+suspension processing. This is a fidelity gap to port, not an optional enhancement.
+The port must preserve GTA's spring/damper order, contact-point velocity and
+force/moment calculations rather than substitute a visually similar approximation.
 
 ## Transmission
 
@@ -168,40 +169,40 @@ is applied at the contact point with a reduced, differently-directed moment
 nose-dive under hard braking. SARE already approximates this with the
 `acceleration * grip * 0.012` pitch term, so the shapes are compatible.
 
-## What SARE should take, in order of value per line of code
+## Required port work, in behavioural order
 
-1. **Gear bands and shift points** — already represented in SARE through
-   the optional `gears` handling value. This is a simplified gearbox, not a
-   full port of GTA's transmission state.
-2. **Per-wheel normal load** — an experimental first-order load-transfer
-   approximation is now on `test/gtasa-wheel-load-skid-latch`. It estimates
-   front/rear and left/right load transfer from acceleration and cornering, then
-   feeds load-sensitive capacity into SARE's existing tire model. It does not
-   yet implement four independent springs or GTA's exact suspension solver.
-3. **The skid latch** — the same test branch adds a per-car latch that reduces
-   rear grip during a slide and clears when both axle slip values recover. This
-   is inspired by GTA's persistent skid state, not a literal port of the
-   process-global `bAlreadySkidding` flag.
-4. **GTA-style gear/drag balance** — still a follow-up. The current speed curve
-   uses SARE's top-speed asymptote, so a declared top speed is not a guaranteed
-   achieved speed. Tune the engine pull and drag together before replacing this
-   with GTA's `maxFlat` calculation.
-5. **Per-surface adhesion** — GTA reads an adhesive limit per material plus a
-   wet multiplier. SARE has one grip value per car, so asphalt, grass and sand
-   all feel the same.
-6. **The rest-stop snap** — GTA zeroes very low speed with no pedal and ground
-   contact. SARE still lacks this behavior, which can leave a slow idle crawl.
+The existing implementation is not the standard to preserve. The following are
+compatibility requirements because they affect observable GTA:SA behaviour:
 
-## What SARE does better, and should keep
+1. **Rigid-body state and force application:** port GTA's scalar `mass`/`turnMass`,
+   centre-of-mass offset, move/turn force accumulation and integration order.
+2. **Per-wheel suspension:** four contact points, GTA spring and damper passes,
+   contact-point velocity, effective mass and the original force clamps.
+3. **Transmission:** consume the original `handling.cfg` fields using GTA's unit
+   conversion, drive layout, engine type, inertia smoothing, gear bands and shift
+   windows. The current `gears` count and speed-band curve are only placeholders.
+4. **Wheel forces and state:** port the per-wheel forward/lateral correction,
+   adhesion clipping, braking/coasting distinction, traction loss and persistent
+   skid/spin state. Do not replace this with a different friction-circle model.
+5. **Steering and airborne behaviour:** match input ramp, steering lock curve,
+   yaw response, air torque and the original tick order.
+6. **Surface response and low-speed behaviour:** use material adhesion/wetness and
+   reproduce GTA's rest-stop rules.
+7. **Differential and regression tests:** compare recorded reference scenarios
+   against GTA:SA/MTA telemetry (speed traces, shift times, turning radius, braking
+   distance, lateral slip, suspension travel and landing response).
 
-- A real friction circle. GTA's per-wheel clipping is cruder and produces the
-  famous "tank slapper" behaviour at the limit.
-- Independent heading and momentum, so a car can actually slide sideways. GTA
-  achieves this indirectly, through turn mass and wheel states.
-- Metric units. Do not adopt GTA's per-tick velocities; convert the constants
-  into SARE's units instead, as the gear change does.
-- A step capped at 1/120 s. GTA is fixed at 50 Hz and its handling is
-  inextricably tuned to that; SARE's model stays consistent across frame rates.
+The current SARE implementation only approximates several of these systems. A
+passing unit-test suite is necessary but does not establish behavioural parity.
+
+## Compatibility rules
+
+- Preserve GTA's gameplay and vehicle behaviour; do not "improve" or rebalance it.
+- Convert units at the boundary, but retain the original formulae and ordering.
+- Keep modern rendering, resource handling and performance improvements separate
+  from simulation behaviour.
+- Treat any deviation as a bug unless a known original-game quirk is deliberately
+  reproduced and covered by a reference test.
 
 ## Appendix: constants worth knowing
 
