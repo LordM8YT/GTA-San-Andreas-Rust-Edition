@@ -1418,6 +1418,26 @@ mod tests {
     use crate::{Batch, Vertex};
 
     #[test]
+    fn gta_reverse_band_and_first_gear_shift_window_match_source_units() {
+        let tuning = Handling {
+            gears: 5.0,
+            gta_handling_loaded: 1.0,
+            top_speed: 41.4,
+            reverse_speed: 10.35,
+            ..Handling::default()
+        };
+        assert_eq!(tuning.gear_band_top(0), -10.35);
+        assert_eq!(tuning.gear_band_top(5), 41.4);
+        let first_band = tuning.gear_band_top(1);
+        let expected_up = -10.35 + 0.6667 * (first_band + 10.35);
+        assert!(
+            (tuning.gear_up_shift_speed(1) - expected_up).abs() < 1e-5,
+            "upshift {}, expected {expected_up}",
+            tuning.gear_up_shift_speed(1)
+        );
+    }
+
+    #[test]
     fn gta_handling_uses_per_wheel_drive_and_reverse_gear() {
         let world = CollisionWorld::from_batches(&[floor(-100.0, 100.0, 0.0)]);
         let tuning = Handling {
