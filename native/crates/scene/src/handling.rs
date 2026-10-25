@@ -4,8 +4,7 @@
 use crate::vehicle::Handling;
 use std::path::Path;
 
-/// Reference values used only by the temporary adapter for the legacy simulator.
-const BASE_BRAKE: f32 = 7.0;
+/// Reference traction value used by the temporary adapter for the legacy simulator.
 const BASE_TRACTION: f32 = 0.75;
 
 /// Handling for a vehicle model, or `None` if the files lack it.
@@ -97,17 +96,16 @@ fn from_line(line: &str) -> Option<Handling> {
         max_flat -= 0.01;
     }
     let top_speed = (max_flat.max(0.01) * 1.2 * 50.0).clamp(5.0, 90.0);
+    let reverse_speed = (max_flat * 0.3).max(0.2) * 50.0;
     let acceleration = (drive_acceleration * 50.0 * 50.0).clamp(0.5, 20.0);
 
     let handling = Handling {
         top_speed,
         acceleration,
         reverse_acceleration: (acceleration * 0.5).clamp(0.5, 10.0),
-        // These are still adapter values for the legacy vehicle integrator.
-        // The raw GTA values below are authoritative inputs for the ongoing port.
-        brake_deceleration: (base.brake_deceleration
-            * (brake_deceleration / BASE_BRAKE).clamp(0.4, 2.0))
-            .clamp(1.0, 25.0),
+        // GTA's converted brake deceleration is the raw handling value in m/s².
+        brake_deceleration: brake_deceleration.clamp(1.0, 25.0),
+        reverse_speed: reverse_speed.clamp(1.0, 25.0),
         tire_grip: (base.tire_grip
             * (traction_multiplier / BASE_TRACTION).clamp(0.5, 1.6))
             .clamp(1.0, 12.0),
@@ -117,6 +115,7 @@ fn from_line(line: &str) -> Option<Handling> {
         suspension_damping: (base.suspension_damping * (1.0 + suspension_damping / 20.0))
             .clamp(8.0, 40.0),
         aerodynamic_drag: (drag * 0.001).clamp(0.0, 0.02),
+        gta_handling_loaded: 1.0,
         gta_mass: mass,
         gta_turn_mass: turn_mass,
         gta_drag_multiplier: drag,
