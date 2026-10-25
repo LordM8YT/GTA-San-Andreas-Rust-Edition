@@ -369,6 +369,9 @@ impl Handling {
     /// GTA's upshift fraction (0.6667) applied to the current adapter band.
     /// The band endpoint remains transitional until the drive-force curve is ported.
     pub fn gear_up_shift_speed(&self, gear: u8) -> f32 {
+        if self.gear_count() <= 1.0 {
+            return self.top_speed;
+        }
         let lower = self.gear_band_top(gear.saturating_sub(1));
         let upper = self.gear_band_top(gear);
         lower + 0.6667 * (upper - lower)
@@ -376,6 +379,9 @@ impl Handling {
 
     /// GTA's downshift fraction (0.42) applied to the current adapter band.
     pub fn gear_down_shift_speed(&self, gear: u8) -> f32 {
+        if self.gear_count() <= 1.0 {
+            return -0.5;
+        }
         let lower = self.gear_band_top(gear.saturating_sub(2));
         let upper = self.gear_band_top(gear.saturating_sub(1));
         lower + 0.42 * (upper - lower)
