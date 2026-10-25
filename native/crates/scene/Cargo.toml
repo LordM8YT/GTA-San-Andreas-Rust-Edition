@@ -9,6 +9,7 @@ anyhow.workspace = true
 sa-assets = { path = "../assets" }
 sa-script = { path = "../script" }
 sa-net = { path = "../net" }
+sa-handling = { path = "../handling" }
 glam.workspace = true
 bytemuck.workspace = true
 serde = { version = "1.0.229", features = ["derive"] }

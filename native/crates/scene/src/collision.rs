@@ -8,6 +8,15 @@ const RADIUS: f32 = 0.32;
 const HEIGHT: f32 = 1.75;
 const STEP_HEIGHT: f32 = 0.38;
 
+/// One segment query result against the collision mesh.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SegmentHit {
+    pub point: Vec3,
+    pub normal: Vec3,
+    /// Distance along the queried segment, 0 at the start and 1 at the end.
+    pub fraction: f32,
+}
+
 #[derive(Clone, Copy)]
 struct Triangle {
     a: Vec3,
@@ -108,6 +117,63 @@ impl CollisionWorld {
             }
         }
         target + segment * fraction
+    }
+    /// First surface along a segment, with the surface normal.
+    ///
+    /// Car suspension needs the hit point and normal, not just a height: the
+    /// spring direction is the contact normal, and the compression is the
+    /// fraction along the line. Tests triangles along the segment, reusing the
+    /// same cell lookup as `clip_camera`.
+    pub fn segment_hit(&self, origin: Vec3, direction: Vec3, max: f32) -> Option<SegmentHit> {
+        let direction = direction.normalize_or_zero();
+        if direction == Vec3::ZERO || max <= 0.0 {
+            return None;
+        }
+        let segment = direction * max;
+        let steps = (max / (CELL * 0.5)).ceil().max(1.0) as usize;
+        let mut candidates = HashSet::new();
+        for step in 0..=steps {
+            candidates.extend(self.nearby(origin + segment * (step as f32 / steps as f32), 0.3));
+        }
+        let mut best: Option<(f32, Vec3)> = None;
+        for &index in &candidates {
+            let t = self.triangles[index];
+            let ab = t.b - t.a;
+            let ac = t.c - t.a;
+            let p = direction.cross(ac);
+            let determinant = ab.dot(p);
+            if determinant.abs() < 1e-7 {
+                continue;
+            }
+            let inverse = determinant.recip();
+            let relative = origin - t.a;
+            let u = relative.dot(p) * inverse;
+            if !(0.0..=1.0).contains(&u) {
+                continue;
+            }
+            let q = relative.cross(ab);
+            let v = direction.dot(q) * inverse;
+            if v < 0.0 || u + v > 1.0 {
+                continue;
+            }
+            let hit = ac.dot(q) * inverse;
+            if !(0.0..=max).contains(&hit) {
+                continue;
+            }
+            if best.is_none_or(|(distance, _)| hit < distance) {
+                best = Some((hit, t.normal));
+            }
+        }
+        best.map(|(distance, normal)| {
+            // Face the normal back along the ray so a wheel under a ceiling
+            // still gets a push toward its spring.
+            let normal = if normal.dot(direction) > 0.0 { -normal } else { normal };
+            SegmentHit {
+                point: origin + segment * (distance / max),
+                normal,
+                fraction: distance / max,
+            }
+        })
     }
     /// A grounded player placement with full body and head clearance.
     pub fn standing_at(&self, position: Vec3, max_ground: f32) -> Option<Player> {

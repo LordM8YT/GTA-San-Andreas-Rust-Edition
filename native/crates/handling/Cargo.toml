@@ -1,0 +1,8 @@
+[package]
+name = "sa-handling"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "GTA:SA automobile physics: the original per-tick model, as a pure-Rust kernel"
+
+[dependencies]

@@ -50,7 +50,19 @@ fn from_line(line: &str) -> Option<Handling> {
     let base = Handling::default();
     let ratio =
         |value: f32, reference: f32, low: f32, high: f32| (value / reference).clamp(low, high);
+    // Drive type is the letter column: 4WD, front, rear.
+    let drive = match fields.get(15).map(|field| field.to_ascii_uppercase()) {
+        Some(letter) if letter == "F" => 1.0,
+        Some(letter) if letter == "R" => 2.0,
+        _ => 4.0,
+    };
     let handling = Handling {
+        // Mass and turn mass are carried straight across: GTA's kernel works in
+        // the same kilograms, and its per-tick forces are scaled by the mass it
+        // is given.
+        mass: number(1)?.clamp(500.0, 40000.0),
+        turn_mass: number(2)?.clamp(1000.0, 90000.0),
+        drive,
         top_speed: base.top_speed * ratio(number(12)?, BASE_TOP_SPEED, 0.4, 1.8),
         acceleration: base.acceleration * ratio(number(13)?, BASE_ACCELERATION, 0.3, 2.5),
         brake_deceleration: base.brake_deceleration * ratio(number(17)?, BASE_BRAKE, 0.4, 2.0),

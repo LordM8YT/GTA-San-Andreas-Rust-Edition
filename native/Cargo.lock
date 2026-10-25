@@ -3301,6 +3301,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "sa-handling"
+version = "0.35.0"
+
+[[package]]
 name = "sa-launcher"
 version = "0.35.0"
 dependencies = [
@@ -3376,6 +3380,7 @@ dependencies = [
  "glam 0.30.10",
  "png",
  "sa-assets",
+ "sa-handling",
  "sa-net",
  "sa-script",
  "serde",
