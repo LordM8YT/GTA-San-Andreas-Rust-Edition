@@ -1137,7 +1137,15 @@ mod tests {
         let original = serde_json::to_value(Handling::default()).unwrap();
         for key in original.as_object().unwrap().keys() {
             let mut invalid = original.clone();
-            invalid[key] = serde_json::json!(-1.0);
+            let invalid_value = match key.as_str() {
+                "gta_centre_of_mass_x"
+                | "gta_centre_of_mass_y"
+                | "gta_centre_of_mass_z"
+                | "gta_suspension_upper_limit"
+                | "gta_suspension_lower_limit" => 1000.0,
+                _ => -1.0,
+            };
+            invalid[key] = serde_json::json!(invalid_value);
             assert!(
                 serde_json::from_value::<Handling>(invalid)
                     .unwrap()
