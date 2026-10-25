@@ -90,11 +90,21 @@ fn from_line(line: &str) -> Option<Handling> {
     // ConvertDataToGameUnits relationship; convert its per-tick speed to m/s.
     let drive_divisor = if drive_type == 2 { 4.0 } else { 2.0 };
     let engine_acceleration_game = engine_acceleration * 0.4 / 2500.0;
+    let engine_acceleration_limit = engine_acceleration_game / 6.0;
     let mut max_flat = max_velocity * 0.277_778 / 50.0;
-    while max_flat > 0.01
-        && max_flat * max_flat * drag / 2.0 / 1000.0 > engine_acceleration_game / 6.0
-    {
+    while max_flat > 0.0 {
+        // The original decrements before checking each candidate velocity.
         max_flat -= 0.01;
+        if drag >= 0.01 {
+            if max_flat * max_flat * (drag / 2.0) / 1000.0 <= engine_acceleration_limit {
+                break;
+            }
+        } else {
+            let reciprocal = 1.0 / (max_flat * max_flat * drag + 1.0);
+            if (reciprocal - 1.0) * -max_flat <= engine_acceleration_limit {
+                break;
+            }
+        }
     }
     let top_speed = (max_flat.max(0.01) * 1.2 * 50.0).clamp(5.0, 90.0);
     let reverse_speed = (max_flat * 0.3).max(0.2) * 50.0;
