@@ -1,5 +1,8 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.35.1:
+- Cars drive with SARE's own handling model again. The vehicle code added on 25 October was withdrawn because it was built from decompiled game code, which SARE does not use. Per-car handling is still read from your own handling.cfg. A new clean-room handling model follows in the next update.
+
 Version 0.35.0:
 - Optional temporal anti-aliasing (Graphics menu, off by default): smoother edges and less shimmer, and the groundwork for FSR 3 and DLSS.
 - Trailer camera: `--trailer` flies ten scripted shots across the map; `--trailer-record <folder>` saves them as 60 FPS MP4 clips through ffmpeg. See `docs/trailer.md`.

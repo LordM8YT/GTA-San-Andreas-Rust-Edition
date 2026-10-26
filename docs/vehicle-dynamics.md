@@ -20,10 +20,6 @@ not the GTA IV or GTA V physics engine.
   gravity, then regain suspension support on landing.
 - Opposite throttle brakes before engaging reverse. Engine acceleration decreases
   near top speed, with rolling resistance and quadratic aerodynamic drag.
-- A car with more than one gear pulls through speed bands, shifting up at 60% of
-  a band and down at 40% of the one below, so each gear pulls, flattens and
-  hands over. Original models use the gear count from their handling row;
-  resources default to one band.
 - Airborne cars retain momentum but cannot accelerate or steer through tire grip.
 - Physics integrates at intervals no greater than 1/120 second. Existing swept
   body collision, ground contact, safe spawning and exit checks remain active.
@@ -34,7 +30,7 @@ Exiting the car or reaching the streamed map boundary clears sideways momentum.
 
 Suspension and body pitch/roll are approximations with fixed contact spacing,
 not independent simulated wheel bodies. This model does not yet simulate wheel
-articulation/animation, deformation, different road surfaces or physical collision
+articulation/animation, gear changes, deformation, different road surfaces or physical collision
 impulses. Solid obstacles still stop the car rather than producing a crash response.
 
 Automated checks cover braking and reverse, handbrake slip, frame-rate consistency,
@@ -68,7 +64,6 @@ resource instead of silently ignoring typos. Restart after editing a resource.
 | `suspension_spring` | 140 | 40–250 | Height restoring acceleration coefficient, s⁻² |
 | `suspension_damping` | 22 | 8–40 | Vertical velocity damping coefficient, s⁻¹ |
 | `aerodynamic_drag` | 0.0035 | 0–0.02 | Quadratic speed resistance coefficient, m⁻¹ |
-| `gears` | 1 | 1–6 | Speed bands the car pulls through; 1 keeps the single-band feel |
 
 The existing Vehicle handling setting multiplies the resource's tire grip.
 Tuning does not change wheelbase, tire spacing or collision shape. Ground
