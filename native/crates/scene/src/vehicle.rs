@@ -265,8 +265,7 @@ pub fn measure(points: impl IntoIterator<Item = [f32; 3]>) -> [f32; 3] {
     ]
 }
 /// Estimate normalized load at the four contact points (rear-left, front-left,
-/// rear-right, front-right). This is a first-order load-transfer model, not a
-/// literal port of GTA's suspension solver. Positive longitudinal acceleration
+/// rear-right, front-right) with a first-order load-transfer model. Positive longitudinal acceleration
 /// transfers load rearward; lateral acceleration transfers it across the body.
 fn wheel_normal_loads(
     supported: [bool; 4],
