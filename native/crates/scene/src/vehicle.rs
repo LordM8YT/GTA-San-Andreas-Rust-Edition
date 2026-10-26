@@ -201,6 +201,8 @@ pub struct Handling {
     pub tire_grip: f32,
     pub steering_lock: f32,
     pub steering_rate: f32,
+    /// Speed, m/s, at which the steering lock has fallen to half.
+    pub steer_fade_speed: f32,
     pub suspension_spring: f32,
     pub suspension_damping: f32,
     pub aerodynamic_drag: f32,
@@ -237,6 +239,7 @@ impl Default for Handling {
             tire_grip: 4.6,
             steering_lock: 0.55,
             steering_rate: 1.7,
+            steer_fade_speed: 16.0,
             suspension_spring: 140.0,
             suspension_damping: 22.0,
             aerodynamic_drag: 0.0035,
@@ -264,6 +267,7 @@ impl Handling {
             ("tire_grip", self.tire_grip, 1.0, 12.0),
             ("steering_lock", self.steering_lock, 0.1, 0.9),
             ("steering_rate", self.steering_rate, 0.3, 4.0),
+            ("steer_fade_speed", self.steer_fade_speed, 8.0, 40.0),
             ("suspension_spring", self.suspension_spring, 40.0, 250.0),
             ("suspension_damping", self.suspension_damping, 8.0, 40.0),
             ("aerodynamic_drag", self.aerodynamic_drag, 0.0, 0.02),
@@ -705,7 +709,8 @@ impl Car {
         // Steering lock falls with speed; wheel input and body rotation both have inertia.
         // Steering into a slide wins back lock the further the car is sliding,
         // so a slide can be caught at any speed.
-        let speed_lock = tuning.steering_lock / (1.0 + (self.speed.abs() / 16.0).powi(2));
+        let speed_lock =
+            tuning.steering_lock / (1.0 + (self.speed.abs() / tuning.steer_fade_speed).powi(2));
         let relief = if steer * self.lateral_speed > 0.0 {
             (self.lateral_speed.abs() / (self.speed.abs() * 0.5 + 1.0)).min(1.0)
         } else {
@@ -798,9 +803,13 @@ impl Car {
         if handbrake {
             rear_limit *= 0.06;
         }
+        // The axle nearer the centre of mass carries more weight and has the
+        // shorter lever, so a nose-heavy car runs wide instead of spinning.
+        let front_arm = 2.7 * (1.0 - tuning.front_weight);
+        let rear_arm = 2.7 * tuning.front_weight;
         let front_slip =
-            self.lateral_speed + 1.35 * self.yaw_rate - self.speed * self.steering_angle.tan();
-        let rear_slip = self.lateral_speed - 1.35 * self.yaw_rate;
+            self.lateral_speed + front_arm * self.yaw_rate - self.speed * self.steering_angle.tan();
+        let rear_slip = self.lateral_speed - rear_arm * self.yaw_rate;
         // Latch a skid when the requested axle force exceeds its load-dependent
         // limit. Keep rear grip reduced until both axles settle, rather than
         // allowing the model to snap instantly back to full grip each tick.
@@ -824,7 +833,8 @@ impl Car {
         // Heavier bodies take longer to turn and to settle, but end up turning
         // as hard; damping grows with speed to keep fast cars stable.
         let damping = 0.22 + 0.02 * self.speed.abs();
-        self.yaw_rate += (1.35 * (front_force - rear_force) / 2.2 - self.yaw_rate * damping)
+        self.yaw_rate += ((front_arm * front_force - rear_arm * rear_force) / 2.2
+            - self.yaw_rate * damping)
             / tuning.yaw_inertia
             * dt;
         if support_count == 0 {
@@ -1708,5 +1718,16 @@ mod tests {
         let mut prototype = Car::new(Vec3::Y * 50.0, 0.6);
         prototype.step(&world, 0.0, 1.0, false, 1.0, 0.25);
         assert_eq!(prototype.yaw, 0.0);
+    }
+    #[test]
+    fn a_nose_heavy_car_runs_wide_at_full_lock_instead_of_spinning() {
+        let world = pad(100.0);
+        let mut car = Car::new(Vec3::Y * 0.6, 0.6).with_handling(row(crate::handling::tests::TAXI));
+        car.speed = 25.0;
+        for _ in 0..240 {
+            car.step(&world, 0.2, 1.0, false, 1.0, 1.0 / 120.0);
+        }
+        assert!(car.speed > 20.0, "speed {}", car.speed);
+        assert!(car.yaw_rate.abs() > 0.2 && car.yaw_rate.abs() < 1.5);
     }
 }

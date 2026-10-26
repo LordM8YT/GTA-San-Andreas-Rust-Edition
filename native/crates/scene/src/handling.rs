@@ -9,7 +9,7 @@ use std::path::Path;
 /// Share of a row's maximum velocity (read as km/h) a car reaches flat out.
 const TOP_SPEED_SCALE: f32 = 0.9;
 /// Engine acceleration column to m/s².
-const ENGINE_SCALE: f32 = 0.30;
+const ENGINE_SCALE: f32 = 0.34;
 /// Engine inertia column that halves a car's pull.
 const INERTIA_HALVING: f32 = 50.0;
 /// Mass the engine pull is relative to, in kg.
@@ -21,13 +21,17 @@ const DRAG_PER_UNIT: f32 = 0.0004;
 /// Braking column to m/s².
 const BRAKE_SCALE: f32 = 1.2;
 /// Grip of a car with traction 0.75, the common saloon value.
-const SALOON_GRIP: f32 = 4.6;
+const SALOON_GRIP: f32 = 6.0;
 /// Squared radius of gyration, m², that makes an average saloon's turn mass 1.
-const SALOON_GYRATION: f32 = 2.8;
+const SALOON_GYRATION: f32 = 3.6;
 /// Wheelbase the centre-of-mass offset is measured against, m.
 const WHEELBASE: f32 = 2.7;
 /// How far traction bias moves grip between the axles.
 const BIAS_GAIN: f32 = 1.2;
+/// How fast the wheels turn to the stick, rad/s.
+const STEERING_RATE: f32 = 3.5;
+/// Speed, m/s, at which steering lock has fallen to half.
+const STEER_FADE_SPEED: f32 = 22.0;
 /// Mid-air turning for cars from handling.cfg, rad/s².
 const AIR_CONTROL: f32 = 1.5;
 /// handlingFlags bit for vehicles without a handbrake.
@@ -100,8 +104,10 @@ pub(crate) fn from_line(line: &str) -> Option<Handling> {
         reverse_acceleration: (0.6 * acceleration).clamp(0.5, 10.0),
         reverse_speed: (0.25 * target).clamp(1.0, 12.0),
         brake_deceleration: (BRAKE_SCALE * number(17)?).clamp(1.0, 25.0),
-        tire_grip: (SALOON_GRIP * (number(8)? / 0.75).max(0.0).sqrt()).clamp(3.2, 6.5),
+        tire_grip: (SALOON_GRIP * (number(8)? / 0.75).max(0.0).sqrt()).clamp(4.2, 8.5),
         steering_lock: number(20)?.to_radians().clamp(0.3, 0.9),
+        steering_rate: STEERING_RATE,
+        steer_fade_speed: STEER_FADE_SPEED,
         aerodynamic_drag,
         traction_loss: (0.4 + 0.55 * number(9)?).clamp(0.6, 0.95),
         front_grip: (1.0 + BIAS_GAIN * (number(10)? - 0.5)).clamp(0.4, 1.6),
@@ -146,7 +152,7 @@ pub(crate) mod tests {
         // Drive layouts come from the row.
         assert_eq!((taxi.drive, voodoo.drive, infernus.drive), (0.0, 1.0, 2.0));
         // The tank's huge traction stays inside the range a car can use.
-        assert!(rhino.tire_grip <= 6.5 && rhino.tire_grip > taxi.tire_grip);
+        assert!(rhino.tire_grip <= 8.5 && rhino.tire_grip > taxi.tire_grip);
         // Cars from handling.cfg can turn a little in mid-air.
         assert!(taxi.air_control > 0.0);
         assert!(from_line("SHORT 1 2 3").is_none());
