@@ -82,6 +82,8 @@ impl RigPiece {
         )
     }
 }
+/// Rolling resistance in m/s² every car pays before aerodynamic drag.
+pub const ROLLING_RESISTANCE: f32 = 0.28;
 /// Health a car starts with, as in SA.
 pub const FULL_HEALTH: f32 = 1000.0;
 /// Below this the engine catches fire and the car burns until it blows up.
@@ -202,6 +204,27 @@ pub struct Handling {
     pub suspension_spring: f32,
     pub suspension_damping: f32,
     pub aerodynamic_drag: f32,
+    /// Share of rear grip kept while the car is sliding.
+    pub traction_loss: f32,
+    /// Front axle grip multiplier; the rear gets `2 - front_grip`.
+    pub front_grip: f32,
+    /// Driven axle: 0 front, 1 rear, 2 both. Engine force uses up that
+    /// axle's cornering grip.
+    pub drive: f32,
+    /// Share of braking force taken by the front axle's grip.
+    pub brake_front: f32,
+    /// Seconds the engine takes to answer the throttle; 0 is instant.
+    pub engine_lag: f32,
+    /// Resistance to turning, relative to an average saloon.
+    pub yaw_inertia: f32,
+    /// Share of the car's weight resting on the front axle.
+    pub front_weight: f32,
+    /// Metres added to the estimated centre-of-gravity height.
+    pub cg_offset: f32,
+    /// 1 when the handbrake works, 0 for vehicles without one.
+    pub handbrake: f32,
+    /// Turning a car can do in mid-air with the steering, rad/s².
+    pub air_control: f32,
 }
 impl Default for Handling {
     fn default() -> Self {
@@ -217,6 +240,16 @@ impl Default for Handling {
             suspension_spring: 140.0,
             suspension_damping: 22.0,
             aerodynamic_drag: 0.0035,
+            traction_loss: 0.82,
+            front_grip: 1.0,
+            drive: 0.0,
+            brake_front: 1.0,
+            engine_lag: 0.0,
+            yaw_inertia: 1.0,
+            front_weight: 0.5,
+            cg_offset: 0.0,
+            handbrake: 1.0,
+            air_control: 0.0,
         }
     }
 }
@@ -234,6 +267,16 @@ impl Handling {
             ("suspension_spring", self.suspension_spring, 40.0, 250.0),
             ("suspension_damping", self.suspension_damping, 8.0, 40.0),
             ("aerodynamic_drag", self.aerodynamic_drag, 0.0, 0.02),
+            ("traction_loss", self.traction_loss, 0.5, 1.0),
+            ("front_grip", self.front_grip, 0.4, 1.6),
+            ("drive", self.drive, 0.0, 2.0),
+            ("brake_front", self.brake_front, 0.0, 1.0),
+            ("engine_lag", self.engine_lag, 0.0, 1.5),
+            ("yaw_inertia", self.yaw_inertia, 0.5, 4.0),
+            ("front_weight", self.front_weight, 0.35, 0.65),
+            ("cg_offset", self.cg_offset, -0.5, 0.5),
+            ("handbrake", self.handbrake, 0.0, 1.0),
+            ("air_control", self.air_control, 0.0, 4.0),
         ] {
             anyhow::ensure!(
                 value.is_finite() && (low..=high).contains(&value),
@@ -271,6 +314,7 @@ fn wheel_normal_loads(
     supported: [bool; 4],
     longitudinal_acceleration: f32,
     lateral_acceleration: f32,
+    front_weight: f32,
     cg_height: f32,
 ) -> [f32; 4] {
     const WHEELBASE: f32 = 2.7;
@@ -304,7 +348,9 @@ fn wheel_normal_loads(
     if front_count > 0 && rear_count > 0 {
         let front_load = transfer(front, &loads);
         let rear_load = transfer(rear, &loads);
-        let moved = (longitudinal_acceleration * cg_height / (GRAVITY * WHEELBASE))
+        // A centre of mass ahead of the middle rests more weight on the nose.
+        let moved = (longitudinal_acceleration * cg_height / (GRAVITY * WHEELBASE)
+            - (front_weight - 0.5))
             .clamp(-rear_load, front_load);
         for i in front {
             if supported[i] {
@@ -367,6 +413,8 @@ pub struct Car {
     airborne: bool,
     /// Stays set through a slide until both axles have recovered their grip.
     skid_latched: bool,
+    /// Throttle the engine is answering, after its lag.
+    engine_throttle: f32,
 }
 impl Car {
     pub fn new(position: Vec3, clearance: f32) -> Self {
@@ -389,6 +437,7 @@ impl Car {
             ground_roll: 0.0,
             airborne: false,
             skid_latched: false,
+            engine_throttle: 0.0,
         }
     }
     pub fn with_handling(mut self, handling: Handling) -> Self {
@@ -419,7 +468,7 @@ impl Car {
             velocity -= normal * closing * 1.3;
             // Glancing blows spin the body a little.
             self.yaw_rate += self.forward().cross(normal).y * closing * 0.15;
-            self.yaw_rate = self.yaw_rate.clamp(-2.0, 2.0);
+            self.yaw_rate = self.yaw_rate.clamp(-3.5, 3.5);
         }
         self.speed = velocity.dot(self.forward());
         self.lateral_speed = velocity.dot(side);
@@ -462,6 +511,7 @@ impl Car {
         self.speed = 0.0;
         self.lateral_speed = 0.0;
         self.yaw_rate = 0.0;
+        self.engine_throttle = 0.0;
     }
     fn body_clear(&self, world: &CollisionWorld, position: Vec3) -> bool {
         let feet = position - Vec3::Y * self.clearance;
@@ -587,37 +637,30 @@ impl Car {
             self.position.y - self.clearance + z * self.pitch.tan() + x * self.roll.tan()
         };
         // Four tire contact points avoid losing all traction at the centre of a ledge.
-        let wheels = [-0.72_f32, 0.72]
-            .into_iter()
-            .flat_map(|x| [-1.35_f32, 1.35].map(move |z| (x, z)))
-            .collect::<Vec<_>>();
-        let contacts = wheels
-            .iter()
-            .map(|&(x, z)| {
-                world.ground_below(
-                    self.position + side * x + self.forward() * z,
-                    expected_height(x, z) + TRAVEL,
-                )
-            })
-            .collect::<Vec<_>>();
-        // Wheel offsets and ground heights of the wheels carrying the car.
-        let supports: Vec<(f32, f32, f32)> = wheels
-            .iter()
-            .zip(&contacts)
-            .filter_map(|(&(x, z), ground)| {
-                ground
-                    .filter(|g| expected_height(x, z) - g <= TRAVEL)
-                    .map(|g| (x, z, g))
-            })
-            .collect();
+        // Order: rear-left, front-left, rear-right, front-right.
+        const WHEELS: [(f32, f32); 4] =
+            [(-0.72, -1.35), (-0.72, 1.35), (0.72, -1.35), (0.72, 1.35)];
+        let forward = self.forward();
+        let contacts = WHEELS.map(|(x, z)| {
+            world.ground_below(
+                self.position + side * x + forward * z,
+                expected_height(x, z) + TRAVEL,
+            )
+        });
+        // Ground heights under the wheels carrying the car.
+        let mut supports = [None; 4];
+        for (support, (&(x, z), ground)) in supports.iter_mut().zip(WHEELS.iter().zip(contacts)) {
+            *support = ground.filter(|g| expected_height(x, z) - g <= TRAVEL);
+        }
+        let support_count = supports.iter().flatten().count();
         // Past a ramp lip or ledge the next surface is far below a wheel. Its
         // height says nothing about the road the car is leaving: following it
         // pitched the nose down and made the damper cancel the climb, so the
         // car dropped at the lip instead of jumping.
         const REACH: f32 = 1.0;
-        let over_air = wheels
+        let over_air = WHEELS
             .iter()
-            .zip(&contacts)
+            .zip(contacts)
             .any(|(&(x, z), ground)| ground.is_none_or(|g| expected_height(x, z) - g > REACH));
         let height = |index: usize| contacts[index].unwrap_or(self.position.y - self.clearance);
         let measured_pitch =
@@ -641,44 +684,71 @@ impl Car {
         } else {
             (0.0, 0.0)
         };
-        let ground = supports
+        let ground = WHEELS
             .iter()
-            .map(|(x, z, ground)| ground - z * grade.0 - x * grade.1)
+            .zip(supports)
+            .filter_map(|(&(x, z), ground)| Some(ground? - z * grade.0 - x * grade.1))
             .sum::<f32>()
-            / supports.len().max(1) as f32;
+            / support_count.max(1) as f32;
         let normal_offset =
             self.clearance * (1.0 + slope_pitch.tan().powi(2) + slope_roll.tan().powi(2)).sqrt();
         let target = ground + normal_offset;
-        let grounded = supports.len() >= 2;
+        let grounded = support_count >= 2;
         let road_velocity = self.speed * slope_pitch.tan() + self.lateral_speed * slope_roll.tan();
         let grip = if grounded && self.support_force(target, road_velocity) > 0.0 {
-            supports.len() as f32 / 4.0
+            support_count as f32 / 4.0
         } else {
             0.0
         };
+        let steer = steer.clamp(-1.0, 1.0);
+        let handbrake = handbrake && tuning.handbrake > 0.5;
         // Steering lock falls with speed; wheel input and body rotation both have inertia.
-        let lock = tuning.steering_lock / (1.0 + (self.speed.abs() / 16.0).powi(2));
-        let target_steering = steer.clamp(-1.0, 1.0) * lock;
+        // Steering into a slide wins back lock the further the car is sliding,
+        // so a slide can be caught at any speed.
+        let speed_lock = tuning.steering_lock / (1.0 + (self.speed.abs() / 16.0).powi(2));
+        let relief = if steer * self.lateral_speed > 0.0 {
+            (self.lateral_speed.abs() / (self.speed.abs() * 0.5 + 1.0)).min(1.0)
+        } else {
+            0.0
+        };
+        let lock = speed_lock + (tuning.steering_lock - speed_lock) * relief;
+        let target_steering = steer * lock;
         self.steering_angle += (target_steering - self.steering_angle)
             .clamp(-tuning.steering_rate * dt, tuning.steering_rate * dt);
         let braking = throttle * self.speed < -0.15;
+        // The engine takes a moment to answer the pedal and lets go faster.
+        let pedal = throttle.max(0.0);
+        if tuning.engine_lag > 0.0 {
+            let rate = if pedal > self.engine_throttle {
+                1.0
+            } else {
+                3.0
+            } / tuning.engine_lag;
+            self.engine_throttle += (pedal - self.engine_throttle) * (1.0 - (-rate * dt).exp());
+        } else {
+            self.engine_throttle = pedal;
+        }
+        // Tyres can't push or brake much harder than they can grip. The grip
+        // setting is left out so it never changes engine power or brakes.
+        let traction_cap = 2.7 * tuning.tire_grip;
         let acceleration = if braking {
             -self.speed.signum() * tuning.brake_deceleration * throttle.abs()
         } else if throttle >= 0.0 {
-            throttle
+            self.engine_throttle
                 * tuning.acceleration
                 * (1.0 - (self.speed.max(0.0) / tuning.top_speed).powi(2)).max(0.0)
         } else {
             throttle
                 * tuning.reverse_acceleration
                 * (1.0 - (-self.speed / tuning.reverse_speed).powi(2)).max(0.0)
-        };
+        }
+        .clamp(-traction_cap, traction_cap);
         let old_speed = self.speed;
         self.speed += acceleration * grip * dt;
         if braking && self.speed.signum() != old_speed.signum() {
             self.speed = 0.0;
         }
-        let resistance = (0.28
+        let resistance = (ROLLING_RESISTANCE
             + tuning.aerodynamic_drag * self.speed * self.speed
             + if handbrake { 7.0 * grip } else { 0.0 })
             * dt;
@@ -687,12 +757,7 @@ impl Car {
         // Approximate per-wheel normal load and load transfer while retaining
         // SARE's friction-circle tire response. A lifted wheel contributes no grip;
         // acceleration and cornering unload the appropriate wheels/axle.
-        let supported_wheels = [
-            supports.iter().any(|(x, z, _)| *x < 0.0 && *z < 0.0),
-            supports.iter().any(|(x, z, _)| *x < 0.0 && *z > 0.0),
-            supports.iter().any(|(x, z, _)| *x > 0.0 && *z < 0.0),
-            supports.iter().any(|(x, z, _)| *x > 0.0 && *z > 0.0),
-        ];
+        let supported_wheels = supports.map(|ground| ground.is_some());
         let approximate_lateral_acceleration = self.speed * self.yaw_rate;
         // Geometric probes can still see the road during takeoff. Only
         // wheels with active suspension support should contribute tire load.
@@ -701,18 +766,37 @@ impl Car {
             loaded_wheels,
             acceleration,
             approximate_lateral_acceleration,
-            (self.clearance * 0.8).clamp(0.25, 0.8),
+            tuning.front_weight,
+            (self.clearance * 0.8 + tuning.cg_offset).clamp(0.25, 0.8),
         );
         // Tire capacity is load-sensitive: two equally loaded wheels sum to one
         // axle's baseline capacity; unloading a wheel reduces that axle's grip.
         let front_load_capacity = wheel_loads[1].sqrt() + wheel_loads[3].sqrt();
         let rear_load_capacity = wheel_loads[0].sqrt() + wheel_loads[2].sqrt();
-        let tire_budget =
-            (tuning.tire_grip * handling).powi(2) - (acceleration * grip * 0.5).powi(2);
-        let front_limit = tire_budget.max(0.5).sqrt() * front_load_capacity;
-        let mut rear_limit = tuning.tire_grip * handling * rear_load_capacity;
+        // Each axle shares one grip budget between pushing or braking and
+        // cornering: drive through the rear and it steps out under power, brake
+        // mostly on the front and the nose runs wide.
+        let (front_share, rear_share) = if braking {
+            (tuning.brake_front, 1.0 - tuning.brake_front)
+        } else {
+            match tuning.drive.round() as u8 {
+                0 => (1.0, 0.0),
+                1 => (0.0, 1.0),
+                _ => (0.5, 0.5),
+            }
+        };
+        let demand = acceleration * grip * 0.5;
+        let cornering = |full: f32, share: f32| {
+            (full * full - (share * demand).powi(2))
+                .max((0.35 * full).powi(2))
+                .sqrt()
+        };
+        let front_grip = tuning.tire_grip * handling * tuning.front_grip;
+        let rear_grip = tuning.tire_grip * handling * (2.0 - tuning.front_grip);
+        let front_limit = cornering(front_grip, front_share) * front_load_capacity;
+        let mut rear_limit = cornering(rear_grip, rear_share) * rear_load_capacity;
         if handbrake {
-            rear_limit *= 0.12;
+            rear_limit *= 0.06;
         }
         let front_slip =
             self.lateral_speed + 1.35 * self.yaw_rate - self.speed * self.steering_angle.tan();
@@ -725,18 +809,29 @@ impl Car {
         {
             self.skid_latched = true;
         }
-        if grounded && front_slip.abs() < 0.35 && rear_slip.abs() < 0.35 {
+        // Centring the wheel lets a slide gather itself sooner.
+        let settled = if steer.abs() < 0.1 { 0.5 } else { 0.35 };
+        if grounded && front_slip.abs() < settled && rear_slip.abs() < settled {
             self.skid_latched = false;
         }
         if self.skid_latched && !handbrake {
-            rear_limit *= 0.82;
+            rear_limit *= tuning.traction_loss;
         }
         let front_force = (-front_slip * 5.5).clamp(-front_limit, front_limit);
         let rear_force = (-rear_slip * 5.5).clamp(-rear_limit, rear_limit);
         let lateral_acceleration = front_force + rear_force;
         velocity += side * lateral_acceleration * dt;
-        self.yaw_rate += (1.35 * (front_force - rear_force) / 2.2 - self.yaw_rate * 0.22) * dt;
-        self.yaw_rate = self.yaw_rate.clamp(-2.0, 2.0);
+        // Heavier bodies take longer to turn and to settle, but end up turning
+        // as hard; damping grows with speed to keep fast cars stable.
+        let damping = 0.22 + 0.02 * self.speed.abs();
+        self.yaw_rate += (1.35 * (front_force - rear_force) / 2.2 - self.yaw_rate * damping)
+            / tuning.yaw_inertia
+            * dt;
+        if support_count == 0 {
+            // Steering still turns a car in mid-air, a little; a jump keeps its spin.
+            self.yaw_rate += steer * tuning.air_control * dt;
+        }
+        self.yaw_rate = self.yaw_rate.clamp(-3.5, 3.5);
         let old_yaw = self.yaw;
         self.yaw += self.yaw_rate * dt;
         if !self.body_clear(world, self.position) {
@@ -818,10 +913,10 @@ mod tests {
 
     #[test]
     fn wheel_loads_transfer_under_acceleration() {
-        let loads = wheel_normal_loads([true; 4], 6.0, 0.0, 0.5);
+        let loads = wheel_normal_loads([true; 4], 6.0, 0.0, 0.5, 0.5);
         assert!((loads.iter().sum::<f32>() - 1.0).abs() < 1e-5);
         assert!(loads[0] + loads[2] > loads[1] + loads[3]);
-        assert_eq!(wheel_normal_loads([false; 4], 0.0, 0.0, 0.5), [0.0; 4]);
+        assert_eq!(wheel_normal_loads([false; 4], 0.0, 0.0, 0.5, 0.5), [0.0; 4]);
     }
 
     #[test]
@@ -1019,6 +1114,8 @@ mod tests {
         let tuning = Handling {
             acceleration: 12.0,
             brake_deceleration: 20.0,
+            // Tyres must be able to carry the harder braking.
+            tire_grip: 9.0,
             ..Handling::default()
         };
         let mut original = Car::new(Vec3::Y * 0.6, 0.6);
@@ -1487,5 +1584,129 @@ mod tests {
         airborne.step(&world, 1.0, 1.0, false, 1.0, 0.05);
         assert_eq!(airborne.yaw, 0.0);
         assert!(airborne.speed <= 12.0 && airborne.position.y < 50.0);
+    }
+    /// A flat square of road `half` metres either side of the origin.
+    fn pad(half: f32) -> CollisionWorld {
+        CollisionWorld::from_batches(&[mesh(&[
+            [-half, 0.0, -half],
+            [half, 0.0, -half],
+            [half, 0.0, half],
+            [-half, 0.0, -half],
+            [half, 0.0, half],
+            [-half, 0.0, half],
+        ])])
+    }
+    fn row(line: &str) -> Handling {
+        crate::handling::from_line(line).unwrap()
+    }
+    /// Heading change after holding the inputs for `seconds` from `speed`.
+    fn turn(tuning: Handling, speed: f32, throttle: f32, handbrake: bool, seconds: f32) -> f32 {
+        let world = pad(100.0);
+        let mut car = Car::new(Vec3::Y * 0.6, 0.6).with_handling(tuning);
+        car.speed = speed;
+        for _ in 0..(seconds * 120.0) as usize {
+            car.step(&world, throttle, 1.0, handbrake, 1.0, 1.0 / 120.0);
+        }
+        car.yaw.abs()
+    }
+    #[test]
+    fn handling_cfg_cars_reach_their_row_speed() {
+        use crate::handling::tests::{INFERNUS, LINERUN, RHINO, TAXI};
+        let world = CollisionWorld::from_batches(&[
+            floor(-3000.0, -1000.0, 0.0),
+            floor(-1000.0, 1000.0, 0.0),
+            floor(1000.0, 3000.0, 0.0),
+        ]);
+        for (line, kmh) in [
+            (TAXI, 180.0),
+            (INFERNUS, 240.0),
+            (LINERUN, 120.0),
+            (RHINO, 80.0),
+        ] {
+            let mut car = Car::new(Vec3::new(0.0, 0.6, -2900.0), 0.6).with_handling(row(line));
+            for _ in 0..120 * 45 {
+                car.step(&world, 1.0, 0.0, false, 1.0, 1.0 / 120.0);
+            }
+            let target = 0.9 * kmh / 3.6;
+            assert!(
+                (car.speed - target).abs() < 0.1 * target,
+                "{} vs {target}",
+                car.speed
+            );
+        }
+    }
+    #[test]
+    fn rear_drive_steps_out_under_power_more_than_front_drive() {
+        use crate::handling::tests::VOODOO;
+        let rear = row(VOODOO);
+        let front = Handling { drive: 0.0, ..rear };
+        let (rear, front) = (
+            turn(rear, 14.0, 1.0, false, 1.2),
+            turn(front, 14.0, 1.0, false, 1.2),
+        );
+        assert!(rear > front * 1.05, "rear {rear} front {front}");
+    }
+    #[test]
+    fn the_handbrake_swings_the_tail_unless_the_car_has_none() {
+        use crate::handling::tests::TAXI;
+        let taxi = row(TAXI);
+        let plain = turn(taxi, 18.0, 0.0, false, 0.8);
+        let handbrake = turn(taxi, 18.0, 0.0, true, 0.8);
+        assert!(
+            handbrake > plain * 1.5,
+            "handbrake {handbrake} plain {plain}"
+        );
+        let none = Handling {
+            handbrake: 0.0,
+            ..taxi
+        };
+        assert_eq!(turn(none, 18.0, 0.0, true, 0.8), plain);
+    }
+    #[test]
+    fn heavy_engines_take_a_moment_to_pull() {
+        use crate::handling::tests::LINERUN;
+        let world = pad(100.0);
+        let lagging = row(LINERUN);
+        let instant = Handling {
+            engine_lag: 0.0,
+            ..lagging
+        };
+        let mut slow = Car::new(Vec3::Y * 0.6, 0.6).with_handling(lagging);
+        let mut quick = Car::new(Vec3::Y * 0.6, 0.6).with_handling(instant);
+        for _ in 0..36 {
+            slow.step(&world, 1.0, 0.0, false, 1.0, 1.0 / 120.0);
+            quick.step(&world, 1.0, 0.0, false, 1.0, 1.0 / 120.0);
+        }
+        assert!(
+            slow.speed < quick.speed * 0.8,
+            "{} vs {}",
+            slow.speed,
+            quick.speed
+        );
+    }
+    #[test]
+    fn a_heavy_body_turns_in_later_but_still_turns() {
+        use crate::handling::tests::TAXI;
+        let light = row(TAXI);
+        let heavy = Handling {
+            yaw_inertia: 3.0,
+            ..light
+        };
+        assert!(turn(heavy, 12.0, 0.0, false, 0.3) < turn(light, 12.0, 0.0, false, 0.3));
+        assert!(turn(heavy, 12.0, 0.0, false, 3.0) > 0.5 * turn(light, 12.0, 0.0, false, 3.0));
+    }
+    #[test]
+    fn steering_turns_handling_cfg_cars_in_mid_air_only() {
+        use crate::handling::tests::TAXI;
+        let world = CollisionWorld::from_batches(&[]);
+        let mut flying = Car::new(Vec3::Y * 50.0, 0.6).with_handling(row(TAXI));
+        for _ in 0..30 {
+            flying.step(&world, 0.0, 1.0, false, 1.0, 1.0 / 120.0);
+        }
+        assert!(flying.yaw.abs() > 0.01);
+        // Hand-tuned profiles keep the old no-air-control behaviour.
+        let mut prototype = Car::new(Vec3::Y * 50.0, 0.6);
+        prototype.step(&world, 0.0, 1.0, false, 1.0, 0.25);
+        assert_eq!(prototype.yaw, 0.0);
     }
 }

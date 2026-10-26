@@ -2,7 +2,7 @@
 
 # SARE - San Andreas Rust Edition
 
-Current development version: **0.35.1**. The base version 0.33.0 was set from the
+Current development version: **0.36.0**. The base version 0.33.0 was set from the
 33 published GitHub releases visible on 17 October 2026, including the first
 release. Small bugfix releases increment the last number: `0.33.1`, `0.33.2`,
 `0.33.3`, and so on. Larger feature updates increment the middle number and reset

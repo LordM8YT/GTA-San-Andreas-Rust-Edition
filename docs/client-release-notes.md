@@ -1,5 +1,10 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.36.0:
+- New clean-room car handling read from your own handling.cfg: each car's top speed, pull, engine lag, grip, drive layout, brake balance and weight now shape how it drives. Rear-drive muscle cars step out under power, trucks and the Rhino are slow to answer, supercars stay planted, handbrake turns swing harder, and steering into a slide catches it. Steering also turns a car a little in mid-air.
+
+The new handling passed automated driving tests. It still needs a feel check on a real install.
+
 Version 0.35.1:
 - Cars drive with SARE's own handling model again. The vehicle code added on 25 October was withdrawn because it was built from decompiled game code, which SARE does not use. Per-car handling is still read from your own handling.cfg. A new clean-room handling model follows in the next update.
 
