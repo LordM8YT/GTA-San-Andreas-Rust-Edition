@@ -64,6 +64,7 @@ resource instead of silently ignoring typos. Restart after editing a resource.
 | `tire_grip` | 4.6 | 1–12 | Per-axle lateral acceleration budget, m/s² |
 | `steering_lock` | 0.55 | 0.1–0.9 | Low-speed steering angle, radians |
 | `steering_rate` | 1.7 | 0.3–4 | Steering movement rate, radians/s |
+| `steer_fade_speed` | 16 | 8–40 | Speed, m/s, at which steering lock has fallen to half |
 | `suspension_spring` | 140 | 40–250 | Height restoring acceleration coefficient, s⁻² |
 | `suspension_damping` | 22 | 8–40 | Vertical velocity damping coefficient, s⁻¹ |
 | `aerodynamic_drag` | 0.0035 | 0–0.02 | Quadratic speed resistance coefficient, m⁻¹ |
@@ -73,7 +74,7 @@ resource instead of silently ignoring typos. Restart after editing a resource.
 | `brake_front` | 1 | 0–1 | Share of braking taken by the front tyres |
 | `engine_lag` | 0 | 0–1.5 | Seconds the engine takes to answer the throttle |
 | `yaw_inertia` | 1 | 0.5–4 | How slowly the body starts and stops turning |
-| `front_weight` | 0.5 | 0.35–0.65 | Share of weight on the front axle |
+| `front_weight` | 0.5 | 0.35–0.65 | Share of weight on the front axle; it also sets each axle's distance from the centre of mass on a 2.7 m wheelbase, so a nose-heavy car runs wide |
 | `cg_offset` | 0 | −0.5–0.5 | Metres added to the centre-of-gravity height |
 | `handbrake` | 1 | 0–1 | 0 disables the handbrake |
 | `air_control` | 0 | 0–4 | Mid-air turning from the steering, rad/s² |
@@ -133,13 +134,13 @@ whole result.
 | handling.cfg column | SARE value |
 | --- | --- |
 | max velocity (read as km/h) | flat-out speed is 0.9 × that; the engine pull is solved so drag and rolling resistance balance there |
-| engine acceleration, inertia, mass | `acceleration` = 0.30 × accel ÷ (1 + inertia/50) × (1500/mass)^0.3; `engine_lag` = 0.012 s × inertia |
+| engine acceleration, inertia, mass | `acceleration` = 0.34 × accel ÷ (1 + inertia/50) × (1500/mass)^0.3; `engine_lag` = 0.012 s × inertia |
 | drag multiplier | `aerodynamic_drag` = 0.0004 × drag |
-| traction multiplier, loss, bias | `tire_grip` = 4.6 × √(traction/0.75); `traction_loss` = 0.4 + 0.55 × loss; `front_grip` = 1 + 1.2 × (bias − 0.5) |
+| traction multiplier, loss, bias | `tire_grip` = 6.0 × √(traction/0.75); `traction_loss` = 0.4 + 0.55 × loss; `front_grip` = 1 + 1.2 × (bias − 0.5) |
 | drive type, brake decel, brake bias | `drive`; `brake_deceleration` = 1.2 × decel; `brake_front` = bias |
-| mass, turn mass | `yaw_inertia` = turn mass ÷ (2.8 × mass) |
+| mass, turn mass | `yaw_inertia` = turn mass ÷ (3.6 × mass) |
 | centre of mass y, z | `front_weight` = 0.5 + y/2.7; `cg_offset` = z |
-| steering lock (degrees) | `steering_lock` |
+| steering lock (degrees) | `steering_lock`; `steering_rate` 3.5 rad/s and `steer_fade_speed` 22 m/s for every row |
 | handling flags, NO_HANDBRAKE | `handbrake` = 0 |
 
 Each result is clamped to the range in the table above. Cars from handling.cfg

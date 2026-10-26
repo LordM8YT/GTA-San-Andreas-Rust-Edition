@@ -1,5 +1,8 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.36.1:
+- Lighter, quicker car handling: the wheels turn faster, cars keep more steering at speed, grip is higher and bodies turn in sooner, so driving is closer to the original game's easy feel. Nose-heavy cars such as the Taxi now run wide at full lock instead of spinning.
+
 Version 0.36.0:
 - New clean-room car handling read from your own handling.cfg: each car's top speed, pull, engine lag, grip, drive layout, brake balance and weight now shape how it drives. Rear-drive muscle cars step out under power, trucks and the Rhino are slow to answer, supercars stay planted, handbrake turns swing harder, and steering into a slide catches it. Steering also turns a car a little in mid-air.
 
