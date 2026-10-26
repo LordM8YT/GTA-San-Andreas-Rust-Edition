@@ -468,7 +468,7 @@ impl Car {
             velocity -= normal * closing * 1.3;
             // Glancing blows spin the body a little.
             self.yaw_rate += self.forward().cross(normal).y * closing * 0.15;
-            self.yaw_rate = self.yaw_rate.clamp(-2.0, 2.0);
+            self.yaw_rate = self.yaw_rate.clamp(-3.5, 3.5);
         }
         self.speed = velocity.dot(self.forward());
         self.lateral_speed = velocity.dot(side);
@@ -511,6 +511,7 @@ impl Car {
         self.speed = 0.0;
         self.lateral_speed = 0.0;
         self.yaw_rate = 0.0;
+        self.engine_throttle = 0.0;
     }
     fn body_clear(&self, world: &CollisionWorld, position: Vec3) -> bool {
         let feet = position - Vec3::Y * self.clearance;
@@ -727,8 +728,9 @@ impl Car {
         } else {
             self.engine_throttle = pedal;
         }
-        // Tyres can't push or brake much harder than they can grip.
-        let traction_cap = 2.4 * tuning.tire_grip * handling;
+        // Tyres can't push or brake much harder than they can grip. The grip
+        // setting is left out so it never changes engine power or brakes.
+        let traction_cap = 2.7 * tuning.tire_grip;
         let acceleration = if braking {
             -self.speed.signum() * tuning.brake_deceleration * throttle.abs()
         } else if throttle >= 0.0 {
@@ -794,7 +796,7 @@ impl Car {
         let front_limit = cornering(front_grip, front_share) * front_load_capacity;
         let mut rear_limit = cornering(rear_grip, rear_share) * rear_load_capacity;
         if handbrake {
-            rear_limit *= 0.12;
+            rear_limit *= 0.06;
         }
         let front_slip =
             self.lateral_speed + 1.35 * self.yaw_rate - self.speed * self.steering_angle.tan();
@@ -825,9 +827,9 @@ impl Car {
         self.yaw_rate += (1.35 * (front_force - rear_force) / 2.2 - self.yaw_rate * damping)
             / tuning.yaw_inertia
             * dt;
-        if support_count == 0 && tuning.air_control > 0.0 {
-            // Steering still turns a car in mid-air, a little.
-            self.yaw_rate += (steer * tuning.air_control - self.yaw_rate) * dt;
+        if support_count == 0 {
+            // Steering still turns a car in mid-air, a little; a jump keeps its spin.
+            self.yaw_rate += steer * tuning.air_control * dt;
         }
         self.yaw_rate = self.yaw_rate.clamp(-3.5, 3.5);
         let old_yaw = self.yaw;
@@ -1609,13 +1611,18 @@ mod tests {
     }
     #[test]
     fn handling_cfg_cars_reach_their_row_speed() {
-        use crate::handling::tests::{INFERNUS, TAXI};
+        use crate::handling::tests::{INFERNUS, LINERUN, RHINO, TAXI};
         let world = CollisionWorld::from_batches(&[
             floor(-3000.0, -1000.0, 0.0),
             floor(-1000.0, 1000.0, 0.0),
             floor(1000.0, 3000.0, 0.0),
         ]);
-        for (line, kmh) in [(TAXI, 180.0), (INFERNUS, 240.0)] {
+        for (line, kmh) in [
+            (TAXI, 180.0),
+            (INFERNUS, 240.0),
+            (LINERUN, 120.0),
+            (RHINO, 80.0),
+        ] {
             let mut car = Car::new(Vec3::new(0.0, 0.6, -2900.0), 0.6).with_handling(row(line));
             for _ in 0..120 * 45 {
                 car.step(&world, 1.0, 0.0, false, 1.0, 1.0 / 120.0);
@@ -1646,7 +1653,7 @@ mod tests {
         let plain = turn(taxi, 18.0, 0.0, false, 0.8);
         let handbrake = turn(taxi, 18.0, 0.0, true, 0.8);
         assert!(
-            handbrake > plain * 1.1,
+            handbrake > plain * 1.5,
             "handbrake {handbrake} plain {plain}"
         );
         let none = Handling {

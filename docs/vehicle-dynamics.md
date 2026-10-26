@@ -78,7 +78,9 @@ resource instead of silently ignoring typos. Restart after editing a resource.
 | `handbrake` | 1 | 0–1 | 0 disables the handbrake |
 | `air_control` | 0 | 0–4 | Mid-air turning from the steering, rad/s² |
 
-The existing Vehicle handling setting multiplies the resource's tire grip.
+Engine and brake force are capped at 2.7 × `tire_grip`, because tyres can't
+push harder than they grip; a profile that raises braking past that needs more
+`tire_grip` too. The existing Vehicle handling setting multiplies the resource's tire grip.
 Tuning does not change wheelbase, tire spacing or collision shape. Ground
 support cancels gravity before suspension damping, avoiding an artificial
 ride-height offset that previously depended on the integration interval.
