@@ -82,8 +82,8 @@ impl RigPiece {
         )
     }
 }
-/// Rolling resistance in m/s^2 the car always pays, before aerodynamic drag.
-const ROLLING_RESISTANCE: f32 = 0.28;
+/// Rolling resistance in m/s² every car pays before aerodynamic drag.
+pub const ROLLING_RESISTANCE: f32 = 0.28;
 /// Health a car starts with, as in SA.
 pub const FULL_HEALTH: f32 = 1000.0;
 /// Below this the engine catches fire and the car burns until it blows up.
@@ -193,7 +193,6 @@ pub fn to_model(yaw: f32, towards: Vec3) -> Vec3 {
 #[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Handling {
-    /// Current simulation parameters, in SI units.
     pub acceleration: f32,
     pub reverse_acceleration: f32,
     pub brake_deceleration: f32,
@@ -202,38 +201,30 @@ pub struct Handling {
     pub tire_grip: f32,
     pub steering_lock: f32,
     pub steering_rate: f32,
-    /// Gear count from handling.cfg.
-    pub gears: f32,
     pub suspension_spring: f32,
     pub suspension_damping: f32,
     pub aerodynamic_drag: f32,
-    /// Original GTA:SA handling.cfg values retained for a faithful physics port.
-    /// Mass and turn mass are in the source file's units.
-    /// 1 when values came from the original handling.cfg; 0 for hand-tuned fallback profiles.
-    pub gta_handling_loaded: f32,
-    /// Original handling.cfg bit flags (stored exactly as a numeric value).
-    pub gta_handling_flags: f64,
-    pub gta_mass: f32,
-    pub gta_turn_mass: f32,
-    pub gta_drag_multiplier: f32,
-    pub gta_traction_multiplier: f32,
-    pub gta_centre_of_mass_x: f32,
-    pub gta_centre_of_mass_y: f32,
-    pub gta_centre_of_mass_z: f32,
-    pub gta_traction_loss: f32,
-    pub gta_traction_bias: f32,
-    /// Encoded original values: drive F=0/R=1/4=2; engine P=0/D=1/E=2.
-    pub gta_drive_type: f32,
-    pub gta_engine_type: f32,
-    pub gta_engine_inertia: f32,
-    pub gta_brake_bias: f32,
-    pub gta_abs: f32,
-    pub gta_suspension_force_level: f32,
-    pub gta_suspension_high_speed_damping: f32,
-    pub gta_suspension_upper_limit: f32,
-    pub gta_suspension_lower_limit: f32,
-    pub gta_suspension_front_rear_bias: f32,
-    pub gta_suspension_anti_dive_multiplier: f32,
+    /// Share of rear grip kept while the car is sliding.
+    pub traction_loss: f32,
+    /// Front axle grip multiplier; the rear gets `2 - front_grip`.
+    pub front_grip: f32,
+    /// Driven axle: 0 front, 1 rear, 2 both. Engine force uses up that
+    /// axle's cornering grip.
+    pub drive: f32,
+    /// Share of braking force taken by the front axle's grip.
+    pub brake_front: f32,
+    /// Seconds the engine takes to answer the throttle; 0 is instant.
+    pub engine_lag: f32,
+    /// Resistance to turning, relative to an average saloon.
+    pub yaw_inertia: f32,
+    /// Share of the car's weight resting on the front axle.
+    pub front_weight: f32,
+    /// Metres added to the estimated centre-of-gravity height.
+    pub cg_offset: f32,
+    /// 1 when the handbrake works, 0 for vehicles without one.
+    pub handbrake: f32,
+    /// Turning a car can do in mid-air with the steering, rad/s².
+    pub air_control: f32,
 }
 impl Default for Handling {
     fn default() -> Self {
@@ -246,32 +237,19 @@ impl Default for Handling {
             tire_grip: 4.6,
             steering_lock: 0.55,
             steering_rate: 1.7,
-            gears: 1.0,
             suspension_spring: 140.0,
             suspension_damping: 22.0,
             aerodynamic_drag: 0.0035,
-            gta_handling_loaded: 0.0,
-            gta_handling_flags: 0.0,
-            gta_mass: 1500.0,
-            gta_turn_mass: 3000.0,
-            gta_drag_multiplier: 2.0,
-            gta_traction_multiplier: 0.75,
-            gta_centre_of_mass_x: 0.0,
-            gta_centre_of_mass_y: 0.0,
-            gta_centre_of_mass_z: -0.2,
-            gta_traction_loss: 0.8,
-            gta_traction_bias: 0.5,
-            gta_drive_type: 0.0,
-            gta_engine_type: 0.0,
-            gta_engine_inertia: 10.0,
-            gta_brake_bias: 0.5,
-            gta_abs: 0.0,
-            gta_suspension_force_level: 1.0,
-            gta_suspension_high_speed_damping: 0.0,
-            gta_suspension_upper_limit: 0.3,
-            gta_suspension_lower_limit: -0.15,
-            gta_suspension_front_rear_bias: 0.5,
-            gta_suspension_anti_dive_multiplier: 0.0,
+            traction_loss: 0.82,
+            front_grip: 1.0,
+            drive: 0.0,
+            brake_front: 1.0,
+            engine_lag: 0.0,
+            yaw_inertia: 1.0,
+            front_weight: 0.5,
+            cg_offset: 0.0,
+            handbrake: 1.0,
+            air_control: 0.0,
         }
     }
 }
@@ -289,160 +267,23 @@ impl Handling {
             ("suspension_spring", self.suspension_spring, 40.0, 250.0),
             ("suspension_damping", self.suspension_damping, 8.0, 40.0),
             ("aerodynamic_drag", self.aerodynamic_drag, 0.0, 0.02),
-            ("gears", self.gears, 1.0, 6.0),
-            ("gta_handling_loaded", self.gta_handling_loaded, 0.0, 1.0),
-            ("gta_mass", self.gta_mass, 1.0, 100000.0),
-            (
-                "gta_centre_of_mass_x",
-                self.gta_centre_of_mass_x,
-                -10.0,
-                10.0,
-            ),
-            (
-                "gta_centre_of_mass_y",
-                self.gta_centre_of_mass_y,
-                -10.0,
-                10.0,
-            ),
-            (
-                "gta_centre_of_mass_z",
-                self.gta_centre_of_mass_z,
-                -10.0,
-                10.0,
-            ),
-            ("gta_drive_type", self.gta_drive_type, 0.0, 2.0),
-            ("gta_engine_type", self.gta_engine_type, 0.0, 2.0),
-            ("gta_abs", self.gta_abs, 0.0, 1.0),
-            ("gta_turn_mass", self.gta_turn_mass, 1.0, 1000000.0),
-            ("gta_drag_multiplier", self.gta_drag_multiplier, 0.0, 100.0),
-            (
-                "gta_traction_multiplier",
-                self.gta_traction_multiplier,
-                0.0,
-                5.0,
-            ),
-            ("gta_traction_loss", self.gta_traction_loss, 0.0, 5.0),
-            ("gta_traction_bias", self.gta_traction_bias, 0.0, 1.0),
-            ("gta_engine_inertia", self.gta_engine_inertia, 0.0, 100.0),
-            ("gta_brake_bias", self.gta_brake_bias, 0.0, 1.0),
-            (
-                "gta_suspension_force_level",
-                self.gta_suspension_force_level,
-                0.0,
-                20.0,
-            ),
-            (
-                "gta_suspension_high_speed_damping",
-                self.gta_suspension_high_speed_damping,
-                0.0,
-                100.0,
-            ),
-            (
-                "gta_suspension_upper_limit",
-                self.gta_suspension_upper_limit,
-                -5.0,
-                5.0,
-            ),
-            (
-                "gta_suspension_lower_limit",
-                self.gta_suspension_lower_limit,
-                -5.0,
-                5.0,
-            ),
-            (
-                "gta_suspension_front_rear_bias",
-                self.gta_suspension_front_rear_bias,
-                0.0,
-                1.0,
-            ),
-            (
-                "gta_suspension_anti_dive_multiplier",
-                self.gta_suspension_anti_dive_multiplier,
-                0.0,
-                10.0,
-            ),
+            ("traction_loss", self.traction_loss, 0.5, 1.0),
+            ("front_grip", self.front_grip, 0.4, 1.6),
+            ("drive", self.drive, 0.0, 2.0),
+            ("brake_front", self.brake_front, 0.0, 1.0),
+            ("engine_lag", self.engine_lag, 0.0, 1.5),
+            ("yaw_inertia", self.yaw_inertia, 0.5, 4.0),
+            ("front_weight", self.front_weight, 0.35, 0.65),
+            ("cg_offset", self.cg_offset, -0.5, 0.5),
+            ("handbrake", self.handbrake, 0.0, 1.0),
+            ("air_control", self.air_control, 0.0, 4.0),
         ] {
             anyhow::ensure!(
                 value.is_finite() && (low..=high).contains(&value),
                 "vehicle handling {name} must be finite and between {low} and {high}"
             );
         }
-        anyhow::ensure!(
-            self.gta_handling_flags.is_finite()
-                && (0.0..=u32::MAX as f64).contains(&self.gta_handling_flags),
-            "vehicle handling gta_handling_flags must be a valid 32-bit flag value"
-        );
         Ok(())
-    }
-}
-impl Handling {
-    /// Whole gears to pull through, clamped to the validated range.
-    pub fn gear_count(&self) -> f32 {
-        self.gears.round().clamp(1.0, 6.0)
-    }
-    /// Speed where the engine balances rolling and aerodynamic drag.
-    ///
-    /// `top_speed` is an asymptote the car never reaches because drag grows
-    /// with the square of speed, so the lower gear bands are spaced against
-    /// this speed instead. Otherwise a middle gear could top out below its own
-    /// shift point and the car would stick there.
-    pub fn reachable_top_speed(&self) -> f32 {
-        let engine = self.acceleration - ROLLING_RESISTANCE;
-        if engine <= 0.0 {
-            return self.top_speed * 0.5;
-        }
-        let drag = self.aerodynamic_drag + self.acceleration / self.top_speed.powi(2);
-        (engine / drag.max(1e-6))
-            .sqrt()
-            .clamp(self.top_speed * 0.2, self.top_speed)
-    }
-    /// GTA's transmission band endpoint in m/s. Gear zero is reverse; gears
-    /// one through N use the original equal-interval table. Hand-tuned fallback
-    /// profiles retain the legacy reachable-speed ceiling.
-    pub fn gear_band_top(&self, gear: u8) -> f32 {
-        let count = self.gear_count();
-        if self.gta_handling_loaded <= 0.5 {
-            if f32::from(gear) >= count {
-                return self.top_speed;
-            }
-            let share = 0.5 / count;
-            let flat = 1.0 - share;
-            let fraction = f32::from(gear.clamp(1, count as u8)) * flat / count + share;
-            return fraction * self.reachable_top_speed();
-        }
-
-        let gear = gear.min(count as u8);
-        if gear == 0 {
-            // GTA's gear-zero band is reverse, not a positive half-band.
-            return -self.reverse_speed;
-        }
-        if f32::from(gear) >= count {
-            return self.top_speed;
-        }
-        let gear = f32::from(gear);
-        let half = self.top_speed / (2.0 * count);
-        gear * (self.top_speed - half) / count + half
-    }
-
-    /// GTA's upshift fraction (0.6667) applied to the current adapter band.
-    /// The band endpoint remains transitional until the drive-force curve is ported.
-    pub fn gear_up_shift_speed(&self, gear: u8) -> f32 {
-        if self.gear_count() <= 1.0 {
-            return self.top_speed;
-        }
-        let lower = self.gear_band_top(gear.saturating_sub(1));
-        let upper = self.gear_band_top(gear);
-        lower + 0.6667 * (upper - lower)
-    }
-
-    /// GTA's downshift fraction (0.42) applied to the current adapter band.
-    pub fn gear_down_shift_speed(&self, gear: u8) -> f32 {
-        if self.gear_count() <= 1.0 {
-            return -0.5;
-        }
-        let lower = self.gear_band_top(gear.saturating_sub(2));
-        let upper = self.gear_band_top(gear.saturating_sub(1));
-        lower + 0.42 * (upper - lower)
     }
 }
 /// Body size used until a model is measured: an average saloon.
@@ -467,13 +308,13 @@ pub fn measure(points: impl IntoIterator<Item = [f32; 3]>) -> [f32; 3] {
     ]
 }
 /// Estimate normalized load at the four contact points (rear-left, front-left,
-/// rear-right, front-right). This is a first-order load-transfer model, not a
-/// literal port of GTA's suspension solver. Positive longitudinal acceleration
+/// rear-right, front-right) with a first-order load-transfer model. Positive longitudinal acceleration
 /// transfers load rearward; lateral acceleration transfers it across the body.
 fn wheel_normal_loads(
     supported: [bool; 4],
     longitudinal_acceleration: f32,
     lateral_acceleration: f32,
+    front_weight: f32,
     cg_height: f32,
 ) -> [f32; 4] {
     const WHEELBASE: f32 = 2.7;
@@ -507,7 +348,9 @@ fn wheel_normal_loads(
     if front_count > 0 && rear_count > 0 {
         let front_load = transfer(front, &loads);
         let rear_load = transfer(rear, &loads);
-        let moved = (longitudinal_acceleration * cg_height / (GRAVITY * WHEELBASE))
+        // A centre of mass ahead of the middle rests more weight on the nose.
+        let moved = (longitudinal_acceleration * cg_height / (GRAVITY * WHEELBASE)
+            - (front_weight - 0.5))
             .clamp(-rear_load, front_load);
         for i in front {
             if supported[i] {
@@ -551,8 +394,6 @@ pub struct Car {
     pub position: Vec3,
     pub yaw: f32,
     pub speed: f32,
-    /// Selected gear, from 1. Always 1 for a single-band car.
-    pub gear: u8,
     pub clearance: f32,
     pub pitch: f32,
     pub roll: f32,
@@ -565,20 +406,15 @@ pub struct Car {
     vertical_speed: f32,
     lateral_speed: f32,
     steering_angle: f32,
-    raw_steering: f32,
     yaw_rate: f32,
     /// Grade of the last road surface under all four wheels.
     ground_pitch: f32,
     ground_roll: f32,
     airborne: bool,
-    /// Legacy axle-model skid latch; GTA-loaded cars use per-wheel states.
+    /// Stays set through a slide until both axles have recovered their grip.
     skid_latched: bool,
-    /// GTA cTransmission's two per-car inertia smoothing values.
-    transmission_a6: f32,
-    transmission_a7: f32,
-    transmission_initialized: bool,
-    /// GTA wheel states: 0 normal, 1 spinning, 2 skidding, 3 fixed/locked.
-    wheel_states: [u8; 4],
+    /// Throttle the engine is answering, after its lag.
+    engine_throttle: f32,
 }
 impl Car {
     pub fn new(position: Vec3, clearance: f32) -> Self {
@@ -587,7 +423,6 @@ impl Car {
             position,
             yaw: 0.0,
             speed: 0.0,
-            gear: 1,
             clearance,
             pitch: 0.0,
             roll: 0.0,
@@ -597,16 +432,12 @@ impl Car {
             vertical_speed: 0.0,
             lateral_speed: 0.0,
             steering_angle: 0.0,
-            raw_steering: 0.0,
             yaw_rate: 0.0,
             ground_pitch: 0.0,
             ground_roll: 0.0,
             airborne: false,
             skid_latched: false,
-            transmission_a6: 0.0,
-            transmission_a7: 1.0,
-            transmission_initialized: false,
-            wheel_states: [0; 4],
+            engine_throttle: 0.0,
         }
     }
     pub fn with_handling(mut self, handling: Handling) -> Self {
@@ -637,7 +468,7 @@ impl Car {
             velocity -= normal * closing * 1.3;
             // Glancing blows spin the body a little.
             self.yaw_rate += self.forward().cross(normal).y * closing * 0.15;
-            self.yaw_rate = self.yaw_rate.clamp(-2.0, 2.0);
+            self.yaw_rate = self.yaw_rate.clamp(-3.5, 3.5);
         }
         self.speed = velocity.dot(self.forward());
         self.lateral_speed = velocity.dot(side);
@@ -680,6 +511,7 @@ impl Car {
         self.speed = 0.0;
         self.lateral_speed = 0.0;
         self.yaw_rate = 0.0;
+        self.engine_throttle = 0.0;
     }
     fn body_clear(&self, world: &CollisionWorld, position: Vec3) -> bool {
         let feet = position - Vec3::Y * self.clearance;
@@ -747,51 +579,6 @@ impl Car {
         }
         None
     }
-    /// Shift by road speed only: up at 60% of the current band, down at 40% of
-    /// the one below, so a car sitting on a boundary cannot hunt between gears.
-    /// 60% keeps every shift point below the speed where drag cancels the
-    /// gear's pull, even for a car running on two wheels.
-    fn shift_gears(&mut self, tuning: &Handling, throttle: f32) {
-        let count = tuning.gear_count() as u8;
-        if tuning.gta_handling_loaded <= 0.5 {
-            if self.speed <= 0.0 {
-                self.gear = 1;
-                return;
-            }
-            while self.gear < count && self.speed > 0.6 * tuning.gear_band_top(self.gear) {
-                self.gear += 1;
-            }
-            while self.gear > 1 && self.speed < 0.4 * tuning.gear_band_top(self.gear - 1) {
-                self.gear -= 1;
-            }
-            return;
-        }
-
-        // GTA has a distinct reverse gear at index zero. It remains selected
-        // while reversing or while reverse torque is being used to stop forward
-        // motion, and returns to first once forward throttle is requested.
-        if self.gear == 0 {
-            if self.speed > -0.5 && throttle > 0.0 {
-                self.gear = 1;
-            } else {
-                return;
-            }
-        }
-        if self.speed < 0.0 || (self.speed <= 0.0 && throttle < 0.0) {
-            self.gear = 0;
-            return;
-        }
-        if self.speed <= 0.0 {
-            self.gear = 1;
-            return;
-        }
-        while self.gear < count && self.speed > tuning.gear_up_shift_speed(self.gear) {
-            self.gear += 1;
-        }
-        while self.gear > 1 && self.speed < tuning.gear_down_shift_speed(self.gear) {
-            self.gear -= 1;
-        }
-    }
     pub fn step(
         &mut self,
         world: &CollisionWorld,
@@ -829,197 +616,6 @@ impl Car {
             - (self.vertical_speed - ground_velocity) * self.handling.suspension_damping)
             .max(0.0)
     }
-
-    /// Apply GTA:SA's per-wheel velocity corrections and turn forces.
-    /// This replaces the legacy axle friction-circle model for cars loaded from
-    /// the original handling.cfg. Material adhesion is still a provisional
-    /// tarmac value until SARE's collision surfaces expose GTA surface types.
-    #[allow(clippy::too_many_arguments)]
-    fn apply_gtasa_wheel_forces(
-        &mut self,
-        velocity: &mut Vec3,
-        supported: [bool; 4],
-        suspension_compression: [f32; 4],
-        drive_wheels: [bool; 4],
-        throttle: f32,
-        braking: bool,
-        handbrake: bool,
-        acceleration: f32,
-        handling: f32,
-        dt: f32,
-    ) -> f32 {
-        let tuning = self.handling;
-        let forward = self.forward();
-        let side = Vec3::new(self.yaw.cos(), 0.0, -self.yaw.sin());
-        let before = *velocity;
-        let wheels_on_ground = supported
-            .iter()
-            .filter(|&&is_supported| is_supported)
-            .count();
-        if wheels_on_ground == 0 {
-            self.wheel_states = [0; 4];
-            return 0.0;
-        }
-        let wheels_on_ground = wheels_on_ground as f32;
-        let centre_of_mass =
-            side * -tuning.gta_centre_of_mass_x + forward * -tuning.gta_centre_of_mass_z;
-        const WHEEL_OFFSETS: [(f32, f32); 4] = [
-            (-0.72, -1.35), // rear left
-            (-0.72, 1.35),  // front left
-            (0.72, -1.35),  // rear right
-            (0.72, 1.35),   // front right
-        ];
-        let mut already_skidding = false;
-
-        for (index, &(x, z)) in WHEEL_OFFSETS.iter().enumerate() {
-            if !supported[index] {
-                self.wheel_states[index] = 0;
-                continue;
-            }
-            let front_wheel = index == 1 || index == 3;
-            let rear_wheel = !front_wheel;
-            let point = side * x + forward * z - centre_of_mass;
-            let contact_velocity =
-                *velocity + Vec3::new(self.yaw_rate * point.z, 0.0, -self.yaw_rate * point.x);
-            let mut wheel_forward = forward;
-            let mut wheel_right = side;
-            if front_wheel {
-                let (sin_steer, cos_steer) = self.steering_angle.sin_cos();
-                let rotated_forward = cos_steer * wheel_forward - sin_steer * wheel_right;
-                wheel_right = sin_steer * wheel_forward + cos_steer * wheel_right;
-                wheel_forward = rotated_forward;
-            }
-            let contact_speed_forward = contact_velocity.dot(wheel_forward);
-            let contact_speed_right = contact_velocity.dot(wheel_right);
-            let previous_wheel_state = self.wheel_states[index];
-            let was_skidding = previous_wheel_state != 0;
-            let traction_bias = if front_wheel {
-                (2.0 * tuning.gta_traction_bias).clamp(0.0, 2.0)
-            } else {
-                (2.0 - 2.0 * tuning.gta_traction_bias).clamp(0.0, 2.0)
-            };
-            let suspension_bias = if front_wheel {
-                2.0 * tuning.gta_suspension_front_rear_bias
-            } else {
-                2.0 - 2.0 * tuning.gta_suspension_front_rear_bias
-            };
-            // GTA scales wheel adhesion by suspension force and remaining travel.
-            let suspension_adhesion = (suspension_bias
-                * tuning.gta_suspension_force_level
-                * 4.0
-                * (1.0 - suspension_compression[index]))
-                .clamp(0.0, 2.0);
-            let mut adhesion = tuning.gta_traction_multiplier
-                * 2.5
-                * dt
-                * handling
-                * traction_bias
-                * suspension_adhesion;
-            if was_skidding {
-                already_skidding = true;
-                adhesion *= tuning.gta_traction_loss;
-                if previous_wheel_state == 1 {
-                    adhesion *= 1.0 - throttle.abs() * 0.2;
-                }
-            }
-            self.wheel_states[index] = 0;
-
-            let wheel_braking = braking || (handbrake && rear_wheel);
-            let driving = !wheel_braking && throttle != 0.0 && drive_wheels[index];
-            let brake_bias = if front_wheel {
-                2.0 * tuning.gta_brake_bias
-            } else {
-                2.0 - 2.0 * tuning.gta_brake_bias
-            };
-            let mut brake = (if handbrake && rear_wheel {
-                // 20,000 game-speed units per tick, converted to SI velocity change.
-                20_000.0 * dt * 2_500.0
-            } else if braking {
-                tuning.brake_deceleration * throttle.abs() * dt
-            } else {
-                0.0
-            }) * brake_bias;
-            let mut right = if contact_speed_right != 0.0 {
-                -contact_speed_right / wheels_on_ground
-            } else {
-                0.0
-            };
-            let mut fwd = 0.0;
-            if driving {
-                fwd = acceleration * dt;
-                right = right.clamp(-adhesion, adhesion);
-            } else if contact_speed_forward != 0.0 {
-                fwd = -contact_speed_forward / wheels_on_ground;
-                if !braking && throttle.abs() < 0.01 && !(handbrake && rear_wheel) {
-                    // GTA's global wheel friction is 0.9; convert its per-tick
-                    // correction to m/s for this SI integrator.
-                    brake = 0.9 / tuning.gta_mass * dt * 2_500.0;
-                }
-                if brake > adhesion {
-                    if contact_speed_forward.abs() > 0.005 {
-                        self.wheel_states[index] = 3;
-                    }
-                } else {
-                    fwd = fwd.clamp(-brake, brake);
-                }
-            }
-
-            let speed_squared = right * right + fwd * fwd;
-            if speed_squared > adhesion * adhesion {
-                if self.wheel_states[index] != 3 {
-                    let traction_limit = if contact_speed_forward > 0.15 && front_wheel {
-                        0.6
-                    } else {
-                        0.3
-                    };
-                    self.wheel_states[index] = if driving && traction_limit * adhesion < fwd.abs() {
-                        1
-                    } else {
-                        2
-                    };
-                }
-                let loss = if already_skidding {
-                    1.0
-                } else if self.wheel_states[index] == 1 {
-                    tuning.gta_traction_loss * (1.0 - throttle.abs() * 0.2)
-                } else {
-                    tuning.gta_traction_loss
-                };
-                let length = speed_squared.sqrt();
-                fwd *= adhesion * loss / length;
-                right *= adhesion * loss / length;
-            }
-
-            if self.wheel_states[index] != 0 {
-                already_skidding = true;
-            }
-            if fwd == 0.0 && right == 0.0 {
-                continue;
-            }
-
-            let total_speed = fwd * wheel_forward + right * wheel_right;
-            let mut turn_direction = total_speed;
-            if wheel_braking {
-                turn_direction -= tuning.gta_suspension_anti_dive_multiplier * wheel_forward * fwd;
-            } else if driving {
-                turn_direction -=
-                    0.5 * tuning.gta_suspension_anti_dive_multiplier * wheel_forward * fwd;
-            }
-            let speed = total_speed.length();
-            let turn_speed = turn_direction.length();
-            let direction = total_speed / speed.max(1e-6);
-            let turn_direction = turn_direction / turn_speed.max(1e-6);
-            let cross_direction = point.z * direction.x - point.x * direction.z;
-            let effective_mass = 1.0
-                / (cross_direction * cross_direction / tuning.gta_turn_mass
-                    + 1.0 / tuning.gta_mass);
-            let turn_cross = point.z * turn_direction.x - point.x * turn_direction.z;
-            *velocity += total_speed;
-            self.yaw_rate += turn_cross * turn_speed * effective_mass / tuning.gta_turn_mass;
-        }
-
-        ((*velocity - before).dot(side) / dt).clamp(-100.0, 100.0)
-    }
     fn integrate(
         &mut self,
         world: &CollisionWorld,
@@ -1041,48 +637,30 @@ impl Car {
             self.position.y - self.clearance + z * self.pitch.tan() + x * self.roll.tan()
         };
         // Four tire contact points avoid losing all traction at the centre of a ledge.
-        let wheels = [-0.72_f32, 0.72]
-            .into_iter()
-            .flat_map(|x| [-1.35_f32, 1.35].map(move |z| (x, z)))
-            .collect::<Vec<_>>();
-        let contacts = wheels
-            .iter()
-            .map(|&(x, z)| {
-                world.ground_below(
-                    self.position + side * x + self.forward() * z,
-                    expected_height(x, z) + TRAVEL,
-                )
-            })
-            .collect::<Vec<_>>();
-        let suspension_range = (tuning.gta_suspension_upper_limit
-            - tuning.gta_suspension_lower_limit)
-            .abs()
-            .max(0.01);
-        let suspension_compression: [f32; 4] = std::array::from_fn(|index| {
-            let (x, z) = wheels[index];
-            let distance = contacts[index].map_or(tuning.gta_suspension_upper_limit, |ground| {
-                expected_height(x, z) - ground
-            });
-            ((distance - tuning.gta_suspension_lower_limit) / suspension_range).clamp(0.0, 1.0)
+        // Order: rear-left, front-left, rear-right, front-right.
+        const WHEELS: [(f32, f32); 4] =
+            [(-0.72, -1.35), (-0.72, 1.35), (0.72, -1.35), (0.72, 1.35)];
+        let forward = self.forward();
+        let contacts = WHEELS.map(|(x, z)| {
+            world.ground_below(
+                self.position + side * x + forward * z,
+                expected_height(x, z) + TRAVEL,
+            )
         });
-        // Wheel offsets and ground heights of the wheels carrying the car.
-        let supports: Vec<(f32, f32, f32)> = wheels
-            .iter()
-            .zip(&contacts)
-            .filter_map(|(&(x, z), ground)| {
-                ground
-                    .filter(|g| expected_height(x, z) - g <= TRAVEL)
-                    .map(|g| (x, z, g))
-            })
-            .collect();
+        // Ground heights under the wheels carrying the car.
+        let mut supports = [None; 4];
+        for (support, (&(x, z), ground)) in supports.iter_mut().zip(WHEELS.iter().zip(contacts)) {
+            *support = ground.filter(|g| expected_height(x, z) - g <= TRAVEL);
+        }
+        let support_count = supports.iter().flatten().count();
         // Past a ramp lip or ledge the next surface is far below a wheel. Its
         // height says nothing about the road the car is leaving: following it
         // pitched the nose down and made the damper cancel the climb, so the
         // car dropped at the lip instead of jumping.
         const REACH: f32 = 1.0;
-        let over_air = wheels
+        let over_air = WHEELS
             .iter()
-            .zip(&contacts)
+            .zip(contacts)
             .any(|(&(x, z), ground)| ground.is_none_or(|g| expected_height(x, z) - g > REACH));
         let height = |index: usize| contacts[index].unwrap_or(self.position.y - self.clearance);
         let measured_pitch =
@@ -1106,290 +684,154 @@ impl Car {
         } else {
             (0.0, 0.0)
         };
-        let ground = supports
+        let ground = WHEELS
             .iter()
-            .map(|(x, z, ground)| ground - z * grade.0 - x * grade.1)
+            .zip(supports)
+            .filter_map(|(&(x, z), ground)| Some(ground? - z * grade.0 - x * grade.1))
             .sum::<f32>()
-            / supports.len().max(1) as f32;
+            / support_count.max(1) as f32;
         let normal_offset =
             self.clearance * (1.0 + slope_pitch.tan().powi(2) + slope_roll.tan().powi(2)).sqrt();
         let target = ground + normal_offset;
-        let grounded = supports.len() >= 2;
+        let grounded = support_count >= 2;
         let road_velocity = self.speed * slope_pitch.tan() + self.lateral_speed * slope_roll.tan();
         let grip = if grounded && self.support_force(target, road_velocity) > 0.0 {
-            supports.len() as f32 / 4.0
+            support_count as f32 / 4.0
         } else {
             0.0
         };
-        let supported_wheels = [
-            supports.iter().any(|(x, z, _)| *x < 0.0 && *z < 0.0),
-            supports.iter().any(|(x, z, _)| *x < 0.0 && *z > 0.0),
-            supports.iter().any(|(x, z, _)| *x > 0.0 && *z < 0.0),
-            supports.iter().any(|(x, z, _)| *x > 0.0 && *z > 0.0),
-        ];
-        let drive_wheels = match tuning.gta_drive_type as u8 {
-            0 => [false, true, false, true], // front-wheel drive
-            1 => [true, false, true, false], // rear-wheel drive
-            2 => [true; 4],                  // four-wheel drive
-            _ => [true; 4],
-        };
-        let drive_wheel_count = drive_wheels.iter().filter(|&&drive| drive).count();
-        let supported_drive_count = drive_wheels
-            .iter()
-            .zip(supported_wheels)
-            .filter(|(drive, supported)| **drive && *supported)
-            .count();
-        let drive_grip = if tuning.gta_handling_loaded > 0.5 {
-            supported_drive_count as f32 / drive_wheel_count.max(1) as f32
+        let steer = steer.clamp(-1.0, 1.0);
+        let handbrake = handbrake && tuning.handbrake > 0.5;
+        // Steering lock falls with speed; wheel input and body rotation both have inertia.
+        // Steering into a slide wins back lock the further the car is sliding,
+        // so a slide can be caught at any speed.
+        let speed_lock = tuning.steering_lock / (1.0 + (self.speed.abs() / 16.0).powi(2));
+        let relief = if steer * self.lateral_speed > 0.0 {
+            (self.lateral_speed.abs() / (self.speed.abs() * 0.5 + 1.0)).min(1.0)
         } else {
-            grip
+            0.0
         };
-        if tuning.gta_handling_loaded > 0.5 {
-            // CAutomobile::ProcessControlInputs: raw steering approaches input
-            // at one fifth of the difference per GTA timestep, then applies a
-            // sign-preserving square and the handling.cfg steering lock.
-            self.raw_steering += (steer.clamp(-1.0, 1.0) - self.raw_steering) * (dt * 50.0 / 5.0);
-            self.raw_steering = self.raw_steering.clamp(-1.0, 1.0);
-            let signed_square = self.raw_steering.signum() * self.raw_steering.powi(2);
-            let lock = tuning.steering_lock;
-            let speed_forward = self.speed / 50.0;
-            let mut steering_limiter = 1.0;
-            if speed_forward > 0.01 && grounded {
-                // CAutomobile::ProcessControl's tarmac steering limit. Surface
-                // adhesion is currently 1.0 until collision materials are ported.
-                let traction = tuning.gta_traction_multiplier / 250.0 * 0.25;
-                let available = (traction * 16.0 / speed_forward.powi(2)).clamp(0.0, 1.0);
-                steering_limiter = available.asin() / lock;
-                if steering_limiter > 1.0
-                    || self.raw_steering < 0.0 && self.lateral_speed > 0.05
-                    || self.raw_steering > 0.0 && self.lateral_speed < -0.05
-                    || handbrake
-                {
-                    steering_limiter = 1.0;
-                } else {
-                    steering_limiter = steering_limiter.min(1.0);
-                }
-            }
-            self.steering_angle = lock * signed_square * steering_limiter;
-        } else {
-            // Legacy fallback for profiles not loaded from GTA:SA handling.cfg.
-            let lock = tuning.steering_lock / (1.0 + (self.speed.abs() / 16.0).powi(2));
-            let target_steering = steer.clamp(-1.0, 1.0) * lock;
-            self.steering_angle += (target_steering - self.steering_angle)
-                .clamp(-tuning.steering_rate * dt, tuning.steering_rate * dt);
-        }
-        // A gearbox pulls against the current gear's band; with one gear the
-        // band is the whole top-speed range, exactly as the prototype had it.
-        if tuning.gears > 1.0 || tuning.gta_handling_loaded > 0.5 {
-            self.shift_gears(&tuning, throttle);
-        }
-        let band_top = if tuning.gears > 1.0 {
-            tuning.gear_band_top(self.gear)
-        } else {
-            tuning.top_speed
-        };
+        let lock = speed_lock + (tuning.steering_lock - speed_lock) * relief;
+        let target_steering = steer * lock;
+        self.steering_angle += (target_steering - self.steering_angle)
+            .clamp(-tuning.steering_rate * dt, tuning.steering_rate * dt);
         let braking = throttle * self.speed < -0.15;
-        let gta_transmission = tuning.gta_handling_loaded > 0.5;
-        let mut transmission_inertia = 1.0;
-        let gear_acceleration_multiplier = if !gta_transmission {
-            1.0
-        } else if tuning.gear_count() <= 1.0 {
-            0.4
-        } else {
-            let gear_number =
-                (1.0 - (f32::from(self.gear) - 1.0) / (tuning.gear_count() - 1.0)).max(0.0);
-            let handling_flags = tuning.gta_handling_flags as u32;
-            let boost = if handling_flags & 0x1 != 0 {
-                5.0
-            } else if handling_flags & 0x2 != 0 {
-                4.0
+        // The engine takes a moment to answer the pedal and lets go faster.
+        let pedal = throttle.max(0.0);
+        if tuning.engine_lag > 0.0 {
+            let rate = if pedal > self.engine_throttle {
+                1.0
             } else {
                 3.0
-            };
-            (gear_number * gear_number * boost + 1.0) * 0.4
-        };
-        if gta_transmission {
-            // Port of cTransmission::CalculateDriveAcceleration's inertia
-            // smoothing (a6/a7). Speeds are SI here, but the ratio is unitless.
-            let gear_count = tuning.gear_count();
-            let max_velocity_change = tuning.top_speed / gear_count / 3.0;
-            let (current_down_diff, up_down_diff) = if self.speed < 0.0 {
-                (
-                    max_velocity_change + self.speed.abs(),
-                    max_velocity_change + tuning.reverse_speed,
-                )
-            } else if self.gear <= 1 {
-                (
-                    max_velocity_change + self.speed.max(0.0),
-                    max_velocity_change + tuning.gear_up_shift_speed(1),
-                )
-            } else {
-                (
-                    self.speed - tuning.gear_down_shift_speed(self.gear),
-                    tuning.gear_up_shift_speed(self.gear) - tuning.gear_down_shift_speed(self.gear),
-                )
-            };
-            let ratio = if up_down_diff.abs() > 1e-5 {
-                (current_down_diff / up_down_diff).clamp(-2.0, 2.0)
-            } else {
-                1.0
-            };
-            if !self.transmission_initialized {
-                // GTA's inertia variables are already settled after a car has
-                // been sitting on the ground since map load.
-                self.transmission_a6 = ratio;
-                self.transmission_a7 = 1.0;
-                self.transmission_initialized = true;
-            }
-            if drive_grip > 0.0 {
-                let inertia_delta = ratio - self.transmission_a6;
-                let engine_response =
-                    (1.0 - inertia_delta * tuning.gta_engine_inertia).clamp(0.1, 1.0);
-                self.transmission_a6 = ratio;
-                self.transmission_a7 = engine_response * 0.15 + 0.85 * self.transmission_a7;
-            } else {
-                self.transmission_a6 +=
-                    throttle.abs() / tuning.gta_engine_inertia.max(0.001) * (dt * 50.0) * 0.1;
-                self.transmission_a6 = self.transmission_a6.min(1.0);
-                self.transmission_a7 = 0.1;
-            }
-            transmission_inertia = self.transmission_a7;
+            } / tuning.engine_lag;
+            self.engine_throttle += (pedal - self.engine_throttle) * (1.0 - (-rate * dt).exp());
+        } else {
+            self.engine_throttle = pedal;
         }
+        // Tyres can't push or brake much harder than they can grip. The grip
+        // setting is left out so it never changes engine power or brakes.
+        let traction_cap = 2.7 * tuning.tire_grip;
         let acceleration = if braking {
             -self.speed.signum() * tuning.brake_deceleration * throttle.abs()
         } else if throttle >= 0.0 {
-            let engine_force = throttle
+            self.engine_throttle
                 * tuning.acceleration
-                * gear_acceleration_multiplier
-                * transmission_inertia;
-            if gta_transmission {
-                // GTA tapers drive force only after this gear's MaxVelocity;
-                // 0.05 game-units/tick equals 2.5 m/s at 50 Hz.
-                let excess_speed = (self.speed.max(0.0) - band_top).max(0.0);
-                engine_force * (1.0 - (excess_speed / 2.5).min(1.0))
-            } else {
-                engine_force * (1.0 - (self.speed.max(0.0) / band_top).powi(2)).max(0.0)
-            }
-        } else if gta_transmission {
-            let excess_speed = (-self.speed - tuning.reverse_speed).max(0.0);
-            throttle
-                * tuning.reverse_acceleration
-                * 1.8
-                * transmission_inertia
-                * (1.0 - (excess_speed / 2.5).min(1.0))
+                * (1.0 - (self.speed.max(0.0) / tuning.top_speed).powi(2)).max(0.0)
         } else {
             throttle
                 * tuning.reverse_acceleration
                 * (1.0 - (-self.speed / tuning.reverse_speed).powi(2)).max(0.0)
-        };
-        let lateral_acceleration;
-        let body_acceleration = if braking {
-            acceleration * grip
-        } else {
-            acceleration * drive_grip
-        };
-        if gta_transmission {
-            lateral_acceleration = self.apply_gtasa_wheel_forces(
-                &mut velocity,
-                supported_wheels,
-                suspension_compression,
-                drive_wheels,
-                throttle,
-                braking,
-                handbrake,
-                acceleration,
-                handling,
-                dt,
-            );
-            // CPhysical::ApplyAirResistance: drag scales with game velocity
-            // (units/tick), then is raised to the timestep. Convert SI speed
-            // back to game units/tick for the formula.
-            let game_speed = velocity.length() / 50.0;
-            let timestep = dt * 50.0;
-            let drag_factor = (1.0 - 0.0005 * tuning.gta_drag_multiplier * game_speed)
-                .max(0.0)
-                .powf(timestep);
-            velocity *= drag_factor;
-        } else {
-            let old_speed = self.speed;
-            let longitudinal_grip = if braking { grip } else { drive_grip };
-            self.speed += acceleration * longitudinal_grip * dt;
-            if braking && self.speed.signum() != old_speed.signum() {
-                self.speed = 0.0;
-            }
-            let resistance = (ROLLING_RESISTANCE
-                + tuning.aerodynamic_drag * self.speed * self.speed
-                + if handbrake { 7.0 * grip } else { 0.0 })
-                * dt;
-            self.speed = self.speed.signum() * (self.speed.abs() - resistance).max(0.0);
-            velocity += self.forward() * (self.speed - old_speed);
-            // Approximate per-wheel normal load and load transfer while retaining
-            // SARE's friction-circle tire response. A lifted wheel contributes no grip;
-            // acceleration and cornering unload the appropriate wheels/axle.
-            let approximate_lateral_acceleration = self.speed * self.yaw_rate;
-            // Geometric probes can still see the road during takeoff. Only
-            // wheels with active suspension support should contribute tire load.
-            let loaded_wheels = supported_wheels.map(|supported| supported && grip > 0.0);
-            let wheel_loads = wheel_normal_loads(
-                loaded_wheels,
-                acceleration,
-                approximate_lateral_acceleration,
-                (self.clearance * 0.8).clamp(0.25, 0.8),
-            );
-            // Tire capacity is load-sensitive: two equally loaded wheels sum to one
-            // axle's baseline capacity; unloading a wheel reduces that axle's grip.
-            let front_load_capacity = wheel_loads[1].sqrt() + wheel_loads[3].sqrt();
-            let rear_load_capacity = wheel_loads[0].sqrt() + wheel_loads[2].sqrt();
-            let tire_budget = (tuning.tire_grip * handling).powi(2)
-                - (acceleration * longitudinal_grip * 0.5).powi(2);
-            let front_traction_bias = if gta_transmission {
-                (2.0 * tuning.gta_traction_bias).clamp(0.0, 2.0)
-            } else {
-                1.0
-            };
-            let rear_traction_bias = if gta_transmission {
-                (2.0 - 2.0 * tuning.gta_traction_bias).clamp(0.0, 2.0)
-            } else {
-                1.0
-            };
-            let mut front_limit =
-                tire_budget.max(0.5).sqrt() * front_load_capacity * front_traction_bias;
-            let mut rear_limit =
-                tuning.tire_grip * handling * rear_load_capacity * rear_traction_bias;
-            if handbrake {
-                rear_limit *= 0.12;
-            }
-            let front_slip =
-                self.lateral_speed + 1.35 * self.yaw_rate - self.speed * self.steering_angle.tan();
-            let rear_slip = self.lateral_speed - 1.35 * self.yaw_rate;
-            // Latch a skid when the requested axle force exceeds its load-dependent
-            // limit. Keep rear grip reduced until both axles settle, rather than
-            // allowing the model to snap instantly back to full grip each tick.
-            if grounded
-                && ((front_slip * 5.5).abs() > front_limit || (rear_slip * 5.5).abs() > rear_limit)
-            {
-                self.skid_latched = true;
-            }
-            if grounded && front_slip.abs() < 0.35 && rear_slip.abs() < 0.35 {
-                self.skid_latched = false;
-            }
-            if self.skid_latched && !handbrake {
-                if gta_transmission {
-                    // handling.cfg tractionLoss applies once a wheel is skidding;
-                    // this axle-level adapter uses it until the skid state recovers.
-                    front_limit *= tuning.gta_traction_loss;
-                    rear_limit *= tuning.gta_traction_loss;
-                } else {
-                    rear_limit *= 0.82;
-                }
-            }
-            let front_force = (-front_slip * 5.5).clamp(-front_limit, front_limit);
-            let rear_force = (-rear_slip * 5.5).clamp(-rear_limit, rear_limit);
-            lateral_acceleration = front_force + rear_force;
-            velocity += side * lateral_acceleration * dt;
-            self.yaw_rate += (1.35 * (front_force - rear_force) / 2.2 - self.yaw_rate * 0.22) * dt;
-            self.yaw_rate = self.yaw_rate.clamp(-2.0, 2.0);
         }
+        .clamp(-traction_cap, traction_cap);
+        let old_speed = self.speed;
+        self.speed += acceleration * grip * dt;
+        if braking && self.speed.signum() != old_speed.signum() {
+            self.speed = 0.0;
+        }
+        let resistance = (ROLLING_RESISTANCE
+            + tuning.aerodynamic_drag * self.speed * self.speed
+            + if handbrake { 7.0 * grip } else { 0.0 })
+            * dt;
+        self.speed = self.speed.signum() * (self.speed.abs() - resistance).max(0.0);
+        velocity += self.forward() * (self.speed - old_speed);
+        // Approximate per-wheel normal load and load transfer while retaining
+        // SARE's friction-circle tire response. A lifted wheel contributes no grip;
+        // acceleration and cornering unload the appropriate wheels/axle.
+        let supported_wheels = supports.map(|ground| ground.is_some());
+        let approximate_lateral_acceleration = self.speed * self.yaw_rate;
+        // Geometric probes can still see the road during takeoff. Only
+        // wheels with active suspension support should contribute tire load.
+        let loaded_wheels = supported_wheels.map(|supported| supported && grip > 0.0);
+        let wheel_loads = wheel_normal_loads(
+            loaded_wheels,
+            acceleration,
+            approximate_lateral_acceleration,
+            tuning.front_weight,
+            (self.clearance * 0.8 + tuning.cg_offset).clamp(0.25, 0.8),
+        );
+        // Tire capacity is load-sensitive: two equally loaded wheels sum to one
+        // axle's baseline capacity; unloading a wheel reduces that axle's grip.
+        let front_load_capacity = wheel_loads[1].sqrt() + wheel_loads[3].sqrt();
+        let rear_load_capacity = wheel_loads[0].sqrt() + wheel_loads[2].sqrt();
+        // Each axle shares one grip budget between pushing or braking and
+        // cornering: drive through the rear and it steps out under power, brake
+        // mostly on the front and the nose runs wide.
+        let (front_share, rear_share) = if braking {
+            (tuning.brake_front, 1.0 - tuning.brake_front)
+        } else {
+            match tuning.drive.round() as u8 {
+                0 => (1.0, 0.0),
+                1 => (0.0, 1.0),
+                _ => (0.5, 0.5),
+            }
+        };
+        let demand = acceleration * grip * 0.5;
+        let cornering = |full: f32, share: f32| {
+            (full * full - (share * demand).powi(2))
+                .max((0.35 * full).powi(2))
+                .sqrt()
+        };
+        let front_grip = tuning.tire_grip * handling * tuning.front_grip;
+        let rear_grip = tuning.tire_grip * handling * (2.0 - tuning.front_grip);
+        let front_limit = cornering(front_grip, front_share) * front_load_capacity;
+        let mut rear_limit = cornering(rear_grip, rear_share) * rear_load_capacity;
+        if handbrake {
+            rear_limit *= 0.06;
+        }
+        let front_slip =
+            self.lateral_speed + 1.35 * self.yaw_rate - self.speed * self.steering_angle.tan();
+        let rear_slip = self.lateral_speed - 1.35 * self.yaw_rate;
+        // Latch a skid when the requested axle force exceeds its load-dependent
+        // limit. Keep rear grip reduced until both axles settle, rather than
+        // allowing the model to snap instantly back to full grip each tick.
+        if grounded
+            && ((front_slip * 5.5).abs() > front_limit || (rear_slip * 5.5).abs() > rear_limit)
+        {
+            self.skid_latched = true;
+        }
+        // Centring the wheel lets a slide gather itself sooner.
+        let settled = if steer.abs() < 0.1 { 0.5 } else { 0.35 };
+        if grounded && front_slip.abs() < settled && rear_slip.abs() < settled {
+            self.skid_latched = false;
+        }
+        if self.skid_latched && !handbrake {
+            rear_limit *= tuning.traction_loss;
+        }
+        let front_force = (-front_slip * 5.5).clamp(-front_limit, front_limit);
+        let rear_force = (-rear_slip * 5.5).clamp(-rear_limit, rear_limit);
+        let lateral_acceleration = front_force + rear_force;
+        velocity += side * lateral_acceleration * dt;
+        // Heavier bodies take longer to turn and to settle, but end up turning
+        // as hard; damping grows with speed to keep fast cars stable.
+        let damping = 0.22 + 0.02 * self.speed.abs();
+        self.yaw_rate += (1.35 * (front_force - rear_force) / 2.2 - self.yaw_rate * damping)
+            / tuning.yaw_inertia
+            * dt;
+        if support_count == 0 {
+            // Steering still turns a car in mid-air, a little; a jump keeps its spin.
+            self.yaw_rate += steer * tuning.air_control * dt;
+        }
+        self.yaw_rate = self.yaw_rate.clamp(-3.5, 3.5);
         let old_yaw = self.yaw;
         self.yaw += self.yaw_rate * dt;
         if !self.body_clear(world, self.position) {
@@ -1401,7 +843,7 @@ impl Car {
         self.lateral_speed = velocity.dot(side);
         let blend = 1.0 - (-8.0 * dt).exp();
         self.pitch +=
-            ((slope_pitch + body_acceleration * 0.012).clamp(-0.6, 0.6) - self.pitch) * blend;
+            ((slope_pitch + acceleration * grip * 0.012).clamp(-0.6, 0.6) - self.pitch) * blend;
         self.roll +=
             ((slope_roll + lateral_acceleration * 0.016).clamp(-0.5, 0.5) - self.roll) * blend;
         let motion = (self.forward() * self.speed + side * self.lateral_speed) * dt;
@@ -1470,51 +912,11 @@ mod tests {
     use crate::{Batch, Vertex};
 
     #[test]
-    fn gta_handling_uses_per_wheel_drive_and_reverse_gear() {
-        let world = CollisionWorld::from_batches(&[floor(-100.0, 100.0, 0.0)]);
-        let tuning = Handling {
-            acceleration: 4.0,
-            reverse_acceleration: 4.0,
-            brake_deceleration: 7.0,
-            top_speed: 41.4,
-            reverse_speed: 10.35,
-            gears: 5.0,
-            gta_handling_loaded: 1.0,
-            gta_handling_flags: 0.0,
-            gta_mass: 1450.0,
-            gta_turn_mass: 4056.4,
-            gta_drag_multiplier: 2.2,
-            gta_traction_multiplier: 0.75,
-            gta_traction_loss: 0.85,
-            gta_traction_bias: 0.51,
-            gta_drive_type: 0.0,
-            gta_engine_inertia: 10.0,
-            gta_suspension_force_level: 1.4,
-            gta_suspension_front_rear_bias: 0.5,
-            ..Handling::default()
-        };
-        let mut forward = Car::new(Vec3::Y * 0.6, 0.6).with_handling(tuning);
-        for _ in 0..30 {
-            forward.step(&world, 1.0, 0.0, false, 1.0, 1.0 / 50.0);
-        }
-        assert!(forward.speed > 0.0, "GTA-loaded car did not accelerate");
-        assert!(forward.gear >= 1, "forward throttle selected reverse");
-
-        let mut reverse = Car::new(Vec3::Y * 0.6, 0.6).with_handling(tuning);
-        reverse.step(&world, -1.0, 0.0, false, 1.0, 1.0 / 50.0);
-        assert_eq!(reverse.gear, 0, "reverse must be a distinct gear");
-        assert!(
-            reverse.speed < 0.0,
-            "reverse throttle did not move backward"
-        );
-    }
-
-    #[test]
     fn wheel_loads_transfer_under_acceleration() {
-        let loads = wheel_normal_loads([true; 4], 6.0, 0.0, 0.5);
+        let loads = wheel_normal_loads([true; 4], 6.0, 0.0, 0.5, 0.5);
         assert!((loads.iter().sum::<f32>() - 1.0).abs() < 1e-5);
         assert!(loads[0] + loads[2] > loads[1] + loads[3]);
-        assert_eq!(wheel_normal_loads([false; 4], 0.0, 0.0, 0.5), [0.0; 4]);
+        assert_eq!(wheel_normal_loads([false; 4], 0.0, 0.0, 0.5, 0.5), [0.0; 4]);
     }
 
     #[test]
@@ -1696,15 +1098,7 @@ mod tests {
         let original = serde_json::to_value(Handling::default()).unwrap();
         for key in original.as_object().unwrap().keys() {
             let mut invalid = original.clone();
-            let invalid_value = match key.as_str() {
-                "gta_centre_of_mass_x"
-                | "gta_centre_of_mass_y"
-                | "gta_centre_of_mass_z"
-                | "gta_suspension_upper_limit"
-                | "gta_suspension_lower_limit" => 1000.0,
-                _ => -1.0,
-            };
-            invalid[key] = serde_json::json!(invalid_value);
+            invalid[key] = serde_json::json!(-1.0);
             assert!(
                 serde_json::from_value::<Handling>(invalid)
                     .unwrap()
@@ -1715,129 +1109,13 @@ mod tests {
         }
     }
     #[test]
-    fn one_gear_keeps_the_single_band_curve() {
-        let tuning = Handling::default();
-        assert_eq!(tuning.gear_count(), 1.0);
-        // The one band ends at the top speed, so the prototype curve the
-        // project was tuned around is untouched.
-        assert_eq!(tuning.gear_band_top(1), tuning.top_speed);
-        let mut car = Car::new(Vec3::Y * 0.6, 0.6);
-        car.handling = tuning;
-        car.speed = 30.0;
-        car.shift_gears(&tuning, 1.0);
-        assert_eq!(car.gear, 1);
-    }
-    #[test]
-    fn five_gears_shift_up_through_the_bands_and_back_down() {
-        let mut car = Car::new(Vec3::Y * 0.6, 0.6);
-        let tuning = Handling {
-            gears: 5.0,
-            ..Handling::default()
-        };
-        car.handling = tuning;
-        // Bands widen towards the top and the last one reaches `top_speed`.
-        assert!(tuning.gear_band_top(1) < tuning.gear_band_top(2));
-        assert_eq!(tuning.gear_band_top(5), tuning.top_speed);
-        // Each band pulls past its own shift point, so no gear can stall.
-        for gear in 1..5u8 {
-            assert!(
-                tuning.reachable_top_speed() > 0.6 * tuning.gear_band_top(gear),
-                "gear {gear} stalls"
-            );
-        }
-        // Crossing GTA's upshift point selects exactly the next gear.
-        for gear in 1..5u8 {
-            car.gear = gear;
-            car.speed = tuning.gear_up_shift_speed(gear) + 0.05;
-            car.shift_gears(&tuning, 1.0);
-            assert_eq!(car.gear, gear + 1, "did not leave gear {gear}");
-        }
-        // Well inside the first band the car drops back to first.
-        car.speed = 0.3 * tuning.gear_band_top(1);
-        car.shift_gears(&tuning, 1.0);
-        assert_eq!(car.gear, 1);
-        // Legacy fallback keeps reverse in first; GTA-loaded handling uses gear zero.
-        car.speed = -3.0;
-        car.shift_gears(&tuning, -1.0);
-        assert_eq!(car.gear, 1);
-        let gta_tuning = Handling {
-            gears: 5.0,
-            gta_handling_loaded: 1.0,
-            ..Handling::default()
-        };
-        car.gear = 1;
-        car.shift_gears(&gta_tuning, -1.0);
-        assert_eq!(car.gear, 0);
-    }
-    #[test]
-    fn a_car_sitting_on_a_shift_point_does_not_hunt_between_gears() {
-        let mut car = Car::new(Vec3::Y * 0.6, 0.6);
-        let tuning = Handling {
-            gears: 5.0,
-            ..Handling::default()
-        };
-        let up = tuning.gear_up_shift_speed(1);
-        car.gear = 1;
-        car.speed = up + 0.05;
-        car.shift_gears(&tuning, 1.0);
-        assert_eq!(car.gear, 2);
-        // Either side of the first gear's up point stays in second because
-        // the down point is lower, preserving the gearbox's shift hysteresis.
-        for speed in [up - 0.05f32, up + 0.05, up - 0.05, up + 0.05] {
-            car.speed = speed;
-            car.shift_gears(&tuning, 1.0);
-            assert_eq!(car.gear, 2, "gear hunted at {speed}");
-        }
-    }
-    #[test]
-    fn gears_shift_while_driving_and_keep_the_top_speed() {
-        let world = CollisionWorld::from_batches(&[floor(-2000.0, 2000.0, 0.0)]);
-        let geared = Handling {
-            gears: 5.0,
-            ..Handling::default()
-        };
-        let mut single = Car::new(Vec3::Y * 0.6, 0.6);
-        let mut shifting = Car::new(Vec3::Y * 0.6, 0.6).with_handling(geared);
-        for _ in 0..3600 {
-            single.step(&world, 1.0, 0.0, false, 1.0, 1.0 / 120.0);
-            shifting.step(&world, 1.0, 0.0, false, 1.0, 1.0 / 120.0);
-        }
-        assert_eq!(shifting.gear, 5, "never reached top gear");
-        assert!(shifting.speed > 25.0, "speed {}", shifting.speed);
-        // The top band is the whole range, so the geared car still ends up at
-        // the same drag-limited speed; it is only slower on the way there.
-        assert!(
-            (shifting.speed - single.speed).abs() < 0.15 * single.speed.max(1.0),
-            "geared {} vs single {}",
-            shifting.speed,
-            single.speed
-        );
-    }
-    #[test]
-    fn a_half_grounded_car_still_reaches_top_gear() {
-        // Grip at half means only two wheels carry the car, so every gear pulls
-        // less. The shift points have to stay below that reduced pull or the
-        // car would sit in a middle gear forever.
-        let world = CollisionWorld::from_batches(&[floor(-2000.0, 2000.0, 0.0)]);
-        let mut car = Car::new(Vec3::Y * 0.6, 0.6).with_handling(Handling {
-            gears: 5.0,
-            ..Handling::default()
-        });
-        for _ in 0..3600 {
-            car.step(&world, 1.0, 0.0, false, 0.5, 1.0 / 120.0);
-        }
-        assert_eq!(
-            car.gear, 5,
-            "stuck in gear {} at {} m/s",
-            car.gear, car.speed
-        );
-    }
-    #[test]
     fn tuning_changes_acceleration_and_braking_without_losing_support() {
         let world = CollisionWorld::from_batches(&[floor(-1000.0, 1000.0, 0.0)]);
         let tuning = Handling {
             acceleration: 12.0,
             brake_deceleration: 20.0,
+            // Tyres must be able to carry the harder braking.
+            tire_grip: 9.0,
             ..Handling::default()
         };
         let mut original = Car::new(Vec3::Y * 0.6, 0.6);
@@ -2306,5 +1584,129 @@ mod tests {
         airborne.step(&world, 1.0, 1.0, false, 1.0, 0.05);
         assert_eq!(airborne.yaw, 0.0);
         assert!(airborne.speed <= 12.0 && airborne.position.y < 50.0);
+    }
+    /// A flat square of road `half` metres either side of the origin.
+    fn pad(half: f32) -> CollisionWorld {
+        CollisionWorld::from_batches(&[mesh(&[
+            [-half, 0.0, -half],
+            [half, 0.0, -half],
+            [half, 0.0, half],
+            [-half, 0.0, -half],
+            [half, 0.0, half],
+            [-half, 0.0, half],
+        ])])
+    }
+    fn row(line: &str) -> Handling {
+        crate::handling::from_line(line).unwrap()
+    }
+    /// Heading change after holding the inputs for `seconds` from `speed`.
+    fn turn(tuning: Handling, speed: f32, throttle: f32, handbrake: bool, seconds: f32) -> f32 {
+        let world = pad(100.0);
+        let mut car = Car::new(Vec3::Y * 0.6, 0.6).with_handling(tuning);
+        car.speed = speed;
+        for _ in 0..(seconds * 120.0) as usize {
+            car.step(&world, throttle, 1.0, handbrake, 1.0, 1.0 / 120.0);
+        }
+        car.yaw.abs()
+    }
+    #[test]
+    fn handling_cfg_cars_reach_their_row_speed() {
+        use crate::handling::tests::{INFERNUS, LINERUN, RHINO, TAXI};
+        let world = CollisionWorld::from_batches(&[
+            floor(-3000.0, -1000.0, 0.0),
+            floor(-1000.0, 1000.0, 0.0),
+            floor(1000.0, 3000.0, 0.0),
+        ]);
+        for (line, kmh) in [
+            (TAXI, 180.0),
+            (INFERNUS, 240.0),
+            (LINERUN, 120.0),
+            (RHINO, 80.0),
+        ] {
+            let mut car = Car::new(Vec3::new(0.0, 0.6, -2900.0), 0.6).with_handling(row(line));
+            for _ in 0..120 * 45 {
+                car.step(&world, 1.0, 0.0, false, 1.0, 1.0 / 120.0);
+            }
+            let target = 0.9 * kmh / 3.6;
+            assert!(
+                (car.speed - target).abs() < 0.1 * target,
+                "{} vs {target}",
+                car.speed
+            );
+        }
+    }
+    #[test]
+    fn rear_drive_steps_out_under_power_more_than_front_drive() {
+        use crate::handling::tests::VOODOO;
+        let rear = row(VOODOO);
+        let front = Handling { drive: 0.0, ..rear };
+        let (rear, front) = (
+            turn(rear, 14.0, 1.0, false, 1.2),
+            turn(front, 14.0, 1.0, false, 1.2),
+        );
+        assert!(rear > front * 1.05, "rear {rear} front {front}");
+    }
+    #[test]
+    fn the_handbrake_swings_the_tail_unless_the_car_has_none() {
+        use crate::handling::tests::TAXI;
+        let taxi = row(TAXI);
+        let plain = turn(taxi, 18.0, 0.0, false, 0.8);
+        let handbrake = turn(taxi, 18.0, 0.0, true, 0.8);
+        assert!(
+            handbrake > plain * 1.5,
+            "handbrake {handbrake} plain {plain}"
+        );
+        let none = Handling {
+            handbrake: 0.0,
+            ..taxi
+        };
+        assert_eq!(turn(none, 18.0, 0.0, true, 0.8), plain);
+    }
+    #[test]
+    fn heavy_engines_take_a_moment_to_pull() {
+        use crate::handling::tests::LINERUN;
+        let world = pad(100.0);
+        let lagging = row(LINERUN);
+        let instant = Handling {
+            engine_lag: 0.0,
+            ..lagging
+        };
+        let mut slow = Car::new(Vec3::Y * 0.6, 0.6).with_handling(lagging);
+        let mut quick = Car::new(Vec3::Y * 0.6, 0.6).with_handling(instant);
+        for _ in 0..36 {
+            slow.step(&world, 1.0, 0.0, false, 1.0, 1.0 / 120.0);
+            quick.step(&world, 1.0, 0.0, false, 1.0, 1.0 / 120.0);
+        }
+        assert!(
+            slow.speed < quick.speed * 0.8,
+            "{} vs {}",
+            slow.speed,
+            quick.speed
+        );
+    }
+    #[test]
+    fn a_heavy_body_turns_in_later_but_still_turns() {
+        use crate::handling::tests::TAXI;
+        let light = row(TAXI);
+        let heavy = Handling {
+            yaw_inertia: 3.0,
+            ..light
+        };
+        assert!(turn(heavy, 12.0, 0.0, false, 0.3) < turn(light, 12.0, 0.0, false, 0.3));
+        assert!(turn(heavy, 12.0, 0.0, false, 3.0) > 0.5 * turn(light, 12.0, 0.0, false, 3.0));
+    }
+    #[test]
+    fn steering_turns_handling_cfg_cars_in_mid_air_only() {
+        use crate::handling::tests::TAXI;
+        let world = CollisionWorld::from_batches(&[]);
+        let mut flying = Car::new(Vec3::Y * 50.0, 0.6).with_handling(row(TAXI));
+        for _ in 0..30 {
+            flying.step(&world, 0.0, 1.0, false, 1.0, 1.0 / 120.0);
+        }
+        assert!(flying.yaw.abs() > 0.01);
+        // Hand-tuned profiles keep the old no-air-control behaviour.
+        let mut prototype = Car::new(Vec3::Y * 50.0, 0.6);
+        prototype.step(&world, 0.0, 1.0, false, 1.0, 0.25);
+        assert_eq!(prototype.yaw, 0.0);
     }
 }

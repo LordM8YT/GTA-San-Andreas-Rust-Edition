@@ -8,8 +8,10 @@ not the GTA IV or GTA V physics engine.
 - Steering moves gradually and steering lock decreases at higher speeds.
 - Body rotation has inertia and a lateral acceleration limit.
 - Tire grip opposes sideways motion; the handbrake reduces grip and slows the car.
-- Front/rear axle slip produces lateral forces and yaw torque. Braking and
-  cornering share a limited tire-grip budget.
+- Front/rear axle slip produces lateral forces and yaw torque. Each axle shares
+  one grip budget between cornering and the engine or brake force it carries,
+  so rear-drive cars step out under power and front-heavy braking pushes wide.
+- Steering into a slide wins back steering lock, so slides can be caught at speed.
 - Four ground probes use each wheel's expected height on the tilted body.
   Damped suspension follows road height and grade; body pitch and roll respond
   to slopes, acceleration and cornering. Local and remote rendering converts
@@ -20,10 +22,6 @@ not the GTA IV or GTA V physics engine.
   gravity, then regain suspension support on landing.
 - Opposite throttle brakes before engaging reverse. Engine acceleration decreases
   near top speed, with rolling resistance and quadratic aerodynamic drag.
-- A car with more than one gear pulls through speed bands, shifting up at 60% of
-  a band and down at 40% of the one below, so each gear pulls, flattens and
-  hands over. Original models use the gear count from their handling row;
-  resources default to one band.
 - Airborne cars retain momentum but cannot accelerate or steer through tire grip.
 - Physics integrates at intervals no greater than 1/120 second. Existing swept
   body collision, ground contact, safe spawning and exit checks remain active.
@@ -34,7 +32,7 @@ Exiting the car or reaching the streamed map boundary clears sideways momentum.
 
 Suspension and body pitch/roll are approximations with fixed contact spacing,
 not independent simulated wheel bodies. This model does not yet simulate wheel
-articulation/animation, deformation, different road surfaces or physical collision
+articulation/animation, gear changes, deformation, different road surfaces or physical collision
 impulses. Solid obstacles still stop the car rather than producing a crash response.
 
 Automated checks cover braking and reverse, handbrake slip, frame-rate consistency,
@@ -51,7 +49,8 @@ these checks do not claim independent tire/suspension simulation.
 
 Each entry in a native resource's `vehicles` array can include a `handling`
 object. Omitted fields use the values below; omitting the object retains the
-prototype's default driving setup. Original cars use these defaults unless a resource supplies an original-car profile.
+prototype's default driving setup. Original cars take their values from the
+player's own handling.cfg (see below) unless a resource supplies an original-car profile.
 Unknown field names, nonfinite numbers and out-of-range values reject the
 resource instead of silently ignoring typos. Restart after editing a resource.
 
@@ -68,9 +67,20 @@ resource instead of silently ignoring typos. Restart after editing a resource.
 | `suspension_spring` | 140 | 40–250 | Height restoring acceleration coefficient, s⁻² |
 | `suspension_damping` | 22 | 8–40 | Vertical velocity damping coefficient, s⁻¹ |
 | `aerodynamic_drag` | 0.0035 | 0–0.02 | Quadratic speed resistance coefficient, m⁻¹ |
-| `gears` | 1 | 1–6 | Speed bands the car pulls through; 1 keeps the single-band feel |
+| `traction_loss` | 0.82 | 0.5–1 | Share of rear grip kept while sliding |
+| `front_grip` | 1 | 0.4–1.6 | Front grip multiplier; the rear gets `2 - front_grip` |
+| `drive` | 0 | 0–2 | Driven axle: 0 front, 1 rear, 2 both |
+| `brake_front` | 1 | 0–1 | Share of braking taken by the front tyres |
+| `engine_lag` | 0 | 0–1.5 | Seconds the engine takes to answer the throttle |
+| `yaw_inertia` | 1 | 0.5–4 | How slowly the body starts and stops turning |
+| `front_weight` | 0.5 | 0.35–0.65 | Share of weight on the front axle |
+| `cg_offset` | 0 | −0.5–0.5 | Metres added to the centre-of-gravity height |
+| `handbrake` | 1 | 0–1 | 0 disables the handbrake |
+| `air_control` | 0 | 0–4 | Mid-air turning from the steering, rad/s² |
 
-The existing Vehicle handling setting multiplies the resource's tire grip.
+Engine and brake force are capped at 2.7 × `tire_grip`, because tyres can't
+push harder than they grip; a profile that raises braking past that needs more
+`tire_grip` too. The existing Vehicle handling setting multiplies the resource's tire grip.
 Tuning does not change wheelbase, tire spacing or collision shape. Ground
 support cancels gravity before suspension damping, avoiding an artificial
 ride-height offset that previously depended on the integration interval.
@@ -111,6 +121,31 @@ provides a starting point. Server guests receive only its resource manifest and
 load the models from their own installations. Disconnecting restores their
 local car/tuning setup. Profiles are native values; original handling.cfg and
 FiveM handling.meta are not automatically translated.
+
+## Handling from your handling.cfg
+
+Original cars read their row of `data/handling.cfg` from the player's own
+install at load time. SARE uses only the column meanings listed in that file's
+header. The units and every scale are SARE's own, tuned by watching how the
+cars drive, not taken from the game's code. Mod profiles still replace the
+whole result.
+
+| handling.cfg column | SARE value |
+| --- | --- |
+| max velocity (read as km/h) | flat-out speed is 0.9 × that; the engine pull is solved so drag and rolling resistance balance there |
+| engine acceleration, inertia, mass | `acceleration` = 0.30 × accel ÷ (1 + inertia/50) × (1500/mass)^0.3; `engine_lag` = 0.012 s × inertia |
+| drag multiplier | `aerodynamic_drag` = 0.0004 × drag |
+| traction multiplier, loss, bias | `tire_grip` = 4.6 × √(traction/0.75); `traction_loss` = 0.4 + 0.55 × loss; `front_grip` = 1 + 1.2 × (bias − 0.5) |
+| drive type, brake decel, brake bias | `drive`; `brake_deceleration` = 1.2 × decel; `brake_front` = bias |
+| mass, turn mass | `yaw_inertia` = turn mass ÷ (2.8 × mass) |
+| centre of mass y, z | `front_weight` = 0.5 + y/2.7; `cg_offset` = z |
+| steering lock (degrees) | `steering_lock` |
+| handling flags, NO_HANDBRAKE | `handbrake` = 0 |
+
+Each result is clamped to the range in the table above. Cars from handling.cfg
+also get `air_control` 1.5 rad/s². Reverse runs at up to a quarter of flat-out
+speed (at most 12 m/s) with 60% of the forward pull. Gears, ABS, burnouts and
+surface types are not modelled yet.
 
 ## Stationary mesh updates
 
