@@ -1574,6 +1574,17 @@ impl State {
                     self.gamepad.move_x,
                 );
                 let handbrake = self.keys.contains(&KeyCode::Space) || self.gamepad.handbrake;
+                // The arrow keys, numpad 8/2 or the left stick tip the nose in
+                // mid-air, so holding the gas over a jump doesn't. Both pedals
+                // together at a standstill are a burnout.
+                let key = |codes: [KeyCode; 2]| codes.iter().any(|code| self.keys.contains(code));
+                let nose = f32::from(key([KeyCode::ArrowUp, KeyCode::Numpad8]))
+                    - f32::from(key([KeyCode::ArrowDown, KeyCode::Numpad2]));
+                car.set_stunt_input(
+                    nose + self.gamepad.move_y,
+                    self.keys.contains(&KeyCode::KeyW) && self.keys.contains(&KeyCode::KeyS)
+                        || self.gamepad.burnout,
+                );
                 car.step(
                     world,
                     throttle,
