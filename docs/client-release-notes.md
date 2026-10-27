@@ -1,5 +1,10 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.40.0:
+- MTA map pickups: nitro, repair and vehicle change pickups from MTA race maps now work. Drive through one to take it. Nitro fills a 10 second tank that burns while you hold fire or left Ctrl, repair fixes your car, and vehicle change swaps your car for the map's chosen model without stopping. Works in single player and on servers.
+
+Pickups passed automated tests. Pickup markers and the nitro feel still need a check on a real install.
+
 Version 0.39.1:
 - MTA map objects marked `collisions="false"` (decoration you are meant to drive through) no longer act as invisible walls.
 

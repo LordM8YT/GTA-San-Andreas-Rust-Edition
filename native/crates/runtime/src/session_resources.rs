@@ -330,6 +330,9 @@ impl Installing {
                 .as_ref()
                 .map(|l| l.map_spawns().to_vec())
                 .unwrap_or_default(),
+            pickups: crate::pickups::Pickups::new(
+                self.loader.as_ref().map_or(&[][..], |l| l.map_pickups()),
+            ),
             streamer: Some(Streamer::new(self.loader.take().unwrap())),
             uploading: None,
             retired: Vec::new(),
@@ -390,6 +393,7 @@ pub(super) struct World {
     peds: Vec<String>,
     clothes: Vec<(String, bool)>,
     map_spawns: Vec<(String, [f32; 3])>,
+    pickups: crate::pickups::Pickups,
 }
 impl State {
     fn swap_session_world(&mut self, mut world: World) -> World {
@@ -420,7 +424,8 @@ impl State {
             room_entry,
             yaw,
             pitch,
-            map_spawns
+            map_spawns,
+            pickups
         );
         std::mem::swap(&mut self.menu.mods, &mut world.mods);
         std::mem::swap(&mut self.menu.cars, &mut world.cars);

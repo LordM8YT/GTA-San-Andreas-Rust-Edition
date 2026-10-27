@@ -235,6 +235,13 @@ Up to 16 maps per resource and
 - `<spawnpoint>`: becomes a teleport target. Type `/spawns` in chat (T) to list
   them and `/spawns 1` to go to the first one. Most MTA maps are built away from
   the normal roads, often out at sea, so this is the way to reach them.
+- `<racepickup>`: `type` `nitro`, `repair` or `vehiclechange` (with
+  `vehicle`, a vehicles.ide ID), position and `respawn` in milliseconds (5 s
+  when missing). Drive through one to take it: nitro fills a 10 s tank that
+  burns while you hold fire or left Ctrl, repair fixes the car, and vehicle
+  change swaps your car for that model, keeping speed and heading. Pickups work
+  in single player and for every player on a server; each player takes them
+  with their own car. Up to 256 per map.
 - `<removeWorldObject>`: removes original placements of `model` and `lodModel`
   whose position lies within `radius` of `posX`/`posY`/`posZ`, in `interior`
   or in every interior when it is missing or -1.
@@ -242,7 +249,7 @@ Up to 16 maps per resource and
 Objects with `collisions="false"` are drawn without collision. Objects with a
 model ID that SARE does not know are skipped. `alpha`, `doublesided`, `frozen`
 and `dimension` are ignored. Vehicles,
-peds, pickups, markers, race checkpoints and other elements are skipped.
+peds, markers, race checkpoints and other elements are skipped.
 
 MTA maps load their custom models through client scripts. SARE never runs
 those scripts, but reads them as text and recognises two common forms:
