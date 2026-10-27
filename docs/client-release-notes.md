@@ -1,5 +1,8 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.41.0:
+- New experimental 3D car physics (Settings → Gameplay → Car physics → 3D). Your car is now a full body on four springs. It rolls down hills and slows on climbs, slides along walls and bounces off instead of stopping dead, leans and dives on its suspension, and can tip over and land on its roof. Classic stays the default while we tune it, so please try 3D and tell us how it feels.
+
 Version 0.40.1:
 - MTA maps: scaled objects no longer get scaled collision. MTA only scales how an object looks, so maps that blow up small props into big decoration (bushes, plants, rocks) no longer leave giant invisible walls. Objects at scale 0, which MTA maps use as invisible walls and floors, are solid again.
 

@@ -230,6 +230,9 @@ struct State {
     car_uploads: u64,
     car_uploaded_bytes: u64,
     car_render_pose: Option<sa_net::VehiclePose>,
+    /// Rotation the own car was last drawn with; the 3D body can tip past
+    /// what the pose angles show.
+    car_render_rotation: glam::Quat,
     driving: bool,
     car_catalog: Vec<Option<(sa_scene::vehicle::Car, Vec<GpuBatch>)>>,
     /// Menu name to gta3.img model for cars loaded on first use.
@@ -1058,6 +1061,7 @@ impl State {
             car_uploads: 0,
             car_uploaded_bytes: 0,
             car_render_pose: None,
+            car_render_rotation: glam::Quat::IDENTITY,
             driving: false,
             car_catalog: vec![None],
             original_car_models: std::collections::HashMap::new(),
@@ -1591,6 +1595,7 @@ impl State {
                 let key = |codes: [KeyCode; 2]| codes.iter().any(|code| self.keys.contains(code));
                 let nose = f32::from(key([KeyCode::ArrowUp, KeyCode::Numpad8]))
                     - f32::from(key([KeyCode::ArrowDown, KeyCode::Numpad2]));
+                car.set_rigid(self.menu.settings.rigid_cars);
                 car.set_stunt_input(
                     nose + self.gamepad.move_y,
                     self.keys.contains(&KeyCode::KeyW) && self.keys.contains(&KeyCode::KeyS)
@@ -1787,10 +1792,13 @@ impl State {
                 roll: car.roll,
                 ..sa_net::VehiclePose::default()
             };
-            if multiplayer::car_changed(self.car_render_pose, pose) || look != self.car_render_look
+            let rotation = car.model_orientation();
+            if multiplayer::car_changed(self.car_render_pose, pose)
+                || look != self.car_render_look
+                || rotation != self.car_render_rotation
             {
                 self.car_uploads += 1;
-                let rotation = sa_scene::vehicle::model_rotation(car.yaw, car.pitch, car.roll);
+                self.car_render_rotation = rotation;
                 for batch in batches {
                     let raw = car_damage::pose_car(batch, &look, rotation, car.position);
                     self.queue

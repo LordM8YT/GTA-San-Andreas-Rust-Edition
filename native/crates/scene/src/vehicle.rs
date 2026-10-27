@@ -1,6 +1,7 @@
 //! Lightweight vehicle dynamics with tire slip and steering inertia.
 //! Position is the model origin; speed and slip are in metres per second.
 use crate::collision::CollisionWorld;
+mod rigid;
 use glam::{Affine3A, Quat, Vec3};
 pub use sa_assets::{Panel, VehiclePart};
 /// Render the original model's -Z front in the simulated +Z-forward body frame.
@@ -436,6 +437,8 @@ pub struct Car {
     air_pitch_rate: f32,
     air_roll_rate: f32,
     burning_out: bool,
+    /// The experimental 3D body, when it drives this car.
+    rigid: Option<rigid::Rigid>,
 }
 impl Car {
     pub fn new(position: Vec3, clearance: f32) -> Self {
@@ -464,6 +467,7 @@ impl Car {
             air_pitch_rate: 0.0,
             air_roll_rate: 0.0,
             burning_out: false,
+            rigid: None,
         }
     }
     pub fn with_handling(mut self, handling: Handling) -> Self {
@@ -541,6 +545,24 @@ impl Car {
         };
         self.burnout_input = burnout;
     }
+    /// Drive this car with the experimental 3D body, which can tip, flip and
+    /// bounce off walls, or with the flat model.
+    pub fn set_rigid(&mut self, on: bool) {
+        if on != self.rigid.is_some() {
+            self.rigid = on.then(|| rigid::Rigid::new(self));
+        }
+    }
+    pub fn rigid(&self) -> bool {
+        self.rigid.is_some()
+    }
+    /// Rotation of the original model (-Z front) as the car should be drawn,
+    /// including upside down under the 3D body.
+    pub fn model_orientation(&self) -> Quat {
+        self.rigid.map_or_else(
+            || model_rotation(self.yaw, self.pitch, self.roll),
+            |body| body.model_orientation(),
+        )
+    }
     /// Standing still with both pedals down and the driven wheels spinning.
     pub fn burning_out(&self) -> bool {
         self.burning_out
@@ -553,6 +575,9 @@ impl Car {
         self.lateral_speed = 0.0;
         self.yaw_rate = 0.0;
         self.engine_throttle = 0.0;
+        if let Some(body) = &mut self.rigid {
+            body.halt();
+        }
     }
     fn body_clear(&self, world: &CollisionWorld, position: Vec3) -> bool {
         let feet = position - Vec3::Y * self.clearance;
@@ -642,6 +667,17 @@ impl Car {
         // Fixed maximum integration interval keeps grip consistent across frame rates.
         let steps = (dt / (1.0 / 120.0)).ceil() as usize;
         for _ in 0..steps {
+            if self.rigid.is_some() {
+                self.integrate_rigid(
+                    world,
+                    throttle,
+                    steer,
+                    handbrake,
+                    handling,
+                    dt / steps as f32,
+                );
+                continue;
+            }
             self.integrate(
                 world,
                 throttle,
@@ -1678,14 +1714,17 @@ mod tests {
     }
     /// A flat square of road `half` metres either side of the origin.
     fn pad(half: f32) -> CollisionWorld {
-        CollisionWorld::from_batches(&[mesh(&[
+        CollisionWorld::from_batches(&[pad_batch(half)])
+    }
+    fn pad_batch(half: f32) -> Batch {
+        mesh(&[
             [-half, 0.0, -half],
             [half, 0.0, -half],
             [half, 0.0, half],
             [-half, 0.0, -half],
             [half, 0.0, half],
             [-half, 0.0, half],
-        ])])
+        ])
     }
     fn row(line: &str) -> Handling {
         crate::handling::from_line(line).unwrap()
@@ -1885,5 +1924,164 @@ mod tests {
             );
             assert!((car.position.y - 0.6).abs() < 0.1, "{}", car.position.y);
         }
+    }
+    fn rigid_car(tuning: Handling, at: Vec3) -> Car {
+        let mut car = Car::new(at, 0.6).with_handling(tuning);
+        car.set_rigid(true);
+        car
+    }
+    fn drive(car: &mut Car, world: &CollisionWorld, throttle: f32, steer: f32, seconds: f32) {
+        for _ in 0..(seconds * 120.0) as usize {
+            car.step(world, throttle, steer, false, 1.0, 1.0 / 120.0);
+        }
+    }
+    #[test]
+    fn the_3d_body_rests_level_on_flat_ground() {
+        let world = pad(100.0);
+        let mut car = rigid_car(Handling::default(), Vec3::Y * 0.7);
+        drive(&mut car, &world, 0.0, 0.0, 3.0);
+        assert!((car.position.y - 0.6).abs() < 0.05, "{}", car.position.y);
+        assert!(
+            car.pitch.abs() < 0.01 && car.roll.abs() < 0.01,
+            "{} {}",
+            car.pitch,
+            car.roll
+        );
+        assert!(car.velocity().length() < 0.05 && !car.airborne());
+    }
+    #[test]
+    fn the_3d_body_rolls_down_hills_and_slows_climbing_them() {
+        let hill = CollisionWorld::from_batches(&[ramp(0.15)]);
+        let mut parked = rigid_car(Handling::default(), Vec3::Y * 0.7);
+        drive(&mut parked, &hill, 0.0, 0.0, 3.0);
+        assert!(parked.speed < -1.0, "rolls back down: {}", parked.speed);
+        let climb = |world: &CollisionWorld, y: f32| {
+            let mut car = rigid_car(Handling::default(), Vec3::new(0.0, y, -60.0));
+            drive(&mut car, world, 1.0, 0.0, 4.0);
+            car.speed
+        };
+        let flat = CollisionWorld::from_batches(&[ramp(0.0)]);
+        assert!(climb(&hill, -60.0 * 0.15 + 0.7) < climb(&flat, 0.7) * 0.85);
+    }
+    #[test]
+    fn the_3d_body_reaches_its_row_speed_and_turns_without_tipping() {
+        use crate::handling::tests::INFERNUS;
+        let tuning = row(INFERNUS);
+        let world =
+            CollisionWorld::from_batches(&[floor(-100.0, 1900.0, 0.0), floor(1900.0, 3900.0, 0.0)]);
+        let mut car = rigid_car(tuning, Vec3::new(0.0, 0.7, -90.0));
+        drive(&mut car, &world, 1.0, 0.0, 40.0);
+        let target = 0.9 * 240.0 / 3.6;
+        assert!(
+            (car.speed - target).abs() < target * 0.12,
+            "{} vs {target}",
+            car.speed
+        );
+        let pad = pad(100.0);
+        let mut turning = rigid_car(tuning, Vec3::Y * 0.7);
+        turning.speed = 15.0;
+        drive(&mut turning, &pad, 0.3, 1.0, 2.0);
+        assert!(turning.yaw > 1.0, "turns left: {}", turning.yaw);
+        assert!(
+            turning.roll.abs() < 0.3 && !turning.airborne(),
+            "{} {} {}",
+            turning.roll,
+            turning.pitch,
+            turning.position
+        );
+    }
+    #[test]
+    fn the_3d_body_glances_off_walls_instead_of_stopping_dead() {
+        let mut batches = vec![pad_batch(100.0)];
+        batches.push(mesh(&[
+            [5.0, -1.0, -60.0],
+            [5.0, 5.0, -60.0],
+            [5.0, 5.0, 60.0],
+            [5.0, -1.0, -60.0],
+            [5.0, 5.0, 60.0],
+            [5.0, -1.0, 60.0],
+        ]));
+        let world = CollisionWorld::from_batches(&batches);
+        let mut car = rigid_car(Handling::default(), Vec3::new(0.0, 0.7, -20.0));
+        car.yaw = 0.5;
+        car.speed = 20.0;
+        drive(&mut car, &world, 0.0, 0.0, 2.0);
+        assert!(
+            car.position.x < 5.0 && car.velocity().length() > 6.0,
+            "{:?}",
+            car.velocity()
+        );
+        assert!(car.velocity().x < 1.0);
+    }
+    #[test]
+    fn the_3d_body_lands_on_its_roof_and_stays_above_ground() {
+        let world = pad(100.0);
+        let mut car = rigid_car(Handling::default(), Vec3::Y * 4.0);
+        car.roll = 0.0;
+        car.rigid.as_mut().unwrap().flip_for_test();
+        drive(&mut car, &world, 0.0, 0.0, 4.0);
+        let up = car.model_orientation() * Vec3::Y;
+        assert!(up.y < -0.9, "still upside down: {up}");
+        assert!(
+            car.position.y > 0.3 && car.velocity().length() < 0.2,
+            "{}",
+            car.position.y
+        );
+    }
+    #[test]
+    fn the_3d_body_flies_off_a_ramp_and_lands_on_its_wheels() {
+        let world = CollisionWorld::from_batches(&[
+            mesh(&[
+                [-20.0, 0.0, -100.0],
+                [20.0, 0.0, -100.0],
+                [20.0, 0.0, 0.0],
+                [-20.0, 0.0, -100.0],
+                [20.0, 0.0, 0.0],
+                [-20.0, 0.0, 0.0],
+            ]),
+            mesh(&[
+                [-20.0, 0.0, 0.0],
+                [20.0, 0.0, 0.0],
+                [20.0, 3.0, 12.0],
+                [-20.0, 0.0, 0.0],
+                [20.0, 3.0, 12.0],
+                [-20.0, 3.0, 12.0],
+            ]),
+            floor(12.0, 112.0, -2.0),
+        ]);
+        let mut car = rigid_car(Handling::default(), Vec3::new(0.0, 0.7, -40.0));
+        car.speed = 25.0;
+        let mut flew = false;
+        for _ in 0..600 {
+            car.step(&world, 0.3, 0.0, false, 1.0, 1.0 / 120.0);
+            flew |= car.airborne() && car.position.z > 12.0;
+        }
+        assert!(flew);
+        let up = car.model_orientation() * Vec3::Y;
+        assert!(up.y > 0.95 && !car.airborne(), "{up} {}", car.position);
+    }
+    #[test]
+    fn the_3d_body_ignores_low_ceilings_and_keeps_its_tilt_when_turned() {
+        let slab = mesh(&[
+            [-20.0, 1.7, -50.0],
+            [20.0, 1.7, -50.0],
+            [20.0, 1.7, 50.0],
+            [-20.0, 1.7, -50.0],
+            [20.0, 1.7, 50.0],
+            [-20.0, 1.7, 50.0],
+        ]);
+        let world = CollisionWorld::from_batches(&[pad_batch(100.0), slab]);
+        let mut car = rigid_car(Handling::default(), Vec3::new(0.0, 0.7, -40.0));
+        car.speed = 10.0;
+        drive(&mut car, &world, 0.3, 0.0, 4.0);
+        assert!((car.position.y - 0.6).abs() < 0.1, "{}", car.position.y);
+        let open = pad(100.0);
+        let mut flipped = rigid_car(Handling::default(), Vec3::Y * 2.0);
+        flipped.rigid.as_mut().unwrap().flip_for_test();
+        drive(&mut flipped, &open, 0.0, 0.0, 3.0);
+        flipped.yaw += 0.5;
+        flipped.stop();
+        drive(&mut flipped, &open, 0.0, 0.0, 0.5);
+        assert!((flipped.model_orientation() * Vec3::Y).y < -0.9);
     }
 }
