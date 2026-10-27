@@ -96,6 +96,7 @@ mod tests {
         let r = Placement {
             id: 0,
             scale: 1.0,
+            solid: true,
             interior: 0,
             lod: -1,
             is_lod: false,

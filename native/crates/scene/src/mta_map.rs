@@ -17,6 +17,8 @@ pub(crate) struct MapObject {
     pub rotation: [f32; 4],
     pub interior: i32,
     pub scale: f32,
+    /// `collisions="false"`: the object is drawn but has no collision.
+    pub solid: bool,
 }
 #[derive(Debug, PartialEq)]
 pub(crate) struct WorldRemoval {
@@ -412,6 +414,7 @@ fn object(element: &BytesStart) -> Result<MapObject> {
         rotation: ipl_rotation(degrees),
         interior,
         scale,
+        solid: attribute(element, "collisions")?.is_none_or(|v| v != "false"),
     })
 }
 fn removal(element: &BytesStart) -> Result<WorldRemoval> {
@@ -442,7 +445,7 @@ mod tests {
 
     const SAMPLE: &str = r#"<map edf:definitions="editor_main">
     <object id="ramp (1)" doublesided="false" model="1634" interior="0" dimension="0" posX="2495.5" posY="-1668.25" posZ="13.1" rotX="0" rotY="0" rotZ="90"></object>
-    <object id="crate" model="1271" posX="1" posY="2" posZ="3" scale="2" />
+    <object id="crate" model="1271" posX="1" posY="2" posZ="3" scale="2" collisions="false" />
     <removeWorldObject id="r1" radius="5.5" interior="0" model="17699" lodModel="17979" posX="10" posY="20" posZ="30" rotX="0" rotY="0" rotZ="0"></removeWorldObject>
     <vehicle id="v" model="411" posX="0" posY="0" posZ="0" />
     <spawnpoint id="s" posX="0" posY="0" posZ="0" />
@@ -456,6 +459,8 @@ mod tests {
         assert_eq!(map.objects[0].position, [2495.5, -1668.25, 13.1]);
         assert_eq!(map.objects[1].rotation, [0.0, 0.0, 0.0, 1.0]);
         assert_eq!(map.objects[1].scale, 2.0);
+        assert!(map.objects[0].solid);
+        assert!(!map.objects[1].solid);
         assert_eq!(map.spawns, vec![[0.0, 0.0, 0.0]]);
         assert_eq!(map.skipped, 1);
         assert_eq!(

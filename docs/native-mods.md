@@ -239,8 +239,9 @@ Up to 16 maps per resource and
   whose position lies within `radius` of `posX`/`posY`/`posZ`, in `interior`
   or in every interior when it is missing or -1.
 
-Objects with a model ID that SARE does not know are skipped. `alpha`,
-`collisions`, `doublesided`, `frozen` and `dimension` are ignored. Vehicles,
+Objects with `collisions="false"` are drawn without collision. Objects with a
+model ID that SARE does not know are skipped. `alpha`, `doublesided`, `frozen`
+and `dimension` are ignored. Vehicles,
 peds, pickups, markers, race checkpoints and other elements are skipped.
 
 MTA maps load their custom models through client scripts. SARE never runs

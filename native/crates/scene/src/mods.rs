@@ -665,6 +665,7 @@ impl WorldLoader {
                         object.rotation,
                     )?;
                     row.scale = object.scale;
+                    row.solid = object.solid;
                     self.rows.push(row);
                 }
                 for position in map.spawns {
