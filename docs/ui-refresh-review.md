@@ -10,7 +10,7 @@ of up to 20 players.
 
 ## Must fix — resolved
 
-1. **Enter could trigger two menu actions** (`menu/front.rs`, `menu/gta.rs`)
+1. **Enter could trigger two menu actions** (`menu/front.rs`, `menu/pause_tabs.rs`)
    - **What this is:** Menus support both the selected row and egui's focused button.
    - **Problem:** Enter on a focused Settings button could also start or resume free roam. The regression returned `Some(Play)` when no play action was expected.
    - **Fix:** Let the focused button own keyboard activation. Use the selected-row fallback only when no widget owns keyboard input. Keep Q/E tab switching available unless a text field is focused.
@@ -22,7 +22,7 @@ of up to 20 players.
    - **Fix:** Give narrow windows a wider settings list and collapsible details inside its scroll area. Keep wide-window details scrollable and omit redundant sidebar hints when the height is too short.
    - **If we skip it:** Players cannot reliably read the setting they are changing.
 
-3. **Title actions and pause labels did not fit small windows** (`menu/front.rs`, `menu/gta.rs`)
+3. **Title actions and pause labels did not fit small windows** (`menu/front.rs`, `menu/pause_tabs.rs`)
    - **What this is:** The old title screen used a long vertical list; pause tabs shared one row.
    - **Problem:** The title list could put Quit below the screen, and long pause-tab labels were squeezed into narrow cells.
    - **Fix:** Group the three play actions separately, keep customization in a second column, wrap narrow pause tabs and size the pause list to the available height.
