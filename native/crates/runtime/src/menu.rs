@@ -445,6 +445,7 @@ impl Menu {
                 ("Traffic", if s.traffic_cars == 0 { "Off".into() } else { format!("{} cars", s.traffic_cars) }, "Cars driving the city's roads around you. Fewer cars run faster on weak PCs."),
                 ("Pedestrians", if s.pedestrians == 0 { "Off".into() } else { format!("{} people", s.pedestrians) }, "People walking the pavements around you. Fewer run faster on weak PCs."),
                 ("Car camera recenter", on(s.car_camera_recenter), "Swings the driving camera back behind the car after you stop moving the mouse. Off keeps it where you left it."),
+                ("Car physics", if s.rigid_cars { "3D (experimental)".into() } else { "Classic".into() }, "3D drives your car as a full body on four springs: it rolls down hills, slides along walls, tips over and can land on its roof. Classic is the flat model from earlier versions."),
             ],
             SettingsTab::Interface => vec![
                 ("HUD", on(s.show_hud), "Shows gameplay information over the world."),
@@ -584,6 +585,7 @@ impl Menu {
                 }
             }
             (SettingsTab::Gameplay, 7) => s.car_camera_recenter = !s.car_camera_recenter,
+            (SettingsTab::Gameplay, 8) => s.rigid_cars = !s.rigid_cars,
             (SettingsTab::Interface, 1) => s.show_hud = !s.show_hud,
             (SettingsTab::Interface, 2) => s.show_minimap = !s.show_minimap,
             (SettingsTab::Interface, 3) => s.show_speedometer = !s.show_speedometer,

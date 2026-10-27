@@ -163,6 +163,34 @@ and steering pivots it slowly on the spot. Letting go of the brake launches
 the car with the engine already at full throttle, which matters most for cars
 with a lot of engine inertia.
 
+## Experimental 3D car body
+
+Gameplay settings → Car physics → 3D (experimental) drives your own car with
+`vehicle/rigid.rs` instead of the flat model. It is built from general
+rigid-body and raycast-suspension physics with SARE's own constants. It reads
+the same `Handling`.
+
+- The body is a box with the car's size. Its turning inertia is scaled by
+  `yaw_inertia`, and `front_weight` moves the centre of mass toward an axle.
+- Each wheel looks straight down for the road. Its spring and damper
+  (`suspension_spring`, `suspension_damping`, shared by four wheels) carry
+  the car, so it squats, dives, leans and leaves the ground over crests.
+- Tyres use the same grip budget as the flat model: per-axle grip,
+  `traction_loss` once sliding, drive and brake shares, the handbrake and
+  burnouts. Their forces act at half the ride height, as if through stiff
+  anti-roll bars, so hard cornering leans the car without flipping it.
+- Gravity acts on the whole body. Cars roll down hills when nobody holds the
+  brake, and they lose speed climbing.
+- Walls push the body out and take an impulse with a little bounce and
+  scraping friction. A glancing hit slides along the wall and spins the car
+  instead of stopping it dead.
+- Body corners that touch the ground hold the car up. A car can tip over,
+  slide on its side and come to rest on its roof.
+- Mid-air controls tip, turn and roll the whole body.
+
+Other players still see your car with the flat pose angles, so a car on its
+roof shows on its side for them.
+
 ## Stationary mesh updates
 
 The local car now reuses its transformed GPU geometry while its position and

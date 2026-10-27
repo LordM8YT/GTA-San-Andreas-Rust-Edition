@@ -73,6 +73,8 @@ pub struct Settings {
     pub pedestrians: u32,
     /// Swing the driving camera back behind the car after looking around.
     pub car_camera_recenter: bool,
+    /// Drive with the experimental 3D car body instead of the flat model.
+    pub rigid_cars: bool,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -113,6 +115,7 @@ impl Default for Settings {
             traffic_cars: 12,
             pedestrians: 16,
             car_camera_recenter: true,
+            rigid_cars: false,
         }
     }
 }
