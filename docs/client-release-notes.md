@@ -1,5 +1,8 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.40.1:
+- MTA maps: scaled objects no longer get scaled collision. MTA only scales how an object looks, so maps that blow up small props into big decoration (bushes, plants, rocks) no longer leave giant invisible walls. Objects at scale 0, which MTA maps use as invisible walls and floors, are solid again.
+
 Version 0.40.0:
 - MTA map pickups: nitro, repair and vehicle change pickups from MTA race maps now work. Drive through one to take it. Nitro fills a 10 second tank that burns while you hold fire or left Ctrl, repair fixes your car, and vehicle change swaps your car for the map's chosen model without stopping. Works in single player and on servers.
 

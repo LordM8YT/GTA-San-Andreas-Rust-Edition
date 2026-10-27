@@ -41,6 +41,8 @@ struct Placement {
     uid: u32,
     parent: u32,
     /// Uniform model scale; 1 for every IPL row, MTA maps may set others.
+    /// Only the drawn model is scaled: as in MTA, collision keeps the
+    /// model's own size, and scale 0 hides the model but keeps it solid.
     scale: f32,
     /// False for MTA objects with `collisions="false"`: drawn, never collided.
     solid: bool,
@@ -837,7 +839,11 @@ impl WorldLoader {
         for ((r, def, is_lod, dff, distance_squared), visible) in
             candidates.into_iter().zip(visibility)
         {
-            let visible = visible && !covered.contains(&r.uid);
+            let visible = visible && !covered.contains(&r.uid) && r.scale > 0.0;
+            let unscaled = Placement {
+                scale: 1.0,
+                ..r.clone()
+            };
             if !is_lod && r.solid {
                 if let Some(model) = self.collision_models.get(&def.model) {
                     // Collision-only objects and transparent surfaces remain solid.
@@ -851,7 +857,7 @@ impl WorldLoader {
                                 model.max[a]
                             }
                         });
-                        let v = orient(point, r);
+                        let v = orient(point, &unscaled);
                         for a in 0..2 {
                             min[a] = min[a].min(v[a] + r.pos[a]);
                             max[a] = max[a].max(v[a] + r.pos[a]);
@@ -864,7 +870,7 @@ impl WorldLoader {
                         for face in &model.triangles {
                             for point in face {
                                 physical.vertices.push(Vertex {
-                                    position: place(*point, r, origin),
+                                    position: place(*point, &unscaled, origin),
                                     ..Default::default()
                                 });
                             }
@@ -880,7 +886,7 @@ impl WorldLoader {
                 && !self.collision_models.contains_key(&def.model)
                 && distance_squared <= detail
             {
-                add_model(&mut fallback, &models[&dff], r, origin, &def.txd)?;
+                add_model(&mut fallback, &models[&dff], &unscaled, origin, &def.txd)?;
             }
             triangles += add_model(&mut batches, &models[&dff], r, origin, &def.txd)?;
             if !is_lod {
@@ -1337,6 +1343,32 @@ mod streaming_tests {
         let world = scene.collision.as_ref().unwrap();
         assert_eq!(world.triangle_count(), 1);
         assert_eq!(world.ground_below(glam::Vec3::ZERO, 2.0), Some(1.0));
+        drop(loader);
+        fs::remove_dir_all(folder).unwrap();
+    }
+    #[test]
+    fn scaled_objects_keep_unscaled_collision_like_mta() {
+        let (folder, mut loader) = test_loader("scaled-collision");
+        loader.collision_models.insert(
+            "room".into(),
+            sa_assets::col::CollisionModel {
+                name: "room".into(),
+                triangles: vec![[[-5.0, -5.0, 1.0], [5.0, -5.0, 1.0], [0.0, 5.0, 1.0]]],
+                min: [-5.0, -5.0, 1.0],
+                max: [5.0, 5.0, 1.0],
+            },
+        );
+        // A second, ordinary placement away from the origin keeps the region non-empty.
+        loader
+            .rows
+            .push(placement(1, 0, [30.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]).unwrap());
+        for (scale, drawn) in [(3.0, 2), (0.0, 1)] {
+            loader.rows[0].scale = scale;
+            let scene = loader.load([0.0; 2], [0.0; 2], 50.0).unwrap();
+            assert_eq!(scene.placements, drawn);
+            let world = scene.collision.as_ref().unwrap();
+            assert_eq!(world.ground_below(glam::Vec3::ZERO, 5.0), Some(1.0));
+        }
         drop(loader);
         fs::remove_dir_all(folder).unwrap();
     }

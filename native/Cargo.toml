@@ -3,7 +3,7 @@ members = ["crates/assets", "crates/audio", "crates/scene", "crates/script", "cr
 resolver = "2"
 
 [workspace.package]
-version = "0.40.0"
+version = "0.40.1"
 edition = "2021"
 license = "MIT"
 
