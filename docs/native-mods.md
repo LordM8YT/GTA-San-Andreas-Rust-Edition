@@ -230,8 +230,9 @@ Up to 16 maps per resource and
 
 - `<object>`: `model`, `posX`/`posY`/`posZ`, `rotX`/`rotY`/`rotZ` in degrees
   (MTA's object rotation order: Z, then X, then Y), `interior`, and a uniform
-  `scale`. Objects with scale 0 (invisible in MTA) or broken attributes are
-  skipped one by one.
+  `scale`. As in MTA, scale changes only the drawn model: collision keeps the
+  model's normal size, and scale 0 hides the model but keeps it solid. Objects
+  with broken attributes are skipped one by one.
 - `<spawnpoint>`: becomes a teleport target. Type `/spawns` in chat (T) to list
   them and `/spawns 1` to go to the first one. Most MTA maps are built away from
   the normal roads, often out at sea, so this is the way to reach them.

@@ -80,7 +80,7 @@ pub(crate) fn parse(data: &[u8]) -> Result<MtaMap> {
             root = true;
         } else if depth == 1 {
             match element.name().as_ref() {
-                // One malformed or invisible (scale 0) object skips only itself.
+                // One malformed object skips only itself.
                 b"object" => match object(&element) {
                     Ok(object) => map.objects.push(object),
                     Err(_) => map.skipped += 1,
@@ -426,7 +426,7 @@ fn object(element: &BytesStart) -> Result<MapObject> {
     );
     let scale = number(element, "scale", Some(1.0))?;
     ensure!(
-        (0.01..=100.0).contains(&scale),
+        (0.0..=100.0).contains(&scale),
         "MTA map object scale {scale} out of range"
     );
     Ok(MapObject {
@@ -600,6 +600,8 @@ engineReplaceModel(bdff, someVariable)
     fn rejects_non_map_xml() {
         assert!(parse(b"<meta><map src=\"a.map\"/></meta>").is_err());
         let map = parse(br#"<map><object posX="1" posY="2" posZ="3"/><object model="1" posX="0" posY="0" posZ="0" scale="0"/></map>"#).unwrap();
-        assert!(map.objects.is_empty() && map.skipped == 2);
+        // Scale 0 hides an object in MTA but keeps its collision.
+        assert_eq!((map.objects.len(), map.skipped), (1, 1));
+        assert_eq!(map.objects[0].scale, 0.0);
     }
 }
