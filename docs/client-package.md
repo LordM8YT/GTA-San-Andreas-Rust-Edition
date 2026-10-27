@@ -25,7 +25,9 @@ Settings, logs, checkpoints and server cache are outside the original installati
 Windows `%LOCALAPPDATA%/SAFreeroam`; Linux `$XDG_CONFIG_HOME/sa-freeroam`
 (or `~/.config/sa-freeroam`), with cache under `$XDG_CACHE_HOME/sa-freeroam`
 (or `~/.cache/sa-freeroam`). `SARE_CONFIG_DIR` isolates a test profile and cache.
-The package's optional `mods/` folder is for local native resources.
+The launcher creates a `mods/` folder next to itself on first start. Put local
+native resources there, or unpacked MTA:SA map resources (folders with a
+`meta.xml`); see the native mod guide in the repository's `docs/native-mods.md`.
 
 macOS has separate `SARE-macos-aarch64-test.zip` (Apple Silicon) and
 `SARE-macos-x86_64-test.zip` (Intel) packages. Extract into a writable folder

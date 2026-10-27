@@ -1,5 +1,11 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.38.0:
+- MTA:SA maps: unzip a downloaded MTA map resource (the folder with `meta.xml`) into `mods/` and it loads on the next start, no conversion needed. Its objects are placed, and its `removeWorldObject` entries remove the original buildings they name. Native resources can also list `.map` files with `"mta_maps"`. Works in single player, and servers share the map file with joining players like other resource files. Vehicles, spawn points, markers, object scale and Lua scripts in MTA maps are not loaded yet.
+- The launcher now creates the `mods/` folder next to itself if it is missing.
+
+MTA map loading passed automated tests. Object rotations still need a check against a real MTA map on a real install.
+
 Version 0.37.0:
 - Air control: in mid-air, the Up/Down arrows (or numpad 8/2) tip the car's nose down or up, A/D turn it, and Space + A/D roll it. On a controller, use the left stick, and LB + stick to roll.
 - Burnouts: hold W + S (RT + LT on a controller) while standing still. The wheels spin, the engine revs and the car leaves tyre marks. Steer to pivot on the spot, and let go of the brake to launch.

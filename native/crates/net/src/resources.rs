@@ -59,7 +59,7 @@ pub fn validate_path(value: &str) -> io::Result<()> {
         }
     }
     let extension = value.rsplit('.').next().unwrap().to_ascii_lowercase();
-    if !["dff", "txd", "png", "col", "ifp"].contains(&extension.as_str())
+    if !["dff", "txd", "png", "col", "ifp", "map"].contains(&extension.as_str())
         && value != "mod.json"
         && value != "resource.json"
     {

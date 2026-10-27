@@ -21,6 +21,9 @@ struct Manifest {
     placements: Vec<Instance>,
     #[serde(default)]
     exclude_model_ids: Vec<i32>,
+    /// MTA:SA `.map` files with object placements and world-object removals.
+    #[serde(default)]
+    mta_maps: Vec<String>,
     #[serde(default)]
     texture_overrides: HashMap<String, String>,
 }
@@ -157,14 +160,9 @@ pub fn share_resource_folders(
     let (mut total_bytes, mut total_files) = (0_usize, 0_usize);
     for folder in folders {
         let folder = folder.canonicalize()?;
-        let filename = if folder.join("mod.json").is_file() {
-            "mod.json"
-        } else if folder.join("resource.json").is_file() {
-            "resource.json"
-        } else {
+        let Some((filename, raw)) = manifest_bytes(&folder)? else {
             continue;
         };
-        let raw = resource(&folder, filename)?;
         let manifest: Manifest = serde_json::from_slice(&raw)?;
         if !manifest.enabled && !force_enabled {
             continue;
@@ -196,6 +194,7 @@ pub fn share_resource_folders(
             }
         }
         references.extend(manifest.texture_overrides.values().cloned());
+        references.extend(manifest.mta_maps.iter().cloned());
         total_files += references.len() + 1;
         ensure!(
             total_files <= MAX_FILES,
@@ -213,6 +212,14 @@ pub fn share_resource_folders(
                         if ["dff", "txd", "col", "ifp"].contains(&key.as_str()) {
                             if let Some(path) = value.as_str() {
                                 *value = serde_json::Value::String(path.replace('\\', "/"));
+                            }
+                        } else if key == "mta_maps" {
+                            if let Some(maps) = value.as_array_mut() {
+                                for value in maps {
+                                    if let Some(path) = value.as_str() {
+                                        *value = serde_json::Value::String(path.replace('\\', "/"));
+                                    }
+                                }
                             }
                         } else if key == "texture_overrides" {
                             if let Some(textures) = value.as_object_mut() {
@@ -272,6 +279,25 @@ pub(super) struct Resources {
     pub ped_name: String,
     pub player: Option<ped::Source>,
     pub players: Vec<(String, ped::Source)>,
+}
+/// The native manifest, or one generated from an MTA resource's `meta.xml`
+/// when the folder has no native manifest. Shared packs always carry JSON.
+fn manifest_bytes(folder: &Path) -> Result<Option<(&'static str, Vec<u8>)>> {
+    for filename in ["mod.json", "resource.json"] {
+        if folder.join(filename).is_file() {
+            return Ok(Some((filename, resource(folder, filename)?)));
+        }
+    }
+    if !folder.join("meta.xml").is_file() {
+        return Ok(None);
+    }
+    let folder_name = folder
+        .file_name()
+        .context("resource folder name missing")?
+        .to_string_lossy();
+    let manifest = crate::mta_map::meta_manifest(&resource(folder, "meta.xml")?, &folder_name)
+        .with_context(|| format!("MTA resource {}", folder.display()))?;
+    Ok(Some(("mod.json", serde_json::to_vec(&manifest)?)))
 }
 /// Canonical containment also rejects escapes through directory junctions.
 fn resource(root: &Path, relative: &str) -> Result<Vec<u8>> {
@@ -369,14 +395,10 @@ impl WorldLoader {
         let root = directory.canonicalize()?;
         let mut resource_names = HashSet::new();
         for folder in resource_folders(&root)? {
-            let manifest_path = if folder.join("mod.json").is_file() {
-                "mod.json"
-            } else if folder.join("resource.json").is_file() {
-                "resource.json"
-            } else {
+            let Some((_, raw)) = manifest_bytes(&folder)? else {
                 continue;
             };
-            let manifest: Manifest = serde_json::from_slice(&resource(&folder, manifest_path)?)
+            let manifest: Manifest = serde_json::from_slice(&raw)
                 .with_context(|| format!("mod manifest {}", folder.display()))?;
             let folder_name = folder
                 .file_name()
@@ -553,6 +575,53 @@ impl WorldLoader {
                     instance.position,
                     instance.rotation,
                 )?);
+            }
+            ensure!(
+                manifest.mta_maps.len() <= 16,
+                "MTA map limit (16 per resource)"
+            );
+            let mut map_objects = 0;
+            for relative in &manifest.mta_maps {
+                let map = crate::mta_map::parse(&resource(&folder, relative)?)
+                    .with_context(|| format!("MTA map {relative}"))?;
+                for removal in &map.removals {
+                    self.rows.retain(|row| {
+                        let model = row.id == removal.model || Some(row.id) == removal.lod_model;
+                        let interior = removal.interior.is_none_or(|i| i == row.interior);
+                        let distance = row
+                            .pos
+                            .iter()
+                            .zip(removal.position)
+                            .map(|(a, b)| (a - b).powi(2))
+                            .sum::<f32>();
+                        !(model && interior && distance <= removal.radius.powi(2))
+                    });
+                }
+                let mut unknown = 0;
+                for object in map.objects {
+                    if !self.defs.contains_key(&object.model) {
+                        unknown += 1;
+                        continue;
+                    }
+                    map_objects += 1;
+                    ensure!(
+                        map_objects <= crate::mta_map::MAX_MAP_ELEMENTS,
+                        "MTA map placement budget ({})",
+                        crate::mta_map::MAX_MAP_ELEMENTS
+                    );
+                    self.rows.push(placement(
+                        object.model,
+                        object.interior,
+                        object.position,
+                        object.rotation,
+                    )?);
+                }
+                eprintln!(
+                    "MTA map {relative}: {} removals; skipped {unknown} unknown models, {} unsupported elements; {} objects placed without scale",
+                    map.removals.len(),
+                    map.skipped,
+                    map.unscaled
+                );
             }
             self.resources.excluded.extend(manifest.exclude_model_ids);
             for (key, relative) in manifest.texture_overrides {
@@ -921,6 +990,88 @@ mod tests {
         fs::remove_dir(extra).unwrap();
         fs::remove_dir(root.join("mods")).unwrap();
         fs::remove_dir(root).unwrap();
+    }
+    #[test]
+    fn mta_map_places_known_objects_and_removes_world_objects() {
+        let root = std::env::temp_dir().join(format!("sa-mta-map-{}", std::process::id()));
+        let folder = root.join("mods/[maps]/stunt");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(root.join("empty.img"), b"VER2\0\0\0\0").unwrap();
+        fs::write(
+            folder.join("stunt.map"),
+            br#"<map>
+<object id="a" model="1634" interior="0" posX="1" posY="2" posZ="3" rotZ="90"/>
+<object id="b" model="99999" posX="0" posY="0" posZ="0"/>
+<removeWorldObject id="r" radius="5" model="17699" lodModel="17979" posX="10" posY="20" posZ="30"/>
+</map>"#,
+        )
+        .unwrap();
+        fs::write(
+            folder.join("mod.json"),
+            br#"{"enabled":true,"name":"Stunt","mta_maps":["stunt.map"]}"#,
+        )
+        .unwrap();
+        let park = root.join("mods/[maps]/park");
+        fs::create_dir_all(park.join("maps")).unwrap();
+        fs::write(
+            park.join("meta.xml"),
+            br#"<meta><info name="Park" type="map"/><map src="maps/park.map"/></meta>"#,
+        )
+        .unwrap();
+        fs::write(
+            park.join("maps/park.map"),
+            br#"<map><object model="1634" posX="7" posY="8" posZ="9"/></map>"#,
+        )
+        .unwrap();
+        let definition = || Definition {
+            model: "m".into(),
+            txd: "m".into(),
+        };
+        let mut loader = WorldLoader {
+            water: std::sync::Arc::new(crate::water::WaterMap::default()),
+            water_texture: None,
+            roadsign_font: None,
+            uv_tracks: HashMap::new(),
+            texture_parents: HashMap::new(),
+            img: WorldArchive {
+                exterior: Img::open(&root.join("empty.img")).unwrap(),
+                interior: None,
+            },
+            defs: [
+                (1634, definition()),
+                (17699, definition()),
+                (17979, definition()),
+            ]
+            .into(),
+            rows: vec![
+                placement(17699, 0, [12.0, 20.0, 30.0], [0.0, 0.0, 0.0, 1.0]).unwrap(),
+                placement(17979, 0, [10.0, 20.0, 30.0], [0.0, 0.0, 0.0, 1.0]).unwrap(),
+                placement(17699, 0, [100.0, 20.0, 30.0], [0.0, 0.0, 0.0, 1.0]).unwrap(),
+            ],
+            collision_models: HashMap::new(),
+            resources: Resources::default(),
+        };
+        loader.enable_mods(&root.join("mods")).unwrap();
+        let rows: Vec<_> = loader.rows.iter().map(|r| (r.id, r.pos)).collect();
+        assert_eq!(
+            rows,
+            vec![
+                (17699, [100.0, 20.0, 30.0]),
+                (1634, [7.0, 8.0, 9.0]),
+                (1634, [1.0, 2.0, 3.0])
+            ]
+        );
+        assert!(loader.mod_names().contains(&"[enabled] Park".to_owned()));
+        let shared = share_resources(&root.join("mods")).unwrap();
+        let files: Vec<_> = shared
+            .manifest
+            .resources
+            .iter()
+            .flat_map(|r| r.files.iter().map(|f| f.path.as_str()))
+            .collect();
+        assert!(files.contains(&"stunt.map") && files.contains(&"maps/park.map"));
+        assert!(!files.contains(&"meta.xml"));
+        fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn rejects_parent_path_escape() {

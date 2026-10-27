@@ -25,6 +25,15 @@ pub fn root() -> PathBuf {
         .filter(|p| p.is_dir())
         .unwrap_or(sibling)
 }
+/// Packages ship without `mods/`; create it so players can drop resources in.
+pub fn ensure_root() {
+    let root = root();
+    if !root.exists() {
+        if let Err(error) = fs::create_dir(&root) {
+            eprintln!("Could not create {}: {error}", root.display());
+        }
+    }
+}
 fn regular(path: &Path) -> Result<fs::Metadata> {
     let meta = fs::symlink_metadata(path)?;
     ensure!(!meta.is_symlink(), "Linked resources are not inspected");
@@ -92,6 +101,14 @@ fn collect(root: &Path, depth: usize, output: &mut Vec<Entry>) -> Result<()> {
         };
         let result = (|| -> Result<()> {
             item.bytes = Some(size(&path, 0, &mut 0)?);
+            if !path.join("mod.json").is_file()
+                && !path.join("resource.json").is_file()
+                && path.join("meta.xml").is_file()
+            {
+                item.kind = "MTA map".into();
+                item.status = "Enabled; runtime validates assets".into();
+                return Ok(());
+            }
             let manifest = if path.join("mod.json").is_file() {
                 path.join("mod.json")
             } else {
@@ -113,6 +130,7 @@ fn collect(root: &Path, depth: usize, output: &mut Vec<Entry>) -> Result<()> {
                 ("peds", "Peds"),
                 ("player", "Player / clothing"),
                 ("placements", "Map placements"),
+                ("mta_maps", "MTA maps"),
                 ("models", "Models"),
                 ("texture_overrides", "Textures"),
                 ("original_vehicle_handling", "Handling"),
