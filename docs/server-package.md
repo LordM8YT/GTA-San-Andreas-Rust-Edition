@@ -56,7 +56,7 @@ To update manually, download the newest server ZIP and replace only the
 your resources: when release notes say the shipped resources changed (for
 example SARE Box), copy those folders from the new ZIP's `server-data/resources/`.
 
-Full reference: <https://github.com/LordM8YT/GTA-San-Andreas-Rust-Edition/blob/main/docs/server-hosting.md>
+Full reference: <https://github.com/LordM8YT/SARE/blob/main/docs/server-hosting.md>
 Help and people to play with: <https://discord.gg/F8KwXJqw6D>
 
 These are experimental community builds; the prototype uses unencrypted TCP.

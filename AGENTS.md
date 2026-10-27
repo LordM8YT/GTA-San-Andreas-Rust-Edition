@@ -11,3 +11,12 @@
 - Small bugfix releases increment the patch number, for example `0.33.1` → `0.33.2`.
 - Larger feature updates increment the minor number and reset the patch number, for example `0.33.2` → `0.34.0`, then `0.35.0`.
 - Assign versions per release, not per commit. Set the shared version in `native/Cargo.toml` and keep local package versions in `native/Cargo.lock` and current-version documentation in sync.
+
+# Clean-room rules
+
+- Never commit Rockstar files or converted, extracted or upscaled copies of them. Read everything from the player's own installation at runtime.
+- Never translate, port or copy code from the game executable or from decompiled or disassembled sources (re3, reVC, gta-reversed, Ghidra/IDA output). Do not use them as references or link to them.
+- Use only observed game behaviour, the player's own data files and community file-format documentation.
+- Keep the project free: no paid features, donations, sponsorships or paid servers.
+- Do not use Rockstar or GTA logos, or artwork that imitates them.
+

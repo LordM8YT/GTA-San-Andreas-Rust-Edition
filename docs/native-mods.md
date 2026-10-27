@@ -205,6 +205,10 @@ Dekodede spillerteksturer har en egen grense på 128 MiB.
 
 ## MTA:SA maps
 
+Only load and share maps you are allowed to use. Servers send map files and
+their models to every player, so do not host maps that contain models taken
+from other Rockstar games.
+
 The quickest way: unzip a downloaded MTA map resource into `mods/` (or a
 category folder such as `mods/[maps]/`), so that its `meta.xml` sits directly
 inside the resource folder, for example `mods/[maps]/stuntpark/meta.xml`. A

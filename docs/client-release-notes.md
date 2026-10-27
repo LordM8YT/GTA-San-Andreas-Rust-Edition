@@ -1,5 +1,9 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.42.0:
+- New SARE look: a plain SARE logo and title font replace the old gothic "SA" icon and lettering in the launcher and menus. The launcher's About page now says SARE is an unofficial fan project and needs your own copy of the game.
+- The launcher and server updaters are ready for the project's new GitHub name (SARE). Updates keep working before and after the rename.
+
 Version 0.41.0:
 - New experimental 3D car physics (Settings → Gameplay → Car physics → 3D). Your car is now a full body on four springs. It rolls down hills and slows on climbs, slides along walls and bounces off instead of stopping dead, leans and dives on its suspension, and can tip over and land on its roof. Classic stays the default while we tune it, so please try 3D and tell us how it feels.
 
