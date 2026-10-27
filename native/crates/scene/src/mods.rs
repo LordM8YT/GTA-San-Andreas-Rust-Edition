@@ -21,6 +21,9 @@ struct Manifest {
     placements: Vec<Instance>,
     #[serde(default)]
     exclude_model_ids: Vec<i32>,
+    /// MTA:SA `.map` files with object placements and world-object removals.
+    #[serde(default)]
+    mta_maps: Vec<String>,
     #[serde(default)]
     texture_overrides: HashMap<String, String>,
 }
@@ -196,6 +199,7 @@ pub fn share_resource_folders(
             }
         }
         references.extend(manifest.texture_overrides.values().cloned());
+        references.extend(manifest.mta_maps.iter().cloned());
         total_files += references.len() + 1;
         ensure!(
             total_files <= MAX_FILES,
@@ -213,6 +217,14 @@ pub fn share_resource_folders(
                         if ["dff", "txd", "col", "ifp"].contains(&key.as_str()) {
                             if let Some(path) = value.as_str() {
                                 *value = serde_json::Value::String(path.replace('\\', "/"));
+                            }
+                        } else if key == "mta_maps" {
+                            if let Some(maps) = value.as_array_mut() {
+                                for value in maps {
+                                    if let Some(path) = value.as_str() {
+                                        *value = serde_json::Value::String(path.replace('\\', "/"));
+                                    }
+                                }
                             }
                         } else if key == "texture_overrides" {
                             if let Some(textures) = value.as_object_mut() {
@@ -553,6 +565,53 @@ impl WorldLoader {
                     instance.position,
                     instance.rotation,
                 )?);
+            }
+            ensure!(
+                manifest.mta_maps.len() <= 16,
+                "MTA map limit (16 per resource)"
+            );
+            let mut map_objects = 0;
+            for relative in &manifest.mta_maps {
+                let map = crate::mta_map::parse(&resource(&folder, relative)?)
+                    .with_context(|| format!("MTA map {relative}"))?;
+                for removal in &map.removals {
+                    self.rows.retain(|row| {
+                        let model = row.id == removal.model || Some(row.id) == removal.lod_model;
+                        let interior = removal.interior.is_none_or(|i| i == row.interior);
+                        let distance = row
+                            .pos
+                            .iter()
+                            .zip(removal.position)
+                            .map(|(a, b)| (a - b).powi(2))
+                            .sum::<f32>();
+                        !(model && interior && distance <= removal.radius.powi(2))
+                    });
+                }
+                let mut unknown = 0;
+                for object in map.objects {
+                    if !self.defs.contains_key(&object.model) {
+                        unknown += 1;
+                        continue;
+                    }
+                    map_objects += 1;
+                    ensure!(
+                        map_objects <= crate::mta_map::MAX_MAP_ELEMENTS,
+                        "MTA map placement budget ({})",
+                        crate::mta_map::MAX_MAP_ELEMENTS
+                    );
+                    self.rows.push(placement(
+                        object.model,
+                        object.interior,
+                        object.position,
+                        object.rotation,
+                    )?);
+                }
+                eprintln!(
+                    "MTA map {relative}: {} removals; skipped {unknown} unknown models, {} unsupported elements; {} objects placed without scale",
+                    map.removals.len(),
+                    map.skipped,
+                    map.unscaled
+                );
             }
             self.resources.excluded.extend(manifest.exclude_model_ids);
             for (key, relative) in manifest.texture_overrides {
@@ -921,6 +980,67 @@ mod tests {
         fs::remove_dir(extra).unwrap();
         fs::remove_dir(root.join("mods")).unwrap();
         fs::remove_dir(root).unwrap();
+    }
+    #[test]
+    fn mta_map_places_known_objects_and_removes_world_objects() {
+        let root = std::env::temp_dir().join(format!("sa-mta-map-{}", std::process::id()));
+        let folder = root.join("mods/[maps]/stunt");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(root.join("empty.img"), b"VER2\0\0\0\0").unwrap();
+        fs::write(
+            folder.join("stunt.map"),
+            br#"<map>
+<object id="a" model="1634" interior="0" posX="1" posY="2" posZ="3" rotZ="90"/>
+<object id="b" model="99999" posX="0" posY="0" posZ="0"/>
+<removeWorldObject id="r" radius="5" model="17699" lodModel="17979" posX="10" posY="20" posZ="30"/>
+</map>"#,
+        )
+        .unwrap();
+        fs::write(
+            folder.join("mod.json"),
+            br#"{"enabled":true,"name":"Stunt","mta_maps":["stunt.map"]}"#,
+        )
+        .unwrap();
+        let definition = || Definition {
+            model: "m".into(),
+            txd: "m".into(),
+        };
+        let mut loader = WorldLoader {
+            water: std::sync::Arc::new(crate::water::WaterMap::default()),
+            water_texture: None,
+            roadsign_font: None,
+            uv_tracks: HashMap::new(),
+            texture_parents: HashMap::new(),
+            img: WorldArchive {
+                exterior: Img::open(&root.join("empty.img")).unwrap(),
+                interior: None,
+            },
+            defs: [
+                (1634, definition()),
+                (17699, definition()),
+                (17979, definition()),
+            ]
+            .into(),
+            rows: vec![
+                placement(17699, 0, [12.0, 20.0, 30.0], [0.0, 0.0, 0.0, 1.0]).unwrap(),
+                placement(17979, 0, [10.0, 20.0, 30.0], [0.0, 0.0, 0.0, 1.0]).unwrap(),
+                placement(17699, 0, [100.0, 20.0, 30.0], [0.0, 0.0, 0.0, 1.0]).unwrap(),
+            ],
+            collision_models: HashMap::new(),
+            resources: Resources::default(),
+        };
+        loader.enable_mods(&root.join("mods")).unwrap();
+        let rows: Vec<_> = loader.rows.iter().map(|r| (r.id, r.pos)).collect();
+        assert_eq!(
+            rows,
+            vec![(17699, [100.0, 20.0, 30.0]), (1634, [1.0, 2.0, 3.0])]
+        );
+        let shared = share_resources(&root.join("mods")).unwrap();
+        assert!(shared.manifest.resources[0]
+            .files
+            .iter()
+            .any(|f| f.path == "stunt.map"));
+        fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn rejects_parent_path_escape() {

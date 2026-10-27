@@ -15,7 +15,8 @@ earlier definition with the same model ID.
 
 This runtime supports its documented `mod.json` resource schema and the asset
 formats described below: PC RenderWare DFF models, TXD textures (and PNG
-texture overrides), COL collision files, placements, and the documented
+texture overrides), COL collision files, placements, MTA:SA `.map` object
+placements, and the documented
 vehicle, player, and clothing resources. It does not load arbitrary original
 San Andreas mods directly. Binary plugins, ASI/DLL mods, CLEO scripts, original
 game-code or plugin APIs, and unconverted archives/workflows such as IMG/IPL
@@ -201,6 +202,41 @@ Filer begrenses til 16 MiB hver, totalt 512 modeller, 512 teksturoverstyringer
 og 256 MiB mod-ressurser. Ressurser kan ikke referere til filer utenfor egen
 mappe. Del egne assets; originaldata leses fra brukerens installasjon.
 Dekodede spillerteksturer har en egen grense på 128 MiB.
+
+## MTA:SA maps
+
+A resource can load MTA:SA `.map` files, such as maps shared on MTA community
+sites, by listing them in `mta_maps`:
+
+```json
+{
+  "schema_version": 2,
+  "enabled": true,
+  "name": "Stunt park",
+  "mta_maps": ["stuntpark.map"]
+}
+```
+
+Copy the `.map` file from the MTA resource (the files named by `<map src=...>`
+in its `meta.xml`) into the resource folder. Up to 16 maps per resource and
+20,000 objects in total are loaded. SARE reads:
+
+- `<object>`: `model`, `posX`/`posY`/`posZ`, `rotX`/`rotY`/`rotZ` in degrees
+  (MTA's object rotation order: Z, then X, then Y), and `interior`.
+- `<removeWorldObject>`: removes original placements of `model` and `lodModel`
+  whose position lies within `radius` of `posX`/`posY`/`posZ`, in `interior`
+  or in every interior when it is missing or -1.
+
+Objects with a model ID that SARE does not know are skipped. `scale`, `alpha`,
+`collisions`, `doublesided`, `frozen` and `dimension` are ignored, so scaled
+objects appear at normal size. Vehicles, peds, pickups, markers, spawn points
+and other elements are skipped, and Lua scripts in the MTA resource are not run.
+MTA maps that use custom models load them through scripts; register those DFF,
+TXD and COL files in `models` with the model ID the map uses instead. The
+loader counts what it skipped in the console log.
+
+When a server shares the resource, the `.map` files go to joining players with
+the other resource files.
 
 ## Multiplayer resource sharing
 
