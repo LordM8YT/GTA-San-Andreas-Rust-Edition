@@ -11,6 +11,8 @@ pub struct Input {
     pub jump: bool,
     pub sprint: bool,
     pub handbrake: bool,
+    /// Both triggers held: a burnout in a car.
+    pub burnout: bool,
     pub menu_up: bool,
     pub menu_down: bool,
     pub menu_left: bool,
@@ -77,6 +79,7 @@ pub fn read(gamepad: &Gamepad) -> Input {
         jump: gamepad.is_pressed(Button::South),
         sprint: gamepad.is_pressed(Button::West),
         handbrake: gamepad.is_pressed(Button::LeftTrigger),
+        burnout: rt_analog > 0.5 && lt_analog > 0.5,
         menu_up: gamepad.is_pressed(Button::DPadUp),
         menu_down: gamepad.is_pressed(Button::DPadDown),
         menu_left: gamepad.is_pressed(Button::DPadLeft),

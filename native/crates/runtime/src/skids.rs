@@ -30,6 +30,9 @@ impl Default for Skids {
 
 /// 0 when gripping, up to 1 for a full slide or a locked-wheel stop.
 pub fn intensity(car: &sa_scene::vehicle::Car, throttle: f32, handbrake: bool) -> f32 {
+    if car.burning_out() {
+        return 0.9;
+    }
     if car.airborne() || car.speed.abs() < 3.0 {
         return 0.0;
     }

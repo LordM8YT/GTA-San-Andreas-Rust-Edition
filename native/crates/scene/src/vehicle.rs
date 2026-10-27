@@ -393,6 +393,16 @@ fn wheel_normal_loads(
     }
     loads
 }
+/// Fastest a car can be rolling and still start a burnout, m/s.
+const BURNOUT_SPEED: f32 = 3.0;
+/// Turn rate at full steering during a burnout, rad/s.
+const BURNOUT_TURN: f32 = 1.2;
+/// Surface speed of the spinning wheels in a burnout, m/s.
+const BURNOUT_WHEEL_SPEED: f32 = 18.0;
+/// Mid-air pitch and roll acceleration per unit of `air_control`.
+const AIR_TILT_RATE: f32 = 2.0;
+/// Furthest the driver can tip the car in mid-air, radians.
+const AIR_TILT: f32 = 0.8;
 pub struct Car {
     pub handling: Handling,
     pub position: Vec3,
@@ -419,6 +429,13 @@ pub struct Car {
     skid_latched: bool,
     /// Throttle the engine is answering, after its lag.
     engine_throttle: f32,
+    /// Mid-air nose input, +1 tips the nose down; see `set_stunt_input`.
+    air_pitch_input: f32,
+    /// Both pedals held, asking for a burnout.
+    burnout_input: bool,
+    air_pitch_rate: f32,
+    air_roll_rate: f32,
+    burning_out: bool,
 }
 impl Car {
     pub fn new(position: Vec3, clearance: f32) -> Self {
@@ -442,6 +459,11 @@ impl Car {
             airborne: false,
             skid_latched: false,
             engine_throttle: 0.0,
+            air_pitch_input: 0.0,
+            burnout_input: false,
+            air_pitch_rate: 0.0,
+            air_roll_rate: 0.0,
+            burning_out: false,
         }
     }
     pub fn with_handling(mut self, handling: Handling) -> Self {
@@ -507,6 +529,21 @@ impl Car {
     }
     pub fn airborne(&self) -> bool {
         self.airborne
+    }
+    /// Controls `step` does not take: `pitch` tips the nose in mid-air (+1
+    /// down, -1 up) and `burnout` is both pedals held at once. They last until
+    /// changed.
+    pub fn set_stunt_input(&mut self, pitch: f32, burnout: bool) {
+        self.air_pitch_input = if pitch.is_finite() {
+            pitch.clamp(-1.0, 1.0)
+        } else {
+            0.0
+        };
+        self.burnout_input = burnout;
+    }
+    /// Standing still with both pedals down and the driven wheels spinning.
+    pub fn burning_out(&self) -> bool {
+        self.burning_out
     }
     pub fn forward(&self) -> Vec3 {
         Vec3::new(self.yaw.sin(), 0.0, self.yaw.cos())
@@ -705,7 +742,15 @@ impl Car {
             0.0
         };
         let steer = steer.clamp(-1.0, 1.0);
+        // In mid-air the handbrake key turns steering into a roll.
+        let roll_key = handbrake;
         let handbrake = handbrake && tuning.handbrake > 0.5;
+        // Both pedals at a standstill: the brakes hold the car while the
+        // engine revs and the wheels spin; letting go of the brake launches it.
+        self.burning_out = self.burnout_input
+            && !self.damage.wrecked
+            && grounded
+            && self.speed.abs() < BURNOUT_SPEED;
         // Steering lock falls with speed; wheel input and body rotation both have inertia.
         // Steering into a slide wins back lock the further the car is sliding,
         // so a slide can be caught at any speed.
@@ -722,7 +767,11 @@ impl Car {
             .clamp(-tuning.steering_rate * dt, tuning.steering_rate * dt);
         let braking = throttle * self.speed < -0.15;
         // The engine takes a moment to answer the pedal and lets go faster.
-        let pedal = throttle.max(0.0);
+        let pedal = if self.burning_out {
+            1.0
+        } else {
+            throttle.max(0.0)
+        };
         if tuning.engine_lag > 0.0 {
             let rate = if pedal > self.engine_throttle {
                 1.0
@@ -736,7 +785,9 @@ impl Car {
         // Tyres can't push or brake much harder than they can grip. The grip
         // setting is left out so it never changes engine power or brakes.
         let traction_cap = 2.7 * tuning.tire_grip;
-        let acceleration = if braking {
+        let acceleration = if self.burning_out {
+            -self.speed.signum() * tuning.brake_deceleration * self.speed.abs().min(1.0)
+        } else if braking {
             -self.speed.signum() * tuning.brake_deceleration * throttle.abs()
         } else if throttle >= 0.0 {
             self.engine_throttle
@@ -838,8 +889,19 @@ impl Car {
             / tuning.yaw_inertia
             * dt;
         if support_count == 0 {
-            // Steering still turns a car in mid-air, a little; a jump keeps its spin.
-            self.yaw_rate += steer * tuning.air_control * dt;
+            // Steering still turns a car in mid-air, a little; a jump keeps its
+            // spin. With the handbrake key it rolls the car instead, and the
+            // pedals tip the nose.
+            if roll_key && tuning.air_control > 0.0 {
+                self.air_roll_rate += steer * AIR_TILT_RATE * tuning.air_control * dt;
+            } else {
+                self.yaw_rate += steer * tuning.air_control * dt;
+            }
+            self.air_pitch_rate -= self.air_pitch_input * AIR_TILT_RATE * tuning.air_control * dt;
+        }
+        if self.burning_out {
+            // Spinning wheels let the car pivot slowly on the spot.
+            self.yaw_rate += (steer * BURNOUT_TURN - self.yaw_rate) * (1.0 - (-4.0 * dt).exp());
         }
         self.yaw_rate = self.yaw_rate.clamp(-3.5, 3.5);
         let old_yaw = self.yaw;
@@ -851,14 +913,33 @@ impl Car {
         let side = Vec3::new(self.yaw.cos(), 0.0, -self.yaw.sin());
         self.speed = velocity.dot(self.forward());
         self.lateral_speed = velocity.dot(side);
-        let blend = 1.0 - (-8.0 * dt).exp();
-        self.pitch +=
-            ((slope_pitch + acceleration * grip * 0.012).clamp(-0.6, 0.6) - self.pitch) * blend;
-        self.roll +=
-            ((slope_roll + lateral_acceleration * 0.016).clamp(-0.5, 0.5) - self.roll) * blend;
+        if support_count == 0 && tuning.air_control > 0.0 {
+            // A car in the air holds its tilt until the driver changes it.
+            let tilt = |angle: &mut f32, rate: &mut f32| {
+                *angle += *rate * dt;
+                if angle.abs() > AIR_TILT {
+                    *angle = angle.clamp(-AIR_TILT, AIR_TILT);
+                    *rate = 0.0;
+                }
+            };
+            tilt(&mut self.pitch, &mut self.air_pitch_rate);
+            tilt(&mut self.roll, &mut self.air_roll_rate);
+        } else {
+            self.air_pitch_rate = 0.0;
+            self.air_roll_rate = 0.0;
+            let blend = 1.0 - (-8.0 * dt).exp();
+            self.pitch +=
+                ((slope_pitch + acceleration * grip * 0.012).clamp(-0.6, 0.6) - self.pitch) * blend;
+            self.roll +=
+                ((slope_roll + lateral_acceleration * 0.016).clamp(-0.5, 0.5) - self.roll) * blend;
+        }
         let motion = (self.forward() * self.speed + side * self.lateral_speed) * dt;
         if grounded {
-            self.travel += self.speed * dt;
+            self.travel += if self.burning_out {
+                BURNOUT_WHEEL_SPEED
+            } else {
+                self.speed
+            } * dt;
         }
         let before_motion = self.position;
         let steps = ((motion.length() / 0.15).ceil() as usize).clamp(1, 20);
@@ -1729,5 +1810,80 @@ mod tests {
         }
         assert!(car.speed > 20.0, "speed {}", car.speed);
         assert!(car.yaw_rate.abs() > 0.2 && car.yaw_rate.abs() < 1.5);
+    }
+    #[test]
+    fn the_pedals_tip_the_nose_and_the_handbrake_rolls_in_mid_air() {
+        use crate::handling::tests::TAXI;
+        let world = CollisionWorld::from_batches(&[]);
+        let fly = |pitch: f32, steer: f32, handbrake: bool| {
+            let mut car = Car::new(Vec3::Y * 50.0, 0.6).with_handling(row(TAXI));
+            car.set_stunt_input(pitch, false);
+            for _ in 0..60 {
+                car.step(&world, 0.0, steer, handbrake, 1.0, 1.0 / 120.0);
+            }
+            car
+        };
+        assert!(fly(1.0, 0.0, false).pitch < -0.05, "W tips the nose down");
+        assert!(fly(-1.0, 0.0, false).pitch > 0.05, "S lifts the nose");
+        let rolled = fly(0.0, 1.0, true);
+        assert!(rolled.roll > 0.05 && rolled.yaw.abs() < 1e-4);
+        let held = fly(0.0, 0.0, false);
+        assert_eq!((held.pitch, held.roll), (0.0, 0.0));
+        // Hand-tuned profiles keep the old no-air-control behaviour.
+        let mut prototype = Car::new(Vec3::Y * 50.0, 0.6);
+        prototype.set_stunt_input(1.0, false);
+        prototype.step(&world, 0.0, 0.0, false, 1.0, 0.25);
+        assert_eq!(prototype.pitch, 0.0);
+    }
+    #[test]
+    fn a_burnout_holds_the_car_revs_up_and_launches_it() {
+        use crate::handling::tests::LINERUN;
+        let world = pad(100.0);
+        let launch = |burnout: bool| {
+            let mut car = Car::new(Vec3::Y * 0.6, 0.6).with_handling(row(LINERUN));
+            car.set_stunt_input(0.0, burnout);
+            for _ in 0..240 {
+                car.step(&world, 0.0, 0.0, false, 1.0, 1.0 / 120.0);
+            }
+            assert_eq!(car.burning_out(), burnout);
+            assert!(car.speed.abs() < 0.2, "speed {}", car.speed);
+            if burnout {
+                assert!(car.look().travel > 10.0, "the wheels spin");
+            }
+            car.set_stunt_input(0.0, false);
+            for _ in 0..36 {
+                car.step(&world, 1.0, 0.0, false, 1.0, 1.0 / 120.0);
+            }
+            assert!(!car.burning_out());
+            car.speed
+        };
+        assert!(launch(true) > launch(false) * 1.2);
+        // Steering pivots the car on the spot.
+        let mut car = Car::new(Vec3::Y * 0.6, 0.6).with_handling(row(LINERUN));
+        car.set_stunt_input(0.0, true);
+        for _ in 0..120 {
+            car.step(&world, 0.0, 1.0, false, 1.0, 1.0 / 120.0);
+        }
+        assert!(car.yaw > 0.3 && car.position.distance(Vec3::Y * 0.6) < 1.5);
+    }
+    #[test]
+    fn a_car_tipped_in_the_air_settles_on_its_wheels_after_landing() {
+        use crate::handling::tests::TAXI;
+        let world = pad(100.0);
+        for (pitch, steer, handbrake) in [(1.0, 0.0, false), (-1.0, 0.0, false), (0.0, 1.0, true)] {
+            let mut car = Car::new(Vec3::Y * 6.0, 0.6).with_handling(row(TAXI));
+            car.speed = 10.0;
+            car.set_stunt_input(pitch, false);
+            for _ in 0..120 * 3 {
+                car.step(&world, 0.0, steer, handbrake, 1.0, 1.0 / 120.0);
+            }
+            assert!(
+                car.pitch.abs() < 0.05 && car.roll.abs() < 0.05,
+                "{} {}",
+                car.pitch,
+                car.roll
+            );
+            assert!((car.position.y - 0.6).abs() < 0.1, "{}", car.position.y);
+        }
     }
 }

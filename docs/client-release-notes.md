@@ -1,5 +1,9 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.37.0:
+- Air control: in mid-air, the Up/Down arrows (or numpad 8/2) tip the car's nose down or up, A/D turn it, and Space + A/D roll it. On a controller, use the left stick, and LB + stick to roll.
+- Burnouts: hold W + S (RT + LT on a controller) while standing still. The wheels spin, the engine revs and the car leaves tyre marks. Steer to pivot on the spot, and let go of the brake to launch.
+
 Version 0.36.1:
 - Lighter, quicker car handling: the wheels turn faster, cars keep more steering at speed, grip is higher and bodies turn in sooner, so driving is closer to the original game's easy feel. Nose-heavy cars such as the Taxi now run wide at full lock instead of spinning.
 

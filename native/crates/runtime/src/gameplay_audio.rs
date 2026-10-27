@@ -73,7 +73,7 @@ impl State {
                     engine_kind(self.menu.cars.get(self.active_car)),
                     car.position,
                     car.speed,
-                    throttle,
+                    if car.burning_out() { 1.0 } else { throttle },
                 ));
             }
         }

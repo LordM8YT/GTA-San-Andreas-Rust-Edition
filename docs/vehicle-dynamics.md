@@ -148,6 +148,21 @@ also get `air_control` 1.5 rad/s². Reverse runs at up to a quarter of flat-out
 speed (at most 12 m/s) with 60% of the forward pull. Gears, ABS, burnouts and
 surface types are not modelled yet.
 
+## Air control and burnouts
+
+Cars from handling.cfg can be steered in mid-air. The Up/Down arrows,
+numpad 8/2 or the left stick tip the nose down or up, A/D turn the car, and
+Space + A/D (or LB + stick) roll it instead. W stays off the nose so holding
+the gas over a jump doesn't tip the car. The car holds the tilt it has until the driver changes it,
+up to 0.8 rad, and levels onto its wheels again after landing. Hand-tuned
+profiles with `air_control` 0 keep levelling out in the air as before.
+
+Holding both pedals (W + S, or RT + LT) below 3 m/s is a burnout. The brakes
+hold the car while the engine revs and the wheels spin, leaving tyre marks,
+and steering pivots it slowly on the spot. Letting go of the brake launches
+the car with the engine already at full throttle, which matters most for cars
+with a lot of engine inertia.
+
 ## Stationary mesh updates
 
 The local car now reuses its transformed GPU geometry while its position and
