@@ -1,5 +1,8 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.39.1:
+- MTA map objects marked `collisions="false"` (decoration you are meant to drive through) no longer act as invisible walls.
+
 Version 0.39.0:
 - MTA maps get their own models: SARE reads the model replacements in an MTA map's scripts as text (it never runs them), so custom roads, ramps and props show up instead of the original objects.
 - Scaled MTA objects now appear at their size, and broken or invisible objects are skipped one by one instead of stopping the whole map.

@@ -41,6 +41,8 @@ struct Placement {
     parent: u32,
     /// Uniform model scale; 1 for every IPL row, MTA maps may set others.
     scale: f32,
+    /// False for MTA objects with `collisions="false"`: drawn, never collided.
+    solid: bool,
 }
 const NO_ROW: u32 = u32::MAX;
 const ALL_AREAS: i32 = 13;
@@ -182,6 +184,7 @@ fn placement(id: i32, interior: i32, pos: [f32; 3], quat: [f32; 4]) -> Result<Pl
         uid: NO_ROW,
         parent: NO_ROW,
         scale: 1.0,
+        solid: true,
     })
 }
 fn binary_ipl(data: &[u8]) -> Result<Vec<Placement>> {
@@ -834,7 +837,7 @@ impl WorldLoader {
             candidates.into_iter().zip(visibility)
         {
             let visible = visible && !covered.contains(&r.uid);
-            if !is_lod {
+            if !is_lod && r.solid {
                 if let Some(model) = self.collision_models.get(&def.model) {
                     // Collision-only objects and transparent surfaces remain solid.
                     let mut min = [f32::INFINITY; 2];
@@ -872,6 +875,7 @@ impl WorldLoader {
                 continue;
             }
             if !is_lod
+                && r.solid
                 && !self.collision_models.contains_key(&def.model)
                 && distance_squared <= detail
             {
@@ -1050,6 +1054,7 @@ pub fn load_first_model(game: &Path) -> Result<Scene> {
     let r = Placement {
         id: 0,
         scale: 1.0,
+        solid: true,
         interior: 0,
         lod: -1,
         is_lod: false,
@@ -1146,6 +1151,7 @@ pub fn load_cuttest(game: &Path) -> Result<Scene> {
     let r = Placement {
         id: 0,
         scale: 1.0,
+        solid: true,
         interior: 0,
         lod: -1,
         is_lod: false,
@@ -1213,6 +1219,7 @@ pub fn load_prologue(game: &Path) -> Result<Scene> {
     let placement = Placement {
         id: 0,
         scale: 1.0,
+        solid: true,
         interior: 0,
         lod: -1,
         is_lod: false,
