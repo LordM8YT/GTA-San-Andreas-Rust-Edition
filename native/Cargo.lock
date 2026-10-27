@@ -3270,14 +3270,14 @@ dependencies = [
 
 [[package]]
 name = "sa-assets"
-version = "0.39.1"
+version = "0.40.0"
 dependencies = [
  "anyhow",
 ]
 
 [[package]]
 name = "sa-audio"
-version = "0.39.1"
+version = "0.40.0"
 dependencies = [
  "anyhow",
  "glam 0.33.12",
@@ -3287,7 +3287,7 @@ dependencies = [
 
 [[package]]
 name = "sa-client"
-version = "0.39.1"
+version = "0.40.0"
 dependencies = [
  "anyhow",
  "getrandom 0.3.4",
@@ -3302,7 +3302,7 @@ dependencies = [
 
 [[package]]
 name = "sa-launcher"
-version = "0.39.1"
+version = "0.40.0"
 dependencies = [
  "anyhow",
  "eframe",
@@ -3321,7 +3321,7 @@ dependencies = [
 
 [[package]]
 name = "sa-lua"
-version = "0.39.1"
+version = "0.40.0"
 dependencies = [
  "mlua",
  "rmp-serde",
@@ -3331,7 +3331,7 @@ dependencies = [
 
 [[package]]
 name = "sa-net"
-version = "0.39.1"
+version = "0.40.0"
 dependencies = [
  "ed25519-dalek",
  "getrandom 0.3.4",
@@ -3342,7 +3342,7 @@ dependencies = [
 
 [[package]]
 name = "sa-runtime"
-version = "0.39.1"
+version = "0.40.0"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -3369,7 +3369,7 @@ dependencies = [
 
 [[package]]
 name = "sa-scene"
-version = "0.39.1"
+version = "0.40.0"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -3385,7 +3385,7 @@ dependencies = [
 
 [[package]]
 name = "sa-script"
-version = "0.39.1"
+version = "0.40.0"
 dependencies = [
  "anyhow",
  "sa-assets",
@@ -3393,7 +3393,7 @@ dependencies = [
 
 [[package]]
 name = "sa-server"
-version = "0.39.1"
+version = "0.40.0"
 dependencies = [
  "anyhow",
  "ctrlc",

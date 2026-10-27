@@ -22,6 +22,7 @@ mod menu;
 mod metrics;
 mod mipmaps;
 mod multiplayer;
+mod pickups;
 mod postprocess;
 mod progress;
 mod rain;
@@ -247,6 +248,10 @@ struct State {
     pending_coords: Option<[f32; 3]>,
     /// MTA map spawn points from the loaded resources, for `/spawns`.
     map_spawns: Vec<(String, [f32; 3])>,
+    /// MTA map race pickups (nitro, repair, vehicle change) and the nitro tank.
+    pickups: pickups::Pickups,
+    /// Original vehicle models by vehicles.ide ID, for vehicle-change pickups.
+    car_ids: std::collections::HashMap<i32, String>,
     chat: chat::Chat,
     /// The server's client scripts, sandboxed, and the UI they show.
     scripts: sa_lua::client::Host,
@@ -1065,6 +1070,8 @@ impl State {
             network_peer_ids: Vec::new(),
             pending_coords: None,
             map_spawns: Vec::new(),
+            pickups: pickups::Pickups::default(),
+            car_ids: std::collections::HashMap::new(),
             chat: chat::Chat::default(),
             scripts: sa_lua::client::Host::new(),
             script_peers: Vec::new(),
@@ -1562,6 +1569,7 @@ impl State {
         if !self.walking || self.driving || self.passenger.is_some() {
             self.locomotion.stop();
         }
+        let mut vehicle_changes = Vec::new();
         if self.passenger.is_some() {
             // The host grants the seat; the interpolated remote car drives its camera.
         } else if self.driving {
@@ -1600,6 +1608,12 @@ impl State {
                     self.skids
                         .update(car, skids::intensity(car, throttle, handbrake));
                 }
+                // Nitro burns on fire or left Ctrl, as in SA.
+                let nitro = self.fire_held
+                    || self.keys.contains(&KeyCode::ControlLeft)
+                    || self.gamepad.fire;
+                self.pickups.boost(car, nitro, dt);
+                vehicle_changes = self.pickups.update(car, dt);
                 let center = [ORIGIN[0] + car.position.x, ORIGIN[1] - car.position.z];
                 if streaming::distance(center, self.region) > RADIUS - 60.0 {
                     car.position = previous;
@@ -1679,6 +1693,9 @@ impl State {
             }
         } else {
             self.position += motion.normalize_or_zero() * dt * speed;
+        }
+        for id in vehicle_changes {
+            self.change_vehicle(id);
         }
         self.resolve_vehicle_contacts();
         if self.walking && !self.driving && self.third_person {
@@ -2084,6 +2101,45 @@ impl State {
             self.position = player.eye();
             self.player = Some(player);
         }
+    }
+    /// A vehicle-change pickup swaps the player's car for the original model
+    /// with that vehicles.ide ID, keeping its place, heading and speed.
+    fn change_vehicle(&mut self, id: i32) {
+        let index = self.car_ids.get(&id).and_then(|model| {
+            self.menu
+                .cars
+                .iter()
+                .position(|name| self.original_car_models.get(name) == Some(model))
+        });
+        let Some(index) = index else {
+            self.chat.log(format!(
+                "Vehicle change pickup: vehicle {id} is not a drivable car"
+            ));
+            return;
+        };
+        if index == self.active_car {
+            return;
+        }
+        self.ensure_car_loaded(index);
+        let Some((old, _)) = &self.car else {
+            return;
+        };
+        let (ground, yaw, speed) = (old.position - Vec3::Y * old.clearance, old.yaw, old.speed);
+        let Some(next) = self.car_catalog.get_mut(index).and_then(Option::take) else {
+            return;
+        };
+        self.car_catalog[self.active_car] = self.car.replace(next);
+        self.active_car = index;
+        if let Some((car, _)) = &mut self.car {
+            *car = sa_scene::vehicle::Car::new(ground + Vec3::Y * car.clearance, car.clearance)
+                .with_handling(car.handling)
+                .with_size(car.size);
+            car.yaw = yaw;
+            car.speed = speed;
+        }
+        self.car_render_pose = None;
+        self.pickups.nitro = 0.0;
+        self.network_car_spawned = true;
     }
     fn recover_car(&mut self) -> bool {
         let (Some(world), Some((car, _))) = (&self.collision, &mut self.car) else {
@@ -2774,6 +2830,7 @@ struct App {
     failure: Option<String>,
     mod_names: Vec<String>,
     map_spawns: Vec<(String, [f32; 3])>,
+    map_pickups: Vec<sa_scene::MapPickup>,
     game_dir: PathBuf,
     smoke_menus: bool,
     smoke_spawner: bool,
@@ -3058,6 +3115,7 @@ impl ApplicationHandler for App {
                 state.frontend_sounds = self.frontend_sounds.take();
                 state.menu.mods = self.mod_names.clone();
                 state.map_spawns = self.map_spawns.clone();
+                state.pickups = pickups::Pickups::new(&self.map_pickups);
                 if let Some(ped) = self.ped.take() {
                     match ped.scene().and_then(|scene| {
                         State::upload_scene(
@@ -3093,6 +3151,10 @@ impl ApplicationHandler for App {
                     }
                 }
                 state.original_car_models = original_car_names(&self.game_dir);
+                state.car_ids = sa_scene::vehicle_list::original_cars(&self.game_dir)
+                    .into_iter()
+                    .map(|car| (car.id, car.model))
+                    .collect();
                 append_originals(
                     &mut state.car_catalog,
                     &mut state.menu.cars,
@@ -5398,6 +5460,10 @@ fn main() -> Result<()> {
         .as_ref()
         .map(|l| l.map_spawns().to_vec())
         .unwrap_or_default();
+    let map_pickups = loader
+        .as_ref()
+        .map(|l| l.map_pickups().to_vec())
+        .unwrap_or_default();
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = App {
@@ -5511,6 +5577,7 @@ fn main() -> Result<()> {
         failure: None,
         mod_names,
         map_spawns,
+        map_pickups,
         game_dir: game,
         test_tone: sa_audio::SoundEffect::tone(660.0, 0.18, 48_000).ok(),
         smoke_spawner: args.iter().any(|a| a == "--smoke-spawner"),

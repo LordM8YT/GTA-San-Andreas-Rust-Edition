@@ -29,11 +29,28 @@ pub(crate) struct WorldRemoval {
     /// `None` applies to every interior.
     pub interior: Option<i32>,
 }
+/// What a race pickup does when a car drives through it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PickupKind {
+    Nitro,
+    Repair,
+    /// Swap the car for this original vehicle ID, keeping its speed.
+    VehicleChange(i32),
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MapPickup {
+    pub kind: PickupKind,
+    /// San Andreas world coordinates.
+    pub position: [f32; 3],
+    /// Milliseconds before it can be taken again; 0 leaves it to the game.
+    pub respawn_ms: u32,
+}
 #[derive(Debug, Default)]
 pub(crate) struct MtaMap {
     pub objects: Vec<MapObject>,
     pub removals: Vec<WorldRemoval>,
     pub spawns: Vec<[f32; 3]>,
+    pub pickups: Vec<MapPickup>,
     /// Elements SARE does not load yet, such as vehicles or markers.
     pub skipped: usize,
 }
@@ -69,6 +86,10 @@ pub(crate) fn parse(data: &[u8]) -> Result<MtaMap> {
                     Err(_) => map.skipped += 1,
                 },
                 b"spawnpoint" if map.spawns.len() < 64 => map.spawns.push(position(&element)?),
+                b"racepickup" if map.pickups.len() < 256 => match pickup(&element) {
+                    Ok(pickup) => map.pickups.push(pickup),
+                    Err(_) => map.skipped += 1,
+                },
                 b"removeWorldObject" => map.removals.push(removal(&element)?),
                 _ => map.skipped += 1,
             }
@@ -417,6 +438,22 @@ fn object(element: &BytesStart) -> Result<MapObject> {
         solid: attribute(element, "collisions")?.is_none_or(|v| v != "false"),
     })
 }
+fn pickup(element: &BytesStart) -> Result<MapPickup> {
+    let kind = match attribute(element, "type")?.as_deref() {
+        Some("nitro") => PickupKind::Nitro,
+        Some("repair") => PickupKind::Repair,
+        Some("vehiclechange") => PickupKind::VehicleChange(
+            integer(element, "vehicle")?.context("vehiclechange pickup lacks vehicle")?,
+        ),
+        other => bail!("unknown race pickup type {other:?}"),
+    };
+    let respawn = number(element, "respawn", Some(0.0))?;
+    Ok(MapPickup {
+        kind,
+        position: position(element)?,
+        respawn_ms: respawn.clamp(0.0, 3_600_000.0) as u32,
+    })
+}
 fn removal(element: &BytesStart) -> Result<WorldRemoval> {
     let model = integer(element, "model")?.context("removeWorldObject lacks model")?;
     let radius = number(element, "radius", None)?;
@@ -449,6 +486,9 @@ mod tests {
     <removeWorldObject id="r1" radius="5.5" interior="0" model="17699" lodModel="17979" posX="10" posY="20" posZ="30" rotX="0" rotY="0" rotZ="0"></removeWorldObject>
     <vehicle id="v" model="411" posX="0" posY="0" posZ="0" />
     <spawnpoint id="s" posX="0" posY="0" posZ="0" />
+    <racepickup id="p1" type="nitro" vehicle="522" respawn="0" posX="1" posY="2" posZ="3" />
+    <racepickup id="p2" type="vehiclechange" vehicle="411" respawn="5000" posX="4" posY="5" posZ="6" />
+    <racepickup id="p3" type="teleport" posX="0" posY="0" posZ="0" />
 </map>"#;
 
     #[test]
@@ -462,7 +502,22 @@ mod tests {
         assert!(map.objects[0].solid);
         assert!(!map.objects[1].solid);
         assert_eq!(map.spawns, vec![[0.0, 0.0, 0.0]]);
-        assert_eq!(map.skipped, 1);
+        assert_eq!(map.skipped, 2);
+        assert_eq!(
+            map.pickups,
+            vec![
+                MapPickup {
+                    kind: PickupKind::Nitro,
+                    position: [1.0, 2.0, 3.0],
+                    respawn_ms: 0
+                },
+                MapPickup {
+                    kind: PickupKind::VehicleChange(411),
+                    position: [4.0, 5.0, 6.0],
+                    respawn_ms: 5000
+                },
+            ]
+        );
         assert_eq!(
             map.removals,
             vec![WorldRemoval {

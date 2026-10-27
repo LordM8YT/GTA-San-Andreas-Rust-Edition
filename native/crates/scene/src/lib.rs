@@ -5,6 +5,7 @@ pub mod lights;
 mod mods;
 mod mta_map;
 pub use mods::{share_resource_folders, share_resources};
+pub use mta_map::{MapPickup, PickupKind};
 pub mod ped;
 pub mod ped_list;
 pub mod roads;

@@ -55,6 +55,11 @@ struct Model {
     #[serde(default)]
     col: Option<String>,
 }
+/// Original game objects that mark race pickups: the nitro bottle upgrade,
+/// the health heart and the information icon.
+const NITRO_MODEL: i32 = 1010;
+const REPAIR_MODEL: i32 = 1240;
+const VEHICLE_CHANGE_MODEL: i32 = 1239;
 #[derive(Deserialize)]
 struct MtaModel {
     id: i32,
@@ -297,6 +302,7 @@ pub(super) struct Resources {
     pub excluded: HashSet<i32>,
     /// Spawn points from MTA maps, as (label, IPL position).
     pub map_spawns: Vec<(String, [f32; 3])>,
+    pub map_pickups: Vec<crate::MapPickup>,
     pub names: Vec<String>,
     pub vehicle: Option<Scene>,
     pub vehicles: Vec<(String, Scene)>,
@@ -668,6 +674,23 @@ impl WorldLoader {
                     row.solid = object.solid;
                     self.rows.push(row);
                 }
+                for pickup in map.pickups {
+                    if self.resources.map_pickups.len() >= 512 {
+                        break;
+                    }
+                    self.resources.map_pickups.push(pickup);
+                    // A marker object from the player's own game, drawn but not solid.
+                    let model = match pickup.kind {
+                        crate::PickupKind::Nitro => NITRO_MODEL,
+                        crate::PickupKind::Repair => REPAIR_MODEL,
+                        crate::PickupKind::VehicleChange(_) => VEHICLE_CHANGE_MODEL,
+                    };
+                    if self.defs.contains_key(&model) {
+                        let mut row = placement(model, 0, pickup.position, [0.0, 0.0, 0.0, 1.0])?;
+                        row.solid = false;
+                        self.rows.push(row);
+                    }
+                }
                 for position in map.spawns {
                     if self.resources.map_spawns.len() < 64 {
                         let label = format!("{name} {}", self.resources.map_spawns.len() + 1);
@@ -805,6 +828,10 @@ impl WorldLoader {
     /// MTA map spawn points, as (label, IPL position).
     pub fn map_spawns(&self) -> &[(String, [f32; 3])] {
         &self.resources.map_spawns
+    }
+    /// MTA race pickups from the loaded maps.
+    pub fn map_pickups(&self) -> &[crate::MapPickup] {
+        &self.resources.map_pickups
     }
     pub fn mod_names(&self) -> &[String] {
         &self.resources.names

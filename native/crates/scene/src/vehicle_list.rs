@@ -5,6 +5,8 @@ use std::{collections::HashMap, path::Path};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OriginalCar {
+    /// Model ID, the first field of the IDE row.
+    pub id: i32,
     /// File name in gta3.img, e.g. `infernus`.
     pub model: String,
     /// GXT key of the in-game name, e.g. `INFERNU`.
@@ -64,7 +66,9 @@ fn parse_cars(ide: &str) -> Vec<OriginalCar> {
         {
             continue;
         }
+        let Ok(id) = fields[0].parse() else { continue };
         cars.push(OriginalCar {
+            id,
             model,
             name_key: fields[5].to_ascii_uppercase(),
             class: fields[7].to_ascii_lowercase(),
