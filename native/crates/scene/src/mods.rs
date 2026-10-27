@@ -776,7 +776,18 @@ impl WorldLoader {
                 collision.name = mesh.clone();
                 Ok(collision)
             })
-            .transpose()?;
+            .transpose()?
+            // A new mesh without its own COL keeps the replaced model's
+            // collision, as an MTA DFF replacement does.
+            .or_else(|| {
+                let original = self.collision_models.get(&original?.model)?;
+                Some(sa_assets::col::CollisionModel {
+                    name: mesh.clone(),
+                    triangles: original.triangles.clone(),
+                    min: original.min,
+                    max: original.max,
+                })
+            });
         if let Some(geometry) = geometry {
             self.resources
                 .geometry
