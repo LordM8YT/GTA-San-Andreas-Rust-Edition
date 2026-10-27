@@ -205,8 +205,15 @@ Dekodede spillerteksturer har en egen grense på 128 MiB.
 
 ## MTA:SA maps
 
-A resource can load MTA:SA `.map` files, such as maps shared on MTA community
-sites, by listing them in `mta_maps`:
+The quickest way: unzip a downloaded MTA map resource into `mods/` (or a
+category folder such as `mods/[maps]/`), so that its `meta.xml` sits directly
+inside the resource folder, for example `mods/[maps]/stuntpark/meta.xml`. A
+folder with a `meta.xml` and no `mod.json` loads as an enabled resource with
+the `.map` files named by `<map src="...">`; the `<info name="...">` becomes the
+resource name. Scripts and other files in it are ignored. To disable it, add a
+`mod.json` containing `{"enabled": false}`, or move the folder out of `mods/`.
+
+A native resource can also list MTA `.map` files itself in `mta_maps`:
 
 ```json
 {
@@ -217,8 +224,7 @@ sites, by listing them in `mta_maps`:
 }
 ```
 
-Copy the `.map` file from the MTA resource (the files named by `<map src=...>`
-in its `meta.xml`) into the resource folder. Up to 16 maps per resource and
+Up to 16 maps per resource and
 20,000 objects in total are loaded. SARE reads:
 
 - `<object>`: `model`, `posX`/`posY`/`posZ`, `rotX`/`rotY`/`rotZ` in degrees
@@ -236,7 +242,8 @@ TXD and COL files in `models` with the model ID the map uses instead. The
 loader counts what it skipped in the console log.
 
 When a server shares the resource, the `.map` files go to joining players with
-the other resource files.
+the other resource files. A drop-in MTA folder is shared with a generated
+`mod.json` in place of its `meta.xml`.
 
 ## Multiplayer resource sharing
 

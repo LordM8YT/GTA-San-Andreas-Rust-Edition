@@ -1594,6 +1594,7 @@ fn main() -> eframe::Result {
     if updater::helper_mode() {
         return Ok(());
     }
+    local_mods::ensure_root();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size(preview_size())

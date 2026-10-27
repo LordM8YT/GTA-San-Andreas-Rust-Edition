@@ -160,14 +160,9 @@ pub fn share_resource_folders(
     let (mut total_bytes, mut total_files) = (0_usize, 0_usize);
     for folder in folders {
         let folder = folder.canonicalize()?;
-        let filename = if folder.join("mod.json").is_file() {
-            "mod.json"
-        } else if folder.join("resource.json").is_file() {
-            "resource.json"
-        } else {
+        let Some((filename, raw)) = manifest_bytes(&folder)? else {
             continue;
         };
-        let raw = resource(&folder, filename)?;
         let manifest: Manifest = serde_json::from_slice(&raw)?;
         if !manifest.enabled && !force_enabled {
             continue;
@@ -285,6 +280,25 @@ pub(super) struct Resources {
     pub player: Option<ped::Source>,
     pub players: Vec<(String, ped::Source)>,
 }
+/// The native manifest, or one generated from an MTA resource's `meta.xml`
+/// when the folder has no native manifest. Shared packs always carry JSON.
+fn manifest_bytes(folder: &Path) -> Result<Option<(&'static str, Vec<u8>)>> {
+    for filename in ["mod.json", "resource.json"] {
+        if folder.join(filename).is_file() {
+            return Ok(Some((filename, resource(folder, filename)?)));
+        }
+    }
+    if !folder.join("meta.xml").is_file() {
+        return Ok(None);
+    }
+    let folder_name = folder
+        .file_name()
+        .context("resource folder name missing")?
+        .to_string_lossy();
+    let manifest = crate::mta_map::meta_manifest(&resource(folder, "meta.xml")?, &folder_name)
+        .with_context(|| format!("MTA resource {}", folder.display()))?;
+    Ok(Some(("mod.json", serde_json::to_vec(&manifest)?)))
+}
 /// Canonical containment also rejects escapes through directory junctions.
 fn resource(root: &Path, relative: &str) -> Result<Vec<u8>> {
     let path = root
@@ -381,14 +395,10 @@ impl WorldLoader {
         let root = directory.canonicalize()?;
         let mut resource_names = HashSet::new();
         for folder in resource_folders(&root)? {
-            let manifest_path = if folder.join("mod.json").is_file() {
-                "mod.json"
-            } else if folder.join("resource.json").is_file() {
-                "resource.json"
-            } else {
+            let Some((_, raw)) = manifest_bytes(&folder)? else {
                 continue;
             };
-            let manifest: Manifest = serde_json::from_slice(&resource(&folder, manifest_path)?)
+            let manifest: Manifest = serde_json::from_slice(&raw)
                 .with_context(|| format!("mod manifest {}", folder.display()))?;
             let folder_name = folder
                 .file_name()
@@ -1001,6 +1011,18 @@ mod tests {
             br#"{"enabled":true,"name":"Stunt","mta_maps":["stunt.map"]}"#,
         )
         .unwrap();
+        let park = root.join("mods/[maps]/park");
+        fs::create_dir_all(park.join("maps")).unwrap();
+        fs::write(
+            park.join("meta.xml"),
+            br#"<meta><info name="Park" type="map"/><map src="maps/park.map"/></meta>"#,
+        )
+        .unwrap();
+        fs::write(
+            park.join("maps/park.map"),
+            br#"<map><object model="1634" posX="7" posY="8" posZ="9"/></map>"#,
+        )
+        .unwrap();
         let definition = || Definition {
             model: "m".into(),
             txd: "m".into(),
@@ -1033,13 +1055,22 @@ mod tests {
         let rows: Vec<_> = loader.rows.iter().map(|r| (r.id, r.pos)).collect();
         assert_eq!(
             rows,
-            vec![(17699, [100.0, 20.0, 30.0]), (1634, [1.0, 2.0, 3.0])]
+            vec![
+                (17699, [100.0, 20.0, 30.0]),
+                (1634, [7.0, 8.0, 9.0]),
+                (1634, [1.0, 2.0, 3.0])
+            ]
         );
+        assert!(loader.mod_names().contains(&"[enabled] Park".to_owned()));
         let shared = share_resources(&root.join("mods")).unwrap();
-        assert!(shared.manifest.resources[0]
-            .files
+        let files: Vec<_> = shared
+            .manifest
+            .resources
             .iter()
-            .any(|f| f.path == "stunt.map"));
+            .flat_map(|r| r.files.iter().map(|f| f.path.as_str()))
+            .collect();
+        assert!(files.contains(&"stunt.map") && files.contains(&"maps/park.map"));
+        assert!(!files.contains(&"meta.xml"));
         fs::remove_dir_all(root).unwrap();
     }
     #[test]

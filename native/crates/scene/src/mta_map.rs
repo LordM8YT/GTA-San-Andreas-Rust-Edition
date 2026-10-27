@@ -87,6 +87,56 @@ pub(crate) fn parse(data: &[u8]) -> Result<MtaMap> {
     Ok(map)
 }
 
+/// A drop-in MTA resource folder: its `meta.xml` becomes an enabled native
+/// manifest listing the `<map src>` files. Scripts and other files are ignored.
+pub(crate) fn meta_manifest(data: &[u8], folder_name: &str) -> Result<serde_json::Value> {
+    let text = std::str::from_utf8(data).context("MTA meta.xml is not UTF-8")?;
+    let mut reader = quick_xml::Reader::from_str(text);
+    let mut name = None;
+    let mut maps = Vec::new();
+    let mut depth = 0_usize;
+    loop {
+        let (element, nested) = match reader.read_event()? {
+            Event::Start(element) => (element, true),
+            Event::Empty(element) => (element, false),
+            Event::End(_) => {
+                depth = depth.saturating_sub(1);
+                continue;
+            }
+            Event::Eof => break,
+            _ => continue,
+        };
+        if depth == 0 {
+            ensure!(
+                element.name().as_ref() == b"meta",
+                "MTA meta.xml root must be <meta>"
+            );
+        } else if depth == 1 {
+            match element.name().as_ref() {
+                b"info" => name = attribute(&element, "name")?.filter(|n| !n.is_empty()),
+                b"map" => {
+                    let src = attribute(&element, "src")?.context("MTA <map> lacks src")?;
+                    maps.push(src.replace('\\', "/"));
+                    ensure!(maps.len() <= 16, "MTA map limit (16 per resource)");
+                }
+                _ => {}
+            }
+        }
+        if nested {
+            depth += 1;
+            ensure!(depth <= 16, "MTA meta.xml nesting too deep");
+        }
+    }
+    ensure!(!maps.is_empty(), "MTA meta.xml lists no <map> files");
+    let name: String = name
+        .unwrap_or_else(|| folder_name.to_owned())
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(96)
+        .collect();
+    Ok(serde_json::json!({ "enabled": true, "name": name, "mta_maps": maps }))
+}
+
 fn attribute(element: &BytesStart, name: &str) -> Result<Option<String>> {
     match element.try_get_attribute(name)? {
         Some(value) => Ok(Some(
@@ -205,6 +255,21 @@ mod tests {
         let q = ipl_rotation([0.0, 0.0, 90.0]);
         let world = crate::rotate([1.0, 0.0, 0.0], q);
         assert!((world[0]).abs() < 1e-5 && (world[1] - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn meta_xml_lists_maps() {
+        let meta = br#"<meta>
+    <info author="someone" type="map" name="Stunt park" version="1.0" />
+    <map src="stunt.map" dimension="0"></map>
+    <script src="client.lua" type="client" />
+    <file src="models/ramp.dff" />
+</meta>"#;
+        assert_eq!(
+            meta_manifest(meta, "stunt").unwrap(),
+            serde_json::json!({"enabled": true, "name": "Stunt park", "mta_maps": ["stunt.map"]})
+        );
+        assert!(meta_manifest(b"<meta><script src=\"a.lua\"/></meta>", "x").is_err());
     }
 
     #[test]
