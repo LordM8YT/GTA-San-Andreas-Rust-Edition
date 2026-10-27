@@ -325,6 +325,11 @@ impl Installing {
             batches,
             collision: scene.collision.take(),
             water: scene.water.take(),
+            map_spawns: self
+                .loader
+                .as_ref()
+                .map(|l| l.map_spawns().to_vec())
+                .unwrap_or_default(),
             streamer: Some(Streamer::new(self.loader.take().unwrap())),
             uploading: None,
             retired: Vec::new(),
@@ -384,6 +389,7 @@ pub(super) struct World {
     cars: Vec<String>,
     peds: Vec<String>,
     clothes: Vec<(String, bool)>,
+    map_spawns: Vec<(String, [f32; 3])>,
 }
 impl State {
     fn swap_session_world(&mut self, mut world: World) -> World {
@@ -413,7 +419,8 @@ impl State {
             interior_destination,
             room_entry,
             yaw,
-            pitch
+            pitch,
+            map_spawns
         );
         std::mem::swap(&mut self.menu.mods, &mut world.mods);
         std::mem::swap(&mut self.menu.cars, &mut world.cars);

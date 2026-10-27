@@ -24,6 +24,10 @@ struct Manifest {
     /// MTA:SA `.map` files with object placements and world-object removals.
     #[serde(default)]
     mta_maps: Vec<String>,
+    /// Model files an MTA resource's scripts assign to IDs. Unlike `models`,
+    /// an entry that fails to load is skipped instead of failing the resource.
+    #[serde(default)]
+    mta_models: Vec<MtaModel>,
     #[serde(default)]
     texture_overrides: HashMap<String, String>,
 }
@@ -46,6 +50,16 @@ impl Manifest {
 struct Model {
     id: i32,
     dff: String,
+    #[serde(default)]
+    txd: Option<String>,
+    #[serde(default)]
+    col: Option<String>,
+}
+#[derive(Deserialize)]
+struct MtaModel {
+    id: i32,
+    #[serde(default)]
+    dff: Option<String>,
     #[serde(default)]
     txd: Option<String>,
     #[serde(default)]
@@ -195,6 +209,15 @@ pub fn share_resource_folders(
         }
         references.extend(manifest.texture_overrides.values().cloned());
         references.extend(manifest.mta_maps.iter().cloned());
+        for model in &manifest.mta_models {
+            references.extend(
+                [&model.dff, &model.txd, &model.col]
+                    .into_iter()
+                    .flatten()
+                    .filter(|path| folder.join(path).is_file())
+                    .cloned(),
+            );
+        }
         total_files += references.len() + 1;
         ensure!(
             total_files <= MAX_FILES,
@@ -272,6 +295,8 @@ pub(super) struct Resources {
     pub dictionaries: HashMap<String, Vec<u8>>,
     pub textures: HashMap<String, Texture>,
     pub excluded: HashSet<i32>,
+    /// Spawn points from MTA maps, as (label, IPL position).
+    pub map_spawns: Vec<(String, [f32; 3])>,
     pub names: Vec<String>,
     pub vehicle: Option<Scene>,
     pub vehicles: Vec<(String, Scene)>,
@@ -295,7 +320,10 @@ fn manifest_bytes(folder: &Path) -> Result<Option<(&'static str, Vec<u8>)>> {
         .file_name()
         .context("resource folder name missing")?
         .to_string_lossy();
-    let manifest = crate::mta_map::meta_manifest(&resource(folder, "meta.xml")?, &folder_name)
+    let manifest =
+        crate::mta_map::meta_manifest(&resource(folder, "meta.xml")?, &folder_name, |path| {
+            resource(folder, path)
+        })
         .with_context(|| format!("MTA resource {}", folder.display()))?;
     Ok(Some(("mod.json", serde_json::to_vec(&manifest)?)))
 }
@@ -577,6 +605,27 @@ impl WorldLoader {
                 )?);
             }
             ensure!(
+                manifest.mta_models.len() <= 256,
+                "MTA model limit (256 per resource)"
+            );
+            let mut replaced = 0;
+            for model in &manifest.mta_models {
+                if self.resources.geometry.len() >= 512 {
+                    eprintln!("MTA model {}: total mod model budget reached", model.id);
+                    break;
+                }
+                match self.mta_model(&folder, &folder_name, model) {
+                    Ok(()) => replaced += 1,
+                    Err(error) => eprintln!("MTA model {} skipped: {error:#}", model.id),
+                }
+            }
+            if !manifest.mta_models.is_empty() {
+                eprintln!(
+                    "{name}: {replaced} of {} script model replacements loaded",
+                    manifest.mta_models.len()
+                );
+            }
+            ensure!(
                 manifest.mta_maps.len() <= 16,
                 "MTA map limit (16 per resource)"
             );
@@ -609,18 +658,25 @@ impl WorldLoader {
                         "MTA map placement budget ({})",
                         crate::mta_map::MAX_MAP_ELEMENTS
                     );
-                    self.rows.push(placement(
+                    let mut row = placement(
                         object.model,
                         object.interior,
                         object.position,
                         object.rotation,
-                    )?);
+                    )?;
+                    row.scale = object.scale;
+                    self.rows.push(row);
+                }
+                for position in map.spawns {
+                    if self.resources.map_spawns.len() < 64 {
+                        let label = format!("{name} {}", self.resources.map_spawns.len() + 1);
+                        self.resources.map_spawns.push((label, position));
+                    }
                 }
                 eprintln!(
-                    "MTA map {relative}: {} removals; skipped {unknown} unknown models, {} unsupported elements; {} objects placed without scale",
+                    "MTA map {relative}: {} removals; skipped {unknown} unknown models, {} unsupported elements",
                     map.removals.len(),
-                    map.skipped,
-                    map.unscaled
+                    map.skipped
                 );
             }
             self.resources.excluded.extend(manifest.exclude_model_ids);
@@ -682,6 +738,61 @@ impl WorldLoader {
             self.resources.names.push(format!("[enabled] {name}"));
         }
         Ok(())
+    }
+    /// Loads one script model replacement; nothing is changed on error.
+    fn mta_model(&mut self, folder: &Path, folder_name: &str, model: &MtaModel) -> Result<()> {
+        ensure!(model.id >= 0, "negative model ID");
+        let key = format!("mod_{}_{}", folder_name.to_ascii_lowercase(), model.id);
+        let original = self.defs.get(&model.id);
+        let geometry = model
+            .dff
+            .as_deref()
+            .map(|path| decode_dff(&resource(folder, path)?).with_context(|| path.to_owned()))
+            .transpose()?;
+        let dictionary = model
+            .txd
+            .as_deref()
+            .map(|path| resource(folder, path))
+            .transpose()?;
+        let mesh = match (&geometry, original) {
+            (Some(_), _) => key.clone(),
+            (None, Some(def)) => def.model.clone(),
+            (None, None) => anyhow::bail!("texture-only replacement of an unknown model"),
+        };
+        // Without its own TXD a new mesh keeps the replaced model's textures.
+        let txd = match (&dictionary, original) {
+            (Some(_), _) | (None, None) => key.clone(),
+            (None, Some(def)) => def.txd.clone(),
+        };
+        let collision = model
+            .col
+            .as_deref()
+            .map(|path| -> Result<_> {
+                let mut models = sa_assets::col::decode_col(&resource(folder, path)?)?;
+                ensure!(!models.is_empty(), "empty COL {path}");
+                // A multi-model COL contributes its first model, as for one model ID.
+                let mut collision = models.swap_remove(0);
+                collision.name = mesh.clone();
+                Ok(collision)
+            })
+            .transpose()?;
+        if let Some(geometry) = geometry {
+            self.resources
+                .geometry
+                .insert(format!("{key}.dff"), geometry);
+        }
+        if let Some(dictionary) = dictionary {
+            self.resources.dictionaries.insert(key.clone(), dictionary);
+        }
+        if let Some(collision) = collision {
+            self.collision_models.insert(mesh.clone(), collision);
+        }
+        self.defs.insert(model.id, Definition { model: mesh, txd });
+        Ok(())
+    }
+    /// MTA map spawn points, as (label, IPL position).
+    pub fn map_spawns(&self) -> &[(String, [f32; 3])] {
+        &self.resources.map_spawns
     }
     pub fn mod_names(&self) -> &[String] {
         &self.resources.names
@@ -1015,12 +1126,22 @@ mod tests {
         fs::create_dir_all(park.join("maps")).unwrap();
         fs::write(
             park.join("meta.xml"),
-            br#"<meta><info name="Park" type="map"/><map src="maps/park.map"/></meta>"#,
+            br#"<meta><info name="Park" type="map"/><map src="maps/park.map"/><script src="c.lua" type="client"/></meta>"#,
         )
         .unwrap();
         fs::write(
             park.join("maps/park.map"),
-            br#"<map><object model="1634" posX="7" posY="8" posZ="9"/></map>"#,
+            br#"<map><object model="1634" posX="7" posY="8" posZ="9" scale="2"/><spawnpoint posX="7" posY="8" posZ="12"/></map>"#,
+        )
+        .unwrap();
+        fs::write(
+            park.join("room.dff"),
+            include_bytes!("../../../../mods/native-room-demo/room.dff"),
+        )
+        .unwrap();
+        fs::write(
+            park.join("c.lua"),
+            b"local d = engineLoadDFF('room.dff')\nengineReplaceModel(d, 1634)\nengineReplaceModel(engineLoadDFF('missing.dff'), 1490)",
         )
         .unwrap();
         let definition = || Definition {
@@ -1062,6 +1183,16 @@ mod tests {
             ]
         );
         assert!(loader.mod_names().contains(&"[enabled] Park".to_owned()));
+        assert_eq!(loader.defs[&1634].model, "mod_park_1634");
+        assert!(
+            !loader.defs.contains_key(&1490),
+            "a missing script model is skipped"
+        );
+        assert_eq!(loader.rows[1].scale, 2.0);
+        assert_eq!(
+            loader.map_spawns(),
+            [("Park 1".to_owned(), [7.0, 8.0, 12.0])]
+        );
         let shared = share_resources(&root.join("mods")).unwrap();
         let files: Vec<_> = shared
             .manifest
@@ -1070,6 +1201,7 @@ mod tests {
             .flat_map(|r| r.files.iter().map(|f| f.path.as_str()))
             .collect();
         assert!(files.contains(&"stunt.map") && files.contains(&"maps/park.map"));
+        assert!(files.contains(&"room.dff") && !files.contains(&"missing.dff"));
         assert!(!files.contains(&"meta.xml"));
         fs::remove_dir_all(root).unwrap();
     }

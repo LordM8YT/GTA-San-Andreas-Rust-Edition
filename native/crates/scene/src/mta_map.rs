@@ -1,7 +1,9 @@
 //! MTA:SA `.map` files: XML lists of `<object>` placements and
 //! `<removeWorldObject>` entries. Implemented from the attribute list on the
 //! public MTA wiki (Object, RemoveWorldModel, SetElementRotation pages).
-//! Other elements (vehicles, spawnpoints, markers, scripts) are skipped.
+//! Spawn points become teleport targets. Other elements (vehicles, markers,
+//! pickups) are skipped, and scripts are never run: model replacements are
+//! read from them as text, see [`script_models`].
 use anyhow::{bail, ensure, Context, Result};
 use quick_xml::events::{BytesStart, Event};
 
@@ -14,6 +16,7 @@ pub(crate) struct MapObject {
     /// IPL convention: the conjugate of the object's rotation.
     pub rotation: [f32; 4],
     pub interior: i32,
+    pub scale: f32,
 }
 #[derive(Debug, PartialEq)]
 pub(crate) struct WorldRemoval {
@@ -28,10 +31,9 @@ pub(crate) struct WorldRemoval {
 pub(crate) struct MtaMap {
     pub objects: Vec<MapObject>,
     pub removals: Vec<WorldRemoval>,
+    pub spawns: Vec<[f32; 3]>,
     /// Elements SARE does not load yet, such as vehicles or markers.
     pub skipped: usize,
-    /// Objects whose `scale` differs from 1; they are placed unscaled.
-    pub unscaled: usize,
 }
 
 pub(crate) fn parse(data: &[u8]) -> Result<MtaMap> {
@@ -59,17 +61,12 @@ pub(crate) fn parse(data: &[u8]) -> Result<MtaMap> {
             root = true;
         } else if depth == 1 {
             match element.name().as_ref() {
-                b"object" => {
-                    let object = object(&element)?;
-                    if attribute(&element, "scale")?
-                        .map(|s| s.parse::<f32>())
-                        .transpose()?
-                        .is_some_and(|scale| (scale - 1.0).abs() > 1e-3)
-                    {
-                        map.unscaled += 1;
-                    }
-                    map.objects.push(object);
-                }
+                // One malformed or invisible (scale 0) object skips only itself.
+                b"object" => match object(&element) {
+                    Ok(object) => map.objects.push(object),
+                    Err(_) => map.skipped += 1,
+                },
+                b"spawnpoint" if map.spawns.len() < 64 => map.spawns.push(position(&element)?),
                 b"removeWorldObject" => map.removals.push(removal(&element)?),
                 _ => map.skipped += 1,
             }
@@ -88,12 +85,18 @@ pub(crate) fn parse(data: &[u8]) -> Result<MtaMap> {
 }
 
 /// A drop-in MTA resource folder: its `meta.xml` becomes an enabled native
-/// manifest listing the `<map src>` files. Scripts and other files are ignored.
-pub(crate) fn meta_manifest(data: &[u8], folder_name: &str) -> Result<serde_json::Value> {
+/// manifest listing the `<map src>` files and the model files its client
+/// scripts load. `read` returns a resource file; scripts are only read.
+pub(crate) fn meta_manifest(
+    data: &[u8],
+    folder_name: &str,
+    read: impl Fn(&str) -> Result<Vec<u8>>,
+) -> Result<serde_json::Value> {
     let text = std::str::from_utf8(data).context("MTA meta.xml is not UTF-8")?;
     let mut reader = quick_xml::Reader::from_str(text);
     let mut name = None;
     let mut maps = Vec::new();
+    let mut scripts = Vec::new();
     let mut depth = 0_usize;
     loop {
         let (element, nested) = match reader.read_event()? {
@@ -119,6 +122,12 @@ pub(crate) fn meta_manifest(data: &[u8], folder_name: &str) -> Result<serde_json
                     maps.push(src.replace('\\', "/"));
                     ensure!(maps.len() <= 16, "MTA map limit (16 per resource)");
                 }
+                b"script" if attribute(&element, "type")?.as_deref() != Some("server") => {
+                    if let Some(src) = attribute(&element, "src")? {
+                        scripts.push(src.replace('\\', "/"));
+                        ensure!(scripts.len() <= 128, "MTA script limit (128 per resource)");
+                    }
+                }
                 _ => {}
             }
         }
@@ -134,7 +143,213 @@ pub(crate) fn meta_manifest(data: &[u8], folder_name: &str) -> Result<serde_json
         .filter(|c| !c.is_control())
         .take(96)
         .collect();
-    Ok(serde_json::json!({ "enabled": true, "name": name, "mta_maps": maps }))
+    let mut models = std::collections::BTreeMap::new();
+    for script in scripts {
+        // A missing or unreadable script only loses its model replacements.
+        let Ok(text) = read(&script) else { continue };
+        for model in script_models(&String::from_utf8_lossy(&text)) {
+            let entry = models.entry(model.id).or_insert_with(ScriptModel::default);
+            entry.id = model.id;
+            entry.dff = model.dff.or(entry.dff.take());
+            entry.txd = model.txd.or(entry.txd.take());
+            entry.col = model.col.or(entry.col.take());
+        }
+    }
+    let models: Vec<_> = models
+        .into_values()
+        .take(256)
+        .map(|m| serde_json::json!({ "id": m.id, "dff": m.dff, "txd": m.txd, "col": m.col }))
+        .collect();
+    Ok(serde_json::json!({
+        "enabled": true,
+        "name": name,
+        "mta_maps": maps,
+        "mta_models": models,
+    }))
+}
+
+/// A model file set that a client script assigns to an ID.
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct ScriptModel {
+    pub id: i32,
+    pub dff: Option<String>,
+    pub txd: Option<String>,
+    pub col: Option<String>,
+}
+
+/// Model replacements in MTA client Lua, found by reading the text, never by
+/// running it. Two common forms are recognised: tables whose fields name a
+/// `.dff`/`.txd`/`.col` file and a model ID, and `engineLoadDFF/TXD/COL`
+/// results passed to `engineReplaceModel`, `engineImportTXD` or
+/// `engineReplaceCOL` with a literal ID. Anything computed at run time is missed.
+pub(crate) fn script_models(source: &str) -> Vec<ScriptModel> {
+    let text = strip_lua_comments(source);
+    let mut found = Vec::new();
+    // Form 1: { dffFile = "a.dff", txdFile = "a.txd", modelID = 1234 }
+    let mut stack = Vec::new();
+    for (index, ch) in text.char_indices() {
+        match ch {
+            '{' => stack.push(index),
+            '}' => {
+                if let Some(start) = stack.pop() {
+                    let block = &text[start + 1..index];
+                    if !block.contains('{') {
+                        found.extend(table_model(block));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    // Form 2: local d = engineLoadDFF("a.dff") ... engineReplaceModel(d, 1234)
+    let loads = [
+        ("engineLoadDFF", "engineReplaceModel"),
+        ("engineLoadTXD", "engineImportTXD"),
+        ("engineLoadCOL", "engineReplaceCOL"),
+    ];
+    for (kind, (load, apply)) in loads.iter().enumerate() {
+        let mut variables = std::collections::HashMap::new();
+        for (at, _) in text.match_indices(load) {
+            let Some(path) = call_args(&text[at + load.len()..])
+                .first()
+                .and_then(|a| string_literal(a))
+            else {
+                continue;
+            };
+            let before = text[..at].trim_end();
+            if let Some(before) = before.strip_suffix('=') {
+                let name: String = before
+                    .trim_end()
+                    .chars()
+                    .rev()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect();
+                if !name.is_empty() {
+                    variables.insert(name, path);
+                }
+            }
+        }
+        for (at, _) in text.match_indices(apply) {
+            let args = call_args(&text[at + apply.len()..]);
+            let (Some(first), Some(id)) = (args.first(), args.get(1).and_then(|a| a.parse().ok()))
+            else {
+                continue;
+            };
+            let path = first
+                .strip_prefix(load)
+                .and_then(|inner| call_args(inner).first().and_then(|a| string_literal(a)))
+                .or_else(|| variables.get(*first).cloned());
+            let Some(path) = path else { continue };
+            let mut model = ScriptModel {
+                id,
+                ..Default::default()
+            };
+            *[&mut model.dff, &mut model.txd, &mut model.col][kind] = Some(path);
+            found.push(model);
+        }
+    }
+    found
+        .into_iter()
+        .filter(|m| {
+            m.id >= 0
+                && [&m.dff, &m.txd, &m.col]
+                    .iter()
+                    .all(|p| p.as_deref().is_none_or(local_path))
+        })
+        .collect()
+}
+fn table_model(block: &str) -> Option<ScriptModel> {
+    let mut model = ScriptModel::default();
+    let mut id = None;
+    for field in block.split([',', ';', '\n']) {
+        let Some((key, value)) = field.split_once('=') else {
+            continue;
+        };
+        let key = key
+            .trim()
+            .trim_matches(['[', ']', '"', '\''])
+            .to_ascii_lowercase();
+        let value = value.trim();
+        if let Some(path) = string_literal(value) {
+            let lower = path.to_ascii_lowercase();
+            if lower.ends_with(".dff") {
+                model.dff = Some(path);
+            } else if lower.ends_with(".txd") {
+                model.txd = Some(path);
+            } else if lower.ends_with(".col") {
+                model.col = Some(path);
+            }
+        } else if ["modelid", "model", "id", "objectid"].contains(&key.as_str()) {
+            id = value.parse().ok();
+        }
+    }
+    model.id = id?;
+    (model.dff.is_some() || model.txd.is_some()).then_some(model)
+}
+/// Arguments of the call whose `(` starts `rest`, split at top-level commas.
+fn call_args(rest: &str) -> Vec<&str> {
+    let Some(rest) = rest.trim_start().strip_prefix('(') else {
+        return Vec::new();
+    };
+    let (mut depth, mut start, mut args, mut quote) = (0, 0, Vec::new(), None);
+    for (index, ch) in rest.char_indices() {
+        match (quote, ch) {
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), _) => {}
+            (None, '"' | '\'') => quote = Some(ch),
+            (None, '(' | '{') => depth += 1,
+            (None, ')') if depth == 0 => {
+                args.push(rest[start..index].trim());
+                return args;
+            }
+            (None, ')' | '}') => depth -= 1,
+            (None, ',') if depth == 0 => {
+                args.push(rest[start..index].trim());
+                start = index + 1;
+            }
+            _ => {}
+        }
+        if index > 4096 {
+            break;
+        }
+    }
+    Vec::new()
+}
+fn string_literal(value: &str) -> Option<String> {
+    let value = value.trim();
+    let quote = value.chars().next().filter(|c| *c == '"' || *c == '\'')?;
+    let inner = value[1..].strip_suffix(quote)?;
+    (!inner.contains(quote)).then(|| inner.replace('\\', "/"))
+}
+/// Paths inside this resource only; `:other/file` and parent paths are skipped.
+fn local_path(path: &str) -> bool {
+    !path.is_empty() && !path.starts_with([':', '/']) && !path.split('/').any(|part| part == "..")
+}
+fn strip_lua_comments(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    let mut rest = source;
+    while let Some(at) = rest.find("--") {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + 2..];
+        let level = after
+            .strip_prefix('[')
+            .map(|r| r.chars().take_while(|c| *c == '=').count())
+            .filter(|n| after[1 + n..].starts_with('['));
+        rest = match level {
+            Some(n) => {
+                let close = format!("]{}]", "=".repeat(n));
+                after
+                    .find(&close)
+                    .map_or("", |end| &after[end + close.len()..])
+            }
+            None => after.find('\n').map_or("", |end| &after[end..]),
+        };
+    }
+    out.push_str(rest);
+    out
 }
 
 fn attribute(element: &BytesStart, name: &str) -> Result<Option<String>> {
@@ -186,11 +401,17 @@ fn object(element: &BytesStart) -> Result<MapObject> {
         (0..=255).contains(&interior),
         "MTA map object interior {interior} out of range"
     );
+    let scale = number(element, "scale", Some(1.0))?;
+    ensure!(
+        (0.01..=100.0).contains(&scale),
+        "MTA map object scale {scale} out of range"
+    );
     Ok(MapObject {
         model,
         position: position(element)?,
         rotation: ipl_rotation(degrees),
         interior,
+        scale,
     })
 }
 fn removal(element: &BytesStart) -> Result<WorldRemoval> {
@@ -234,8 +455,9 @@ mod tests {
         assert_eq!(map.objects[0].model, 1634);
         assert_eq!(map.objects[0].position, [2495.5, -1668.25, 13.1]);
         assert_eq!(map.objects[1].rotation, [0.0, 0.0, 0.0, 1.0]);
-        assert_eq!(map.unscaled, 1);
-        assert_eq!(map.skipped, 2);
+        assert_eq!(map.objects[1].scale, 2.0);
+        assert_eq!(map.spawns, vec![[0.0, 0.0, 0.0]]);
+        assert_eq!(map.skipped, 1);
         assert_eq!(
             map.removals,
             vec![WorldRemoval {
@@ -265,16 +487,59 @@ mod tests {
     <script src="client.lua" type="client" />
     <file src="models/ramp.dff" />
 </meta>"#;
+        let read = |path: &str| -> Result<Vec<u8>> {
+            ensure!(path == "client.lua");
+            Ok(
+                br#"local d = engineLoadDFF("models/ramp.dff") engineReplaceModel(d, 1634)"#
+                    .to_vec(),
+            )
+        };
         assert_eq!(
-            meta_manifest(meta, "stunt").unwrap(),
-            serde_json::json!({"enabled": true, "name": "Stunt park", "mta_maps": ["stunt.map"]})
+            meta_manifest(meta, "stunt", read).unwrap(),
+            serde_json::json!({"enabled": true, "name": "Stunt park", "mta_maps": ["stunt.map"],
+                "mta_models": [{"id": 1634, "dff": "models/ramp.dff", "txd": null, "col": null}]})
         );
-        assert!(meta_manifest(b"<meta><script src=\"a.lua\"/></meta>", "x").is_err());
+        assert!(meta_manifest(b"<meta><script src=\"a.lua\"/></meta>", "x", read).is_err());
+    }
+
+    #[test]
+    fn script_models_reads_tables_and_calls_without_running_them() {
+        let lua = r#"
+local modelsToReplace = {
+    --[[{ dffFile = "dff/.dff", modelID = 1 },--]]
+    { colFile = "road.col", txdFile = "road.txd", dffFile = "road.dff", modelID = 18450, alphaTransparency = true },
+    { dffFile = "dff/tag.dff", modelID = 1524 }, -- { dffFile = "x.dff", modelID = 2 }
+}
+local btxd = engineLoadTXD("b.txd")
+engineImportTXD(btxd, 6959)
+local bdff = engineLoadDFF("b.dff", 0)
+engineReplaceModel(bdff, 6959)
+engineReplaceCOL(engineLoadCOL("b.col"), 6959)
+engineReplaceModel(engineLoadDFF(":other/x.dff"), 7)
+engineReplaceModel(bdff, someVariable)
+"#;
+        let model = |id, dff: Option<&str>, txd: Option<&str>, col: Option<&str>| ScriptModel {
+            id,
+            dff: dff.map(Into::into),
+            txd: txd.map(Into::into),
+            col: col.map(Into::into),
+        };
+        assert_eq!(
+            script_models(lua),
+            vec![
+                model(18450, Some("road.dff"), Some("road.txd"), Some("road.col")),
+                model(1524, Some("dff/tag.dff"), None, None),
+                model(6959, Some("b.dff"), None, None),
+                model(6959, None, Some("b.txd"), None),
+                model(6959, None, None, Some("b.col")),
+            ]
+        );
     }
 
     #[test]
     fn rejects_non_map_xml() {
         assert!(parse(b"<meta><map src=\"a.map\"/></meta>").is_err());
-        assert!(parse(b"<map><object posX=\"1\" posY=\"2\" posZ=\"3\"/></map>").is_err());
+        let map = parse(br#"<map><object posX="1" posY="2" posZ="3"/><object model="1" posX="0" posY="0" posZ="0" scale="0"/></map>"#).unwrap();
+        assert!(map.objects.is_empty() && map.skipped == 2);
     }
 }

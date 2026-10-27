@@ -245,6 +245,8 @@ struct State {
     network_peer_ids: Vec<u32>,
     /// Server-requested position (`SetEntityCoords`), SA world coordinates.
     pending_coords: Option<[f32; 3]>,
+    /// MTA map spawn points from the loaded resources, for `/spawns`.
+    map_spawns: Vec<(String, [f32; 3])>,
     chat: chat::Chat,
     /// The server's client scripts, sandboxed, and the UI they show.
     scripts: sa_lua::client::Host,
@@ -1062,6 +1064,7 @@ impl State {
             network_host: false,
             network_peer_ids: Vec::new(),
             pending_coords: None,
+            map_spawns: Vec::new(),
             chat: chat::Chat::default(),
             scripts: sa_lua::client::Host::new(),
             script_peers: Vec::new(),
@@ -2770,6 +2773,7 @@ struct App {
     capture_dir: Option<PathBuf>,
     failure: Option<String>,
     mod_names: Vec<String>,
+    map_spawns: Vec<(String, [f32; 3])>,
     game_dir: PathBuf,
     smoke_menus: bool,
     smoke_spawner: bool,
@@ -3053,6 +3057,7 @@ impl ApplicationHandler for App {
                 }
                 state.frontend_sounds = self.frontend_sounds.take();
                 state.menu.mods = self.mod_names.clone();
+                state.map_spawns = self.map_spawns.clone();
                 if let Some(ped) = self.ped.take() {
                     match ped.scene().and_then(|scene| {
                         State::upload_scene(
@@ -5389,6 +5394,10 @@ fn main() -> Result<()> {
         .as_ref()
         .map(|l| l.mod_names().to_vec())
         .unwrap_or_default();
+    let map_spawns = loader
+        .as_ref()
+        .map(|l| l.map_spawns().to_vec())
+        .unwrap_or_default();
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = App {
@@ -5501,6 +5510,7 @@ fn main() -> Result<()> {
             .map(|w| PathBuf::from(&w[1])),
         failure: None,
         mod_names,
+        map_spawns,
         game_dir: game,
         test_tone: sa_audio::SoundEffect::tone(660.0, 0.18, 48_000).ok(),
         smoke_spawner: args.iter().any(|a| a == "--smoke-spawner"),

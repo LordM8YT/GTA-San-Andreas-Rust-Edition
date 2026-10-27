@@ -210,7 +210,8 @@ category folder such as `mods/[maps]/`), so that its `meta.xml` sits directly
 inside the resource folder, for example `mods/[maps]/stuntpark/meta.xml`. A
 folder with a `meta.xml` and no `mod.json` loads as an enabled resource with
 the `.map` files named by `<map src="...">`; the `<info name="...">` becomes the
-resource name. Scripts and other files in it are ignored. To disable it, add a
+resource name. Its client scripts are read for model replacements (see below)
+but never run. To disable it, add a
 `mod.json` containing `{"enabled": false}`, or move the folder out of `mods/`.
 
 A native resource can also list MTA `.map` files itself in `mta_maps`:
@@ -228,18 +229,37 @@ Up to 16 maps per resource and
 20,000 objects in total are loaded. SARE reads:
 
 - `<object>`: `model`, `posX`/`posY`/`posZ`, `rotX`/`rotY`/`rotZ` in degrees
-  (MTA's object rotation order: Z, then X, then Y), and `interior`.
+  (MTA's object rotation order: Z, then X, then Y), `interior`, and a uniform
+  `scale`. Objects with scale 0 (invisible in MTA) or broken attributes are
+  skipped one by one.
+- `<spawnpoint>`: becomes a teleport target. Type `/spawns` in chat (T) to list
+  them and `/spawns 1` to go to the first one. Most MTA maps are built away from
+  the normal roads, often out at sea, so this is the way to reach them.
 - `<removeWorldObject>`: removes original placements of `model` and `lodModel`
   whose position lies within `radius` of `posX`/`posY`/`posZ`, in `interior`
   or in every interior when it is missing or -1.
 
-Objects with a model ID that SARE does not know are skipped. `scale`, `alpha`,
-`collisions`, `doublesided`, `frozen` and `dimension` are ignored, so scaled
-objects appear at normal size. Vehicles, peds, pickups, markers, spawn points
-and other elements are skipped, and Lua scripts in the MTA resource are not run.
-MTA maps that use custom models load them through scripts; register those DFF,
-TXD and COL files in `models` with the model ID the map uses instead. The
-loader counts what it skipped in the console log.
+Objects with a model ID that SARE does not know are skipped. `alpha`,
+`collisions`, `doublesided`, `frozen` and `dimension` are ignored. Vehicles,
+peds, pickups, markers, race checkpoints and other elements are skipped.
+
+MTA maps load their custom models through client scripts. SARE never runs
+those scripts, but reads them as text and recognises two common forms:
+
+- tables whose fields name a `.dff`, `.txd` or `.col` file and a model ID, such
+  as `{ dffFile = "road.dff", txdFile = "road.txd", modelID = 18450 }`;
+- `engineLoadDFF/TXD/COL("file")` results, directly or through a local
+  variable, passed to `engineReplaceModel`, `engineImportTXD` or
+  `engineReplaceCOL` with a literal model ID.
+
+These become `mta_models` entries in the generated manifest. A model whose
+files are missing or fail to decode is skipped and logged; the rest of the
+resource still loads. A new DFF without its own TXD keeps the replaced model's
+textures, and a TXD alone replaces the textures of the original model. IDs or
+paths computed at run time, shaders, sounds and other script behaviour are not
+supported. For any model the scripts hide, register its files in `models` with
+the model ID the map uses. The loader counts what it skipped in the console
+log.
 
 When a server shares the resource, the `.map` files go to joining players with
 the other resource files. A drop-in MTA folder is shared with a generated
