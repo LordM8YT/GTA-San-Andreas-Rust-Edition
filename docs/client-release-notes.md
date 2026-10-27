@@ -1,5 +1,12 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.39.0:
+- MTA maps get their own models: SARE reads the model replacements in an MTA map's scripts as text (it never runs them), so custom roads, ramps and props show up instead of the original objects.
+- Scaled MTA objects now appear at their size, and broken or invisible objects are skipped one by one instead of stopping the whole map.
+- `/spawns` in chat lists the spawn points of loaded MTA maps, and `/spawns 1` takes you there. Many MTA maps are built out at sea, away from the normal roads.
+
+Tested against a real MTA DM map (10,566 objects, 31 script models, 6 spawn points) in automated tests. In-game look and rotations still need a check on a real install.
+
 Version 0.38.0:
 - MTA:SA maps: unzip a downloaded MTA map resource (the folder with `meta.xml`) into `mods/` and it loads on the next start, no conversion needed. Its objects are placed, and its `removeWorldObject` entries remove the original buildings they name. Native resources can also list `.map` files with `"mta_maps"`. Works in single player, and servers share the map file with joining players like other resource files. Vehicles, spawn points, markers, object scale and Lua scripts in MTA maps are not loaded yet.
 - The launcher now creates the `mods/` folder next to itself if it is missing.

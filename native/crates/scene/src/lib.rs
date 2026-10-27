@@ -39,6 +39,8 @@ struct Placement {
     /// `NO_ROW` for placements outside the original IPL set.
     uid: u32,
     parent: u32,
+    /// Uniform model scale; 1 for every IPL row, MTA maps may set others.
+    scale: f32,
 }
 const NO_ROW: u32 = u32::MAX;
 const ALL_AREAS: i32 = 13;
@@ -179,6 +181,7 @@ fn placement(id: i32, interior: i32, pos: [f32; 3], quat: [f32; 4]) -> Result<Pl
         is_lod: false,
         uid: NO_ROW,
         parent: NO_ROW,
+        scale: 1.0,
     })
 }
 fn binary_ipl(data: &[u8]) -> Result<Vec<Placement>> {
@@ -335,8 +338,12 @@ fn rotate(point: [f32; 3], q: [f32; 4]) -> [f32; 3] {
         point[2] + w * t[2] + x * t[1] - y * t[0],
     ]
 }
+/// Model space to IPL world axes, relative to the placement position.
+fn orient(point: [f32; 3], r: &Placement) -> [f32; 3] {
+    rotate(point.map(|v| v * r.scale), r.quat)
+}
 fn place(point: [f32; 3], r: &Placement, center: [f32; 2]) -> [f32; 3] {
-    let v = rotate(point, r.quat);
+    let v = orient(point, r);
     [
         v[0] + r.pos[0] - center[0],
         v[2] + r.pos[2],
@@ -780,7 +787,7 @@ impl WorldLoader {
             let mut max = [f32::NEG_INFINITY; 2];
             for geometry in &models[&dff] {
                 for point in &geometry.positions {
-                    let v = rotate(*point, r.quat);
+                    let v = orient(*point, r);
                     for axis in 0..2 {
                         let value = v[axis] + r.pos[axis];
                         min[axis] = min[axis].min(value);
@@ -840,7 +847,7 @@ impl WorldLoader {
                                 model.max[a]
                             }
                         });
-                        let v = rotate(point, r.quat);
+                        let v = orient(point, r);
                         for a in 0..2 {
                             min[a] = min[a].min(v[a] + r.pos[a]);
                             max[a] = max[a].max(v[a] + r.pos[a]);
@@ -1042,6 +1049,7 @@ pub fn load_first_model(game: &Path) -> Result<Scene> {
     let geometry = decode_dff(&img.read("cj_wastebin.dff")?)?;
     let r = Placement {
         id: 0,
+        scale: 1.0,
         interior: 0,
         lod: -1,
         is_lod: false,
@@ -1137,6 +1145,7 @@ pub fn load_cuttest(game: &Path) -> Result<Scene> {
     let geometry = decode_dff(&img.read("csgoldrec.dff")?)?;
     let r = Placement {
         id: 0,
+        scale: 1.0,
         interior: 0,
         lod: -1,
         is_lod: false,
@@ -1203,6 +1212,7 @@ pub fn load_prologue(game: &Path) -> Result<Scene> {
     let geometry = decode_dff(&img.read("cstaxi92.dff")?)?;
     let placement = Placement {
         id: 0,
+        scale: 1.0,
         interior: 0,
         lod: -1,
         is_lod: false,

@@ -128,8 +128,34 @@ impl State {
                 self.chat.log("Disconnected.");
             }
             "quit" => self.apply_menu_action(Some(crate::menu::Action::Quit)),
+            "spawns" => match rest.first().map(|n| n.parse::<usize>()) {
+                _ if self.map_spawns.is_empty() => {
+                    self.chat.log("No MTA map spawn points are loaded.")
+                }
+                Some(Ok(n)) if (1..=self.map_spawns.len()).contains(&n) => {
+                    let (name, position) = self.map_spawns[n - 1].clone();
+                    self.pending_coords = Some(position);
+                    self.chat.log(format!("Going to {name}..."));
+                    self.chat.close();
+                    self.capture(true);
+                }
+                Some(_) => self.chat.log(format!(
+                    "Usage: /spawns 1-{}",
+                    self.map_spawns.len()
+                )),
+                None => {
+                    let list: Vec<_> = self
+                        .map_spawns
+                        .iter()
+                        .enumerate()
+                        .map(|(i, (name, _))| format!("{}: {name}", i + 1))
+                        .collect();
+                    self.chat
+                        .log(format!("MTA map spawns (/spawns N): {}", list.join(", ")));
+                }
+            },
             "help" | "cmdlist" => self.chat.log(
-                "Local: /cars /peds /mp /mods, connect <ip:port>, disconnect, quit. Other /commands go to the server.",
+                "Local: /cars /peds /mp /mods /spawns, connect <ip:port>, disconnect, quit. Other /commands go to the server.",
             ),
             _ if self.scripts.command(line) => {}
             _ => match &self.network_session {
