@@ -1,5 +1,8 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.42.1:
+- 3D car physics: cars drive up kerbs, steps and the small edges between road pieces again instead of stopping as if at a wall, and they have the grip to climb steep hills.
+
 Version 0.42.0:
 - New SARE look: a plain SARE logo and title font replace the old gothic "SA" icon and lettering in the launcher and menus. The launcher's About page now says SARE is an unofficial fan project and needs your own copy of the game.
 - The launcher and server updaters are ready for the project's new GitHub name (SARE). Updates keep working before and after the rename.

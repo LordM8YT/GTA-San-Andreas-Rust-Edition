@@ -24,6 +24,10 @@ const BODY_FRICTION: f32 = 0.6;
 /// Wall hits: share of the closing speed bounced back, and scraping friction.
 const WALL_BOUNCE: f32 = 0.2;
 const WALL_FRICTION: f32 = 0.3;
+/// How much harder tyres can push or brake than corner.
+const PUSH_GRIP: f32 = 1.6;
+/// Tallest step the wheels drive up instead of treating it as a wall, m.
+const KERB: f32 = 0.35;
 /// Share of the ride height at which tyre forces act on the body.
 const ROLL_CENTRE: f32 = 0.5;
 /// Fastest the body may spin, rad/s.
@@ -306,8 +310,12 @@ impl Car {
                 };
                 drive + hold(ROLLING_RESISTANCE / 4.0 * load / (GRAVITY / 4.0))
             };
-            long = long.clamp(-limit, limit);
-            let mut budget = (limit * limit - long * long)
+            // Tyres push and brake harder than they corner, as in the flat
+            // model, so cars still climb steep hills.
+            let push_limit = limit * PUSH_GRIP;
+            long = long.clamp(-push_limit, push_limit);
+            let used = long / PUSH_GRIP;
+            let mut budget = (limit * limit - used * used)
                 .max((0.35 * limit).powi(2))
                 .sqrt();
             if handbrake && !front {
@@ -383,7 +391,9 @@ impl Car {
 
         // Walls: slide along them and bounce off a little instead of stopping dead.
         let flat = Vec3::new(forward.x, 0.0, forward.z).normalize_or(Vec3::Z);
-        let feet = self.position - Vec3::Y * self.clearance;
+        // Probe from kerb height: the wheels climb kerbs, steps and seams
+        // between road pieces, only taller things are walls.
+        let feet = self.position - Vec3::Y * (self.clearance - KERB);
         let mut deepest = Vec3::ZERO;
         let mut hit = feet;
         let radius = half_width.max(0.3);
@@ -391,7 +401,7 @@ impl Car {
         let probes = (2.0 * reach / radius).ceil().max(1.0) as usize;
         for index in 0..=probes {
             let probe = feet + flat * (index as f32 / probes as f32 * 2.0 - 1.0) * reach;
-            let out = world.resolve_body(probe, radius, height) - probe;
+            let out = world.resolve_body(probe, radius, (height - KERB).max(0.5)) - probe;
             if out.length_squared() > deepest.length_squared() {
                 deepest = out;
                 hit = probe;

@@ -2084,4 +2084,45 @@ mod tests {
         drive(&mut flipped, &open, 0.0, 0.0, 0.5);
         assert!((flipped.model_orientation() * Vec3::Y).y < -0.9);
     }
+    #[test]
+    fn both_models_drive_up_a_kerb() {
+        let kerb = 0.15;
+        let world = CollisionWorld::from_batches(&[
+            floor(-100.0, 0.0, 0.0),
+            floor(0.0, 100.0, kerb),
+            mesh(&[
+                [-20.0, 0.0, 0.0],
+                [20.0, 0.0, 0.0],
+                [20.0, kerb, 0.0],
+                [-20.0, 0.0, 0.0],
+                [20.0, kerb, 0.0],
+                [-20.0, kerb, 0.0],
+            ]),
+        ]);
+        for rigid in [false, true] {
+            let mut car = Car::new(Vec3::new(0.0, 0.6, -20.0), 0.6);
+            car.set_rigid(rigid);
+            car.speed = 8.0;
+            drive(&mut car, &world, 0.5, 0.0, 4.0);
+            assert!(
+                car.position.z > 10.0,
+                "rigid={rigid}: stuck at {}",
+                car.position
+            );
+        }
+    }
+    #[test]
+    fn both_models_climb_a_steep_hill_from_rest() {
+        let hill = CollisionWorld::from_batches(&[ramp(0.4)]);
+        for rigid in [false, true] {
+            let mut car = Car::new(Vec3::new(0.0, -60.0 * 0.4 + 0.7, -60.0), 0.6);
+            car.set_rigid(rigid);
+            drive(&mut car, &hill, 1.0, 0.0, 6.0);
+            assert!(
+                car.position.z > -40.0,
+                "rigid={rigid}: stuck at {}",
+                car.position
+            );
+        }
+    }
 }
