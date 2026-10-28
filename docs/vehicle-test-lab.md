@@ -4,7 +4,7 @@
 
 Create a repeatable, developer-facing place to evaluate SARE's vehicle physics without changing normal freeroam gameplay. The lab should make regressions visible and let developers compare the classic vehicle model with the experimental 3D body.
 
-This document is a scoped implementation plan, not a claim that the test map or telemetry already exists.
+The first executable milestone is a headless, procedural regression course in `native/crates/scene/examples/vehicle-test-lab.rs`. It exercises flat-ground suspension, an oblique wall impact, and ramp flight/landing. It is not yet a rendered in-game test map and does not include the telemetry overlay.
 
 ## First milestone: a small test course
 
@@ -58,18 +58,28 @@ After the course exists, add deterministic tests for cases that can run without 
 
 Each check should state its setup, expected invariant, and tolerance. Avoid asserting that the physics exactly matches GTA or another game unless a measured reference and acceptance tolerance are documented.
 
+## Current headless milestone
+
+Run from the repository root:
+
+```sh
+cargo run -p sa-scene --example vehicle-test-lab
+```
+
+The example builds collision geometry from project-owned triangles at runtime, then runs fixed-step checks for flat-ground suspension, oblique wall response, and ramp launch/landing. A failed invariant returns an error and exits non-zero. These checks are useful as a quick local smoke test; they do not replace the full test suite or hardware testing. The example has been authored through the GitHub connector but has not yet been compiled in this environment.
+
 ## Suggested implementation order
 
-1. Inspect existing vehicle test helpers and the vehicle-slopes example; reuse them rather than creating a competing physics harness.
-2. Add a small procedural test course and developer-only entry point.
-3. Add reset/spawn controls and a minimal telemetry overlay.
+1. Run the new `vehicle-test-lab` example and fix any compile or behavioral failures.
+2. Expand the procedural course with bumps, side slopes, thin walls, and roof/side landing cases, reusing the existing vehicle test helpers where possible.
+3. Add reset/spawn controls and a minimal developer-only telemetry overlay in-game.
 4. Add repeatable non-rendering regression tests for the highest-risk collision and suspension cases.
 5. Only after those are useful, add recorded runs/replay comparison and surface-grip tests.
 
 ## Acceptance criteria for the first usable version
 
 - The lab is opt-in and does not alter normal gameplay or the default physics mode.
-- The course uses project-owned/procedural geometry and adds no game assets.
+- The headless course uses project-owned/procedural geometry and adds no game assets.
 - A developer can reset a vehicle and reproduce the same basic test setup.
 - Telemetry identifies which physics mode is active and shows speed, body angles, and frame time.
 - At least one automated regression test covers a previously fragile vehicle-physics case.
