@@ -24,6 +24,10 @@ const BODY_FRICTION: f32 = 0.6;
 /// Wall hits: share of the closing speed bounced back, and scraping friction.
 const WALL_BOUNCE: f32 = 0.2;
 const WALL_FRICTION: f32 = 0.3;
+/// Roll acceleration the steering gives a car lying on its side or roof,
+/// rad/s², and the slowest it must be moving for that.
+const FLIP_SPIN: f32 = 28.0;
+const FLIP_SPEED: f32 = 3.0;
 /// How much harder tyres can push or brake than corner.
 const PUSH_GRIP: f32 = 1.6;
 /// Tallest step the wheels drive up instead of treating it as a wall, m.
@@ -340,6 +344,7 @@ impl Car {
         }
 
         // Body corners that reach the ground: roof landings, scraping, rollovers.
+        let mut resting = false;
         // The roof can only touch down once the car is well tipped.
         let roof = (up.y < 0.5).then_some(height - self.clearance);
         for x in [-half_width, half_width] {
@@ -360,13 +365,19 @@ impl Car {
                     let press = (BODY_SPRING * depth - BODY_DAMPING * velocity.y).max(0.0);
                     let slide = velocity - Vec3::Y * velocity.y;
                     let rub = (-slide * 8.0).clamp_length_max(BODY_FRICTION * press);
+                    resting |= press > 0.0;
                     push(corner, Vec3::Y * press + rub, &mut force, &mut torque);
                 }
             }
         }
 
+        // A car on its side or roof rocks with the steering until it rolls
+        // back onto its wheels.
+        if up.y < 0.5 && contacts < 2 && resting && body.velocity.length() < FLIP_SPEED {
+            torque += forward * steer * FLIP_SPIN * inertia.z;
+        }
         // Steering in mid-air: turn, tip the nose, or roll with the handbrake key.
-        if contacts == 0 && tuning.air_control > 0.0 {
+        if contacts == 0 && !resting && tuning.air_control > 0.0 {
             let rate = AIR_TILT_RATE * tuning.air_control;
             if roll_key {
                 torque += forward * steer * rate * inertia.z;

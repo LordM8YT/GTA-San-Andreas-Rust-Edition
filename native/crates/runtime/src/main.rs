@@ -37,6 +37,7 @@ mod streaming;
 mod temporal;
 mod traffic;
 mod trailer;
+mod tyre_smoke;
 #[path = "../../../ui/theme.rs"]
 mod ui_theme;
 mod upload;
@@ -168,6 +169,10 @@ struct State {
     rain: rain::Rain,
     rain_buffer: wgpu::Buffer,
     white: wgpu::BindGroup,
+    tyre_smoke: tyre_smoke::TyreSmoke,
+    smoke_buffer: wgpu::Buffer,
+    /// Soft round texture for smoke puffs.
+    puff: wgpu::BindGroup,
     shadows: shadow::Shadows,
     pub(crate) daycycle: daycycle::DayCycle,
     zones: zones::Zones,
@@ -882,6 +887,47 @@ impl State {
                 },
             ],
         });
+        let smoke_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("tyre smoke"),
+            size: (tyre_smoke::VERTICES * std::mem::size_of::<sa_scene::Vertex>()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let puff_view = device
+            .create_texture_with_data(
+                &queue,
+                &wgpu::TextureDescriptor {
+                    label: Some("smoke puff"),
+                    size: wgpu::Extent3d {
+                        width: tyre_smoke::TEXTURE_SIZE,
+                        height: tyre_smoke::TEXTURE_SIZE,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                },
+                Default::default(),
+                &tyre_smoke::texture(),
+            )
+            .create_view(&Default::default());
+        let puff = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("smoke puff"),
+            layout: &image_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&puff_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+        });
         let animation = scene.animation.take();
         let collision = scene.collision.take();
         let water = scene.water.take();
@@ -982,6 +1028,9 @@ impl State {
             rain: rain::Rain::default(),
             rain_buffer,
             white,
+            tyre_smoke: tyre_smoke::TyreSmoke::default(),
+            smoke_buffer,
+            puff,
             shadows,
             daycycle: daycycle::DayCycle::default(),
             zones: zones::Zones::default(),
@@ -1481,6 +1530,7 @@ impl State {
             0.0
         };
         self.rain.update(self.position, right, rain, dt);
+        self.tyre_smoke.update(right, Vec3::Y, dt);
         let stream_started = Instant::now();
         self.stream_world();
         self.metrics.stream_ms = stream_started.elapsed().as_secs_f64() * 1000.;
@@ -1612,6 +1662,7 @@ impl State {
                 if dt > 0.0 {
                     self.skids
                         .update(car, skids::intensity(car, throttle, handbrake));
+                    self.tyre_smoke.emit(car, tyre_smoke::intensity(car), dt);
                 }
                 // Nitro burns on fire or left Ctrl, as in SA.
                 let nitro = self.fire_held
@@ -2671,6 +2722,17 @@ impl State {
                     );
                     pass.set_vertex_buffer(0, self.rain_buffer.slice(..));
                     pass.draw(0..self.rain.count, 0..1);
+                }
+                if self.tyre_smoke.count > 0 {
+                    let used = self.tyre_smoke.count as usize;
+                    self.queue.write_buffer(
+                        &self.smoke_buffer,
+                        0,
+                        bytemuck::cast_slice(&self.tyre_smoke.vertices[..used]),
+                    );
+                    pass.set_bind_group(1, &self.puff, &[]);
+                    pass.set_vertex_buffer(0, self.smoke_buffer.slice(..));
+                    pass.draw(0..self.tyre_smoke.count, 0..1);
                 }
             }
         }
