@@ -1,5 +1,9 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.43.0:
+- Tyre smoke: burnouts and hard drifts now leave clouds of tyre smoke that rise and drift away.
+- 3D car physics: a car stuck on its side or roof can be rocked back onto its wheels. Hold A or D (or push the stick) while it lies still.
+
 Version 0.42.1:
 - 3D car physics: cars drive up kerbs, steps and the small edges between road pieces again instead of stopping as if at a wall, and they have the grip to climb steep hills.
 

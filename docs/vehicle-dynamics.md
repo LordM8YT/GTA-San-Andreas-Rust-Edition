@@ -190,9 +190,19 @@ the same `Handling`.
 - Body corners that touch the ground hold the car up. A car can tip over,
   slide on its side and come to rest on its roof.
 - Mid-air controls tip, turn and roll the whole body.
+- A car lying on its side or roof, moving slower than 3 m/s, rocks with the
+  steering (28 rad/s² of roll) until it tips back onto its wheels.
 
 Other players still see your car with the flat pose angles, so a car on its
 roof shows on its side for them.
+
+## Tyre smoke
+
+`runtime/src/tyre_smoke.rs` puffs grey smoke from the rear tyres. A burnout
+smokes at full strength, and a slide smokes once the car slips sideways
+faster than 4 m/s. There are up to 96 camera-facing puffs, each lasting 1.6 s,
+in one dynamic buffer drawn with the blended pipeline and a generated soft
+round texture.
 
 ## Stationary mesh updates
 

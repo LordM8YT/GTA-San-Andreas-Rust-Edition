@@ -2125,4 +2125,19 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn steering_rocks_a_3d_car_off_its_roof_back_onto_its_wheels() {
+        let world = pad(100.0);
+        let mut car = rigid_car(Handling::default(), Vec3::Y * 2.0);
+        car.rigid.as_mut().unwrap().flip_for_test();
+        drive(&mut car, &world, 0.0, 0.0, 3.0);
+        assert!(
+            (car.model_orientation() * Vec3::Y).y < -0.9,
+            "rests on its roof"
+        );
+        drive(&mut car, &world, 0.0, 1.0, 4.0);
+        drive(&mut car, &world, 0.0, 0.0, 3.0);
+        let up = car.model_orientation() * Vec3::Y;
+        assert!(up.y > 0.95 && !car.airborne(), "back on its wheels: {up}");
+    }
 }
