@@ -82,7 +82,11 @@ impl TyreSmoke {
         self.owed += RATE * 2.0 * intensity * dt;
         while self.owed >= 1.0 {
             self.owed -= 1.0;
-            let tyre = if self.next.is_multiple_of(2) { -0.8 } else { 0.8 };
+            let tyre = if self.next.is_multiple_of(2) {
+                -0.8
+            } else {
+                0.8
+            };
             let jitter = Vec3::new(self.random() - 0.5, 0.0, self.random() - 0.5) * 0.4;
             let drift = Vec3::new(self.random() - 0.5, 0.0, self.random() - 0.5) * 1.2;
             self.puffs[self.next] = Puff {
