@@ -181,6 +181,9 @@ the same `Handling`.
   anti-roll bars, so hard cornering leans the car without flipping it.
 - Gravity acts on the whole body. Cars roll down hills when nobody holds the
   brake, and they lose speed climbing.
+- Steps up to 0.35 m (kerbs, seams between road pieces) are left to the
+  wheels; only taller things count as walls. Tyres push and brake 1.6 times
+  harder than they corner, so cars climb steep hills.
 - Walls push the body out and take an impulse with a little bounce and
   scraping friction. A glancing hit slides along the wall and spins the car
   instead of stopping it dead.
