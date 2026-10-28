@@ -154,7 +154,7 @@ fn ramp_and_landing_test() -> Result<()> {
     );
     println!(
         "PASS ramp and landing: position=({:.2}, {:.2}, {:.2}), vertical speed={:.2} m/s",
-        car.position.x, car.position.y, car.position.z, car.vertical_speed
+        car.position.x, car.position.y, car.position.z, car.velocity().y
     );
     Ok(())
 }
