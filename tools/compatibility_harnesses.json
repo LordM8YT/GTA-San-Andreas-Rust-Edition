@@ -1,0 +1,635 @@
+{
+  "schema_version": 1,
+  "purpose": "Repeatable black-box behavior scenarios. These are test specifications, not measured GTA SA results.",
+  "reference_policy": "Do not mark a scenario compatible until reference measurements are captured from a documented, legally owned GTA SA build and compared with SARE under matching conditions.",
+  "scenarios": [
+    {
+      "id": "vehicle/flat-idle",
+      "subsystem": "vehicle_physics",
+      "title": "Vehicle settles on flat ground",
+      "status": "spec_only",
+      "reference_status": "not_captured",
+      "setup": {
+        "scene": "procedural_flat_ground",
+        "vehicle": "record_exact_vehicle_model",
+        "weather": "clear",
+        "traffic": "disabled",
+        "start_speed_mps": 0,
+        "framerate_cap": "record_actual_cap"
+      },
+      "inputs": [
+        {
+          "at_s": 0,
+          "action": "throttle",
+          "value": 0
+        },
+        {
+          "at_s": 0,
+          "action": "brake",
+          "value": 0
+        }
+      ],
+      "checkpoints": [
+        {
+          "id": "spawn",
+          "at_s": 0,
+          "metrics": [
+            "position_x_m",
+            "position_y_m",
+            "position_z_m",
+            "speed_mps",
+            "pitch_deg",
+            "roll_deg",
+            "grounded"
+          ]
+        },
+        {
+          "id": "settled",
+          "at_s": 3,
+          "metrics": [
+            "position_y_m",
+            "speed_mps",
+            "pitch_deg",
+            "roll_deg",
+            "grounded"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vehicle/straight-acceleration",
+      "subsystem": "vehicle_physics",
+      "title": "Straight-line acceleration",
+      "status": "spec_only",
+      "reference_status": "not_captured",
+      "setup": {
+        "scene": "long_flat_straight",
+        "vehicle": "record_exact_vehicle_model",
+        "weather": "clear",
+        "traffic": "disabled",
+        "start_speed_mps": 0,
+        "framerate_cap": "record_actual_cap"
+      },
+      "inputs": [
+        {
+          "at_s": 0,
+          "action": "throttle",
+          "value": 1
+        },
+        {
+          "at_s": 4,
+          "action": "throttle",
+          "value": 0
+        }
+      ],
+      "checkpoints": [
+        {
+          "id": "start",
+          "at_s": 0,
+          "metrics": [
+            "speed_mps",
+            "position_x_m",
+            "position_z_m"
+          ]
+        },
+        {
+          "id": "after_1s",
+          "at_s": 1,
+          "metrics": [
+            "speed_mps",
+            "position_x_m",
+            "position_z_m"
+          ]
+        },
+        {
+          "id": "after_4s",
+          "at_s": 4,
+          "metrics": [
+            "speed_mps",
+            "position_x_m",
+            "position_z_m"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vehicle/braking",
+      "subsystem": "vehicle_physics",
+      "title": "Straight-line braking",
+      "status": "spec_only",
+      "reference_status": "not_captured",
+      "setup": {
+        "scene": "long_flat_straight",
+        "vehicle": "record_exact_vehicle_model",
+        "weather": "clear",
+        "traffic": "disabled",
+        "initial_speed_mps": 20,
+        "framerate_cap": "record_actual_cap"
+      },
+      "inputs": [
+        {
+          "at_s": 0,
+          "action": "throttle",
+          "value": 0
+        },
+        {
+          "at_s": 0,
+          "action": "brake",
+          "value": 1
+        },
+        {
+          "at_s": 4,
+          "action": "brake",
+          "value": 0
+        }
+      ],
+      "checkpoints": [
+        {
+          "id": "brake_start",
+          "at_s": 0,
+          "metrics": [
+            "speed_mps",
+            "position_x_m",
+            "position_z_m"
+          ]
+        },
+        {
+          "id": "after_1s",
+          "at_s": 1,
+          "metrics": [
+            "speed_mps",
+            "position_x_m",
+            "position_z_m"
+          ]
+        },
+        {
+          "id": "after_4s",
+          "at_s": 4,
+          "metrics": [
+            "speed_mps",
+            "position_x_m",
+            "position_z_m"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vehicle/constant-radius-turn",
+      "subsystem": "vehicle_physics",
+      "title": "Constant-radius turn",
+      "status": "spec_only",
+      "reference_status": "not_captured",
+      "setup": {
+        "scene": "large_flat_pad_with_marked_radius",
+        "vehicle": "record_exact_vehicle_model",
+        "weather": "clear",
+        "traffic": "disabled",
+        "initial_speed_mps": 12,
+        "framerate_cap": "record_actual_cap"
+      },
+      "inputs": [
+        {
+          "at_s": 0,
+          "action": "steering",
+          "value": 0.35
+        },
+        {
+          "at_s": 0,
+          "action": "throttle",
+          "value": 0.35
+        },
+        {
+          "at_s": 5,
+          "action": "throttle",
+          "value": 0
+        },
+        {
+          "at_s": 5,
+          "action": "steering",
+          "value": 0
+        }
+      ],
+      "checkpoints": [
+        {
+          "id": "turn_1s",
+          "at_s": 1,
+          "metrics": [
+            "speed_mps",
+            "position_x_m",
+            "position_z_m",
+            "yaw_deg"
+          ]
+        },
+        {
+          "id": "turn_3s",
+          "at_s": 3,
+          "metrics": [
+            "speed_mps",
+            "position_x_m",
+            "position_z_m",
+            "yaw_deg"
+          ]
+        },
+        {
+          "id": "turn_5s",
+          "at_s": 5,
+          "metrics": [
+            "speed_mps",
+            "position_x_m",
+            "position_z_m",
+            "yaw_deg"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vehicle/wall-impact",
+      "subsystem": "collision",
+      "title": "Oblique wall impact",
+      "status": "spec_only",
+      "reference_status": "not_captured",
+      "setup": {
+        "scene": "marked_oblique_wall_on_flat_ground",
+        "vehicle": "record_exact_vehicle_model",
+        "initial_speed_mps": 15,
+        "impact_angle_deg": 25,
+        "framerate_cap": "record_actual_cap"
+      },
+      "inputs": [
+        {
+          "at_s": 0,
+          "action": "throttle",
+          "value": 1
+        },
+        {
+          "at_s": "impact",
+          "action": "capture_event",
+          "value": "first_wall_contact"
+        }
+      ],
+      "checkpoints": [
+        {
+          "id": "pre_impact",
+          "at_s": "before_impact",
+          "metrics": [
+            "speed_mps",
+            "position_x_m",
+            "position_z_m"
+          ]
+        },
+        {
+          "id": "post_impact_0_25s",
+          "at_s": "impact_plus_0.25",
+          "metrics": [
+            "speed_mps",
+            "position_x_m",
+            "position_z_m",
+            "yaw_deg",
+            "grounded"
+          ]
+        },
+        {
+          "id": "post_impact_1s",
+          "at_s": "impact_plus_1",
+          "metrics": [
+            "speed_mps",
+            "position_x_m",
+            "position_z_m",
+            "yaw_deg",
+            "grounded"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vehicle/ramp-landing",
+      "subsystem": "vehicle_physics",
+      "title": "Ramp, airtime and landing",
+      "status": "spec_only",
+      "reference_status": "not_captured",
+      "setup": {
+        "scene": "fixed_ramp_and_flat_landing_pad",
+        "vehicle": "record_exact_vehicle_model",
+        "approach_speed_mps": 20,
+        "framerate_cap": "record_actual_cap"
+      },
+      "inputs": [
+        {
+          "at_s": 0,
+          "action": "throttle",
+          "value": 1
+        },
+        {
+          "at_s": "ramp_edge",
+          "action": "capture_event",
+          "value": "leave_ground"
+        }
+      ],
+      "checkpoints": [
+        {
+          "id": "ramp_edge",
+          "at_s": "ramp_edge",
+          "metrics": [
+            "position_x_m",
+            "position_y_m",
+            "position_z_m",
+            "speed_mps",
+            "pitch_deg",
+            "roll_deg",
+            "grounded"
+          ]
+        },
+        {
+          "id": "touchdown",
+          "at_s": "first_landing",
+          "metrics": [
+            "position_x_m",
+            "position_y_m",
+            "position_z_m",
+            "speed_mps",
+            "pitch_deg",
+            "roll_deg",
+            "grounded"
+          ]
+        },
+        {
+          "id": "settled",
+          "at_s": "landing_plus_2",
+          "metrics": [
+            "position_y_m",
+            "speed_mps",
+            "pitch_deg",
+            "roll_deg",
+            "grounded"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "player/walk-sprint-jump",
+      "subsystem": "player_movement",
+      "title": "Walk, sprint, jump and land",
+      "status": "spec_only",
+      "reference_status": "not_captured",
+      "setup": {
+        "scene": "flat_ground_with_distance_markers",
+        "player_state": "on_foot",
+        "camera": "fixed",
+        "framerate_cap": "record_actual_cap"
+      },
+      "inputs": [
+        {
+          "at_s": 0,
+          "action": "move_forward",
+          "value": 0.5
+        },
+        {
+          "at_s": 2,
+          "action": "move_forward",
+          "value": 0
+        },
+        {
+          "at_s": 2,
+          "action": "sprint",
+          "value": 1
+        },
+        {
+          "at_s": 4,
+          "action": "jump",
+          "value": 1
+        },
+        {
+          "at_s": 4.2,
+          "action": "jump",
+          "value": 0
+        },
+        {
+          "at_s": 7,
+          "action": "sprint",
+          "value": 0
+        }
+      ],
+      "checkpoints": [
+        {
+          "id": "walk_2s",
+          "at_s": 2,
+          "metrics": [
+            "position_x_m",
+            "position_y_m",
+            "position_z_m",
+            "speed_mps"
+          ]
+        },
+        {
+          "id": "sprint_4s",
+          "at_s": 4,
+          "metrics": [
+            "position_x_m",
+            "position_y_m",
+            "position_z_m",
+            "speed_mps"
+          ]
+        },
+        {
+          "id": "jump_apex",
+          "at_s": "apex",
+          "metrics": [
+            "position_y_m",
+            "vertical_speed_mps",
+            "grounded"
+          ]
+        },
+        {
+          "id": "landed",
+          "at_s": "first_landing",
+          "metrics": [
+            "position_y_m",
+            "vertical_speed_mps",
+            "grounded"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "interaction/enter-exit-vehicle",
+      "subsystem": "gameplay_interaction",
+      "title": "Enter and exit a vehicle",
+      "status": "spec_only",
+      "reference_status": "not_captured",
+      "setup": {
+        "scene": "parked_vehicle_with_clear_door_access",
+        "player_state": "on_foot",
+        "vehicle": "record_exact_vehicle_model"
+      },
+      "inputs": [
+        {
+          "at_s": 0,
+          "action": "enter_vehicle",
+          "value": 1
+        },
+        {
+          "at_s": "entered",
+          "action": "wait",
+          "value": 1
+        },
+        {
+          "at_s": "entered_plus_1",
+          "action": "exit_vehicle",
+          "value": 1
+        }
+      ],
+      "checkpoints": [
+        {
+          "id": "before_enter",
+          "at_s": 0,
+          "metrics": [
+            "player_state",
+            "vehicle_occupied"
+          ]
+        },
+        {
+          "id": "entered",
+          "at_s": "enter_complete",
+          "metrics": [
+            "player_state",
+            "vehicle_occupied"
+          ]
+        },
+        {
+          "id": "exited",
+          "at_s": "exit_complete",
+          "metrics": [
+            "player_state",
+            "vehicle_occupied"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "world/pickup-collection",
+      "subsystem": "world_interaction",
+      "title": "Pickup collection",
+      "status": "spec_only",
+      "reference_status": "not_captured",
+      "setup": {
+        "scene": "single_known_pickup_on_flat_ground",
+        "player_state": "on_foot",
+        "inventory_state": "record_initial_state"
+      },
+      "inputs": [
+        {
+          "at_s": 0,
+          "action": "move_to_pickup",
+          "value": 1
+        }
+      ],
+      "checkpoints": [
+        {
+          "id": "before_contact",
+          "at_s": "before_pickup_contact",
+          "metrics": [
+            "pickup_visible",
+            "pickup_active",
+            "inventory_count"
+          ]
+        },
+        {
+          "id": "after_contact",
+          "at_s": "pickup_contact_plus_0.5",
+          "metrics": [
+            "pickup_visible",
+            "pickup_active",
+            "inventory_count"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "world/wanted-level",
+      "subsystem": "police_response",
+      "title": "Wanted-level transition",
+      "status": "spec_only",
+      "reference_status": "not_captured",
+      "setup": {
+        "scene": "fixed_location_with_repeatable_witnessed_action",
+        "wanted_level_start": 0,
+        "traffic": "fixed_or_disabled"
+      },
+      "inputs": [
+        {
+          "at_s": 0,
+          "action": "perform_repeatable_witnessed_action",
+          "value": 1
+        }
+      ],
+      "checkpoints": [
+        {
+          "id": "action_plus_1s",
+          "at_s": 1,
+          "metrics": [
+            "wanted_level",
+            "police_units_active"
+          ]
+        },
+        {
+          "id": "action_plus_5s",
+          "at_s": 5,
+          "metrics": [
+            "wanted_level",
+            "police_units_active"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "stability/repeated-route",
+      "subsystem": "streaming_performance",
+      "title": "Repeated route and streaming stability",
+      "status": "spec_only",
+      "reference_status": "not_captured",
+      "setup": {
+        "scene": "documented_route_with_known_landmarks",
+        "vehicle": "record_exact_vehicle_model",
+        "route_repetitions": 3,
+        "framerate_cap": "record_actual_cap"
+      },
+      "inputs": [
+        {
+          "at_s": 0,
+          "action": "follow_recorded_route",
+          "value": "route_id"
+        }
+      ],
+      "checkpoints": [
+        {
+          "id": "route_start",
+          "at_s": "route_start",
+          "metrics": [
+            "frame_time_ms",
+            "memory_working_set_mb",
+            "missing_resource_count"
+          ]
+        },
+        {
+          "id": "route_midpoint",
+          "at_s": "route_midpoint",
+          "metrics": [
+            "frame_time_ms",
+            "memory_working_set_mb",
+            "missing_resource_count"
+          ]
+        },
+        {
+          "id": "route_end",
+          "at_s": "route_end",
+          "metrics": [
+            "frame_time_ms",
+            "memory_working_set_mb",
+            "missing_resource_count",
+            "crash_count"
+          ]
+        }
+      ]
+    }
+  ]
+}
