@@ -112,6 +112,7 @@ def capture_sare_trace(scenario_id: str, output_path: Path) -> None:
     if trace_id != scenario_id:
         raise ValueError(f"SARE probe returned scenario {trace_id!r}, expected {scenario_id!r}")
 
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
