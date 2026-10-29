@@ -550,6 +550,8 @@ fn pursue_car<'a>(
             car.lane = 0;
             car.along = progress(car.position, lane(roads, node, to, 0)).max(0.0);
             car.committed = None;
+            car.speed = car.speed.max(0.0);
+            police.reversing = 0.0;
             police.off_road = false;
             police.rejoin = None;
             return;
@@ -837,7 +839,8 @@ fn step(
         let wanted = toward.x.atan2(toward.z);
         car.aim_yaw = wanted;
         let delta = (wanted - car.yaw).sin().atan2((wanted - car.yaw).cos());
-        let rate = car.speed / TURN_RADIUS * dt;
+        // A police car can come back to the road still backing up.
+        let rate = car.speed.abs() / TURN_RADIUS * dt;
         car.yaw += delta.clamp(-rate, rate);
     }
     car.position += car.forward() * car.speed * dt;
@@ -1689,6 +1692,21 @@ mod tests {
             traffic.cars[0].position.distance(start) < 6.0,
             "never drove through"
         );
+    }
+
+    #[test]
+    fn a_car_backing_up_as_it_rejoins_the_road_drives_on() {
+        let roads = road();
+        let mut traffic = Traffic::default();
+        let suspect = Vec3::new(8.0, 10.0, -20.0);
+        traffic.add_pursuer(&roads, &open_road(suspect, &[]), 5, 1);
+        traffic.chase = Some(suspect);
+        traffic.cars[0].speed = -4.0;
+        // On its lane with a negative speed used to panic in the turn clamp.
+        for _ in 0..60 {
+            traffic.update(&roads, &open_road(suspect, &[]), &[3], 0, 0.05);
+        }
+        assert!(traffic.cars[0].speed > 0.0, "{:?}", traffic.cars[0]);
     }
 
     #[test]
