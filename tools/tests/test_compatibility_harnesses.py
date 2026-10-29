@@ -5,8 +5,8 @@ import json
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
@@ -64,7 +64,6 @@ class CompatibilityHarnessRegistryTests(unittest.TestCase):
         manifest["scenarios"] = [scenario]
         with self.assertRaisesRegex(ValueError, "captured reference needs"):
             validate_manifest(manifest)
-
 
     def test_capture_refuses_scenarios_without_an_implemented_probe(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
