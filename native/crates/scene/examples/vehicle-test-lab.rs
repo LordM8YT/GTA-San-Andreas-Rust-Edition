@@ -6,12 +6,12 @@
 //! redistribute any original game assets.
 use anyhow::{bail, ensure, Result};
 use glam::Vec3;
-use std::{env, fs, path::PathBuf};
 use sa_scene::{
     collision::CollisionWorld,
     vehicle::{Car, Handling},
     Batch, Vertex,
 };
+use std::{env, fs, path::PathBuf};
 
 const DT: f32 = 1.0 / 120.0;
 
@@ -111,13 +111,17 @@ fn trace_output_path() -> Result<Option<PathBuf>> {
     match args.next() {
         None => Ok(None),
         Some(flag) if flag == "--trace-json" => {
-            let path = args.next().ok_or_else(|| anyhow::anyhow!("--trace-json requires a file path"))?;
+            let path = args
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("--trace-json requires a file path"))?;
             if args.next().is_some() {
                 bail!("unexpected extra argument; usage: vehicle-test-lab [--trace-json <path>]");
             }
             Ok(Some(PathBuf::from(path)))
         }
-        Some(other) => bail!("unknown argument {other:?}; usage: vehicle-test-lab [--trace-json <path>]"),
+        Some(other) => {
+            bail!("unknown argument {other:?}; usage: vehicle-test-lab [--trace-json <path>]")
+        }
     }
 }
 
@@ -209,7 +213,10 @@ fn main() -> Result<()> {
     wall_impact_test()?;
     ramp_and_landing_test()?;
     if let Some(path) = trace_path {
-        if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
             fs::create_dir_all(parent)?;
         }
         fs::write(&path, serde_json::to_vec_pretty(&flat_idle_trace)?)?;
