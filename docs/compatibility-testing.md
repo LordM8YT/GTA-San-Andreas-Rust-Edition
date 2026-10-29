@@ -22,44 +22,57 @@ not a source-porting project.
 - Do not label a behavior as "GTA-compatible" until there is a documented
   reference observation and a tolerance/acceptance rule.
 
-## Three layers of testing
+## Horizon-inspired testing approach
 
-### 1. Deterministic CI regressions
+Horizon describes a differential harness as running the same inputs through
+its implementation and the original game, then comparing observable outputs.
+SARE can adopt that testing pattern, but not copy Horizon's code or Minecraft's
+implementation. GTA SA does not currently expose the same convenient probe
+surface in SARE, so the first stage is a registry of reproducible scenarios,
+a trace format, and validation. Reference data must be captured and a reliable
+SARE telemetry/export path must be built before a scenario can prove parity.
 
-Run on every change using the existing workspace CI:
-- Unit tests for simulation and game-state rules.
-- Procedural scene tests, including
-  `cargo run -p sa-scene --example vehicle-test-lab`.
-- Existing import, packaging, and workspace tests.
+The registry is `tools/compatibility_harnesses.json`. It currently specifies
+repeatable scenarios for:
 
-These prove that defined invariants remain true; by themselves they do not
-prove parity with the original game.
+- Vehicle idle settling, acceleration, braking, constant-radius turning,
+  wall impacts, and ramp/landing.
+- Player walking, sprinting, jumping, and landing.
+- Entering/exiting vehicles and collecting pickups.
+- Wanted-level transitions.
+- Repeated-route streaming and frame-time/memory observations.
 
-### 2. Black-box behavior comparisons
-
-For a small, repeatable scenario, run the same input sequence in an owned GTA SA
-installation and SARE. Record normalized observations at named checkpoints.
-A future SARE telemetry/export path should emit the candidate trace; the GTA SA
-reference can initially be recorded manually from visible behavior or permitted
-player-side measurements. No injection, decompilation, or reading game memory
-is required by this comparator.
-
-The trace comparator is deliberately data-only. It compares the reference
-measurements with a candidate JSON trace and applies explicit tolerances from
-the reference file.
-
-Run it with:
+List the registered scenarios:
 
 ```powershell
-python tools/compatibility_trace.py path\to\reference.json path\to\sare.json
+python tools/compatibility_harnesses.py list
 ```
 
-Reference trace shape:
+Validate the registry:
+
+```powershell
+python tools/compatibility_harnesses.py validate
+```
+
+Compare a captured reference trace and a SARE trace for a scenario:
+
+```powershell
+python tools/compatibility_harnesses.py compare vehicle/straight-acceleration reference.json sare.json
+```
+
+Both trace files use the JSON format below. The reference trace defines
+per-metric tolerances; the candidate trace supplies measurements from SARE.
+Boolean state checks must match exactly. The comparator fails for missing
+checkpoints, missing metrics, non-finite numbers, or values outside tolerances.
+
+## Trace format
+
+Example shape only:
 
 ```json
 {
   "schema_version": 1,
-  "scenario_id": "vehicle/straight-line",
+  "scenario_id": "vehicle/straight-acceleration",
   "capture": {
     "game_version": "record the version actually tested",
     "notes": "starting conditions and input sequence"
@@ -88,6 +101,27 @@ grounded/not grounded) must match exactly. Example numbers above explain the
 format only; they are **not measured GTA SA data and must not be used as a
 compatibility baseline**.
 
+## Three layers of testing
+
+### 1. Deterministic CI regressions
+
+Run on every change using the existing workspace CI:
+- Unit tests for simulation and game-state rules.
+- Procedural scene tests, including
+  `cargo run -p sa-scene --example vehicle-test-lab`.
+- Registry schema tests and existing import, packaging, and workspace tests.
+
+These prove that defined invariants remain true; by themselves they do not
+prove parity with the original game.
+
+### 2. Black-box behavior comparisons
+
+For a small, repeatable scenario, run the same input sequence in an owned GTA SA
+installation and SARE. Record normalized observations at named checkpoints.
+The first references can be captured manually from visible behavior or
+permitted player-side measurements. No injection, decompilation, or reading
+game memory is required by the comparator.
+
 ### 3. Human-reviewed gameplay checks
 
 Some behaviors cannot yet be compared reliably by a headless test: mission
@@ -96,33 +130,28 @@ and visual presentation. Keep a short reproducible checklist with screenshots
 or notes stored outside the repository where appropriate. Convert repeated
 findings into layers 1 or 2 when the simulation exposes trustworthy telemetry.
 
-## First scenario backlog
+## Rules for reliable comparisons
 
-Start with isolated, easy-to-repeat scenarios and add measured references
-before setting expected values:
-
-1. **Vehicle on flat ground:** idle settling, straight-line acceleration and
-   braking.
-2. **Vehicle handling:** fixed-speed circle, slalom, handbrake turn, and
-   recovery after a bump.
-3. **Collision:** low/high-speed wall impact and thin-wall tunnelling.
-4. **Character movement:** idle, walk, sprint, jump, fall and landing.
-5. **World interaction:** enter/exit a vehicle, pickup collection, wanted-level
-   transitions, and arrest/busted flow.
-6. **Streaming and stability:** repeat a route and compare missing assets,
-   state transitions, frame time and crashes.
-
-Do not compare a different game build, vehicle, handling setup, framerate cap,
-or input timing as if it were the same experiment. Record those conditions and
-run multiple captures to estimate normal variation.
+- Match the exact GTA SA version, vehicle, handling setup, scene, weather,
+  traffic conditions, frame-rate cap, starting position, and input timing.
+- Capture multiple runs where normal variation is expected; define tolerances
+  from observed repeatability rather than guessing them.
+- Record which side produced each trace and the tool/build version.
+- Keep reference values separate from source code and never fabricate a
+  baseline to make a test pass.
+- Report missing coverage honestly. A passing harness proves only the metrics
+  and checkpoints it actually compares.
 
 ## Current status and limitations
 
-- The existing Vehicle Test Lab is a useful procedural smoke test for SARE's
-  own physics invariants.
-- `tools/compatibility_trace.py` and its unit tests provide a first comparator
-  for manually or automatically captured traces.
-- SARE does not yet have a complete, standardized telemetry recorder for every
-  scenario, and no verified GTA SA reference baselines are included here.
-  Building those capture paths and collecting clean measurements are follow-up
-  work. Until then, this is a framework foundation, not a claim of parity.
+- The Vehicle Test Lab is a procedural smoke test for SARE's own physics
+  invariants.
+- The compatibility trace comparator and registry tests run through the
+  existing Python test suite in CI.
+- The 11 registered scenarios are specifications, not captured GTA SA
+  references. They are marked `spec_only` / `not_captured` until measurements
+  are collected.
+- SARE still needs standardized telemetry/export and scenario drivers to
+  produce candidate traces automatically. Until that exists and real reference
+  traces are captured, this is a test framework foundation, not a claim of
+  compatibility.
