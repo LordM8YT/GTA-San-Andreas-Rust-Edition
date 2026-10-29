@@ -3,12 +3,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
 TOOLS_DIR = Path(__file__).resolve().parent
 MANIFEST_PATH = TOOLS_DIR / "compatibility_harnesses.json"
+NATIVE_DIR = TOOLS_DIR.parent / "native"
+SARE_CAPTURE_SCENARIOS = {"vehicle/flat-idle"}
 sys.path.insert(0, str(TOOLS_DIR))
 from compatibility_trace import compare_traces  # noqa: E402
 
@@ -84,6 +87,31 @@ def compare_scenario(scenario_id: str, reference_path: Path, candidate_path: Pat
     return compare_traces(reference, candidate)
 
 
+def capture_sare_trace(scenario_id: str, output_path: Path) -> None:
+    """Run an implemented SARE procedural probe and write its measured trace."""
+    if scenario_id not in SARE_CAPTURE_SCENARIOS:
+        supported = ", ".join(sorted(SARE_CAPTURE_SCENARIOS))
+        raise ValueError(
+            f"SARE capture is not implemented for {scenario_id!r}; "
+            f"currently supported: {supported}"
+        )
+    output_path = output_path.resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    command = [
+        "cargo", "run", "-p", "sa-scene", "--example", "vehicle-test-lab", "--",
+        "--trace-json", str(output_path),
+    ]
+    completed = subprocess.run(command, cwd=NATIVE_DIR, check=False)
+    if completed.returncode != 0:
+        raise ValueError(f"SARE probe exited with status {completed.returncode}")
+    try:
+        trace = json.loads(output_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"SARE probe did not write a valid trace: {exc}") from exc
+    trace_id, _ = _check_trace(trace, "SARE candidate")
+    if trace_id != scenario_id:
+        raise ValueError(f"SARE probe returned scenario {trace_id!r}, expected {scenario_id!r}")
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -94,6 +122,9 @@ def main(argv: list[str] | None = None) -> int:
     compare.add_argument("scenario_id")
     compare.add_argument("reference", type=Path)
     compare.add_argument("candidate", type=Path)
+    capture = sub.add_parser("capture-sare", help="run a supported SARE probe and export its candidate trace")
+    capture.add_argument("scenario_id")
+    capture.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         if args.command in ("list", "validate"):
@@ -104,6 +135,10 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{len(manifest['scenarios'])} harness specifications")
             else:
                 print(f"VALID: {len(manifest['scenarios'])} harness specifications")
+            return 0
+        if args.command == "capture-sare":
+            capture_sare_trace(args.scenario_id, args.output)
+            print(f"SARE candidate trace written: {args.output.resolve()}")
             return 0
         failures = compare_scenario(args.scenario_id, args.reference, args.candidate)
     except (OSError, json.JSONDecodeError, ValueError) as exc:
