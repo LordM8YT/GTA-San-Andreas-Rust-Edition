@@ -40,6 +40,22 @@ const KNOCK_HOLD: f32 = 2.5;
 /// Seconds a burnt-out wreck stays before it is towed away.
 const WRECK_SECONDS: f32 = 45.0;
 const SPAWN_INTERVAL: f32 = 0.6;
+/// One spawned car in this many is a police patrol, where the area has one.
+const PATROL_ODDS: u32 = 10;
+/// Top speed of a police car chasing someone.
+const CHASE_CRUISE: f32 = 26.0;
+/// A chasing car leaves the road and heads straight for the suspect inside
+/// this distance...
+const CLOSE_IN: f32 = 40.0;
+/// ...and goes back to the roads once the suspect has got this far away.
+const FALL_BACK: f32 = 80.0;
+/// A chasing car pulls up this far from the suspect.
+const PULL_UP: f32 = 7.0;
+/// Police cars come from roads this far from the suspect.
+const PURSUIT_NEAR: f32 = 70.0;
+const PURSUIT_FAR: f32 = 130.0;
+/// A police car left parked off the road is cleared away beyond this.
+const PARKED_DESPAWN: f32 = 90.0;
 /// Roads this close to another player who runs traffic are theirs to fill.
 pub const TAKEN_RADIUS: f32 = 150.0;
 
@@ -97,9 +113,68 @@ pub struct TrafficCar {
     travel: f32,
     /// Seconds since this car blew up.
     pub burnt_for: f32,
+    /// Set for police cars.
+    pub police: Option<Patrol>,
+}
+
+/// What a police car is up to.
+#[derive(Clone, Debug, Default)]
+pub struct Patrol {
+    /// After a wanted player, with siren and lights on.
+    pub chasing: bool,
+    /// Left the road to drive straight at the suspect; it keeps to no lane
+    /// until it has found its way back to a road node.
+    pub off_road: bool,
+    /// Officers still sitting in the car, and out of it on foot.
+    pub crew: u8,
+    pub out: u8,
+    /// The road node an off-road car is heading back to.
+    rejoin: Option<u32>,
+    /// Seconds the car has stood still while chasing.
+    pub stopped_for: f32,
+    /// Seconds left backing up to get round something in the way.
+    reversing: f32,
 }
 
 impl TrafficCar {
+    /// A car at the start of the link `from` -> `to`, turning into `next` after.
+    fn new(id: u64, catalog: usize, [from, to, next]: [u32; 3], lane: u8, cruise: f32) -> Self {
+        Self {
+            id,
+            catalog,
+            from,
+            to,
+            next,
+            lane,
+            stranded: false,
+            along: 0.0,
+            speed: cruise * 0.6,
+            cruise,
+            position: Vec3::ZERO,
+            yaw: 0.0,
+            pitch: 0.0,
+            roll: 0.0,
+            size: sa_scene::vehicle::DEFAULT_SIZE,
+            hold: 0.0,
+            waited: 0.0,
+            committed: None,
+            aim_yaw: 0.0,
+            damage: Default::default(),
+            travel: 0.0,
+            burnt_for: 0.0,
+            police: None,
+        }
+    }
+    pub fn chasing(&self) -> bool {
+        self.police.as_ref().is_some_and(|p| p.chasing)
+    }
+    fn off_road(&self) -> bool {
+        self.police.as_ref().is_some_and(|p| p.off_road)
+    }
+    /// Siren and lights on.
+    pub fn siren(&self) -> bool {
+        self.chasing() && !self.damage.wrecked
+    }
     fn footprint(&self) -> Footprint {
         Footprint::car(self.position, self.yaw, self.size)
     }
@@ -149,6 +224,11 @@ pub struct Traffic {
     seed: u32,
     since_spawn: f32,
     next_id: u64,
+    /// Where police cars are chasing someone, if they are.
+    pub chase: Option<Vec3>,
+    /// Catalog indices of the police cars that patrol the area; empty for
+    /// no patrols.
+    pub patrol_models: Vec<usize>,
 }
 
 /// World position (X east, Y up, Z south) of a road node.
@@ -179,12 +259,30 @@ impl Traffic {
         dt: f32,
     ) -> Option<usize> {
         let (player, blocked, ground) = (around.player, around.blocked, &around.ground);
+        let chase = self.chase;
+        for car in &mut self.cars {
+            if let Some(police) = &mut car.police {
+                if police.chasing != chase.is_some() {
+                    police.chasing = chase.is_some();
+                    car.cruise = if police.chasing { CHASE_CRUISE } else { CRUISE };
+                }
+            }
+        }
+        // Police cars chasing someone, or parked where a chase ended, do not
+        // count against the traffic limit.
+        let mut kept = 0;
         self.cars.retain(|car| {
-            car.position.distance(player) < DESPAWN
+            let distance = car.position.distance(player);
+            let parked = car.off_road() && !car.chasing();
+            distance < DESPAWN
                 && car.burnt_for < WRECK_SECONDS
                 && !car.stranded
+                && !(parked && distance > PARKED_DESPAWN)
+                && (car.chasing() || car.off_road() || {
+                    kept += 1;
+                    kept <= limit
+                })
         });
-        self.cars.truncate(limit);
         let bodies: Vec<Footprint> = self.cars.iter().map(TrafficCar::footprint).collect();
         let paths: Vec<Footprint> = self.cars.iter().map(TrafficCar::path_ahead).collect();
         let junctions: Vec<Junction> = self.cars.iter().map(|c| junction(c, roads)).collect();
@@ -193,8 +291,12 @@ impl Traffic {
         let body = |me: usize, other: usize| {
             other != me && paths[me].push_out_of(&bodies[other]).is_some()
         };
+        // A police car on a chase gives way to nobody at junctions.
         let turn = |me: usize, other: usize| {
-            other != me && cars[me].waited < PATIENCE && gives_way(me, other, cars, &junctions)
+            other != me
+                && !cars[me].chasing()
+                && cars[me].waited < PATIENCE
+                && gives_way(me, other, cars, &junctions)
         };
         let obstructed: Vec<bool> = (0..cars.len())
             .map(|me| {
@@ -233,13 +335,26 @@ impl Traffic {
                 car.burnt_for += dt;
                 continue;
             }
+            if car.off_road() {
+                // Driven by `pursue`, or parked where the chase ended.
+                if !car.chasing() {
+                    car.speed = (car.speed - BRAKING * dt).max(0.0);
+                }
+                continue;
+            }
             // A driver whose car is on fire pulls up.
             let obstructed = obstructed || car.hold > 0.0 || car.damage.burning();
-            step(car, roads, ground, obstructed, dt, &mut self.seed);
+            let toward = chase.filter(|_| car.chasing());
+            step(car, roads, ground, obstructed, toward, dt, &mut self.seed);
             car.travel += car.speed * dt;
         }
         self.since_spawn += dt;
-        if self.cars.len() >= limit || models.is_empty() || self.since_spawn < SPAWN_INTERVAL {
+        let ambient = self
+            .cars
+            .iter()
+            .filter(|car| !car.chasing() && !car.off_road())
+            .count();
+        if ambient >= limit || models.is_empty() || self.since_spawn < SPAWN_INTERVAL {
             return None;
         }
         self.since_spawn = 0.0;
@@ -263,34 +378,22 @@ impl Traffic {
         }
         let to = exits[self.random() as usize % exits.len()];
         let lane = (self.random() % roads.lanes(from, to).max(1) as u32) as u8;
-        let catalog = models[self.random() as usize % models.len()];
+        let patrol = !self.patrol_models.is_empty() && self.random().is_multiple_of(PATROL_ODDS);
+        let catalog = if patrol {
+            let pick = self.random() as usize;
+            self.patrol_models[pick % self.patrol_models.len()]
+        } else {
+            models[self.random() as usize % models.len()]
+        };
         let next = pick_next(roads, from, to, &mut self.seed)?;
         let cruise = CRUISE * (0.8 + (self.random() % 1000) as f32 / 1000.0 * 0.35);
         self.next_id += 1;
-        let mut car = TrafficCar {
-            id: self.next_id,
-            catalog,
-            from,
-            to,
-            next,
-            lane,
-            stranded: false,
-            along: 0.0,
-            speed: cruise * 0.6,
-            cruise,
-            position: world(roads, from),
-            yaw: 0.0,
-            pitch: 0.0,
-            roll: 0.0,
-            size: sa_scene::vehicle::DEFAULT_SIZE,
-            hold: 0.0,
-            waited: 0.0,
-            committed: None,
-            aim_yaw: 0.0,
-            damage: Default::default(),
-            travel: 0.0,
-            burnt_for: 0.0,
-        };
+        let mut car = TrafficCar::new(self.next_id, catalog, [from, to, next], lane, cruise);
+        car.police = patrol.then(|| Patrol {
+            crew: 1,
+            ..Patrol::default()
+        });
+        car.position = world(roads, from);
         place(&mut car, roads);
         settle(&mut car, roads, ground, 0.0, 0.0);
         // Never drop a car on top of another one, or on someone.
@@ -307,6 +410,216 @@ impl Traffic {
         self.cars.push(car);
         Some(self.cars.len() - 1)
     }
+
+    /// Send a police car with `crew` officers after the suspect at
+    /// `around.player`, from a road a little way off, heading their way.
+    /// Returns its index in `cars`, so the caller can give it a mesh.
+    pub fn add_pursuer<G: Fn(Vec3, f32) -> Option<f32>>(
+        &mut self,
+        roads: &RoadGraph,
+        around: &Surroundings<G>,
+        catalog: usize,
+        crew: u8,
+    ) -> Option<usize> {
+        let target = around.player;
+        let at = [target.x + ORIGIN[0], ORIGIN[1] - target.z];
+        let candidates = roads.nodes_between(at, PURSUIT_NEAR, PURSUIT_FAR);
+        if candidates.is_empty() {
+            return None;
+        }
+        let from = candidates[self.random() as usize % candidates.len()];
+        let to = roads.exits(from).min_by(|&a, &b| {
+            flat_length(world(roads, a), target).total_cmp(&flat_length(world(roads, b), target))
+        })?;
+        let next = pick_toward(roads, from, to, target)?;
+        self.next_id += 1;
+        let mut car = TrafficCar::new(self.next_id, catalog, [from, to, next], 0, CHASE_CRUISE);
+        car.police = Some(Patrol {
+            chasing: true,
+            crew,
+            ..Patrol::default()
+        });
+        place(&mut car, roads);
+        settle(&mut car, roads, &around.ground, 0.0, 0.0);
+        if self
+            .cars
+            .iter()
+            .any(|other| other.position.distance(car.position) < GAP)
+            || around
+                .blocked
+                .iter()
+                .any(|b| car.footprint().push_out_of(b).is_some())
+        {
+            return None;
+        }
+        self.cars.push(car);
+        Some(self.cars.len() - 1)
+    }
+
+    /// Drive the police cars that have left the road straight at the
+    /// suspect at `target`, round anything in `blocked` (other cars, the
+    /// suspect's car) and short of walls, which `walls` reports between two
+    /// points. They pull up close by, back up when stuck and head back to
+    /// the roads when the suspect gets away.
+    pub fn pursue<G, W>(
+        &mut self,
+        roads: &RoadGraph,
+        target: Vec3,
+        blocked: &[Footprint],
+        ground: &G,
+        walls: &W,
+        dt: f32,
+    ) where
+        G: Fn(Vec3, f32) -> Option<f32>,
+        W: Fn(Vec3, Vec3) -> bool,
+    {
+        let bodies: Vec<Footprint> = self.cars.iter().map(TrafficCar::footprint).collect();
+        for index in 0..self.cars.len() {
+            let car = &mut self.cars[index];
+            if !car.chasing() || car.damage.wrecked {
+                continue;
+            }
+            let Some(mut police) = car.police.take() else {
+                continue;
+            };
+            let others = bodies
+                .iter()
+                .enumerate()
+                .filter(|(other, _)| *other != index)
+                .map(|(_, body)| body)
+                .chain(blocked);
+            pursue_car(car, &mut police, roads, target, others, ground, walls, dt);
+            car.police = Some(police);
+        }
+    }
+}
+
+/// The fastest a chasing car `distance` from the suspect may go and still
+/// pull up in time, braking gently.
+fn stopping_speed(distance: f32) -> f32 {
+    (2.0 * BRAKING * 0.7 * (distance - PULL_UP).max(0.0))
+        .sqrt()
+        .min(CHASE_CRUISE)
+}
+
+/// One frame of a police car's direct pursuit; see `Traffic::pursue`.
+#[allow(clippy::too_many_arguments)]
+fn pursue_car<'a>(
+    car: &mut TrafficCar,
+    police: &mut Patrol,
+    roads: &RoadGraph,
+    target: Vec3,
+    mut others: impl Iterator<Item = &'a Footprint>,
+    ground: &impl Fn(Vec3, f32) -> Option<f32>,
+    walls: &impl Fn(Vec3, Vec3) -> bool,
+    dt: f32,
+) {
+    let distance = flat_length(car.position, target);
+    if !police.off_road {
+        if distance >= CLOSE_IN {
+            return;
+        }
+        police.off_road = true;
+    }
+    if distance < CLOSE_IN {
+        police.rejoin = None;
+    } else if distance > FALL_BACK && police.rejoin.is_none() {
+        let at = [car.position.x + ORIGIN[0], ORIGIN[1] - car.position.z];
+        police.rejoin = roads
+            .nodes_between(at, 0.0, 60.0)
+            .into_iter()
+            .filter(|&node| roads.exits(node).next().is_some())
+            .min_by(|&a, &b| {
+                flat_length(world(roads, a), car.position)
+                    .total_cmp(&flat_length(world(roads, b), car.position))
+            });
+    }
+    let aim = police.rejoin.map_or(target, |node| world(roads, node));
+    if let Some(node) = police
+        .rejoin
+        .filter(|_| flat_length(car.position, aim) < 5.0)
+    {
+        // Back on the road: carry on along it towards the suspect.
+        let exits = roads.exits(node).min_by(|&a, &b| {
+            flat_length(world(roads, a), target).total_cmp(&flat_length(world(roads, b), target))
+        });
+        if let Some(to) = exits {
+            car.from = node;
+            car.to = to;
+            car.next = pick_toward(roads, node, to, target).unwrap_or(node);
+            car.lane = 0;
+            car.along = progress(car.position, lane(roads, node, to, 0)).max(0.0);
+            car.committed = None;
+            police.off_road = false;
+            police.rejoin = None;
+            return;
+        }
+    }
+    let toward = aim - car.position;
+    let wanted = toward.x.atan2(toward.z);
+    let turn = (wanted - car.yaw).sin().atan2((wanted - car.yaw).cos());
+    car.aim_yaw = wanted;
+    let mut desired = if police.rejoin.is_some() {
+        CHASE_CRUISE * 0.5
+    } else {
+        stopping_speed(distance)
+    };
+    if turn.abs() > 1.2 {
+        desired = desired.min(8.0);
+    }
+    // Wait for officers who got out on foot.
+    if police.out > 0 {
+        desired = 0.0;
+    }
+    let ahead = car.path_ahead();
+    let eye = car.position + Vec3::Y * 0.8;
+    let stopping = car.speed.max(0.0).powi(2) / (2.0 * BRAKING);
+    let reach = car.size[1] + 1.5 + stopping;
+    let stuck = others.any(|body| ahead.push_out_of(body).is_some())
+        || walls(eye, eye + car.forward() * reach);
+    if police.reversing > 0.0 {
+        police.reversing -= dt;
+        desired = -4.0;
+    } else if stuck {
+        desired = 0.0;
+        // Wedged against something with the suspect still out of reach:
+        // back off and come round it.
+        if police.stopped_for > 1.5 && distance > PULL_UP + 5.0 && police.out == 0 {
+            police.reversing = 1.2;
+        }
+    }
+    let old_speed = car.speed;
+    car.speed = if car.speed < desired {
+        (car.speed + ACCELERATION * 1.5 * dt).min(desired)
+    } else {
+        (car.speed - BRAKING * dt).max(desired)
+    };
+    let rate = car.speed.abs() / TURN_RADIUS * dt;
+    let previous_yaw = car.yaw;
+    car.yaw += turn.clamp(-rate, rate);
+    car.position += car.forward() * car.speed * dt;
+    car.travel += car.speed * dt;
+    let (on_ground, roll) = surface(ground, car.position, car.position.y, car.yaw, car.size);
+    if let Some((y, pitch)) = on_ground {
+        car.position.y = y;
+        let accel = if dt > 0.0 {
+            (car.speed - old_speed) / dt
+        } else {
+            0.0
+        };
+        car.pitch = pitch + (accel * 0.004).clamp(-0.04, 0.04);
+    }
+    let yaw_rate = if dt > 0.0 {
+        (car.yaw - previous_yaw) / dt
+    } else {
+        0.0
+    };
+    car.roll = roll + (yaw_rate * car.speed * 0.006).clamp(-0.06, 0.06);
+    police.stopped_for = if car.speed.abs() < 0.5 {
+        police.stopped_for + dt
+    } else {
+        0.0
+    };
 }
 
 /// Where a car stands relative to the junction at the end of its link.
@@ -405,6 +718,19 @@ fn pick_next(roads: &RoadGraph, from: u32, to: u32, seed: &mut u32) -> Option<u3
     }
 }
 
+/// The way on after `from` -> `to` that leads closest to `target`, for a
+/// police car hunting someone down. Never the wrong way down a one-way road,
+/// and back the way it came only at a dead end.
+fn pick_toward(roads: &RoadGraph, from: u32, to: u32, target: Vec3) -> Option<u32> {
+    roads
+        .exits(to)
+        .filter(|&n| n != from)
+        .min_by(|&a, &b| {
+            flat_length(world(roads, a), target).total_cmp(&flat_length(world(roads, b), target))
+        })
+        .or_else(|| (roads.lanes(to, from) > 0).then_some(from))
+}
+
 /// Start and end of lane `wanted` of a link. Two-way roads keep their lanes
 /// right of the centre line; a one-way road (a motorway carriageway) is
 /// centred on its path line with its lanes side by side, as in SA.
@@ -454,11 +780,13 @@ fn flat_length(a: Vec3, b: Vec3) -> f32 {
 
 /// Advance one car: steer towards a point ahead on its lane, move along its
 /// heading, and move on to the next link once past the end of this one.
+/// A car hunting someone at `hunt` turns their way at every junction.
 fn step(
     car: &mut TrafficCar,
     roads: &RoadGraph,
     ground: &impl Fn(Vec3, f32) -> Option<f32>,
     obstructed: bool,
+    hunt: Option<Vec3>,
     dt: f32,
     seed: &mut u32,
 ) {
@@ -480,11 +808,14 @@ fn step(
     // Ease off before a sharp corner.
     let turn = 1.0 - here.dot(there).max(0.0);
     let near_end = (left / 25.0).clamp(0.0, 1.0);
-    let target = if obstructed {
+    let mut target = if obstructed {
         0.0
     } else {
         car.cruise * (1.0 - turn.min(1.0) * 0.75 * (1.0 - near_end))
     };
+    if let Some(suspect) = hunt {
+        target = target.min(stopping_speed(flat_length(car.position, suspect)));
+    }
     let old_speed = car.speed;
     car.speed = if car.speed < target {
         (car.speed + ACCELERATION * dt).min(target)
@@ -517,7 +848,11 @@ fn step(
         let u_turn = car.next == car.from;
         car.from = car.to;
         car.to = car.next;
-        car.next = pick_next(roads, car.from, car.to, seed).unwrap_or_else(|| {
+        let next = match hunt {
+            Some(target) => pick_toward(roads, car.from, car.to, target),
+            None => pick_next(roads, car.from, car.to, seed),
+        };
+        car.next = next.unwrap_or_else(|| {
             car.stranded = true;
             car.from
         });
@@ -711,30 +1046,40 @@ impl State {
         self.traffic_meshes
             .retain(|mesh| cars.iter().any(|car| car.id == mesh.id));
         if let Some(index) = added {
-            let (id, catalog) = (
-                self.traffic.cars[index].id,
-                self.traffic.cars[index].catalog,
-            );
-            self.ensure_car_loaded(catalog);
-            let source = if catalog == self.active_car {
-                self.car.as_ref()
-            } else {
-                self.car_catalog.get(catalog).and_then(|c| c.as_ref())
-            };
-            match source {
-                Some((car, batches)) => {
-                    self.traffic.cars[index].size = car.size;
-                    self.traffic_meshes.push(TrafficMesh {
-                        id,
-                        batches: crate::multiplayer::duplicate(&self.device, batches),
-                        clearance: car.clearance,
-                    })
-                }
-                None => {
-                    self.traffic.cars.remove(index);
-                }
+            self.mesh_traffic_car(index);
+        }
+    }
+
+    /// Give the car just added at `index` its own copy of its model, or
+    /// drop it when the model cannot be loaded.
+    pub(super) fn mesh_traffic_car(&mut self, index: usize) {
+        let (id, catalog) = (
+            self.traffic.cars[index].id,
+            self.traffic.cars[index].catalog,
+        );
+        self.ensure_car_loaded(catalog);
+        let source = if catalog == self.active_car {
+            self.car.as_ref()
+        } else {
+            self.car_catalog.get(catalog).and_then(|c| c.as_ref())
+        };
+        match source {
+            Some((car, batches)) => {
+                self.traffic.cars[index].size = car.size;
+                self.traffic_meshes.push(TrafficMesh {
+                    id,
+                    batches: crate::multiplayer::duplicate(&self.device, batches),
+                    clearance: car.clearance,
+                })
+            }
+            None => {
+                self.traffic.cars.remove(index);
             }
         }
+    }
+
+    /// Move every traffic car's mesh to where the car is now.
+    pub(super) fn pose_traffic(&mut self) {
         for mesh in &self.traffic_meshes {
             let Some(car) = self.traffic.cars.iter().find(|c| c.id == mesh.id) else {
                 continue;
@@ -1277,6 +1622,133 @@ mod tests {
             1.0,
         );
         assert!(fresh.cars.is_empty());
+    }
+
+    fn open_road(
+        player: Vec3,
+        blocked: &[Footprint],
+    ) -> Surroundings<'_, impl Fn(Vec3, f32) -> Option<f32>> {
+        Surroundings {
+            player,
+            blocked,
+            ground: |_, _| None,
+            taken: &[],
+        }
+    }
+
+    #[test]
+    fn a_pursuer_comes_down_the_road_and_pulls_up_by_the_suspect() {
+        let roads = road();
+        let mut traffic = Traffic::default();
+        // The suspect stands beside the road, near its southern end.
+        let suspect = Vec3::new(8.0, 10.0, -20.0);
+        let index = traffic
+            .add_pursuer(&roads, &open_road(suspect, &[]), 5, 2)
+            .expect("a road far enough away");
+        let car = &traffic.cars[index];
+        assert!(car.chasing() && car.siren());
+        assert_eq!(car.police.as_ref().unwrap().crew, 2);
+        assert!(car.position.distance(suspect) > PURSUIT_NEAR - LANE - 1.0);
+        traffic.chase = Some(suspect);
+        let person = [Footprint::person(suspect)];
+        let mut closest = f32::MAX;
+        for _ in 0..600 {
+            traffic.update(&roads, &open_road(suspect, &person), &[3], 0, 0.05);
+            traffic.pursue(&roads, suspect, &person, &|_, _| None, &|_, _| false, 0.05);
+            closest = closest.min(flat_length(traffic.cars[0].position, suspect));
+        }
+        let car = &traffic.cars[0];
+        assert!(car.off_road(), "left the road for the last stretch");
+        assert!(car.speed.abs() < 0.5, "pulled up: {}", car.speed);
+        assert!(
+            (PULL_UP - 2.0..PULL_UP + 4.0).contains(&closest),
+            "stopped short of the suspect: {closest}"
+        );
+        assert!(car.police.as_ref().unwrap().stopped_for > 1.0);
+    }
+
+    #[test]
+    fn a_wall_stops_a_pursuer_and_it_backs_off() {
+        let roads = road();
+        let mut traffic = Traffic::default();
+        let far = Vec3::new(8.0, 10.0, -20.0);
+        traffic.add_pursuer(&roads, &open_road(far, &[]), 5, 1);
+        let start = traffic.cars[0].position;
+        let suspect = start + Vec3::X * 20.0;
+        traffic.chase = Some(suspect);
+        traffic.cars[0].police.as_mut().unwrap().off_road = true;
+        traffic.cars[0].speed = 0.0;
+        let mut backed = false;
+        for _ in 0..100 {
+            traffic.update(&roads, &open_road(suspect, &[]), &[3], 0, 0.05);
+            traffic.pursue(&roads, suspect, &[], &|_, _| None, &|_, _| true, 0.05);
+            backed |= traffic.cars[0].speed < -0.5;
+        }
+        assert!(backed, "reversed out of the way");
+        assert!(
+            traffic.cars[0].position.distance(start) < 6.0,
+            "never drove through"
+        );
+    }
+
+    #[test]
+    fn chasing_cars_do_not_count_against_traffic_and_park_when_it_ends() {
+        let roads = road();
+        let mut traffic = Traffic::default();
+        let far = Vec3::new(8.0, 10.0, -20.0);
+        traffic.add_pursuer(&roads, &open_road(far, &[]), 5, 1);
+        let suspect = traffic.cars[0].position + Vec3::X * 20.0;
+        traffic.chase = Some(suspect);
+        traffic.cars[0].police.as_mut().unwrap().off_road = true;
+        traffic.update(&roads, &open_road(suspect, &[]), &[3], 0, 0.1);
+        assert_eq!(traffic.cars.len(), 1, "kept with traffic turned off");
+        traffic.chase = None;
+        for _ in 0..40 {
+            traffic.update(&roads, &open_road(suspect, &[]), &[3], 0, 0.1);
+        }
+        let car = &traffic.cars[0];
+        assert!(
+            !car.siren() && car.speed == 0.0,
+            "parked where the chase ended"
+        );
+        // Cleared away once the player has left it behind.
+        traffic.update(
+            &roads,
+            &open_road(Vec3::new(0.0, 10.0, -300.0), &[]),
+            &[3],
+            0,
+            0.1,
+        );
+        assert!(traffic.cars.is_empty());
+    }
+
+    #[test]
+    fn patrols_mix_into_traffic_and_join_a_chase() {
+        let roads = road();
+        let mut traffic = Traffic {
+            patrol_models: vec![9],
+            ..Traffic::default()
+        };
+        for _ in 0..2000 {
+            traffic.update(&roads, &open_road(Vec3::ZERO, &[]), &[3], 8, 0.1);
+            if traffic.cars.iter().any(|car| car.police.is_some()) {
+                break;
+            }
+        }
+        let patrol = traffic
+            .cars
+            .iter()
+            .find(|car| car.police.is_some())
+            .expect("a patrol car");
+        assert_eq!(patrol.catalog, 9);
+        assert!(!patrol.siren(), "a patrol is quiet");
+        traffic.chase = Some(Vec3::ZERO);
+        traffic.update(&roads, &open_road(Vec3::ZERO, &[]), &[3], 8, 0.1);
+        assert!(traffic
+            .cars
+            .iter()
+            .filter(|car| car.police.is_some())
+            .all(|car| car.siren() && car.cruise == CHASE_CRUISE));
     }
 
     #[test]

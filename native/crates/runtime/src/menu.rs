@@ -369,6 +369,13 @@ pub struct Menu {
     zone_announced: (Option<String>, f64),
     /// Held weapon: name, rounds loaded, spare rounds, whether a gun is held, reloading.
     pub weapon_hud: Option<(String, u32, u32, bool, bool)>,
+    /// Wanted stars, and whether they flash because no cop can see the player.
+    pub wanted: (u8, bool),
+    /// When (egui time) the player was last busted, for the banner.
+    pub busted_at: Option<f64>,
+    /// Set by the game when the player is busted; the banner starts on the
+    /// next frame drawn.
+    pub busted: bool,
     pub ride_status: String,
     pub network_players: Vec<String>,
     pub network_active: bool,
@@ -446,6 +453,7 @@ impl Menu {
                 ("Pedestrians", if s.pedestrians == 0 { "Off".into() } else { format!("{} people", s.pedestrians) }, "People walking the pavements around you. Fewer run faster on weak PCs."),
                 ("Car camera recenter", on(s.car_camera_recenter), "Swings the driving camera back behind the car after you stop moving the mouse. Off keeps it where you left it."),
                 ("Car physics", if s.rigid_cars { "3D (experimental)".into() } else { "Classic".into() }, "3D drives your car as a full body on four springs: it rolls down hills, slides along walls, tips over and can land on its roof. Classic is the flat model from earlier versions."),
+                ("Police", on(s.police), "Police cars patrol the streets. Crimes they see give you wanted stars, and the more stars, the more cops chase you. Lose them to lose the stars, or get busted. Off turns the police off."),
             ],
             SettingsTab::Interface => vec![
                 ("HUD", on(s.show_hud), "Shows gameplay information over the world."),
@@ -586,6 +594,7 @@ impl Menu {
             }
             (SettingsTab::Gameplay, 7) => s.car_camera_recenter = !s.car_camera_recenter,
             (SettingsTab::Gameplay, 8) => s.rigid_cars = !s.rigid_cars,
+            (SettingsTab::Gameplay, 9) => s.police = !s.police,
             (SettingsTab::Interface, 1) => s.show_hud = !s.show_hud,
             (SettingsTab::Interface, 2) => s.show_minimap = !s.show_minimap,
             (SettingsTab::Interface, 3) => s.show_speedometer = !s.show_speedometer,
@@ -762,6 +771,9 @@ impl Menu {
             zone: None,
             zone_announced: (None, f64::NEG_INFINITY),
             weapon_hud: None,
+            wanted: (0, false),
+            busted_at: None,
+            busted: false,
             ride_status: String::new(),
             network_players: Vec::new(),
             network_active: false,
@@ -1155,6 +1167,7 @@ impl Menu {
                         });
                 }
             }
+            self.busted_banner(ctx, scale);
             if let (true, Some((_, _, _, aiming, _))) = (self.settings.show_hud, &self.weapon_hud) {
                 if *aiming {
                     let center = screen.center();

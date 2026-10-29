@@ -396,6 +396,7 @@ impl State {
                         .unwrap_or(0),
                     vehicle,
                     ride_request: self.ride_request,
+                    wanted: self.police.wanted.level(),
                     ..Pose::default()
                 };
             }
@@ -423,6 +424,7 @@ impl State {
                 .unwrap_or(0),
             vehicle,
             ride_request: self.ride_request,
+            wanted: self.police.wanted.level(),
             ..Pose::default()
         }
     }
@@ -603,12 +605,16 @@ impl State {
                 .iter()
                 .map(|p| {
                     format!(
-                        "{}{}",
+                        "{}{}{}",
                         p.name,
                         if p.id == report.local_id {
                             " (you)"
                         } else {
                             ""
+                        },
+                        match p.pose.wanted {
+                            0 => String::new(),
+                            stars => format!("  wanted {stars}/6"),
                         }
                     )
                 })

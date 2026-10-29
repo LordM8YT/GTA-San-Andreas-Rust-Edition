@@ -1,5 +1,14 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.44.0:
+- Police: patrol cars from your own install (LSPD, SFPD, LVPD and the country sheriff) now drive around among the traffic. Crimes they see give you wanted stars: shooting, punching or killing people, wrecking cars, stealing cars and anything you do to the police. Really bad crimes get reported even when no cop sees them.
+- With stars, police cars come after you with flashing lights and sirens. More stars send more cars, up to four. Up close the officers get out and run at you. If one grabs you on foot, or while your car is standing still, you are BUSTED and wake up outside the nearest police station.
+- Stay out of every cop's sight and your stars flash, then drop one at a time.
+- Online, other players see your police cars with their lights on, and the player list shows who is wanted.
+- Turn it off in Settings → Gameplay → Police.
+
+The police passed automated tests. The chase, the station spots and the siren still need a check on a real install.
+
 Version 0.43.0:
 - Tyre smoke: burnouts and hard drifts now leave clouds of tyre smoke that rise and drift away.
 - 3D car physics: a car stuck on its side or roof can be rocked back onto its wheels. Hold A or D (or push the stick) while it lies still.
