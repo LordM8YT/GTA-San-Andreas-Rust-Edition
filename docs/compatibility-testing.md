@@ -54,6 +54,21 @@ Validate the registry:
 python tools/compatibility_harnesses.py validate
 ```
 
+Capture a real SARE candidate trace for the currently instrumented procedural
+flat-ground vehicle scenario:
+
+```powershell
+python tools/compatibility_harnesses.py capture-sare vehicle/flat-idle --output .local/compatibility/vehicle-flat-idle-sare.json
+```
+
+The command builds/runs the existing headless Vehicle Test Lab, preserves its
+normal pass/fail checks, and writes measured spawn and settled checkpoints in
+the shared trace format. It currently supports only `vehicle/flat-idle`;
+other scenario definitions remain specifications until their probes are
+instrumented. This output is a SARE candidate trace, **not** a GTA SA reference
+trace and not proof of compatibility.
+
+
 Compare a captured reference trace and a SARE trace for a scenario:
 
 ```powershell
