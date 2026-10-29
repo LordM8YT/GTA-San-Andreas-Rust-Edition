@@ -37,6 +37,10 @@ impl RemoteTraffic {
     pub fn velocity(&self) -> Vec3 {
         Vec3::new(self.yaw.sin(), 0.0, self.yaw.cos()) * self.speed
     }
+    /// A police car of another player's chase, siren and lights on.
+    pub fn siren(&self) -> bool {
+        self.last.siren
+    }
 }
 
 /// Meshes made per frame for newly seen cars, so a crowded street arriving
@@ -113,13 +117,15 @@ impl State {
                 .cars
                 .iter()
                 .filter_map(|car| {
-                    Some(TrafficPose::new(
+                    let mut pose = TrafficPose::new(
                         u32::try_from(car.id).ok()?,
                         u16::try_from(car.catalog).ok().filter(|m| *m < 256)?,
                         car.position.to_array(),
                         car.yaw,
                         car.speed,
-                    ))
+                    );
+                    pose.siren = car.siren();
+                    Some(pose)
                 })
                 .collect(),
         );

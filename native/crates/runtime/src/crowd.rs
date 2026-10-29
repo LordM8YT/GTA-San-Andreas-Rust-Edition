@@ -44,6 +44,17 @@ pub struct Walker {
     pub thrown: Vec3,
     /// Seconds before a car can hurt this walker again.
     bumped: f32,
+    /// A police officer on foot. Officers are moved by the police, not
+    /// along the footpaths, and do not count against the pedestrian limit.
+    pub cop: bool,
+}
+
+/// Someone the player hurt, for the police to hear about.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Injury {
+    pub cop: bool,
+    pub killed: bool,
+    pub at: Vec3,
 }
 
 /// Running pace while fleeing.
@@ -67,6 +78,8 @@ pub struct Crowd {
     seed: u32,
     since_spawn: f32,
     next_id: u64,
+    /// Hits since the police last looked.
+    pub injuries: Vec<Injury>,
 }
 
 fn world(paths: &RoadGraph, node: u32) -> Vec3 {
@@ -93,10 +106,15 @@ impl Crowd {
         limit: usize,
         dt: f32,
     ) -> Option<usize> {
+        let mut kept = 0;
         self.walkers.retain(|w| {
-            w.feet.distance(player) < DESPAWN && w.dead_for.is_none_or(|t| t < BODY_SECONDS)
+            w.feet.distance(player) < DESPAWN
+                && w.dead_for.is_none_or(|t| t < BODY_SECONDS)
+                && (w.cop || {
+                    kept += 1;
+                    kept <= limit
+                })
         });
-        self.walkers.truncate(limit);
         let positions: Vec<Vec3> = self.walkers.iter().map(|w| w.feet).collect();
         for (index, walker) in self.walkers.iter_mut().enumerate() {
             walker.bumped = (walker.bumped - dt).max(0.0);
@@ -106,6 +124,9 @@ impl Crowd {
                 // A body thrown by a car or a blast slides to a stop.
                 walker.feet += walker.thrown * dt;
                 walker.thrown *= (-3.0 * dt).exp();
+                continue;
+            }
+            if walker.cop {
                 continue;
             }
             walker.panic = (walker.panic - dt).max(0.0);
@@ -152,7 +173,8 @@ impl Crowd {
             place(walker, paths);
         }
         self.since_spawn += dt;
-        if self.walkers.len() >= limit || models.is_empty() || self.since_spawn < SPAWN_INTERVAL {
+        let civilians = self.walkers.iter().filter(|w| !w.cop).count();
+        if civilians >= limit || models.is_empty() || self.since_spawn < SPAWN_INTERVAL {
             return None;
         }
         self.since_spawn = 0.0;
@@ -187,6 +209,7 @@ impl Crowd {
             panic: 0.0,
             thrown: Vec3::ZERO,
             bumped: 0.0,
+            cop: false,
         };
         place(&mut walker, paths);
         if self
@@ -198,6 +221,31 @@ impl Crowd {
         }
         self.walkers.push(walker);
         Some(self.walkers.len() - 1)
+    }
+
+    /// A police officer on foot at `feet`, drawn with ped catalog index
+    /// `catalog`. Returns their index in `walkers`.
+    pub fn add_cop(&mut self, catalog: usize, feet: Vec3, yaw: f32) -> usize {
+        self.next_id += 1;
+        self.walkers.push(Walker {
+            id: self.next_id,
+            catalog,
+            from: 0,
+            to: 0,
+            along: 0.0,
+            speed: 0.0,
+            pace: 0.0,
+            feet,
+            yaw,
+            health: 100.0,
+            dead_for: None,
+            flinch: false,
+            panic: 0.0,
+            thrown: Vec3::ZERO,
+            bumped: 0.0,
+            cop: true,
+        });
+        self.walkers.len() - 1
     }
 
     /// The nearest living walker a ray hits within `range`, and how far along
@@ -225,13 +273,19 @@ impl Crowd {
         }
         walker.health -= amount;
         walker.panic = 10.0;
-        if walker.health <= 0.0 {
+        let killed = walker.health <= 0.0;
+        if killed {
             walker.dead_for = Some(0.0);
             walker.speed = 0.0;
-            return true;
+        } else {
+            walker.flinch = true;
         }
-        walker.flinch = true;
-        false
+        self.injuries.push(Injury {
+            cop: walker.cop,
+            killed,
+            at: walker.feet,
+        });
+        killed
     }
 
     /// A car at `speed` m/s ran into this walker, pushing along `away`.
@@ -265,10 +319,11 @@ impl Crowd {
             }
         }
     }
-    /// Everyone within earshot of a shot runs for a while.
+    /// Everyone within earshot of a shot runs for a while; officers hold
+    /// their ground.
     pub fn scare(&mut self, at: Vec3) {
         for walker in &mut self.walkers {
-            if walker.dead_for.is_none() && walker.feet.distance(at) < HEARING {
+            if !walker.cop && walker.dead_for.is_none() && walker.feet.distance(at) < HEARING {
                 walker.panic = walker.panic.max(8.0);
             }
         }
@@ -345,6 +400,35 @@ impl State {
         self.crowd_models_for = self.menu.peds.len();
     }
 
+    /// Give the walker just added at `index` its own copy of its model, or
+    /// drop them when the model cannot be loaded. Returns whether they stay.
+    pub(super) fn mesh_walker(&mut self, index: usize) -> bool {
+        let (id, catalog) = (
+            self.crowd.walkers[index].id,
+            self.crowd.walkers[index].catalog,
+        );
+        self.ensure_ped_loaded(catalog);
+        let source = if catalog == self.active_ped {
+            self.ped.as_ref()
+        } else {
+            self.ped_catalog.get(catalog).and_then(|p| p.as_ref())
+        };
+        match source {
+            Some((_, batches)) => {
+                self.crowd_meshes.push(WalkerMesh {
+                    id,
+                    batches: crate::multiplayer::duplicate(&self.device, batches),
+                    animator: crate::animation::Animator::civilian((id % 17) as f32 * 0.13),
+                });
+                true
+            }
+            None => {
+                self.crowd.walkers.remove(index);
+                false
+            }
+        }
+    }
+
     pub(super) fn update_crowd(&mut self, dt: f32) {
         if self.crowd_models_for != self.menu.peds.len() {
             self.refresh_crowd_models();
@@ -378,26 +462,7 @@ impl State {
         self.crowd_meshes
             .retain(|mesh| walkers.iter().any(|w| w.id == mesh.id));
         if let Some(index) = added {
-            let (id, catalog) = (
-                self.crowd.walkers[index].id,
-                self.crowd.walkers[index].catalog,
-            );
-            self.ensure_ped_loaded(catalog);
-            let source = if catalog == self.active_ped {
-                self.ped.as_ref()
-            } else {
-                self.ped_catalog.get(catalog).and_then(|p| p.as_ref())
-            };
-            match source {
-                Some((_, batches)) => self.crowd_meshes.push(WalkerMesh {
-                    id,
-                    batches: crate::multiplayer::duplicate(&self.device, batches),
-                    animator: crate::animation::Animator::civilian((id % 17) as f32 * 0.13),
-                }),
-                None => {
-                    self.crowd.walkers.remove(index);
-                }
-            }
+            self.mesh_walker(index);
         }
         for mesh in &mut self.crowd_meshes {
             let Some(walker) = self.crowd.walkers.iter_mut().find(|w| w.id == mesh.id) else {
@@ -584,6 +649,41 @@ mod tests {
         crowd.scare(at + Vec3::X * 5.0);
         crowd.update(&paths, Vec3::ZERO, &[], &[1], 1, 0.1);
         assert_eq!(crowd.walkers[0].speed, FLEE);
+    }
+
+    #[test]
+    fn officers_stand_where_the_police_put_them_and_are_not_counted() {
+        let paths = pavement();
+        let mut crowd = Crowd::default();
+        let at = Vec3::new(3.0, 10.0, -3.0);
+        let index = crowd.add_cop(4, at, 0.0);
+        for _ in 0..50 {
+            crowd.update(&paths, Vec3::ZERO, &[], &[1], 0, 0.1);
+        }
+        assert_eq!(crowd.walkers.len(), 1, "kept with pedestrians turned off");
+        assert_eq!(
+            crowd.walkers[index].feet, at,
+            "the footpaths do not move them"
+        );
+        crowd.scare(at);
+        assert_eq!(crowd.walkers[index].panic, 0.0);
+        assert!(!crowd.damage(index, 30.0));
+        assert!(crowd.damage(index, 80.0));
+        assert_eq!(
+            crowd.injuries,
+            [
+                Injury {
+                    cop: true,
+                    killed: false,
+                    at
+                },
+                Injury {
+                    cop: true,
+                    killed: true,
+                    at
+                },
+            ]
+        );
     }
 
     #[test]

@@ -75,6 +75,8 @@ pub struct Settings {
     pub car_camera_recenter: bool,
     /// Drive with the experimental 3D car body instead of the flat model.
     pub rigid_cars: bool,
+    /// Police patrols, the wanted level and chases.
+    pub police: bool,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -116,6 +118,7 @@ impl Default for Settings {
             pedestrians: 16,
             car_camera_recenter: true,
             rigid_cars: false,
+            police: true,
         }
     }
 }

@@ -64,6 +64,12 @@ pub struct Pose {
     pub ride_request: Option<RideRequest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ride_reply: Option<RideReply>,
+    /// Wanted stars, 0 to 6.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub wanted: u8,
+}
+fn is_zero(value: &u8) -> bool {
+    *value == 0
 }
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct VehiclePose {
@@ -98,6 +104,7 @@ impl Pose {
             && self
                 .ride_request
                 .is_none_or(|request| request.sequence != 0)
+            && self.wanted <= 6
     }
 }
 /// Traffic cars one player's game may share at once.
@@ -119,6 +126,9 @@ pub struct TrafficPose {
     pub position: [i32; 3],
     pub yaw: i16,
     pub speed: i16,
+    /// A police car with its siren and lights on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub siren: bool,
 }
 impl TrafficPose {
     pub fn new(id: u32, model: u16, position: [f32; 3], yaw: f32, speed: f32) -> Self {
@@ -129,6 +139,7 @@ impl TrafficPose {
             position: position.map(|v| (v.clamp(-20000.0, 20000.0) * 100.0).round() as i32),
             yaw: (yaw * 1000.0).round() as i16,
             speed: (speed.clamp(-200.0, 200.0) * 10.0).round() as i16,
+            siren: false,
         }
     }
     pub fn position(&self) -> [f32; 3] {
@@ -1388,6 +1399,32 @@ mod tests {
         let guest = Session::join(host.address, "Guest").unwrap();
         wait(|| report(&guest).local_id != 0 && report(&host).peers.len() >= 2);
         assert_eq!(host.identity(report(&guest).local_id), None);
+    }
+
+    #[test]
+    fn wanted_stars_and_sirens_travel_only_when_set() {
+        let quiet = serde_json::to_string(&Pose::default()).unwrap();
+        assert!(!quiet.contains("wanted"), "older games see nothing new");
+        let old: Pose = serde_json::from_str(&quiet).unwrap();
+        assert_eq!(old.wanted, 0);
+        let wanted = Pose {
+            wanted: 3,
+            ..Pose::default()
+        };
+        let back: Pose = serde_json::from_str(&serde_json::to_string(&wanted).unwrap()).unwrap();
+        assert_eq!(back.wanted, 3);
+        assert!(back.valid());
+        assert!(!Pose {
+            wanted: 7,
+            ..wanted
+        }
+        .valid());
+        let mut car = TrafficPose::new(1, 2, [0.0; 3], 0.0, 0.0);
+        assert!(!serde_json::to_string(&car).unwrap().contains("siren"));
+        car.siren = true;
+        let back: TrafficPose =
+            serde_json::from_str(&serde_json::to_string(&car).unwrap()).unwrap();
+        assert!(back.siren);
     }
 
     /// A raw client speaking the protocol by hand.

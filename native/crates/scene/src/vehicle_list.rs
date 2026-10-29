@@ -23,11 +23,20 @@ impl OriginalCar {
             "poorfamily" | "richfamily" | "executive" | "worker" | "taxi" | "big"
         )
     }
+    /// The four-wheeled patrol cars the game sends after a wanted player.
+    pub fn is_police(&self) -> bool {
+        POLICE_CARS.contains(&self.model.as_str())
+    }
 }
+
+/// Patrol cars of Los Santos, San Fierro and Las Venturas, and the
+/// countryside sheriff's Ranger.
+pub const POLICE_CARS: [&str; 4] = ["copcarla", "copcarsf", "copcarvg", "copcarru"];
 
 /// Cars a player can spawn and drive with the four-wheel model. Bikes, boats,
 /// aircraft, trains and trailers need their own physics and are left out, as
-/// are entries the game itself marks `ignore` (RC toys and the like).
+/// are entries the game itself marks `ignore` (RC toys and the like), except
+/// the police cars, which only the police system spawns.
 pub fn original_cars(game: &Path) -> Vec<OriginalCar> {
     sa_assets::game_path::resolve(game, "data/vehicles.ide")
         .ok()
@@ -56,10 +65,13 @@ fn parse_cars(ide: &str) -> Vec<OriginalCar> {
             continue;
         }
         let fields: Vec<_> = line.split(',').map(str::trim).collect();
-        if fields.len() < 8 || fields[3] != "car" || fields[7].eq_ignore_ascii_case("ignore") {
+        if fields.len() < 8 || fields[3] != "car" {
             continue;
         }
         let model = fields[1].to_ascii_lowercase();
+        if fields[7].eq_ignore_ascii_case("ignore") && !POLICE_CARS.contains(&model.as_str()) {
+            continue;
+        }
         if model.is_empty()
             || !model.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
             || cars.iter().any(|c: &OriginalCar| c.model == model)
@@ -154,14 +166,16 @@ mod tests {
             448, pizzaboy, pizzaboy, bike, PIZZABOY, PIZZABO, bikev, motorbike, 1, 0, 0, 16, 0.46, 0.46\n\
             435, artict1, artict1, trailer, ARTICT1, ARTICT1, null, ignore, 1, 0, 0, -1, 1.1, 1.1, -1\n\
             411, Infernus, infernus, car, INFERNUS, INFERNU, null, executive, 10, 0, 0, -1, 0.7, 0.7, -1\n\
+            596, copcarla, copcarla, car, POLICAR, POLICAR, null, ignore, 1, 0, 0, -1, 0.7, 0.7, -1\n\
             end\n";
         let cars = parse_cars(ide);
         assert_eq!(
             cars.iter().map(|c| c.model.as_str()).collect::<Vec<_>>(),
-            ["landstal", "infernus"]
+            ["landstal", "infernus", "copcarla"]
         );
         assert_eq!(cars[1].name_key, "INFERNU");
         assert!(cars[0].is_civilian() && cars[1].is_civilian());
+        assert!(cars[2].is_police() && !cars[2].is_civilian());
     }
 
     #[test]

@@ -329,6 +329,7 @@ impl State {
         let group = held.weapon.group.clone();
         self.play_weapon_sound(Some(&group), muzzle_at);
         self.crowd.scare(muzzle_at);
+        self.report_crime(crate::wanted::Crime::Gunfire, muzzle_at);
         for direction in pellet_directions(aim, pellets) {
             // Walls stop bullets: shorten the ray to the first solid thing.
             let end = origin + direction * range;

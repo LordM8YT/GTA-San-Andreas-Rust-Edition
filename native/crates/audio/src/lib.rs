@@ -78,6 +78,28 @@ impl Drop for EngineEmitter {
     }
 }
 
+/// One looping sound that follows something around the world, such as a
+/// police siren. Dropping it stops the sound and releases its mixer track.
+pub struct LoopEmitter {
+    track: SpatialTrackHandle,
+    sound: StaticSoundHandle,
+}
+
+impl LoopEmitter {
+    pub fn update(&mut self, position: [f32; 3]) -> Result<()> {
+        validate_position(position, "loop")?;
+        self.track
+            .set_position(glam::Vec3::from_array(position), Tween::default());
+        Ok(())
+    }
+}
+
+impl Drop for LoopEmitter {
+    fn drop(&mut self) {
+        self.sound.stop(Tween::default());
+    }
+}
+
 /// In-memory sound used for overlapping short effects.
 #[derive(Clone, Debug)]
 pub struct SoundEffect {
@@ -161,6 +183,36 @@ impl SoundEffect {
         Ok(Self { data })
     }
 
+    /// A police siren's rising and falling wail, made here rather than
+    /// taken from the game, as a seamless four-second loop.
+    pub fn siren() -> Self {
+        const RATE: u32 = 22050;
+        const CYCLE: f32 = 4.0;
+        let frames = (RATE as f32 * CYCLE) as usize;
+        let mut phase = 0.0_f32;
+        let samples = (0..frames)
+            .map(|index| {
+                let time = index as f32 / RATE as f32;
+                // Sweep 650 Hz up to 1500 Hz and back once per cycle.
+                let sweep = 0.5 - 0.5 * (std::f32::consts::TAU * time / CYCLE).cos();
+                let frequency = 650.0 + 850.0 * sweep;
+                phase = (phase + frequency / RATE as f32).fract();
+                let wave = (std::f32::consts::TAU * phase).sin();
+                // A touch of the third harmonic gives it a horn's edge.
+                let edge = (std::f32::consts::TAU * phase * 3.0).sin() / 3.0;
+                Frame::from_mono((wave + edge * 0.6) * 0.22)
+            })
+            .collect::<Vec<_>>();
+        let mut data = StaticSoundData {
+            sample_rate: RATE,
+            frames: samples.into(),
+            settings: Default::default(),
+            slice: None,
+        };
+        data = data.loop_region(..);
+        Self { data }
+    }
+
     /// Builds a bounded test tone without requiring audio files or a device.
     pub fn tone(frequency_hz: f32, duration_seconds: f32, sample_rate: u32) -> Result<Self> {
         anyhow::ensure!(
@@ -238,6 +290,25 @@ impl AudioEngine {
         position: [f32; 3],
     ) -> Result<EngineEmitter> {
         EngineEmitter::new(&mut self.effects, &self.listener, sounds, position)
+    }
+    /// Starts `sound` looping at `position`, heard from far off. Its own
+    /// track keeps it apart from the short effects.
+    pub fn loop_emitter(&mut self, sound: &SoundEffect, position: [f32; 3]) -> Result<LoopEmitter> {
+        validate_position(position, "loop")?;
+        let mut track = self
+            .effects
+            .add_spatial_sub_track(
+                &self.listener,
+                glam::Vec3::from_array(position),
+                SpatialTrackBuilder::new()
+                    .distances((6.0, 160.0))
+                    .sound_capacity(1),
+            )
+            .context("create looping sound emitter")?;
+        let sound = track
+            .play(sound.data.clone())
+            .context("play looping sound")?;
+        Ok(LoopEmitter { track, sound })
     }
     /// Opens the operating system's default output device.
     pub fn new() -> Result<Self> {
@@ -442,6 +513,19 @@ mod tests {
             && frame.right.is_finite()
             && frame.left.abs() <= 0.2
             && frame.right.abs() <= 0.2));
+    }
+    #[test]
+    fn the_siren_loops_seamlessly_within_bounds() {
+        let siren = SoundEffect::siren();
+        let frames = &siren.data.frames;
+        assert_eq!(frames.len(), 22050 * 4);
+        assert!(siren.data.settings.loop_region.is_some());
+        assert!(frames
+            .iter()
+            .all(|f| f.left.is_finite() && f.left.abs() <= 0.4));
+        // The pitch is back where it started, so the loop point does not click.
+        let (first, last) = (frames[0].left, frames[frames.len() - 1].left);
+        assert!((first - last).abs() < 0.1, "{first} {last}");
     }
     #[test]
     fn original_pcm_stereo_keeps_channels_rates_and_shorter_channel_padding() {

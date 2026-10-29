@@ -21,7 +21,7 @@ const FLASH_SECONDS: f32 = 1.2;
 /// Seconds a wreck keeps burning after it blew up.
 const WRECK_FIRE_SECONDS: f32 = 10.0;
 /// Fire and flash sprites drawn at most; the furthest are left out.
-const FIRE_GLOWS: usize = 24;
+const FIRE_GLOWS: usize = 40;
 pub const FIRE_VERTICES: usize = FIRE_GLOWS * 6;
 const CORNERS: [[f32; 2]; 6] = [
     [-1.0, -1.0],
@@ -173,6 +173,13 @@ impl State {
                     car.damage.hurt(amount);
                     // A shot-at driver stops, like a knock.
                     car.knock(3.0, Vec3::ZERO);
+                    let crime = if car.police.is_some() {
+                        crate::wanted::Crime::HitPoliceCar
+                    } else {
+                        crate::wanted::Crime::DamageCar
+                    };
+                    let at = car.position;
+                    self.report_crime(crime, at);
                 }
             }
         }
@@ -194,13 +201,25 @@ impl State {
                 blasts.push((car.position, CarRef::Own));
             }
         }
+        let mut crimes = Vec::new();
         for car in &mut self.traffic.cars {
             if car.damage.update(dt) {
                 blasts.push((car.position, CarRef::Traffic(car.id)));
+                crimes.push((
+                    if car.police.is_some() {
+                        crate::wanted::Crime::BlowUpPolice
+                    } else {
+                        crate::wanted::Crime::BlowUpCar
+                    },
+                    car.position,
+                ));
             }
         }
         for (at, source) in blasts {
             self.explode(at, source);
+        }
+        for (crime, at) in crimes {
+            self.report_crime(crime, at);
         }
         for flash in &mut self.blast_flashes {
             flash.1 += dt;
@@ -246,8 +265,8 @@ impl State {
         }
     }
 
-    /// Thrown out of a car that blew up.
-    fn bail_out(&mut self) {
+    /// Thrown out of a car that blew up, or hauled out by the police.
+    pub(super) fn bail_out(&mut self) {
         let (Some(world), Some((car, _))) = (&self.collision, &mut self.car) else {
             return;
         };
@@ -293,6 +312,7 @@ impl State {
                 flame(at, car.id as f32, 1.0 - car.burnt_for / WRECK_FIRE_SECONDS);
             }
         }
+        glows.extend(self.light_bars(time));
         for (at, age) in &self.blast_flashes {
             let fade = 1.0 - age / FLASH_SECONDS;
             glows.push((

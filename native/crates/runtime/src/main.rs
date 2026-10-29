@@ -23,6 +23,7 @@ mod metrics;
 mod mipmaps;
 mod multiplayer;
 mod pickups;
+mod police;
 mod postprocess;
 mod progress;
 mod rain;
@@ -41,6 +42,7 @@ mod tyre_smoke;
 #[path = "../../../ui/theme.rs"]
 mod ui_theme;
 mod upload;
+mod wanted;
 mod weapons;
 mod zones;
 use streaming::{Streamer, DESTINATIONS, ORIGIN, RADIUS};
@@ -288,6 +290,7 @@ struct State {
     offline_world: Option<session_resources::World>,
     remote_actors: Vec<multiplayer::RemoteActor>,
     traffic: traffic::Traffic,
+    police: police::Police,
     arsenal: weapons::Arsenal,
     arsenal_loaded: bool,
     weapon_anims: std::collections::HashMap<String, Option<weapons::WeaponAnims>>,
@@ -585,6 +588,10 @@ impl State {
             return;
         };
         let stolen = self.traffic.cars.remove(index);
+        self.report_crime(wanted::Crime::CarJack, stolen.position);
+        if stolen.police.is_some() {
+            self.report_crime(wanted::Crime::HitPoliceCar, stolen.position);
+        }
         let catalog = stolen.catalog;
         self.ensure_car_loaded(catalog);
         if catalog != self.active_car {
@@ -1150,6 +1157,7 @@ impl State {
             offline_world: None,
             remote_actors: Vec::new(),
             traffic: traffic::Traffic::default(),
+            police: police::Police::default(),
             arsenal: weapons::Arsenal::default(),
             arsenal_loaded: false,
             weapon_anims: std::collections::HashMap::new(),
@@ -1884,6 +1892,8 @@ impl State {
         }
         self.update_network();
         self.update_traffic(dt);
+        self.update_police(dt);
+        self.pose_traffic();
         self.update_shared_traffic(dt);
         self.update_crowd(dt);
         self.update_weapons(dt);

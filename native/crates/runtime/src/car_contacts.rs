@@ -197,6 +197,7 @@ impl State {
                 return;
             };
             let mut moved = Vec3::ZERO;
+            let mut crimes = Vec::new();
             for (owner, other, velocity) in &others {
                 if *owner == Owner::OwnParked {
                     continue;
@@ -216,6 +217,11 @@ impl State {
                 if let Owner::Traffic(index) = owner {
                     if let Some(hit) = self.traffic.cars.get_mut(*index) {
                         hit.knock(impact, normal);
+                        // Only the player driving into a car is a crime, not
+                        // a police car pulling up against them.
+                        if impact > 2.0 && car.speed.abs() > 3.0 {
+                            crimes.push((hit.police.is_some(), hit.position));
+                        }
                     }
                 }
             }
@@ -237,6 +243,14 @@ impl State {
                 .collect();
             for (index, away) in hits {
                 self.crowd.run_over(index, speed, away);
+            }
+            for (police, at) in crimes {
+                let crime = if police {
+                    crate::wanted::Crime::HitPoliceCar
+                } else {
+                    crate::wanted::Crime::DamageCar
+                };
+                self.report_crime(crime, at);
             }
         } else if self.walking {
             let Some(player) = &mut self.player else {
