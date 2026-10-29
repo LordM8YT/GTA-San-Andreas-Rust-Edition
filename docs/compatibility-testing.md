@@ -68,7 +68,6 @@ other scenario definitions remain specifications until their probes are
 instrumented. This output is a SARE candidate trace, **not** a GTA SA reference
 trace and not proof of compatibility.
 
-
 Compare a captured reference trace and a SARE trace for a scenario:
 
 ```powershell
