@@ -12,7 +12,7 @@ impl Menu {
     ) -> Option<Action> {
         let ctx = ui.ctx().clone();
         let painter = ui.painter().clone();
-        let inset = screen.width() * 0.065;
+        let inset = (screen.width() * 0.065).max(48.0 * scale);
         let left = screen.left() + inset;
         let right = screen.right() - inset;
         let top = screen.top() + screen.height() * 0.055;
@@ -42,7 +42,7 @@ impl Menu {
             MUTED,
         );
         painter.text(
-            Pos2::new(left + 4.0 * scale, top + 119.0 * scale),
+            Pos2::new(left + 4.0 * scale, top + 126.0 * scale),
             egui::Align2::LEFT_TOP,
             "SAME CITY. NEW STORIES.",
             FontId::proportional((10.0 * scale).max(9.0)),
@@ -50,8 +50,8 @@ impl Menu {
         );
         painter.line_segment(
             [
-                Pos2::new(left, top + 127.0 * scale),
-                Pos2::new(left + 118.0 * scale, top + 127.0 * scale),
+                Pos2::new(left, top + 148.0 * scale),
+                Pos2::new(left + 118.0 * scale, top + 148.0 * scale),
             ],
             egui::Stroke::new(2.0 * scale, ui_theme::ACCENT),
         );
@@ -82,7 +82,7 @@ impl Menu {
             egui::Stroke::new(1.0, Color32::from_white_alpha(70)),
         );
 
-        let body_top = top + 151.0 * scale;
+        let body_top = top + 174.0 * scale;
         let gap = 24.0 * scale;
         let width = ((right - left - gap) * 0.55).min(610.0 * scale);
         let secondary_left = left + width + gap;
@@ -197,7 +197,7 @@ impl Menu {
         // Secondary destinations use a compact two-column grid so the title
         // screen stays balanced without turning into a long settings list.
         let grid_gap = 8.0 * scale;
-        let grid_width = (right - secondary_left).min(430.0 * scale);
+        let grid_width = (right - secondary_left).max(0.0).min(430.0 * scale);
         let row_height = 48.0 * scale;
         let column_width = (grid_width - grid_gap) * 0.5;
         for (slot, index) in (2..10).enumerate() {
