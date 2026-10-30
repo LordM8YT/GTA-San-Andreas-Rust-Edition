@@ -2,7 +2,7 @@
 use super::*;
 
 impl Menu {
-    pub(super) fn status_hud(&self, ctx: &egui::Context, scale: f32) {
+    pub(super) fn status_hud(&self, ctx: &egui::Context, scale: f32, fps: f32) {
         egui::Area::new("sare-status".into())
             .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-28.0, 26.0))
             .interactable(false)
@@ -40,6 +40,15 @@ impl Menu {
                                         ),
                                     );
                                 },
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("FPS").size(11.0 * scale).color(MUTED));
+                            ui.label(
+                                RichText::new(format!("{fps:.0}"))
+                                    .size(15.0 * scale)
+                                    .color(if fps >= 60.0 { ui_theme::SUCCESS } else { GOLD })
+                                    .strong(),
                             );
                         });
                         if self.wanted.0 > 0 {
