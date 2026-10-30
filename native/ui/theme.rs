@@ -1,13 +1,13 @@
 //! Shared SARE interface tokens and original San Andreas-inspired artwork.
 use egui::{Color32, FontId, Pos2, Rect, RichText, Vec2};
 
-/// The same restrained palette is used by the launcher, menus and in-game HUD.
-pub const BACKGROUND: Color32 = Color32::from_rgb(10, 15, 21);
-pub const SURFACE: Color32 = Color32::from_rgb(18, 27, 36);
-pub const SURFACE_HIGH: Color32 = Color32::from_rgb(28, 40, 51);
-pub const TEXT: Color32 = Color32::from_rgb(244, 242, 233);
-pub const MUTED: Color32 = Color32::from_rgb(164, 176, 186);
-pub const ACCENT: Color32 = Color32::from_rgb(230, 180, 92);
+/// SARE visual identity: midnight surfaces, warm ivory text and muted gold accents.
+pub const BACKGROUND: Color32 = Color32::from_rgb(11, 15, 20);
+pub const SURFACE: Color32 = Color32::from_rgb(26, 31, 38);
+pub const SURFACE_HIGH: Color32 = Color32::from_rgb(46, 53, 64);
+pub const TEXT: Color32 = Color32::from_rgb(245, 233, 200);
+pub const MUTED: Color32 = Color32::from_rgb(166, 169, 173);
+pub const ACCENT: Color32 = Color32::from_rgb(212, 175, 55);
 pub const SUCCESS: Color32 = Color32::from_rgb(143, 203, 160);
 
 pub fn apply(ctx: &egui::Context) {
@@ -37,7 +37,7 @@ pub fn apply(ctx: &egui::Context) {
     style.visuals.widgets.inactive.bg_fill = SURFACE_HIGH;
     style.visuals.widgets.inactive.weak_bg_fill = SURFACE;
     style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, SURFACE_HIGH);
-    style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(40, 53, 65);
+    style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(58, 57, 43);
     style.visuals.widgets.hovered.weak_bg_fill = SURFACE_HIGH;
     style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, ACCENT);
     style.visuals.widgets.active.bg_fill = Color32::from_rgb(73, 59, 39);
@@ -64,7 +64,7 @@ pub fn key_hint(ui: &mut egui::Ui, key: &str, label: &str) {
         ui.spacing_mut().item_spacing.x = 6.0;
         egui::Frame::new()
             .fill(SURFACE_HIGH)
-            .stroke(egui::Stroke::new(1.0, Color32::from_rgb(54, 67, 77)))
+            .stroke(egui::Stroke::new(1.0, Color32::from_rgb(66, 69, 67)))
             .corner_radius(3)
             .inner_margin(egui::Margin::symmetric(6, 3))
             .show(ui, |ui| {
