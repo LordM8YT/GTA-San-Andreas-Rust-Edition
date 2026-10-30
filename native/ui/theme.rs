@@ -190,3 +190,21 @@ pub fn horizon(painter: &egui::Painter, rect: Rect) {
     shade.add_triangle(0, 2, 3);
     painter.add(egui::Shape::mesh(shade));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apply_installs_the_shared_sare_palette() {
+        let ctx = egui::Context::default();
+        apply(&ctx);
+        let style = ctx.style_of(egui::Theme::Dark);
+        assert_eq!(style.visuals.panel_fill, BACKGROUND);
+        assert_eq!(style.visuals.window_fill, SURFACE);
+        assert_eq!(style.visuals.extreme_bg_color, BACKGROUND);
+        assert_eq!(style.visuals.widgets.inactive.bg_fill, SURFACE_HIGH);
+        assert_eq!(style.visuals.widgets.hovered.bg_stroke.color, ACCENT);
+        assert_eq!(style.visuals.override_text_color, Some(TEXT));
+    }
+}
