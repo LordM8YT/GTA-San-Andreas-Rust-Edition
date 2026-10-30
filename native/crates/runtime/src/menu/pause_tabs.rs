@@ -257,6 +257,7 @@ impl Menu {
         let ctx = ui.ctx().clone();
         let mut action = None;
         let count = PAUSE_ITEMS.len();
+        self.selected %= count;
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
             self.selected = (self.selected + 1) % count;
         }
