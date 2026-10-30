@@ -570,6 +570,13 @@ impl Launcher {
             egui::FontId::proportional(17.0),
             MUTED,
         );
+        painter.text(
+            egui::pos2(left, rect.top() + if width < 600.0 { 124.0 } else { 145.0 }),
+            egui::Align2::LEFT_TOP,
+            "SAME CITY. NEW STORIES.",
+            egui::FontId::proportional(12.0),
+            ACCENT,
+        );
         let play = egui::Rect::from_min_size(
             egui::pos2(left, rect.bottom() - 84.0),
             egui::vec2(218.0, 44.0),
