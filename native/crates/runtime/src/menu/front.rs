@@ -41,6 +41,13 @@ impl Menu {
             FontId::proportional((12.0 * scale).max(10.0)),
             MUTED,
         );
+        painter.text(
+            Pos2::new(left + 4.0 * scale, top + 119.0 * scale),
+            egui::Align2::LEFT_TOP,
+            "SAME CITY. NEW STORIES.",
+            FontId::proportional((10.0 * scale).max(9.0)),
+            ui_theme::ACCENT,
+        );
         painter.line_segment(
             [
                 Pos2::new(left, top + 127.0 * scale),
@@ -123,9 +130,9 @@ impl Menu {
             let response = ui.interact(rect, egui::Id::new(("front-play", index)), Sense::click());
             let active = selected || response.hovered() || response.has_focus();
             let fill = if active {
-                Color32::from_rgba_unmultiplied(18, 27, 36, 245)
+                Color32::from_rgba_unmultiplied(46, 53, 64, 245)
             } else {
-                Color32::from_rgba_unmultiplied(10, 15, 21, 205)
+                Color32::from_rgba_unmultiplied(11, 15, 20, 205)
             };
             painter.rect_filled(rect, 2, fill);
             painter.rect_filled(

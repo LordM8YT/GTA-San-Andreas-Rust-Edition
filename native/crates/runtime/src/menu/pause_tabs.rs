@@ -7,6 +7,7 @@ use egui::{Color32, FontFamily, FontId, Pos2, Rect, Sense, Vec2};
 /// The shared SARE accent keeps launcher and game navigation consistent.
 const STRIPE: Color32 = crate::ui_theme::ACCENT;
 const PANEL: Color32 = crate::ui_theme::SURFACE;
+const RAISED: Color32 = crate::ui_theme::SURFACE_HIGH;
 const TEXT: Color32 = crate::ui_theme::TEXT;
 
 pub(super) const TABS: [(Page, &str); 10] = [
@@ -38,9 +39,9 @@ fn menu_font(size: f32) -> FontId {
 fn row(ui: &mut egui::Ui, rect: Rect, text: &str, selected: bool, id: usize, scale: f32) -> bool {
     let response = ui.interact(rect, egui::Id::new(("gta-row", id)), Sense::click());
     let (fill, color) = if selected {
-        (Color32::from_rgb(31, 43, 53), TEXT)
+        (RAISED, TEXT)
     } else if response.hovered() || response.has_focus() {
-        (Color32::from_rgb(35, 47, 58), TEXT)
+        (Color32::from_rgb(37, 43, 50), TEXT)
     } else {
         (PANEL, MUTED)
     };
@@ -55,7 +56,7 @@ fn row(ui: &mut egui::Ui, rect: Rect, text: &str, selected: bool, id: usize, sca
         if selected {
             STRIPE
         } else {
-            Color32::from_rgb(54, 67, 77)
+            Color32::from_rgb(66, 69, 67)
         },
     );
     painter.text(

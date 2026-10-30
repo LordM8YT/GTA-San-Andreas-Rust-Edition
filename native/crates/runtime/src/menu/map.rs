@@ -9,7 +9,7 @@ use egui::{Color32, FontId, Pos2, Rect, Sense, Vec2};
 const WORLD: f32 = 3000.0;
 /// Most zoomed in, in pixels per metre.
 const MAX_ZOOM: f32 = 1.6;
-const PANEL: Color32 = Color32::from_black_alpha(185);
+const PANEL: Color32 = crate::ui_theme::SURFACE;
 
 /// Screen <-> world for a map view centred on `center` at `zoom` px/m.
 #[derive(Clone, Copy)]

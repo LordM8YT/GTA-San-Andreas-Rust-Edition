@@ -949,6 +949,7 @@ impl State {
             )
         };
         let gui_context = egui::Context::default();
+        ui_theme::apply(&gui_context);
         let mut radar_texture_handles = Vec::with_capacity(radar_tiles.len());
         let radar_tiles = radar_tiles
             .into_iter()

@@ -725,19 +725,12 @@ impl Menu {
         fonts
             .families
             .insert(FontFamily::Name("title".into()), vec!["title".into()]);
-        if let Ok(bytes) = std::fs::read("C:/Windows/Fonts/impact.ttf") {
-            fonts
-                .font_data
-                .insert("menu".into(), egui::FontData::from_owned(bytes).into());
-            fonts
-                .families
-                .insert(FontFamily::Name("menu".into()), vec!["menu".into()]);
-        } else {
-            fonts.families.insert(
-                FontFamily::Name("menu".into()),
-                fonts.families[&FontFamily::Proportional].clone(),
-            );
-        }
+        // Use the same platform-independent sans-serif family on every OS.
+        // A Windows-only Impact lookup made the pause navigation vary by machine.
+        fonts.families.insert(
+            FontFamily::Name("menu".into()),
+            fonts.families[&FontFamily::Proportional].clone(),
+        );
         ctx.set_fonts(fonts);
         ui_theme::apply(ctx);
         Self {
@@ -1159,7 +1152,7 @@ impl Menu {
                         .interactable(false)
                         .show(ctx, |ui| {
                             egui::Frame::new()
-                                .fill(Color32::from_rgba_unmultiplied(15, 21, 29, 210))
+                                .fill(ui_theme::SURFACE)
                                 .inner_margin(egui::Margin::symmetric(8, 2))
                                 .show(ui, |ui| {
                                     ui.set_width(minimap_size(screen).x - 16.0);
@@ -1195,7 +1188,7 @@ impl Menu {
                         .interactable(false)
                         .show(ctx, |ui| {
                             egui::Frame::new()
-                                .fill(Color32::from_rgba_unmultiplied(15, 21, 29, 205))
+                                .fill(ui_theme::SURFACE)
                                 .corner_radius(3)
                                 .inner_margin(egui::Margin::symmetric(16, 10))
                                 .show(ui, |ui| {

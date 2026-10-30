@@ -8,7 +8,7 @@ impl Menu {
             .interactable(false)
             .show(ctx, |ui| {
                 egui::Frame::new()
-                    .fill(Color32::from_rgba_unmultiplied(15, 21, 29, 205))
+                    .fill(ui_theme::SURFACE)
                     .corner_radius(3)
                     .inner_margin(12)
                     .show(ui, |ui| {
@@ -140,7 +140,7 @@ impl Menu {
                     ui,
                     "BUSTED",
                     FontId::new(76.0 * scale, FontFamily::Name("title".into())),
-                    Color32::from_rgba_unmultiplied(90, 150, 230, (255.0 * fade) as u8),
+                    Color32::from_rgba_unmultiplied(212, 175, 55, (255.0 * fade) as u8),
                 );
             });
         ctx.request_repaint();
