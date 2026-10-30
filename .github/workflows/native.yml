@@ -35,6 +35,8 @@ jobs:
           components: rustfmt, clippy
       - run: cargo fmt --all -- --check
       - run: cargo test --workspace
+      - name: Build in-game interface preview
+        run: cargo build -p sa-launcher --example interface-preview
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - uses: actions/setup-python@v5
         with:
