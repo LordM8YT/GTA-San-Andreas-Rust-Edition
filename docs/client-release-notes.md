@@ -1,5 +1,8 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.44.1:
+- Fixed a crash during police chases when a police car backing up drove back onto the road.
+
 Version 0.44.0:
 - Police: patrol cars from your own install (LSPD, SFPD, LVPD and the country sheriff) now drive around among the traffic. Crimes they see give you wanted stars: shooting, punching or killing people, wrecking cars, stealing cars and anything you do to the police. Really bad crimes get reported even when no cop sees them.
 - With stars, police cars come after you with flashing lights and sirens. More stars send more cars, up to four. Up close the officers get out and run at you. If one grabs you on foot, or while your car is standing still, you are BUSTED and wake up outside the nearest police station.
