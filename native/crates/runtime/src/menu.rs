@@ -1152,7 +1152,7 @@ impl Menu {
                         .interactable(false)
                         .show(ctx, |ui| {
                             egui::Frame::new()
-                                .fill(Color32::from_rgba_unmultiplied(15, 21, 29, 210))
+                                .fill(ui_theme::SURFACE)
                                 .inner_margin(egui::Margin::symmetric(8, 2))
                                 .show(ui, |ui| {
                                     ui.set_width(minimap_size(screen).x - 16.0);
@@ -1188,7 +1188,7 @@ impl Menu {
                         .interactable(false)
                         .show(ctx, |ui| {
                             egui::Frame::new()
-                                .fill(Color32::from_rgba_unmultiplied(15, 21, 29, 205))
+                                .fill(ui_theme::SURFACE)
                                 .corner_radius(3)
                                 .inner_margin(egui::Margin::symmetric(16, 10))
                                 .show(ui, |ui| {
