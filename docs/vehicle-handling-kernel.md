@@ -105,3 +105,6 @@ one, and it is the next thing to fix before the map test means anything.
   hard landing is a little softer than the original.
 - **Tunnelling at speed.** One push per frame; a very fast car can still pass
   through a thin wall between two ticks.
+
+
+CI validation is required before this kernel is merged into the current main branch. The parity fixtures and known limitations above are part of the acceptance criteria.
