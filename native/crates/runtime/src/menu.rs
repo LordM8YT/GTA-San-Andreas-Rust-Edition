@@ -1061,6 +1061,7 @@ impl Menu {
         coordinates: [f32; 3],
         loading: bool,
         car_speed: Option<f32>,
+        fps: f32,
         yaw: f32,
         radar_tiles: &[RadarTile],
     ) -> Option<Action> {
@@ -1069,7 +1070,7 @@ impl Menu {
         let scale = (screen.height() / 900.0).clamp(0.8, 1.5);
         if self.page.is_none() {
             if self.settings.show_hud {
-                self.status_hud(ctx, scale);
+                self.status_hud(ctx, scale, fps);
                 egui::Area::new("freeroam-hud".into())
                     .fixed_pos(Pos2::new(
                         28.0,
