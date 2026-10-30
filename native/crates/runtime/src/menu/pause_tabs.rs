@@ -306,11 +306,23 @@ impl Menu {
         );
         let (title, body) = match self.selected {
             0 => ("Resume", "Return to free roam where you left off."),
-            1 => ("Map", "Open the San Andreas map, set a waypoint and choose a destination."),
-            2 => ("Settings", "Configure display, graphics, gameplay, interface and audio."),
+            1 => (
+                "Map",
+                "Open the San Andreas map, set a waypoint and choose a destination.",
+            ),
+            2 => (
+                "Settings",
+                "Configure display, graphics, gameplay, interface and audio.",
+            ),
             3 => ("Controls", "View keyboard, mouse and controller bindings."),
-            4 => ("Multiplayer", "Host a session, join friends or browse available servers."),
-            _ => ("Main menu", "Leave free roam and return to the SARE title screen."),
+            4 => (
+                "Multiplayer",
+                "Host a session, join friends or browse available servers.",
+            ),
+            _ => (
+                "Main menu",
+                "Leave free roam and return to the SARE title screen.",
+            ),
         };
         let inner = panel.shrink(22.0 * scale);
         painter.text(
