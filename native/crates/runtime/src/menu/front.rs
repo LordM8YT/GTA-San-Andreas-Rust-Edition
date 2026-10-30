@@ -130,9 +130,9 @@ impl Menu {
             let response = ui.interact(rect, egui::Id::new(("front-play", index)), Sense::click());
             let active = selected || response.hovered() || response.has_focus();
             let fill = if active {
-                Color32::from_rgba_unmultiplied(18, 27, 36, 245)
+                Color32::from_rgba_unmultiplied(46, 53, 64, 245)
             } else {
-                Color32::from_rgba_unmultiplied(10, 15, 21, 205)
+                Color32::from_rgba_unmultiplied(11, 15, 20, 205)
             };
             painter.rect_filled(rect, 2, fill);
             painter.rect_filled(
