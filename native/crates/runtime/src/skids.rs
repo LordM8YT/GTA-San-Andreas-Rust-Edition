@@ -93,7 +93,32 @@ impl Skids {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sa_scene::vehicle::Car;
+    use sa_scene::{collision::CollisionWorld, vehicle::Car, Batch, Vertex};
+
+    fn flat_world() -> CollisionWorld {
+        let batch = Batch {
+            key: "skid-test-ground".into(),
+            alpha: false,
+            animated: false,
+            uv_animation: None,
+            vertices: [
+                [-100.0, 0.0, -100.0],
+                [100.0, 0.0, -100.0],
+                [100.0, 0.0, 100.0],
+                [-100.0, 0.0, -100.0],
+                [100.0, 0.0, 100.0],
+                [-100.0, 0.0, 100.0],
+            ]
+            .into_iter()
+            .map(|position| Vertex {
+                position,
+                ..Default::default()
+            })
+            .collect(),
+        };
+        CollisionWorld::from_batches(&[batch])
+    }
+
     #[test]
     fn sliding_lays_marks_and_gripping_stops_them() {
         let mut car = Car::new(Vec3::new(0.0, 1.0, 0.0), 0.5);
@@ -119,8 +144,15 @@ mod tests {
     }
     #[test]
     fn handbrake_at_speed_marks_but_crawling_does_not() {
-        let mut car = Car::new(Vec3::ZERO, 0.5);
+        let world = flat_world();
+        let mut car = Car::new(Vec3::Y * 0.5, 0.5);
+        // Establish wheel contact before checking tyre marks; a freshly
+        // constructed kernel vehicle is airborne until its first ground ticks.
+        for _ in 0..120 {
+            car.step(&world, 0.0, 0.0, false, 1.0, 1.0 / 60.0);
+        }
         car.speed = 15.0;
+        assert!(!car.airborne());
         assert!(intensity(&car, 0.0, true) > 0.5);
         assert_eq!(intensity(&car, 0.0, false), 0.0);
         assert!(intensity(&car, -1.0, false) > 0.5);
