@@ -78,9 +78,9 @@ fn from_line(line: &str) -> Option<Handling> {
     let engine_type = code(16, &[("P", 0), ("D", 1), ("E", 2)])?;
     let brake_deceleration = number(17)?;
     let brake_bias = number(18)?;
-    let abs = match fields.get(19)? {
-        &"0" => 0.0,
-        &"1" => 1.0,
+    let abs = match *fields.get(19)? {
+        "0" => 0.0,
+        "1" => 1.0,
         _ => return None,
     };
     let steering_lock = number(20)?;
