@@ -71,3 +71,24 @@ The shared Rust tokens live in `native/ui/theme.rs`. Do not introduce screen-spe
 - [ ] Check dialogs, transient notifications, focus states and controller navigation.
 - [ ] Run the full Windows, Linux and macOS test/build/package workflow on the final commit.
 - [ ] Fix any regressions found by those checks before merging.
+
+## Visual preview workflow
+
+The repository includes `native/crates/launcher/examples/interface-preview.rs`, which renders the real in-game menu code using isolated sample data and does not require a GTA installation.
+
+Build it with:
+
+```sh
+cd native
+cargo build -p sa-launcher --example interface-preview
+```
+
+Run it with an isolated profile and one of the supported screens:
+
+```sh
+SARE_CONFIG_DIR=/tmp/sare-ui-preview \
+  cargo run -p sa-launcher --example interface-preview -- \
+  main 1920 1080 /tmp/sare-ui-preview/main.png
+```
+
+Supported screens: `main`, `pause`, `hud`, `map`, `settings`. Use separate output filenames for each capture. Review at 1920x1080, 2560x1080 and 640x480. The preview example is also compiled by the native CI workflow to prevent it silently drifting out of date.
