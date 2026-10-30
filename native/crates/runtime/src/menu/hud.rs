@@ -8,7 +8,7 @@ impl Menu {
             .interactable(false)
             .show(ctx, |ui| {
                 egui::Frame::new()
-                    .fill(Color32::from_rgba_unmultiplied(ui_theme::SURFACE.r(), ui_theme::SURFACE.g(), ui_theme::SURFACE.b(), 225))
+                    .fill(ui_theme::SURFACE)
                     .corner_radius(3)
                     .inner_margin(12)
                     .show(ui, |ui| {
