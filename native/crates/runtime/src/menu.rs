@@ -725,19 +725,12 @@ impl Menu {
         fonts
             .families
             .insert(FontFamily::Name("title".into()), vec!["title".into()]);
-        if let Ok(bytes) = std::fs::read("C:/Windows/Fonts/impact.ttf") {
-            fonts
-                .font_data
-                .insert("menu".into(), egui::FontData::from_owned(bytes).into());
-            fonts
-                .families
-                .insert(FontFamily::Name("menu".into()), vec!["menu".into()]);
-        } else {
-            fonts.families.insert(
-                FontFamily::Name("menu".into()),
-                fonts.families[&FontFamily::Proportional].clone(),
-            );
-        }
+        // Use the same platform-independent sans-serif family on every OS.
+        // A Windows-only Impact lookup made the pause navigation vary by machine.
+        fonts.families.insert(
+            FontFamily::Name("menu".into()),
+            fonts.families[&FontFamily::Proportional].clone(),
+        );
         ctx.set_fonts(fonts);
         ui_theme::apply(ctx);
         Self {
