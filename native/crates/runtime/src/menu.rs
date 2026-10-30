@@ -460,6 +460,7 @@ impl Menu {
                 ("Radar / minimap", on(s.show_minimap), "Shows the original San Andreas radar tiles. Requires HUD to be enabled."),
                 ("Speedometer", on(s.show_speedometer), "Shows vehicle speed in km/h while driving. Requires HUD to be enabled."),
                 ("Radar zoom", format!("{:.1}x", s.minimap_zoom), "Adjusts the area visible around the player."),
+                ("FPS counter", on(s.show_fps), "Shows the current smoothed frame rate in the gameplay HUD."),
             ],
             SettingsTab::Audio => vec![
                 ("Master volume", format!("{:.0}%", s.master_volume * 100.0), "Overall output level. Zero mutes all audio."),
@@ -599,6 +600,7 @@ impl Menu {
             (SettingsTab::Interface, 2) => s.show_minimap = !s.show_minimap,
             (SettingsTab::Interface, 3) => s.show_speedometer = !s.show_speedometer,
             (SettingsTab::Interface, 4) => s.minimap_zoom += delta * 0.1,
+            (SettingsTab::Interface, 5) => s.show_fps = !s.show_fps,
             _ => {}
         }
         self.settings.sanitize();
