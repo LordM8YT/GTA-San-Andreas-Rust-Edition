@@ -140,7 +140,7 @@ impl Menu {
                     ui,
                     "BUSTED",
                     FontId::new(76.0 * scale, FontFamily::Name("title".into())),
-                    Color32::from_rgba_unmultiplied(90, 150, 230, (255.0 * fade) as u8),
+                    Color32::from_rgba_unmultiplied(212, 175, 55, (255.0 * fade) as u8),
                 );
             });
         ctx.request_repaint();
