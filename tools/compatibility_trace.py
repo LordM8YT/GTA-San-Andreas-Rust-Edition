@@ -26,7 +26,9 @@ def _load(path: str | Path) -> dict[str, Any]:
     return data
 
 
-def _check_trace(trace: dict[str, Any], label: str) -> tuple[str, dict[str, dict[str, Any]]]:
+def _check_trace(
+    trace: dict[str, Any], label: str, *, allow_empty_values: bool = False
+) -> tuple[str, dict[str, dict[str, Any]]]:
     if trace.get("schema_version") != 1:
         raise ValueError(f"{label}: schema_version must be 1")
     scenario_id = trace.get("scenario_id")
@@ -46,7 +48,7 @@ def _check_trace(trace: dict[str, Any], label: str) -> tuple[str, dict[str, dict
             raise ValueError(f"{label}: checkpoint {index} needs a non-empty id")
         if checkpoint_id in checkpoints:
             raise ValueError(f"{label}: duplicate checkpoint id {checkpoint_id!r}")
-        if not isinstance(values, dict) or not values:
+        if not isinstance(values, dict) or (not values and not allow_empty_values):
             raise ValueError(f"{label}: checkpoint {checkpoint_id!r} needs values")
         checkpoints[checkpoint_id] = values
     return scenario_id, checkpoints
@@ -55,7 +57,9 @@ def _check_trace(trace: dict[str, Any], label: str) -> tuple[str, dict[str, dict
 def compare_traces(reference: dict[str, Any], candidate: dict[str, Any]) -> list[str]:
     """Return comparison failures; an empty list means all reference checks passed."""
     ref_id, ref_points = _check_trace(reference, "reference")
-    candidate_id, candidate_points = _check_trace(candidate, "candidate")
+    candidate_id, candidate_points = _check_trace(
+        candidate, "candidate", allow_empty_values=True
+    )
     if ref_id != candidate_id:
         return [f"scenario_id mismatch: reference={ref_id!r}, candidate={candidate_id!r}"]
 
