@@ -460,6 +460,7 @@ impl Menu {
                 ("Radar / minimap", on(s.show_minimap), "Shows the original San Andreas radar tiles. Requires HUD to be enabled."),
                 ("Speedometer", on(s.show_speedometer), "Shows vehicle speed in km/h while driving. Requires HUD to be enabled."),
                 ("Radar zoom", format!("{:.1}x", s.minimap_zoom), "Adjusts the area visible around the player."),
+                ("FPS counter", on(s.show_fps), "Shows the current smoothed frame rate in the gameplay HUD."),
             ],
             SettingsTab::Audio => vec![
                 ("Master volume", format!("{:.0}%", s.master_volume * 100.0), "Overall output level. Zero mutes all audio."),
@@ -599,6 +600,7 @@ impl Menu {
             (SettingsTab::Interface, 2) => s.show_minimap = !s.show_minimap,
             (SettingsTab::Interface, 3) => s.show_speedometer = !s.show_speedometer,
             (SettingsTab::Interface, 4) => s.minimap_zoom += delta * 0.1,
+            (SettingsTab::Interface, 5) => s.show_fps = !s.show_fps,
             _ => {}
         }
         self.settings.sanitize();
@@ -1061,6 +1063,7 @@ impl Menu {
         coordinates: [f32; 3],
         loading: bool,
         car_speed: Option<f32>,
+        fps: f32,
         yaw: f32,
         radar_tiles: &[RadarTile],
     ) -> Option<Action> {
@@ -1069,7 +1072,7 @@ impl Menu {
         let scale = (screen.height() / 900.0).clamp(0.8, 1.5);
         if self.page.is_none() {
             if self.settings.show_hud {
-                self.status_hud(ctx, scale);
+                self.status_hud(ctx, scale, fps);
                 egui::Area::new("freeroam-hud".into())
                     .fixed_pos(Pos2::new(
                         28.0,

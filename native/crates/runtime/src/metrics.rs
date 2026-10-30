@@ -38,6 +38,21 @@ impl Metrics {
             self.frames.pop_front();
         }
     }
+    /// Smoothed frames per second over the most recent frame samples.
+    pub fn fps(&self) -> f32 {
+        let mut total_ms = 0.0;
+        let mut count = 0usize;
+        for frame_ms in self.frames.iter().rev().take(60) {
+            total_ms += *frame_ms;
+            count += 1;
+        }
+        if count == 0 || total_ms <= 0.0 {
+            0.0
+        } else {
+            1000.0 * count as f32 / total_ms as f32
+        }
+    }
+
     pub fn text(&self, batches: usize, loading: bool, server: bool, retained: bool) -> String {
         let mut frames: Vec<_> = self.frames.iter().copied().collect();
         frames.sort_by(f64::total_cmp);

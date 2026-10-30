@@ -2608,6 +2608,7 @@ impl State {
                     .as_ref()
                     .filter(|_| self.driving)
                     .map(|(car, _)| car.speed),
+                self.metrics.fps(),
                 // The maps take a compass heading (0 = north, clockwise);
                 // the camera yaw is 0 facing south and grows towards east.
                 std::f32::consts::PI - self.yaw,

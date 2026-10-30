@@ -187,15 +187,19 @@ impl Menu {
             }
         }
 
-        // Secondary destinations remain compact and consistent with the in-game tabs.
-        let row_height = 37.0 * scale;
+        // Secondary destinations use a compact two-column grid so the title
+        // screen stays balanced without turning into a long settings list.
+        let grid_gap = 8.0 * scale;
+        let grid_width = (right - secondary_left).min(430.0 * scale);
+        let row_height = 48.0 * scale;
+        let column_width = (grid_width - grid_gap) * 0.5;
         for (slot, index) in (2..10).enumerate() {
             let rect = Rect::from_min_size(
                 Pos2::new(
-                    secondary_left,
-                    body_top + slot as f32 * (row_height + 2.0 * scale),
+                    secondary_left + (slot % 2) as f32 * (column_width + grid_gap),
+                    body_top + (slot / 2) as f32 * (row_height + grid_gap),
                 ),
-                Vec2::new((right - secondary_left).min(330.0 * scale), row_height),
+                Vec2::new(column_width, row_height),
             );
             if Self::nav(
                 ui,

@@ -21,18 +21,13 @@ pub(super) const TABS: [(Page, &str); 10] = [
     (Page::Controls, "Controls"),
     (Page::Mods, "Resources"),
 ];
-pub(super) const PAUSE_ITEMS: [&str; 11] = [
+pub(super) const PAUSE_ITEMS: [&str; 6] = [
     "Resume",
-    "Map & destinations",
+    "Map",
     "Settings",
     "Controls",
-    "Resources",
-    "Wardrobe",
-    "Interiors",
-    "Vehicles",
-    "Player",
-    "Main menu",
     "Multiplayer",
+    "Main menu",
 ];
 
 fn menu_font(size: f32) -> FontId {
@@ -262,6 +257,7 @@ impl Menu {
         let ctx = ui.ctx().clone();
         let mut action = None;
         let count = PAUSE_ITEMS.len();
+        self.selected %= count;
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
             self.selected = (self.selected + 1) % count;
         }
@@ -289,13 +285,8 @@ impl Menu {
                     1 => self.open(Page::Map),
                     2 => self.open(Page::Settings),
                     3 => self.open(Page::Controls),
-                    4 => self.open(Page::Mods),
-                    5 => self.open(Page::Wardrobe),
-                    6 => self.open(Page::Interiors),
-                    7 => self.open(Page::Cars),
-                    8 => self.open(Page::Peds),
-                    9 => action = Some(Action::Main),
-                    _ => self.open(Page::Network),
+                    4 => self.open(Page::Network),
+                    _ => action = Some(Action::Main),
                 }
             }
         }
@@ -315,31 +306,11 @@ impl Menu {
         );
         let (title, body) = match self.selected {
             0 => ("Resume", "Return to free roam where you left off."),
-            1 => (
-                "Map & destinations",
-                "Travel to nine regions of San Andreas. The area loads before you move.",
-            ),
-            2 => (
-                "Settings",
-                "Display, graphics, gameplay, interface and audio.",
-            ),
-            3 => ("Controls", "Keyboard, mouse and controller bindings."),
-            4 => (
-                "Resources",
-                "Local or server resources that are loaded now.",
-            ),
-            5 => ("Wardrobe", "Choose which clothes your character wears."),
-            6 => ("Interiors", "Visit the interiors that are available today."),
-            7 => ("Vehicles", "Spawn a vehicle nearby and get in."),
-            8 => ("Player", "Change your player model or spawn a ped."),
-            9 => (
-                "Main menu",
-                "Leave free roam for the main menu. Offline progress is saved.",
-            ),
-            _ => (
-                "Multiplayer",
-                "Host, join a server or browse a relay. T opens chat, F8 the console.",
-            ),
+            1 => ("Map", "Open the San Andreas map, set a waypoint and choose a destination."),
+            2 => ("Settings", "Configure display, graphics, gameplay, interface and audio."),
+            3 => ("Controls", "View keyboard, mouse and controller bindings."),
+            4 => ("Multiplayer", "Host a session, join friends or browse available servers."),
+            _ => ("Main menu", "Leave free roam and return to the SARE title screen."),
         };
         let inner = panel.shrink(22.0 * scale);
         painter.text(
