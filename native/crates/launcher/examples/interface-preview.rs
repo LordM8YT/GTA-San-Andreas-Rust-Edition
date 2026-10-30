@@ -60,9 +60,15 @@ impl eframe::App for Preview {
             return;
         }
         ui_theme::horizon(ui.painter(), ctx.content_rect());
-        let _ = self
-            .menu
-            .draw(&ctx, [2500.0, -1670.0, 13.0], false, Some(19.4), 0.0, 0.0, &[]);
+        let _ = self.menu.draw(
+            &ctx,
+            [2500.0, -1670.0, 13.0],
+            false,
+            Some(19.4),
+            0.0,
+            0.0,
+            &[],
+        );
         ui.painter().text(
             ctx.content_rect().center_bottom() - egui::vec2(0.0, 12.0),
             egui::Align2::CENTER_BOTTOM,
