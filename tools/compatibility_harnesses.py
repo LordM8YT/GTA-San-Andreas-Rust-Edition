@@ -13,7 +13,7 @@ MANIFEST_PATH = TOOLS_DIR / "compatibility_harnesses.json"
 NATIVE_DIR = TOOLS_DIR.parent / "native"
 SARE_CAPTURE_SCENARIOS = {"vehicle/flat-idle"}
 sys.path.insert(0, str(TOOLS_DIR))
-from compatibility_trace import compare_traces  # noqa: E402
+from compatibility_trace import _check_trace, compare_traces  # noqa: E402
 
 
 def load_manifest(path: Path = MANIFEST_PATH) -> dict[str, Any]:
