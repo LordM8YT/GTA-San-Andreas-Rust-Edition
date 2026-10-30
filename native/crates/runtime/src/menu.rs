@@ -1057,6 +1057,8 @@ impl Menu {
             WHITE,
         );
     }
+    // This frame-level UI entry point intentionally accepts the complete set of live game inputs.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
         ctx: &egui::Context,
