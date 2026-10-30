@@ -5,8 +5,10 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: native-${{ github.ref }}
-  cancel-in-progress: true
+  # Keep an active platform matrix intact; newer pushes wait instead of
+  # cancelling runners that are still provisioning or executing.
+  group: native-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
 jobs:
   native:
     strategy:
