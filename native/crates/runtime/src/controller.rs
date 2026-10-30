@@ -138,12 +138,15 @@ mod tests {
                 ] {
                     let mut car = Car::new(Vec3::Y * 0.6, 0.6);
                     car.yaw = yaw;
-                    car.speed = speed;
+                    // Set velocity through the vehicle kernel, not the public
+                    // telemetry field. The latter is refreshed from the kernel
+                    // after each tick and is not an input to the simulation.
                     // The chase camera looks forward with +Y up: forward cross up is right.
                     let driver_right = car.forward().cross(Vec3::Y);
                     let input = car_steering(left, right, stick);
-                    for _ in 0..60 {
-                        car.step(&world, 0.0, input, false, 1.0, 1.0 / 60.0);
+                    let throttle = speed.signum();
+                    for _ in 0..120 {
+                        car.step(&world, throttle, input, false, 1.0, 1.0 / 60.0);
                     }
                     assert!(car.forward().dot(driver_right) * requested_side * speed.signum() > 0.05,
                         "inverted steering: yaw={yaw}, speed={speed}, left={left}, right={right}, stick={stick}");
