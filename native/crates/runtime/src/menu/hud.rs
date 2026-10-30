@@ -42,15 +42,17 @@ impl Menu {
                                 },
                             );
                         });
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("FPS").size(11.0 * scale).color(MUTED));
-                            ui.label(
-                                RichText::new(format!("{fps:.0}"))
-                                    .size(15.0 * scale)
-                                    .color(if fps >= 60.0 { ui_theme::SUCCESS } else { GOLD })
-                                    .strong(),
-                            );
-                        });
+                        if self.settings.show_fps {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("FPS").size(11.0 * scale).color(MUTED));
+                                ui.label(
+                                    RichText::new(format!("{fps:.0}"))
+                                        .size(15.0 * scale)
+                                        .color(if fps >= 60.0 { ui_theme::SUCCESS } else { GOLD })
+                                        .strong(),
+                                );
+                            });
+                        }
                         if self.wanted.0 > 0 {
                             let blink = ctx.input(|input| input.time * 3.0).fract() < 0.5;
                             wanted_stars(ui, self.wanted.0, self.wanted.1 && blink, scale);
