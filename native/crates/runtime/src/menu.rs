@@ -1600,7 +1600,7 @@ mod tests {
         }
         let mut action = None;
         let mut output = ctx.run_ui(input, |ui| {
-            action = menu.draw(ui.ctx(), [2500.0, -1670.0, 14.0], false, None, 0.0, &[]);
+            action = menu.draw(ui.ctx(), [2500.0, -1670.0, 14.0], false, None, 0.0, 0.0, &[]);
         });
         output.textures_delta.clear();
         action
@@ -1740,7 +1740,7 @@ mod tests {
                     ..Default::default()
                 };
                 let mut output = ctx.run_ui(input, |ui| {
-                    menu.draw(ui.ctx(), [0.0; 3], false, None, 0.0, &[]);
+                    menu.draw(ui.ctx(), [0.0; 3], false, None, 0.0, 0.0, &[]);
                 });
                 output.textures_delta.clear();
             };
@@ -1884,7 +1884,7 @@ mod tests {
                         ..Default::default()
                     },
                     |ui| {
-                        menu.draw(ui.ctx(), [0.0; 3], false, Some(20.0), 0.0, &[]);
+                        menu.draw(ui.ctx(), [0.0; 3], false, Some(20.0), 0.0, 0.0, &[]);
                     },
                 );
                 output.textures_delta.clear();
@@ -1983,7 +1983,7 @@ mod tests {
                     });
                 }
                 let mut output = ctx.run_ui(input, |ui| {
-                    menu.draw(ui.ctx(), [0.0; 3], false, None, 0.0, &[]);
+                    menu.draw(ui.ctx(), [0.0; 3], false, None, 0.0, 0.0, &[]);
                 });
                 output.textures_delta.clear();
             }
@@ -2021,7 +2021,7 @@ mod tests {
                 });
             }
             let mut output = ctx.run_ui(input, |ui| {
-                menu.draw(ui.ctx(), [0.0; 3], false, None, 0.0, &[]);
+                menu.draw(ui.ctx(), [0.0; 3], false, None, 0.0, 0.0, &[]);
             });
             output.textures_delta.clear();
             if frame_index == 20 {
@@ -2075,6 +2075,7 @@ mod tests {
                 [2500.0, -1670.0, 14.0],
                 false,
                 Some(20.0),
+                0.0,
                 0.0,
                 &[],
             );
