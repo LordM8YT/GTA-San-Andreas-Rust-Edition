@@ -49,3 +49,25 @@ The shared Rust tokens live in `native/ui/theme.rs`. Do not introduce screen-spe
 3. Launcher home and navigation.
 4. HUD, notifications and dialogs.
 5. Screenshot review at 16:9, ultrawide and compact window sizes, followed by keyboard/controller and regression tests.
+
+## Delivery checklist
+
+### Implemented in this integration
+- [x] Shared palette, spacing, typography scale and control states.
+- [x] Apply the shared theme to the in-game UI context and launcher.
+- [x] Cinematic title-screen horizon, SARE brand lockup and tagline.
+- [x] Main navigation surfaces use the shared midnight/slate/gold direction.
+- [x] Pause navigation and map panels use shared surface tokens.
+- [x] Status HUD panel and major alert use the SARE palette.
+- [x] Platform-independent pause-menu body typography.
+- [x] Launcher home hero carries the same brand line.
+- [x] Unit test guards the shared palette against accidental regressions.
+
+### Remaining visual review
+- [ ] Capture and review the main menu at 16:9, ultrawide and compact sizes.
+- [ ] Capture and review pause tabs and map at the same sizes.
+- [ ] Review the HUD against gameplay screenshots, including vehicle and on-foot states.
+- [ ] Review every launcher page: Home, Multiplayer, Resources, Settings and Help.
+- [ ] Check dialogs, transient notifications, focus states and controller navigation.
+- [ ] Run the full Windows, Linux and macOS test/build/package workflow on the final commit.
+- [ ] Fix any regressions found by those checks before merging.
