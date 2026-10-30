@@ -41,6 +41,13 @@ impl Menu {
             FontId::proportional((12.0 * scale).max(10.0)),
             MUTED,
         );
+        painter.text(
+            Pos2::new(left + 4.0 * scale, top + 119.0 * scale),
+            egui::Align2::LEFT_TOP,
+            "SAME CITY. NEW STORIES.",
+            FontId::proportional((10.0 * scale).max(9.0)),
+            ui_theme::ACCENT,
+        );
         painter.line_segment(
             [
                 Pos2::new(left, top + 127.0 * scale),
