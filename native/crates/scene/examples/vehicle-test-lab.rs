@@ -4,13 +4,14 @@
 //!
 //! This uses project-generated collision geometry only; it does not load or
 //! redistribute any original game assets.
-use anyhow::{ensure, Result};
+use anyhow::{bail, ensure, Result};
 use glam::Vec3;
 use sa_scene::{
     collision::CollisionWorld,
     vehicle::{Car, Handling},
     Batch, Vertex,
 };
+use std::{env, fs, path::PathBuf};
 
 const DT: f32 = 1.0 / 120.0;
 
@@ -53,10 +54,12 @@ fn rigid_car(at: Vec3) -> Car {
     car
 }
 
-fn flat_ground_test() -> Result<()> {
+fn flat_ground_test() -> Result<serde_json::Value> {
     let world = CollisionWorld::from_batches(&[floor(-100.0, 100.0, 0.0)]);
     let mut car = rigid_car(Vec3::Y * 0.7);
+    let spawn = vehicle_snapshot(&car);
     drive(&mut car, &world, 0.0, 0.0, 3.0);
+    let settled = vehicle_snapshot(&car);
     ensure!(
         (car.position.y - 0.6).abs() < 0.05,
         "flat-ground ride height drifted to {:.3} m",
@@ -78,7 +81,48 @@ fn flat_ground_test() -> Result<()> {
         "PASS flat-ground suspension: y={:.3} m, pitch={:.3}, roll={:.3}",
         car.position.y, car.pitch, car.roll
     );
-    Ok(())
+    Ok(serde_json::json!({
+        "schema_version": 1,
+        "scenario_id": "vehicle/flat-idle",
+        "capture_kind": "sare_procedural_vehicle_test_lab",
+        "metadata": { "fixed_timestep_s": DT },
+        "checkpoints": [
+            { "id": "spawn", "values": spawn },
+            { "id": "settled", "values": settled }
+        ]
+    }))
+}
+
+fn vehicle_snapshot(car: &Car) -> serde_json::Value {
+    let velocity = car.velocity();
+    serde_json::json!({
+        "position_x_m": car.position.x,
+        "position_y_m": car.position.y,
+        "position_z_m": car.position.z,
+        "speed_mps": velocity.length(),
+        "pitch_deg": car.pitch.to_degrees(),
+        "roll_deg": car.roll.to_degrees(),
+        "grounded": !car.airborne()
+    })
+}
+
+fn trace_output_path() -> Result<Option<PathBuf>> {
+    let mut args = env::args().skip(1);
+    match args.next() {
+        None => Ok(None),
+        Some(flag) if flag == "--trace-json" => {
+            let path = args
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("--trace-json requires a file path"))?;
+            if args.next().is_some() {
+                bail!("unexpected extra argument; usage: vehicle-test-lab [--trace-json <path>]");
+            }
+            Ok(Some(PathBuf::from(path)))
+        }
+        Some(other) => {
+            bail!("unknown argument {other:?}; usage: vehicle-test-lab [--trace-json <path>]")
+        }
+    }
 }
 
 fn wall_impact_test() -> Result<()> {
@@ -163,10 +207,21 @@ fn ramp_and_landing_test() -> Result<()> {
 }
 
 fn main() -> Result<()> {
+    let trace_path = trace_output_path()?;
     println!("SARE Vehicle Test Lab — procedural headless checks");
-    flat_ground_test()?;
+    let flat_idle_trace = flat_ground_test()?;
     wall_impact_test()?;
     ramp_and_landing_test()?;
+    if let Some(path) = trace_path {
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&path, serde_json::to_vec_pretty(&flat_idle_trace)?)?;
+        println!("Wrote SARE candidate trace: {}", path.display());
+    }
     println!("All Vehicle Test Lab checks passed.");
     Ok(())
 }
