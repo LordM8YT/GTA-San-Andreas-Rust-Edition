@@ -24,6 +24,13 @@ build ID to distinguish builds. Existing commit-based release tags stay valid.
 > your own legally purchased copy of the PC game; SARE ships no game files.
 > See [Legal](#legal).
 
+## Guides for server owners and creators
+
+New to SARE development? Start with the practical [server guide](docs/server-guide.md)
+or learn how to [create resources and mods](docs/creating-resources.md).
+The deeper references remain available for the [dedicated server API](docs/server-hosting.md)
+and [native resource format](docs/native-mods.md).
+
 ## Native interface refresh
 
 Launcher, title screen, pause menus and HUD now share SARE styling, with a warm
