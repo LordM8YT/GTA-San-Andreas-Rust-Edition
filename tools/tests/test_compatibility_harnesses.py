@@ -1,14 +1,17 @@
 """CI checks for the clean-room compatibility harness registry."""
 from __future__ import annotations
 
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 
-from compatibility_harnesses import load_manifest, validate_manifest  # noqa: E402
+from compatibility_harnesses import capture_sare_trace, load_manifest, validate_manifest  # noqa: E402
 
 
 class CompatibilityHarnessRegistryTests(unittest.TestCase):
@@ -62,6 +65,32 @@ class CompatibilityHarnessRegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "captured reference needs"):
             validate_manifest(manifest)
 
+    def test_capture_refuses_scenarios_without_an_implemented_probe(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "candidate.json"
+            with self.assertRaisesRegex(ValueError, "capture is not implemented"):
+                capture_sare_trace("vehicle/braking", output)
+
+    def test_capture_validates_the_exported_candidate_trace(self) -> None:
+        trace = {
+            "schema_version": 1,
+            "scenario_id": "vehicle/flat-idle",
+            "checkpoints": [
+                {"id": "spawn", "values": {"speed_mps": 0.0}},
+                {"id": "settled", "values": {"speed_mps": 0.0}},
+            ],
+        }
+
+        def fake_cargo(command, cwd, check):
+            Path(command[-1]).write_text(json.dumps(trace), encoding="utf-8")
+            return type("Completed", (), {"returncode": 0})()
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "candidate.json"
+            with patch("compatibility_harnesses.subprocess.run", side_effect=fake_cargo) as run:
+                capture_sare_trace("vehicle/flat-idle", output)
+            self.assertTrue(output.exists())
+            self.assertEqual(run.call_args.kwargs["cwd"], ROOT / "native")
 
 if __name__ == "__main__":
     unittest.main()
