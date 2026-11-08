@@ -26,7 +26,12 @@ and the FiveM script API are also incompatible. The resource folder workflow
 can be similar, but the engine still uses SA asset formats and its own JSON
 manifest. The runtime does not parse `fxmanifest.lua`, GTA V `.meta` files or executable scripts.
 The offline importer inspects resource manifests as text and converts supported assets;
-see [GTA V / FiveM conversion](gta5-conversion.md).
+see [GTA V / FiveM conversion](gta5-conversion.md). For classic San Andreas packages, use the
+[ GTA SA mod importer](gta-sa-conversion.md): it can read loose DFF/TXD/COL/IFP assets,
+uncompressed VER2 IMG entries, selected IDE declarations and exterior text IPL placements.
+It creates a native JSON resource and a server-facing fxmanifest.lua; this is a conversion
+workflow, not direct execution of old mod-loader code. Compressed IMG entries, binary IPLs,
+interiors, ASI/DLL plugins and CLEO scripts remain unsupported.
 
 ## Create a resource
 
