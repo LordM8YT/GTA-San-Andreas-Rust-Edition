@@ -234,32 +234,33 @@ def parse_ipl(paths):
 
 
 def installed_ide_paths(game_root):
-    """Read only small IDE files from the user's data folder, not the whole game tree."""
-    data = Path(game_root) / 'data'
-    if not data.is_dir():
-        return []
+    """Read IDE files registered by the installed game, matching the runtime."""
+    root = Path(game_root).resolve()
     paths = []
-    for directory, dirs, files in os.walk(data, followlinks=False):
-        current = Path(directory)
-        dirs[:] = sorted(
-            name for name in dirs
-            if not (current / name).is_symlink()
-            and not getattr((current / name).lstat(), 'st_file_attributes', 0) & 0x400
-        )
-        for filename in sorted(files, key=str.casefold):
-            path = current / filename
-            if path.suffix.casefold() != '.ide':
+    for manifest_name in ('default.dat', 'gta.dat'):
+        manifest = root / 'data' / manifest_name
+        require(manifest.is_file() and not manifest.is_symlink(),
+                f'Installed game is missing a safe data/{manifest_name}')
+        for line in data_lines(manifest):
+            fields = line.split()
+            if len(fields) < 2 or fields[0].casefold() != 'ide' or not fields[1].casefold().endswith('.ide'):
                 continue
+            relative = Path(fields[1].replace('\\', '/'))
+            require(not relative.is_absolute() and '..' not in relative.parts,
+                    f'Unsafe IDE path in data/{manifest_name}: {fields[1]}')
+            path = root.joinpath(*relative.parts)
             info = path.lstat()
             require(stat.S_ISREG(info.st_mode) and not stat.S_ISLNK(info.st_mode)
                     and not getattr(info, 'st_file_attributes', 0) & 0x400,
-                    f'Unsafe installed IDE file: {path.name}')
+                    f'Unsafe installed IDE file: {fields[1]}')
+            resolved = path.resolve()
+            require(resolved.is_relative_to(root),
+                    f'Installed IDE path escapes the game folder: {fields[1]}')
             require(info.st_size <= MAX_ASSET_BYTES,
                     f'Installed IDE file exceeds 16 MiB: {path.name}')
-            paths.append(path)
-            require(len(paths) <= 128, 'Too many installed IDE files')
+            paths.append(resolved)
+            require(len(paths) <= 128, 'Too many registered IDE files')
     return paths
-
 
 class Exporter:
     def __init__(self, output):
@@ -294,6 +295,9 @@ def import_resource(root, output, kind='auto', models=(), model_id=30000,
     require(0 <= model_id <= 2_147_483_647, 'Invalid starting model ID')
     require(position is None or (len(position) == 3 and all(math.isfinite(v) and abs(v) <= 10000 for v in position)),
             'Position must contain three finite world coordinates')
+    display_name = ' '.join((name or root.name).split())
+    require(1 <= len(display_name) <= 96 and all(ord(char) >= 32 and ord(char) != 127 for char in display_name),
+            'Resource name must be 1-96 printable characters')
     wanted = {item.casefold() for item in models}
     require(all(NAME_RE.fullmatch(item) for item in wanted), 'Model names must use 1-64 letters, digits, underscores or hyphens')
 
@@ -329,7 +333,7 @@ def import_resource(root, output, kind='auto', models=(), model_id=30000,
         manifest = {
             'schema_version': 2,
             'enabled': bool(enable),
-            'name': (name or root.name)[:96],
+            'name': display_name,
         }
         imported = []
         omitted = []
@@ -384,6 +388,8 @@ def import_resource(root, output, kind='auto', models=(), model_id=30000,
                 selected = [model for model in candidates if not wanted or model in wanted]
                 require(bool(selected), 'No selected DFF props found')
                 require(len(selected) <= MAX_MODELS, 'Native model limit exceeded (256)')
+                require(model_id + len(selected) - 1 <= 2_147_483_647,
+                        'Generated model IDs exceed the supported integer range')
                 model_rows = []
                 placement_rows = []
                 for index, model in enumerate(selected):
@@ -446,10 +452,11 @@ def import_resource(root, output, kind='auto', models=(), model_id=30000,
         manifest_path.write_text(json.dumps(manifest, indent=2, allow_nan=False) + '\n', encoding='utf-8')
         # A standard FiveM-style resource manifest lets the SARE server discover
         # and ensure the same resource alongside its native resource.json.
+        fx_description = manifest['name'].replace('\\', '\\\\').replace("'", "\\'")
         (stage / 'fxmanifest.lua').write_text(
             "fx_version 'cerulean'\n"
             "game 'gta3'\n"
-            f"description '{manifest['name'].replace(chr(39), '')}'\n",
+            f"description '{fx_description}'\n",
             encoding='utf-8')
         (stage / 'README.md').write_text(
             f"# {manifest['name']}\n\n"
