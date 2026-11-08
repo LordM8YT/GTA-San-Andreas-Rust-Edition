@@ -90,7 +90,9 @@ class GtaSaImportTests(unittest.TestCase):
             (game / 'models').mkdir()
             # A normal game archive is deliberately larger than the importer budget;
             # --game-dir must not recursively index or read it.
-            (game / 'models' / 'gta3.img').write_bytes(bytes(IMPORTER.MAX_INPUT_BYTES + 1))
+            with (game / 'models' / 'gta3.img').open('wb') as archive:
+                archive.seek(128 * 1024 * 1024)
+                archive.write(b'\\0')
             (game / 'data' / 'objects.ide').write_text(
                 'objs\n1, vanilla, generic, 100, 0\nend\n', encoding='utf-8')
             (game / 'data' / 'unused.ide').write_text(
