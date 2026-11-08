@@ -91,7 +91,9 @@ fn validate_original_txd(name: &str) -> Result<()> {
     ensure!(
         !name.is_empty()
             && name.len() <= 32
-            && name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_'),
+            && name
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_'),
         "original_txd must be a dictionary name (1-32 ASCII letters, digits or underscores)"
     );
     Ok(())
