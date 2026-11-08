@@ -142,8 +142,7 @@ interiors and **R** or a map destination to return outside.
 The native runtime loads documented `resource.json` / `mod.json` resources and supported assets;
 it is not a drop-in loader for arbitrary original San Andreas mods. SARE now includes an
 offline [classic GTA SA mod importer](docs/gta-sa-conversion.md) for loose DFF/TXD/COL/IFP
-assets, uncompressed VER2 IMG entries, selected IDE model declarations and exterior text IPL
-placements. It creates native resources that can also be managed through SARE's FiveM-style
+assets, uncompressed VER2 IMG entries, selected IDE model declarations and text IPL placements, including interior IDs. It creates native resources that can also be managed through SARE's FiveM-style
 server resource workflow. Compressed IMG variants, binary IPL/interiors, ASI/DLL plugins and
 CLEO scripts are not supported. Read [native mod documentation](docs/native-mods.md)
 before preparing a resource. An experimental [GTA V / FiveM asset converter](docs/gta5-conversion.md)
