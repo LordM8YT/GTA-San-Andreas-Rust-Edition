@@ -98,11 +98,9 @@ def parse_img(path):
                     f'{path.name}: invalid IMG entry name')
             data_offset = sector * IMG_SECTOR
             data_size = sectors * IMG_SECTOR
-            if archived != 0 or sectors == 0:
+            if archived != 0 or sectors == 0 or data_size > MAX_ASSET_BYTES:
                 compressed += 1
                 continue
-            require(data_size <= MAX_ASSET_BYTES,
-                    f'{path.name}: IMG entry {name} exceeds 16 MiB')
             require(data_offset >= directory_end and data_offset + data_size <= length,
                     f'{path.name}: IMG entry {name} is outside the archive')
             entries[name] = (path, data_offset, data_size)
@@ -182,6 +180,101 @@ def parse_ide(paths):
                     else:
                         unsupported_vehicle_types[model] = vehicle_type
     return definitions, cars, unsupported_vehicle_types
+
+
+def vehicle_handling_ids(paths):
+    """Map car model basenames to their handling.cfg identifiers."""
+    result = {}
+    for path in sorted(paths, key=lambda p: p.as_posix().casefold()):
+        section = ''
+        for line in data_lines(path):
+            if ',' not in line:
+                section = '' if line.casefold() == 'end' else line.casefold()
+                continue
+            if section != 'cars':
+                continue
+            fields = [field.strip() for field in line.split(',')]
+            if len(fields) < 5:
+                continue
+            model, vehicle_type, handling_id = fields[1].casefold(), fields[3].casefold(), fields[4].casefold()
+            if vehicle_type == 'car' and NAME_RE.fullmatch(model) and NAME_RE.fullmatch(handling_id):
+                result[model] = handling_id
+    return result
+
+
+def native_handling_from_line(line):
+    """Translate the same standard GTA SA handling.cfg columns as SARE's Rust loader."""
+    fields = line.split()
+    if len(fields) < 33:
+        return None
+    try:
+        values = [float(fields[index]) for index in (1, 2, 3, 5, 6, 8, 9, 10, 12, 13, 14, 17, 18, 20)]
+    except ValueError:
+        return None
+    if not all(math.isfinite(value) for value in values):
+        return None
+    (mass, turn_mass, drag, centre_x, centre_z, traction, traction_loss,
+     traction_bias, max_velocity, engine_acceleration, inertia,
+     brake_deceleration, brake_bias, steering_lock) = values
+    mass = max(1.0, mass)
+    turn_mass = max(1.0, turn_mass)
+    drag = max(0.0, drag)
+    inertia = max(0.0, inertia)
+
+    acceleration = (0.34 * engine_acceleration / (1.0 + inertia / 50.0)
+                    * max(0.4, min(1.1, (1500.0 / mass) ** 0.3)))
+    acceleration = max(0.5, min(20.0, acceleration))
+    target = max(5.0, min(85.0, 0.9 * max_velocity / 3.6))
+    aerodynamic_drag = max(0.0, min(0.02, 0.0004 * drag))
+    spare = lambda coefficient: acceleration - 0.28 - coefficient * target * target
+    if spare(aerodynamic_drag) < 0.1 * acceleration:
+        aerodynamic_drag = max(0.0, (0.9 * acceleration - 0.28) / (target * target))
+    top_speed = max(5.0, min(90.0, target * math.sqrt(acceleration / max(spare(aerodynamic_drag), 0.01))))
+    try:
+        flags = int(fields[32], 16)
+    except ValueError:
+        flags = 0
+    drive = 1.0 if fields[15].upper() == 'R' else 2.0 if fields[15] == '4' else 0.0
+    profile = {
+        'acceleration': acceleration,
+        'reverse_acceleration': max(0.5, min(10.0, 0.6 * acceleration)),
+        'brake_deceleration': max(1.0, min(25.0, 1.2 * brake_deceleration)),
+        'top_speed': top_speed,
+        'reverse_speed': max(1.0, min(12.0, 0.25 * target)),
+        'tire_grip': max(4.2, min(8.5, 6.0 * math.sqrt(max(0.0, traction / 0.75)))),
+        'steering_lock': max(0.3, min(0.9, math.radians(steering_lock))),
+        'steering_rate': 3.5,
+        'steer_fade_speed': 22.0,
+        'aerodynamic_drag': aerodynamic_drag,
+        'traction_loss': max(0.6, min(0.95, 0.4 + 0.55 * traction_loss)),
+        'front_grip': max(0.4, min(1.6, 1.0 + 1.2 * (traction_bias - 0.5))),
+        'drive': drive,
+        'brake_front': max(0.2, min(0.8, brake_bias)),
+        'engine_lag': max(0.0, min(1.5, 0.012 * inertia)),
+        'yaw_inertia': max(0.5, min(4.0, turn_mass / (mass * 3.6))),
+        'front_weight': max(0.35, min(0.65, 0.5 + centre_x / 2.7)),
+        'cg_offset': max(-0.3, min(0.3, centre_z)),
+        'handbrake': 0.0 if flags & 0x10 else 1.0,
+        'air_control': 1.5,
+    }
+    return profile
+
+
+def handling_profiles(paths, model_to_id):
+    profiles = {}
+    requested = set(model_to_id.values())
+    for path in sorted(paths, key=lambda p: p.as_posix().casefold()):
+        if path.name.casefold() != 'handling.cfg':
+            continue
+        for line in data_lines(path):
+            handling_id = line.split()[0].casefold()
+            if handling_id not in requested or handling_id in profiles:
+                continue
+            profile = native_handling_from_line(line)
+            if profile is not None:
+                profiles[handling_id] = profile
+    return {model: profiles[handling_id] for model, handling_id in model_to_id.items()
+            if handling_id in profiles}
 
 
 def parse_ipl(paths):
@@ -306,14 +399,27 @@ def import_resource(root, output, kind='auto', models=(), model_id=30000,
     ipl_paths = [path for path in files if path.suffix.casefold() == '.ipl']
     definitions, cars, unsupported_vehicle_types = parse_ide(ide_paths)
     game_definitions = {}
+    original_txd_names = set()
     if game_dir:
         game_root = Path(game_dir).absolute()
         require(game_root.is_dir(), '--game-dir must point to an installed GTA San Andreas folder')
         base_ide = installed_ide_paths(game_root)
         game_definitions, _, _ = parse_ide(base_ide)
-    else:
-        game_definitions = {}
+        for archive_name in ('gta3.img', 'gta_int.img'):
+            archive_path = game_root / 'models' / archive_name
+            if not archive_path.exists():
+                if archive_name == 'gta3.img':
+                    raise ValueError('--game-dir is missing models/gta3.img')
+                continue
+            require(not archive_path.is_symlink(), f'Unsafe original game archive: {archive_name}')
+            archive_entries, _ = parse_img(archive_path)
+            original_txd_names.update(
+                Path(entry).stem for entry in archive_entries if entry.endswith('.txd')
+            )
     placements, malformed_placements, binary_ipls = parse_ipl(ipl_paths)
+
+    car_handling_ids = vehicle_handling_ids(ide_paths)
+    custom_handling = handling_profiles(files, car_handling_ids)
 
     if kind == 'auto':
         if cars and any(f'{model}.dff' in assets for model in cars):
@@ -356,11 +462,14 @@ def import_resource(root, output, kind='auto', models=(), model_id=30000,
                     omitted.append(f'{model}: missing DFF')
                     continue
                 txd = exporter.save_asset(assets, candidates[model], '.txd', f'stream/vehicle-{index:03}.txd')
-                vehicles.append({
+                vehicle_row = {
                     'name': model,
                     'dff': dff,
                     **({'txd': txd} if txd else {}),
-                })
+                    **({'original_txd': candidates[model]} if not txd and candidates[model] in original_txd_names else {}),
+                    **({'handling': custom_handling[model]} if model in custom_handling else {}),
+                }
+                vehicles.append(vehicle_row)
                 imported.append(model)
             require(bool(vehicles), 'No compatible vehicles could be imported')
             manifest['vehicles'] = vehicles
@@ -419,6 +528,7 @@ def import_resource(root, output, kind='auto', models=(), model_id=30000,
                     col = exporter.save_asset(assets, model, '.col', f'stream/collision-{index:03}.col')
                     row = {'id': model_id_value, 'dff': dff,
                            **({'txd': txd} if txd else {}),
+                           **({'original_txd': txd_name} if not txd and txd_name in original_txd_names else {}),
                            **({'col': col} if col else {})}
                     model_rows.append(row)
                     imported_ids.add(model_id_value)
