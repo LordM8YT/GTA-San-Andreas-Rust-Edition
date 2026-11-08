@@ -90,9 +90,10 @@ class GtaSaImportTests(unittest.TestCase):
             (game / 'models').mkdir()
             # A normal game archive is deliberately larger than the importer budget;
             # --game-dir must not recursively index or read it.
-            with (game / 'models' / 'gta3.img').open('wb') as archive:
-                archive.seek(128 * 1024 * 1024)
-                archive.write(b'\\0')
+            write_img(game / 'models' / 'gta3.img', [
+                ('generic.txd', b'original-dictionary'),
+                ('props.txd', b'original-props-dictionary'),
+            ])
             (game / 'data' / 'objects.ide').write_text(
                 'objs\n1, vanilla, generic, 100, 0\nend\n', encoding='utf-8')
             (game / 'data' / 'unused.ide').write_text(
@@ -111,6 +112,35 @@ class GtaSaImportTests(unittest.TestCase):
             IMPORTER.import_resource(source, out, kind='map', game_dir=game)
             manifest = json.loads((out / 'resource.json').read_text())
             self.assertEqual([p['model_id'] for p in manifest['placements']], [1, 300])
+            self.assertEqual(manifest['models'][0]['original_txd'], 'props')
+
+    def test_vehicles_reuse_original_txd_and_convert_matching_handling_cfg(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp)
+            source = temp / 'vehicle_pack'
+            game = temp / 'game'
+            source.mkdir()
+            (game / 'data').mkdir(parents=True)
+            (game / 'models').mkdir()
+            (game / 'data' / 'default.dat').write_text('', encoding='utf-8')
+            (game / 'data' / 'gta.dat').write_text('', encoding='utf-8')
+            write_img(game / 'models' / 'gta3.img', [('generic.txd', b'original-vehicle-txd')])
+            (source / 'vehicles.ide').write_text(
+                'cars\\n411, elegy, generic, car, ELEGY, ELEGY, null\\nend\\n', encoding='utf-8')
+            write_img(source / 'vehicles.img', [('elegy.dff', b'elegy-model')])
+            handling = ('TAXI 1450.0 4056.4 2.2 0.0 0.3 -0.25 75 0.80 0.75 0.45 5 '
+                        '180.0 19.0 10.0 F P 9.1 0.60 0 35.0 1.4 0.1 0.0 0.25 '
+                        '-0.15 0.54 0.0 0.2 0.51 20000 0 200000 0 1 0')
+            (source / 'handling.cfg').write_text(handling.replace('TAXI', 'ELEGY'), encoding='utf-8')
+            out = temp / 'mods' / '[vehicles]' / 'elegy'
+            IMPORTER.import_resource(source, out, kind='vehicles', game_dir=game)
+            manifest = json.loads((out / 'resource.json').read_text())
+            vehicle = manifest['vehicles'][0]
+            self.assertEqual(vehicle['original_txd'], 'generic')
+            self.assertNotIn('txd', vehicle)
+            expected = 0.34 * 19.0 / 1.2 * (1500.0 / 1450.0) ** 0.3
+            self.assertAlmostEqual(vehicle['handling']['acceleration'], expected)
+            self.assertEqual(vehicle['handling']['drive'], 0.0)
 
     def test_skips_interiors_and_binary_ipls_without_corrupting_exterior_placements(self):
         with tempfile.TemporaryDirectory() as temp:
