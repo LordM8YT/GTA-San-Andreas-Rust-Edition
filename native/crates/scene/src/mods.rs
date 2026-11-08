@@ -52,6 +52,10 @@ struct Model {
     dff: String,
     #[serde(default)]
     txd: Option<String>,
+    /// A TXD already present in the player's own gta3.img/gta_int.img.
+    /// It is a dictionary name, not a resource-relative file path.
+    #[serde(default)]
+    original_txd: Option<String>,
     #[serde(default)]
     col: Option<String>,
 }
@@ -79,10 +83,29 @@ struct Vehicle {
     dff: String,
     #[serde(default)]
     txd: Option<String>,
+    /// A TXD already present in the player's own game archives.
+    #[serde(default)]
+    original_txd: Option<String>,
+}
+fn validate_original_txd(name: &str) -> Result<()> {
+    ensure!(
+        !name.is_empty()
+            && name.len() <= 32
+            && name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_'),
+        "original_txd must be a dictionary name (1-32 ASCII letters, digits or underscores)"
+    );
+    Ok(())
 }
 impl Vehicle {
     fn validate(&self) -> Result<()> {
         self.handling.validate()?;
+        ensure!(
+            self.txd.is_none() || self.original_txd.is_none(),
+            "choose either a resource TXD file or original_txd, not both"
+        );
+        if let Some(name) = &self.original_txd {
+            validate_original_txd(name)?;
+        }
         ensure!(
             self.name.is_empty()
                 || (!self.name.trim().is_empty()
@@ -481,13 +504,25 @@ impl WorldLoader {
                     .as_deref()
                     .map(|path| resource(&folder, path))
                     .transpose()?;
+                let original_dictionary = vehicle
+                    .original_txd
+                    .as_deref()
+                    .map(|name| {
+                        validate_original_txd(name)?;
+                        let file = format!("{name}.txd");
+                        ensure!(
+                            self.img.has(&file),
+                            "original TXD {file} is not present in the player's game archives"
+                        );
+                        self.img.read(&file)
+                    })
+                    .transpose()?;
                 let mut scene = car_scene(&geometry, None, |name| {
-                    decode_txd(
-                        dictionary
-                            .as_deref()
-                            .context("textured custom vehicle requires a TXD")?,
-                        name,
-                    )
+                    let bytes = dictionary
+                        .as_deref()
+                        .or(original_dictionary.as_deref())
+                        .context("textured custom vehicle requires txd or original_txd")?;
+                    decode_txd(bytes, name)
                 })?;
                 scene.vehicle_handling = vehicle.handling;
                 ensure!(scene.triangles > 0, "empty custom vehicle");
@@ -562,18 +597,32 @@ impl WorldLoader {
                 let key = format!("mod_{}_{}", folder_name.to_ascii_lowercase(), model.id);
                 let geometry = decode_dff(&resource(&folder, &model.dff)?)
                     .with_context(|| format!("mod model {}", model.dff))?;
-                if let Some(txd) = model.txd {
+                ensure!(
+                    model.txd.is_none() || model.original_txd.is_none(),
+                    "model must use either txd or original_txd, not both"
+                );
+                let dictionary_name = if let Some(txd) = model.txd {
                     self.resources
                         .dictionaries
                         .insert(key.clone(), resource(&folder, &txd)?);
+                    key.clone()
+                } else if let Some(original_txd) = model.original_txd {
+                    validate_original_txd(&original_txd)?;
+                    let file = format!("{original_txd}.txd");
+                    ensure!(
+                        self.img.has(&file),
+                        "original TXD {file} is not present in the player's game archives"
+                    );
+                    original_txd
                 } else {
                     ensure!(
                         geometry
                             .iter()
                             .all(|g| g.materials.iter().all(|m| m.texture.is_none())),
-                        "textured mod DFF requires a TXD"
+                        "textured mod DFF requires a TXD or original_txd"
                     );
-                }
+                    key.clone()
+                };
                 // The new definition has its own key, so it cannot accidentally
                 // retain the replaced model's collision. Shared old models stay.
                 if let Some(col) = model.col {
@@ -593,7 +642,7 @@ impl WorldLoader {
                     model.id,
                     Definition {
                         model: key.clone(),
-                        txd: key,
+                        txd: dictionary_name,
                     },
                 );
             }
