@@ -126,7 +126,7 @@ class GtaSaImportTests(unittest.TestCase):
             (game / 'data' / 'gta.dat').write_text('', encoding='utf-8')
             write_img(game / 'models' / 'gta3.img', [('generic.txd', b'original-vehicle-txd')])
             (source / 'vehicles.ide').write_text(
-                'cars\\n411, elegy, generic, car, ELEGY, ELEGY, null\\nend\\n', encoding='utf-8')
+                'cars\n411, elegy, generic, car, ELEGY, ELEGY, null\nend\n', encoding='utf-8')
             write_img(source / 'vehicles.img', [('elegy.dff', b'elegy-model')])
             handling = ('TAXI 1450.0 4056.4 2.2 0.0 0.3 -0.25 75 0.80 0.75 0.45 5 '
                         '180.0 19.0 10.0 F P 9.1 0.60 0 35.0 1.4 0.1 0.0 0.25 '
