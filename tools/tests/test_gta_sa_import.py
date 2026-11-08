@@ -142,7 +142,7 @@ class GtaSaImportTests(unittest.TestCase):
             self.assertAlmostEqual(vehicle['handling']['acceleration'], expected)
             self.assertEqual(vehicle['handling']['drive'], 0.0)
 
-    def test_skips_interiors_and_binary_ipls_without_corrupting_exterior_placements(self):
+    def test_imports_interior_placements_and_reports_binary_ipls(self):
         with tempfile.TemporaryDirectory() as temp:
             temp = Path(temp)
             source = temp / 'map_pack'
@@ -156,8 +156,10 @@ class GtaSaImportTests(unittest.TestCase):
             out = temp / 'native_map'
             report = IMPORTER.import_resource(source, out, kind='map')
             manifest = json.loads((out / 'resource.json').read_text())
-            self.assertEqual(len(manifest['placements']), 1)
-            self.assertEqual(report['skipped_interior_ipl_placements'], 1)
+            self.assertEqual(len(manifest['placements']), 2)
+            self.assertEqual(manifest['placements'][0]['interior'], 0)
+            self.assertEqual(manifest['placements'][1]['interior'], 1)
+            self.assertEqual(report['imported_interior_ipl_placements'], 1)
             self.assertEqual(report['binary_ipl_files'], ['binary.ipl'])
 
     def test_props_require_position_and_start_disabled(self):
