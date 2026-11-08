@@ -31,7 +31,7 @@ or CLEO scripts are not run.
 The offline importer inspects resource manifests as text and converts supported assets;
 see [GTA V / FiveM conversion](gta5-conversion.md). For classic San Andreas packages, use the
 [GTA SA mod importer](gta-sa-conversion.md): it can read loose DFF/TXD/COL/IFP assets,
-uncompressed VER2 IMG entries, selected IDE declarations and exterior text IPL placements.
+uncompressed VER2 IMG entries, selected IDE declarations and text IPL placements, including interior IDs.
 It creates a native JSON resource and a server-facing fxmanifest.lua; this is a conversion
 workflow, not direct execution of old mod-loader code. Compressed IMG entries, binary IPLs,
 interiors, ASI/DLL plugins and CLEO scripts remain unsupported.
