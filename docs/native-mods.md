@@ -21,13 +21,16 @@ vehicle, player, and clothing resources. It does not load arbitrary original
 San Andreas mods directly. Binary plugins, ASI/DLL mods, CLEO scripts, original
 game-code or plugin APIs, and unconverted archives/workflows such as IMG/IPL
 are not drop-in compatible. Convert assets into a supported resource or add
-explicit format support; scripts and DLLs are not executed. FiveM resources
-and the FiveM script API are also incompatible. The resource folder workflow
-can be similar, but the engine still uses SA asset formats and its own JSON
-manifest. The runtime does not parse `fxmanifest.lua`, GTA V `.meta` files or executable scripts.
+explicit format support; scripts and DLLs are not executed. FiveM asset resources and most GTA V APIs are not drop-in compatible. SARE's
+separate server scripting layer supports a documented subset of the FiveM resource
+and CfxLua workflow; see [framework compatibility](framework-compatibility.md).
+The native asset loader uses its own JSON manifest and does not parse
+`fxmanifest.lua`; the dedicated server reads fxmanifest metadata to manage server
+resources. GTA V `.meta` files are not parsed, and arbitrary executable plugins
+or CLEO scripts are not run.
 The offline importer inspects resource manifests as text and converts supported assets;
 see [GTA V / FiveM conversion](gta5-conversion.md). For classic San Andreas packages, use the
-[ GTA SA mod importer](gta-sa-conversion.md): it can read loose DFF/TXD/COL/IFP assets,
+[GTA SA mod importer](gta-sa-conversion.md): it can read loose DFF/TXD/COL/IFP assets,
 uncompressed VER2 IMG entries, selected IDE declarations and exterior text IPL placements.
 It creates a native JSON resource and a server-facing fxmanifest.lua; this is a conversion
 workflow, not direct execution of old mod-loader code. Compressed IMG entries, binary IPLs,
