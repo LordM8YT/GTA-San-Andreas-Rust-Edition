@@ -8,7 +8,7 @@ SARE has an offline importer for classic San Andreas mod folders and Mod Loader-
 - Uncompressed GTA SA VER2 IMG archives containing those assets.
 - Text IDE model declarations in the objs, tobj, anim and cars sections.
 - Text IPL inst placements for the exterior world.
-- Vehicle model-to-texture names from cars IDE rows.
+- Vehicle model-to-texture names from cars IDE rows, plus a best-effort conversion of matching passenger-car lines in handling.cfg into SARE's native handling parameters.
 
 The importer creates resource.json, a FiveM-style fxmanifest.lua, a stream/ folder and a README. SARE's native runtime reads resource.json; the fxmanifest lets the SARE server discover and start the same resource through its existing resource manager. The two manifests have different jobs and are both required for this combined workflow.
 
@@ -22,7 +22,7 @@ For a map or object pack with IDE/IPL files:
 
     python tools/import-gta-sa.py "C:\Downloads\my-map-mod" --out "mods/[maps]/my-map-mod" --kind map --game-dir "C:\Games\GTA San Andreas"
 
---game-dir is optional. When supplied, the importer reads only small IDE files under the installation's data/ folder so map placements can refer to original game model IDs. It does not scan or copy the whole game installation.
+--game-dir is optional. When supplied, the importer reads only IDE files registered in data/default.dat and data/gta.dat, plus TXD directory names from the original gta3.img and gta_int.img archives. It does not extract or copy original game assets. This lets it retain map placements that reference the base game and lets vehicles reuse a TXD already present in the player's own installation.
 
 For a standalone prop without IDE/IPL metadata, choose the model and its world position:
 
@@ -41,7 +41,7 @@ Review the import report, generated resource.json, model IDs and placements befo
 - IMG support is read-only and currently accepts uncompressed VER2 entries. Compressed entries are reported and skipped.
 - Map placement import currently reads text IPL inst rows for exterior (interior 0) placements. Binary IPL files and interior placements are reported/skipped; the importer does not convert binary streaming IPLs.
 - IDE support is intentionally limited to the documented sections. Unsupported IDE sections and other game data files are not silently translated.
-- Custom vehicle registration currently uses SARE's passenger-car physics. Bike, boat, train, helicopter, plane and trailer handling is not converted into equivalent vehicle simulation.
+- Custom vehicle registration currently uses SARE's passenger-car physics. Matching passenger-car lines in handling.cfg are translated approximately into SARE's smaller native handling model; this is not a one-to-one import of every GTA handling field. Bike, boat, train, helicopter, plane and trailer handling is not converted into equivalent vehicle simulation.
 - A custom player DFF must already match SARE's supported PC skin/skeleton and animation requirements. Merely having a DFF extension does not make a model compatible.
 - The importer copies source assets; the SARE runtime still validates and decodes them when the resource loads. A successful conversion report is not a guarantee that every model is renderable.
 - The native runtime has resource, file-size, model, placement and memory budgets. Split large packs into smaller resources when those limits are reached.
