@@ -80,7 +80,7 @@ class GtaSaImportTests(unittest.TestCase):
             self.assertEqual(manifest['vehicles'][0]['name'], 'elegy')
             self.assertTrue((out / manifest['vehicles'][0]['txd']).read_bytes().startswith(b'elegy-textures'))
 
-    def test_game_dir_reads_only_ide_files_and_retains_vanilla_ipl_placements(self):
+    def test_game_dir_reads_only_registered_ide_files_and_retains_vanilla_ipl_placements(self):
         with tempfile.TemporaryDirectory() as temp:
             temp = Path(temp)
             source = temp / 'map_pack'
@@ -93,10 +93,16 @@ class GtaSaImportTests(unittest.TestCase):
             (game / 'models' / 'gta3.img').write_bytes(bytes(IMPORTER.MAX_INPUT_BYTES + 1))
             (game / 'data' / 'objects.ide').write_text(
                 'objs\n1, vanilla, generic, 100, 0\nend\n', encoding='utf-8')
+            (game / 'data' / 'unused.ide').write_text(
+                'objs\n2, not_registered, generic, 100, 0\nend\n', encoding='utf-8')
+            (game / 'data' / 'default.dat').write_text(
+                'IDE data/objects.ide\n', encoding='utf-8')
+            (game / 'data' / 'gta.dat').write_text('', encoding='utf-8')
             (source / 'map.ide').write_text(
                 'objs\n300, prop, props, 100, 0\nend\n', encoding='utf-8')
             (source / 'map.ipl').write_text(
                 'inst\n1, vanilla, 0, 1, 2, 3, 0, 0, 0, 1, -1\n'
+                '2, not_registered, 0, 7, 8, 9, 0, 0, 0, 1, -1\n'
                 '300, prop, 0, 4, 5, 6, 0, 0, 0, 1, -1\nend\n', encoding='utf-8')
             write_img(source / 'map.img', [('prop.dff', b'prop-dff')])
             out = temp / 'native_map'
