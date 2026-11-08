@@ -176,6 +176,9 @@ fn resource_folders(root: &Path) -> Result<Vec<PathBuf>> {
 #[derive(Deserialize)]
 struct Instance {
     model_id: i32,
+    /// GTA SA IPL interior ID. Zero is the exterior world.
+    #[serde(default)]
+    interior: i32,
     position: [f32; 3],
     #[serde(default = "identity")]
     rotation: [f32; 4],
@@ -654,9 +657,13 @@ impl WorldLoader {
                     "mod placement uses unknown model {}",
                     instance.model_id
                 );
+                ensure!(
+                    (0..=255).contains(&instance.interior),
+                    "mod placement interior ID must be between 0 and 255"
+                );
                 self.rows.push(placement(
                     instance.model_id,
-                    0,
+                    instance.interior,
                     instance.position,
                     instance.rotation,
                 )?);
