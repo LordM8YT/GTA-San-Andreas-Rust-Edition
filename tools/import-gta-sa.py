@@ -309,7 +309,7 @@ def parse_ipl(paths):
                 malformed += 1
                 continue
             norm = sum(value * value for value in rotation)
-            if model_id < 0 or interior < 0 or not all(math.isfinite(v) for v in position + rotation):
+            if model_id < 0 or not 0 <= interior <= 255 or not all(math.isfinite(v) for v in position + rotation):
                 malformed += 1
                 continue
             if not (0.98 <= norm <= 1.02) or any(abs(v) > 10000 for v in position):
@@ -539,19 +539,18 @@ def import_resource(root, output, kind='auto', models=(), model_id=30000,
                 known_ids = set(game_definitions) | imported_ids
                 placement_rows = []
                 skipped_unknown = 0
-                skipped_interiors = 0
+                imported_interiors = 0
                 for item in placements:
-                    if item['_interior'] != 0:
-                        skipped_interiors += 1
-                        continue
                     if item['model_id'] not in known_ids:
                         skipped_unknown += 1
                         continue
                     placement_rows.append({
                         'model_id': item['model_id'],
+                        'interior': item['_interior'],
                         'position': item['position'],
                         'rotation': item['rotation'],
                     })
+                    imported_interiors += int(item['_interior'] != 0)
                     require(len(placement_rows) <= MAX_PLACEMENTS,
                             'Native placement limit exceeded (2000); split the map resource')
                 manifest['models'] = model_rows
@@ -587,7 +586,7 @@ def import_resource(root, output, kind='auto', models=(), model_id=30000,
             'files': len(exporter.files),
             'output_bytes': total,
             'skipped_unknown_ipl_placements': locals().get('skipped_unknown', 0),
-            'skipped_interior_ipl_placements': locals().get('skipped_interiors', 0),
+            'imported_interior_ipl_placements': locals().get('imported_interiors', 0),
             'malformed_ipl_placements': malformed_placements,
             'compressed_img_entries': compressed_entries,
             'duplicate_asset_names': duplicates,
