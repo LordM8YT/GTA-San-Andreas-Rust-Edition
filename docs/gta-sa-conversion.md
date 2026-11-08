@@ -7,7 +7,7 @@ SARE has an offline importer for classic San Andreas mod folders and Mod Loader-
 - Loose PC RenderWare DFF, TXD, COL and IFP files.
 - Uncompressed GTA SA VER2 IMG archives containing those assets.
 - Text IDE model declarations in the objs, tobj, anim and cars sections.
-- Text IPL inst placements for the exterior world.
+- Text IPL inst placements for both the exterior world (interior 0) and numbered interiors (interior IDs 1–255).
 - Vehicle model-to-texture names from cars IDE rows, plus a best-effort conversion of matching passenger-car lines in handling.cfg into SARE's native handling parameters.
 
 The importer creates resource.json, a FiveM-style fxmanifest.lua, a stream/ folder and a README. SARE's native runtime reads resource.json; the fxmanifest lets the SARE server discover and start the same resource through its existing resource manager. The two manifests have different jobs and are both required for this combined workflow.
@@ -39,7 +39,7 @@ Review the import report, generated resource.json, model IDs and placements befo
 ## Limits and compatibility
 
 - IMG support is read-only and currently accepts uncompressed VER2 entries. Compressed entries are reported and skipped.
-- Map placement import currently reads text IPL inst rows for exterior (interior 0) placements. Binary IPL files and interior placements are reported/skipped; the importer does not convert binary streaming IPLs.
+- Map placement import reads text IPL inst rows, preserving their interior IDs so interior objects can be placed in the matching runtime interior. Binary IPL files are reported and skipped; binary streaming IPLs are not converted.
 - IDE support is intentionally limited to the documented sections. Unsupported IDE sections and other game data files are not silently translated.
 - Custom vehicle registration currently uses SARE's passenger-car physics. Matching passenger-car lines in handling.cfg are translated approximately into SARE's smaller native handling model; this is not a one-to-one import of every GTA handling field. Bike, boat, train, helicopter, plane and trailer handling is not converted into equivalent vehicle simulation.
 - A custom player DFF must already match SARE's supported PC skin/skeleton and animation requirements. Merely having a DFF extension does not make a model compatible.
