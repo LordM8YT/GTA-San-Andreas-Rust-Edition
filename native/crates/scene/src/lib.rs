@@ -359,8 +359,41 @@ fn place(point: [f32; 3], r: &Placement, center: [f32; 2]) -> [f32; 3] {
 /// Batch suffixes describe draw state; they are not part of the TXD entry name.
 fn texture_key(key: &str) -> &str {
     let key = key.strip_suffix("|alpha").unwrap_or(key);
+    let key = key.split_once("|map|").map_or(key, |(base, _)| base);
     key.split_once("|uv|").map_or(key, |(base, _)| base)
 }
+/// Add a custom map DFF as independently batched RenderWare atomics.
+/// Each atomic gets a stable per-placement key while retaining the original
+/// TXD/material lookup key (the `|map|` suffix is draw metadata only).
+fn add_map_pieces(
+    batches: &mut HashMap<String, Batch>,
+    pieces: &[sa_assets::VehiclePiece],
+    r: &Placement,
+    center: [f32; 2],
+    txd: &str,
+) -> Result<usize> {
+    let mut triangles = 0;
+    for (index, piece) in pieces.iter().enumerate() {
+        let mut atomic = HashMap::new();
+        triangles += add_model(&mut atomic, std::slice::from_ref(&piece.geometry), r, center, txd)?;
+        for (key, mut batch) in atomic {
+            let map_key = format!("|map|{}_{}_{}_{}", r.id, r.uid, index, piece.frame_name);
+            let renamed = if let Some(base) = key.strip_suffix("|alpha") {
+                format!("{base}{map_key}|alpha")
+            } else {
+                format!("{key}{map_key}")
+            };
+            batch.key = renamed.clone();
+            if let Some(existing) = batches.get_mut(&renamed) {
+                existing.vertices.append(&mut batch.vertices);
+            } else {
+                batches.insert(renamed, batch);
+            }
+        }
+    }
+    Ok(triangles)
+}
+
 fn add_model(
     batches: &mut HashMap<String, Batch>,
     geometry: &[Geometry],
@@ -888,7 +921,11 @@ impl WorldLoader {
             {
                 add_model(&mut fallback, &models[&dff], &unscaled, origin, &def.txd)?;
             }
-            triangles += add_model(&mut batches, &models[&dff], r, origin, &def.txd)?;
+            if let Some(pieces) = self.resources.map_pieces.get(&dff) {
+                triangles += add_map_pieces(&mut batches, pieces, r, origin, &def.txd)?;
+            } else {
+                triangles += add_model(&mut batches, &models[&dff], r, origin, &def.txd)?;
+            }
             if !is_lod {
                 lights::add(&mut batches, &models[&dff], r, origin);
             }
