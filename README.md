@@ -140,12 +140,13 @@ interiors and **R** or a map destination to return outside.
 ## Mod compatibility
 
 The native runtime loads documented `resource.json` / `mod.json` resources and supported assets;
-it is not a drop-in loader for arbitrary original San Andreas mods. Existing
-binary plugins, scripts, IDE/ IPL/IMG workflows, and mods that depend on the
-game executable or its plugin APIs are not expected to work without conversion
-or dedicated support. Read [native mod documentation](docs/native-mods.md)
+it is not a drop-in loader for arbitrary original San Andreas mods. SARE now includes an
+offline [classic GTA SA mod importer](docs/gta-sa-conversion.md) for loose DFF/TXD/COL/IFP
+assets, uncompressed VER2 IMG entries, selected IDE model declarations and text IPL placements, including interior IDs. It creates native resources that can also be managed through SARE's FiveM-style
+server resource workflow. Compressed IMG variants, binary IPL/interiors, ASI/DLL plugins and
+CLEO scripts are not supported. Read [native mod documentation](docs/native-mods.md)
 before preparing a resource. An experimental [GTA V / FiveM asset converter](docs/gta5-conversion.md)
-can prepare Legacy cars, props and explicitly mapped clothing as native resources.
+can prepare supported Legacy cars, props and explicitly mapped clothing as native resources.
 The new folder importer can inspect FiveM packages and batch-convert their cars
 or props, and preserve static placements from Legacy YMAP or CodeWalker XML. Unsupported
 scripts and metadata are listed in the import report. See

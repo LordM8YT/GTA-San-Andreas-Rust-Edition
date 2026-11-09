@@ -7,7 +7,7 @@ There are currently **two different resource types**:
 1. **Native asset resources** — models, textures, collision and placements loaded by the game runtime. These use `resource.json` or `mod.json`.
 2. **Server script resources** — Lua scripts started by a dedicated server. These use `fxmanifest.lua`.
 
-They can live in the same server's resource catalog, but they are not interchangeable. A native asset manifest does not run Lua, and an `fxmanifest.lua` does not register DFF models.
+They can live in the same server resource folder, but they are not interchangeable. A converted GTA SA resource can contain both: resource.json registers native assets, while fxmanifest.lua lets the SARE server discover and ensure that folder. A native asset manifest does not run Lua, and an fxmanifest.lua does not register DFF models.
 
 ## What can be added today?
 
@@ -20,7 +20,11 @@ The current native runtime supports documented forms of:
 - **Clothing:** Separate skinned clothing models that match the selected player's skeleton and bind pose.
 - **Texture overrides:** PNG overrides for supported texture dictionary entries.
 
-This is not a general-purpose importer for every GTA mod. ASI/DLL plugins, CLEO scripts, arbitrary original game scripts, IMG/IPL workflows, GTA V metadata and FiveM scripts do not run as native SARE resources. GTA V/FiveM assets need to be converted with the experimental converter where supported.
+This is not a general-purpose loader for every GTA mod. ASI/DLL plugins, CLEO scripts and arbitrary original game scripts do not run as native SARE resources. SARE includes an offline importer for a subset of classic GTA SA packages, including loose DFF/TXD/COL/IFP assets, uncompressed VER2 IMG entries, selected IDE declarations and exterior text IPL placements. Binary IPLs, compressed IMG variants and unsupported game-data formats remain out of scope. See [Importing classic GTA San Andreas mods](gta-sa-conversion.md). GTA V/FiveM assets need to be converted with the experimental converter where supported.
+
+## Import a classic GTA San Andreas mod
+
+Use the offline [GTA SA mod importer](gta-sa-conversion.md) to convert supported Mod Loader-style folders or loose game assets into a native resource. The output includes both resource.json for the native asset loader and fxmanifest.lua for SARE's server resource manager. This is an import step; it does not execute ASI, DLL or CLEO code.
 
 ## 1. Generate a starter resource
 
