@@ -375,7 +375,13 @@ fn add_map_pieces(
     let mut triangles = 0;
     for (index, piece) in pieces.iter().enumerate() {
         let mut atomic = HashMap::new();
-        triangles += add_model(&mut atomic, std::slice::from_ref(&piece.geometry), r, center, txd)?;
+        triangles += add_model(
+            &mut atomic,
+            std::slice::from_ref(&piece.geometry),
+            r,
+            center,
+            txd,
+        )?;
         for (key, mut batch) in atomic {
             let map_key = format!("|map|{}_{}_{}_{}", r.id, r.uid, index, piece.frame_name);
             let renamed = if let Some(base) = key.strip_suffix("|alpha") {
@@ -1370,7 +1376,10 @@ mod streaming_tests {
             "room.dff".into(),
             pieces.iter().map(|piece| piece.geometry.clone()).collect(),
         );
-        loader.resources.map_pieces.insert("room.dff".into(), pieces.clone());
+        loader
+            .resources
+            .map_pieces
+            .insert("room.dff".into(), pieces.clone());
 
         let scene = loader.load([0.0; 2], [0.0; 2], 50.0).unwrap();
         let map_batches: Vec<_> = scene
@@ -1379,8 +1388,13 @@ mod streaming_tests {
             .filter(|batch| batch.key.contains("|map|"))
             .collect();
         assert!(!pieces.is_empty());
-        assert!(!map_batches.is_empty(), "custom map atomics are split into batches");
-        assert!(map_batches.iter().all(|batch| scene.textures.contains_key(&batch.key)));
+        assert!(
+            !map_batches.is_empty(),
+            "custom map atomics are split into batches"
+        );
+        assert!(map_batches
+            .iter()
+            .all(|batch| scene.textures.contains_key(&batch.key)));
         assert!(map_batches.iter().all(|batch| {
             let texture = texture_key(&batch.key);
             texture == "runtime:white" || texture.contains(':')
