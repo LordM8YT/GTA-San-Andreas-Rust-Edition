@@ -1072,6 +1072,12 @@ mod tests {
         )
         .unwrap();
         loader.enable_mods(&root.join("mods")).unwrap();
+        let room_pieces = &loader.resources.map_pieces["mod_room_30000.dff"];
+        assert!(!room_pieces.is_empty(), "custom map DFF atomics are retained");
+        assert_eq!(
+            room_pieces.len(),
+            loader.resources.geometry["mod_room_30000.dff"].len()
+        );
         fs::write(extra.join("private.txt"), b"Do not share adjacent files").unwrap();
         let shared = share_resources(&root.join("mods")).unwrap();
         assert_eq!(shared.manifest.resources.len(), 2);
