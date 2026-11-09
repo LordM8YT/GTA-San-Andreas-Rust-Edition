@@ -210,7 +210,7 @@ pub fn share_resource_folders(
         let Some((filename, raw)) = manifest_bytes(&folder)? else {
             continue;
         };
-        let manifest: Manifest = serde_json::from_slice(&raw)?;
+        let manifest: Manifest = serde_json::from_slice(without_utf8_bom(&raw))?;
         if !manifest.enabled && !force_enabled {
             continue;
         }
@@ -256,7 +256,7 @@ pub fn share_resource_folders(
             total_files <= MAX_FILES,
             "server resource sharing supports at most {MAX_FILES} files"
         );
-        let mut exported: serde_json::Value = serde_json::from_slice(&raw)?;
+        let mut exported: serde_json::Value = serde_json::from_slice(without_utf8_bom(&raw))?;
         exported["name"] = serde_json::Value::String(name.clone());
         if force_enabled {
             exported["enabled"] = serde_json::Value::Bool(true);
@@ -338,6 +338,11 @@ pub(super) struct Resources {
     pub ped_name: String,
     pub player: Option<ped::Source>,
     pub players: Vec<(String, ped::Source)>,
+}
+/// serde_json does not accept a UTF-8 BOM, although editors commonly add one.
+/// Accept it on input so existing resources remain loadable.
+fn without_utf8_bom(raw: &[u8]) -> &[u8] {
+    raw.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(raw)
 }
 /// The native manifest, or one generated from an MTA resource's `meta.xml`
 /// when the folder has no native manifest. Shared packs always carry JSON.
@@ -460,7 +465,7 @@ impl WorldLoader {
             let Some((_, raw)) = manifest_bytes(&folder)? else {
                 continue;
             };
-            let manifest: Manifest = serde_json::from_slice(&raw)
+            let manifest: Manifest = serde_json::from_slice(without_utf8_bom(&raw))
                 .with_context(|| format!("mod manifest {}", folder.display()))?;
             let folder_name = folder
                 .file_name()
@@ -1198,6 +1203,13 @@ mod tests {
         fs::remove_dir(extra).unwrap();
         fs::remove_dir(root.join("mods")).unwrap();
         fs::remove_dir(root).unwrap();
+    }
+    #[test]
+    fn native_manifests_accept_utf8_bom() {
+        let raw = b"\xEF\xBB\xBF{\"enabled\":true,\"name\":\"BOM test\"}";
+        let manifest: Manifest = serde_json::from_slice(without_utf8_bom(raw)).unwrap();
+        assert!(manifest.enabled);
+        assert_eq!(manifest.name, "BOM test");
     }
     #[test]
     fn mta_map_places_known_objects_and_removes_world_objects() {
