@@ -64,6 +64,11 @@ the resource root, for example `stream/car.dff`. Model registration and map
 placements currently remain in `resource.json`; putting a GTA V metadata file
 in `data/` does not make it load. A clothing template includes its base player
 because clothes currently attach to a matching custom player skeleton.
+When enabling map resources, the console reports each custom model's ID, DFF,
+decoded geometry and triangle counts, texture dictionary association, and the
+resource's placement totals. A DFF with no triangles or a placement that refers
+to an unavailable model ID fails with a contextual error instead of being
+reported as enabled.
 
 This takes inspiration from the [FiveM resource workflow](https://docs.fivem.net/docs/scripting-reference/resource-manifest/)
 and [stream folder layout](https://docs.fivem.net/docs/assets-manual/beginner-series/part-4/).

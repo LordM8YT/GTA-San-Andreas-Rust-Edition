@@ -59,6 +59,14 @@ struct Model {
     #[serde(default)]
     col: Option<String>,
 }
+fn custom_model_triangle_count(id: i32, dff: &str, geometry: &[Geometry]) -> Result<usize> {
+    let triangles: usize = geometry.iter().map(|mesh| mesh.triangles.len()).sum();
+    ensure!(
+        triangles > 0,
+        "custom model ID {id} ({dff}) decodes to zero triangles"
+    );
+    Ok(triangles)
+}
 /// Original game objects that mark race pickups: the nitro bottle upgrade,
 /// the health heart and the information icon.
 const NITRO_MODEL: i32 = 1010;
@@ -597,20 +605,27 @@ impl WorldLoader {
                 self.resources.textures.len() + manifest.texture_overrides.len() <= 512,
                 "total mod texture budget"
             );
+            let custom_model_count = manifest.models.len();
+            let placement_count = manifest.placements.len();
+            let mut decoded_geometry_count = 0;
+            let mut decoded_triangle_count = 0;
             for model in manifest.models {
-                ensure!(model.id >= 0, "negative mod model ID");
-                let key = format!("mod_{}_{}", folder_name.to_ascii_lowercase(), model.id);
-                let geometry = decode_dff(&resource(&folder, &model.dff)?)
-                    .with_context(|| format!("mod model {}", model.dff))?;
+                let model_id = model.id;
+                let dff = model.dff;
+                ensure!(model_id >= 0, "negative mod model ID");
+                let key = format!("mod_{}_{}", folder_name.to_ascii_lowercase(), model_id);
+                let geometry = decode_dff(&resource(&folder, &dff)?)
+                    .with_context(|| format!("custom model ID {model_id} DFF {dff}"))?;
+                let triangles = custom_model_triangle_count(model_id, &dff, &geometry)?;
                 ensure!(
                     model.txd.is_none() || model.original_txd.is_none(),
                     "model must use either txd or original_txd, not both"
                 );
-                let dictionary_name = if let Some(txd) = model.txd {
+                let (dictionary_name, texture_dictionary) = if let Some(txd) = model.txd {
                     self.resources
                         .dictionaries
                         .insert(key.clone(), resource(&folder, &txd)?);
-                    key.clone()
+                    (key.clone(), format!("resource TXD {txd}"))
                 } else if let Some(original_txd) = model.original_txd {
                     validate_original_txd(&original_txd)?;
                     let file = format!("{original_txd}.txd");
@@ -618,16 +633,22 @@ impl WorldLoader {
                         self.img.has(&file),
                         "original TXD {file} is not present in the player's game archives"
                     );
-                    original_txd
+                    (original_txd.clone(), format!("original TXD {original_txd}"))
                 } else {
                     ensure!(
                         geometry
                             .iter()
                             .all(|g| g.materials.iter().all(|m| m.texture.is_none())),
-                        "textured mod DFF requires a TXD or original_txd"
+                        "custom model ID {model_id} ({dff}) has textured materials but no TXD or original_txd"
                     );
-                    key.clone()
+                    (key.clone(), "none (untextured model)".to_owned())
                 };
+                decoded_geometry_count += geometry.len();
+                decoded_triangle_count += triangles;
+                eprintln!(
+                    "{name}: custom model ID {model_id}, DFF {dff}: {} geometries, {triangles} triangles; texture dictionary: {texture_dictionary}",
+                    geometry.len()
+                );
                 // The new definition has its own key, so it cannot accidentally
                 // retain the replaced model's collision. Shared old models stay.
                 if let Some(col) = model.col {
@@ -644,7 +665,7 @@ impl WorldLoader {
                     .geometry
                     .insert(format!("{key}.dff"), geometry);
                 self.defs.insert(
-                    model.id,
+                    model_id,
                     Definition {
                         model: key.clone(),
                         txd: dictionary_name,
@@ -652,11 +673,12 @@ impl WorldLoader {
                 );
             }
             for instance in manifest.placements {
-                ensure!(
-                    self.defs.contains_key(&instance.model_id),
-                    "mod placement uses unknown model {}",
-                    instance.model_id
-                );
+                if !self.defs.contains_key(&instance.model_id) {
+                    anyhow::bail!(
+                        "{name}: placement references unavailable model ID {}",
+                        instance.model_id
+                    );
+                }
                 ensure!(
                     (0..=255).contains(&instance.interior),
                     "mod placement interior ID must be between 0 and 255"
@@ -667,6 +689,11 @@ impl WorldLoader {
                     instance.position,
                     instance.rotation,
                 )?);
+            }
+            if custom_model_count > 0 || placement_count > 0 {
+                eprintln!(
+                    "{name}: loaded {custom_model_count} custom models and {placement_count} placements ({decoded_geometry_count} geometries, {decoded_triangle_count} custom-model triangles)"
+                );
             }
             ensure!(
                 manifest.mta_models.len() <= 256,
@@ -932,6 +959,73 @@ impl WorldLoader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn custom_map_model_id_placement_and_geometry_reach_scene() {
+        let root =
+            std::env::temp_dir().join(format!("sa-custom-map-render-{}", std::process::id()));
+        let folder = root.join("mods/[maps]/ppalace-test");
+        fs::create_dir_all(folder.join("stream")).unwrap();
+        let dff = include_bytes!("../../../../mods/native-room-demo/room.dff");
+        fs::write(folder.join("stream/model.dff"), dff).unwrap();
+        fs::write(
+            folder.join("resource.json"),
+            br#"{"enabled":true,"name":"ppalace","models":[{"id":18697,"dff":"stream/model.dff"}],"placements":[{"model_id":18697,"interior":0,"position":[1030.0,-1987.05,14.53]}]}"#,
+        )
+        .unwrap();
+        let archive = root.join("empty.img");
+        fs::write(&archive, b"VER2\0\0\0\0").unwrap();
+        let mut loader = WorldLoader {
+            water: std::sync::Arc::new(crate::water::WaterMap::default()),
+            water_texture: None,
+            roadsign_font: None,
+            uv_tracks: HashMap::new(),
+            texture_parents: HashMap::new(),
+            img: WorldArchive {
+                exterior: Img::open(&archive).unwrap(),
+                interior: None,
+            },
+            defs: HashMap::new(),
+            rows: Vec::new(),
+            collision_models: HashMap::new(),
+            resources: Resources::default(),
+        };
+        let geometry = decode_dff(dff).unwrap();
+        let expected_triangles: usize = geometry.iter().map(|mesh| mesh.triangles.len()).sum();
+        assert!(expected_triangles > 0);
+        assert!(custom_model_triangle_count(18697, "stream/model.dff", &geometry).is_ok());
+        let empty_geometry =
+            custom_model_triangle_count(18697, "stream/model.dff", &[]).unwrap_err();
+        assert!(empty_geometry.to_string().contains("18697"));
+        assert!(empty_geometry.to_string().contains("stream/model.dff"));
+        assert!(empty_geometry.to_string().contains("zero triangles"));
+
+        loader.enable_mods(&root.join("mods")).unwrap();
+        assert_eq!(
+            loader.defs.get(&18697).unwrap().model,
+            "mod_ppalace-test_18697"
+        );
+        assert_eq!(loader.rows.len(), 1);
+        assert_eq!(loader.rows[0].interior, 0);
+        assert_eq!(loader.rows[0].pos, [1030.0, -1987.05, 14.53]);
+        assert_eq!(loader.mod_names(), &["[enabled] ppalace".to_owned()]);
+
+        let scene = loader
+            .load([1030.0, -1987.05], [2500.0, -1670.0], 50.0)
+            .unwrap();
+        assert_eq!(scene.placements, 1);
+        assert_eq!(scene.triangles, expected_triangles);
+        assert_eq!(
+            scene
+                .batches
+                .iter()
+                .map(|batch| batch.vertices.len())
+                .sum::<usize>(),
+            expected_triangles * 3
+        );
+        drop(loader);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn original_handling_pack_shares_only_manifest_and_rejects_invalid_models() {
         let root = std::env::temp_dir().join(format!("sa-handling-only-{}", std::process::id()));

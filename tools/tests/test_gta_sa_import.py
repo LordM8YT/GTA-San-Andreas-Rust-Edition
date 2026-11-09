@@ -54,8 +54,13 @@ class GtaSaImportTests(unittest.TestCase):
             manifest = json.loads((out / 'resource.json').read_text())
             self.assertFalse(manifest['enabled'])
             self.assertEqual(manifest['models'][0]['id'], 100)
+            self.assertEqual(manifest['models'][0]['dff'], 'stream/model-001.dff')
+            self.assertEqual(manifest['models'][0]['txd'], 'stream/dictionary-002.txd')
+            self.assertTrue(
+                (out / manifest['models'][0]['txd']).read_bytes().startswith(b'owned-txd-fixture'))
             self.assertEqual(manifest['placements'][0]['model_id'], 100)
             self.assertEqual(manifest['placements'][0]['position'], [10.0, 20.0, 30.0])
+            self.assertEqual(manifest['placements'][0]['rotation'], [0.0, 0.0, 0.0, 1.0])
             self.assertIn('fx_version', (out / 'fxmanifest.lua').read_text())
             self.assertIn("game 'gta3'", (out / 'fxmanifest.lua').read_text())
             self.assertTrue((out / manifest['models'][0]['dff']).read_bytes().startswith(b'owned-dff-fixture'))
