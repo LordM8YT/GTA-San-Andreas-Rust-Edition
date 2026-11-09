@@ -40,7 +40,10 @@ fn main() -> Result<()> {
 
     if has("--map") {
         let pieces = sa_assets::decode_map_dff_pieces(&bytes)?;
-        ensure!(!pieces.is_empty(), "map DFF contains no renderable atomics");
+        ensure!(
+            !pieces.is_empty(),
+            "map DFF contains no renderable atomics"
+        );
         for (index, piece) in pieces.iter().enumerate() {
             let geometry = &piece.geometry;
             ensure!(
@@ -56,10 +59,16 @@ fn main() -> Result<()> {
                     if has("--materials") {
                         match dictionary.as_deref() {
                             Some(bytes) => {
-                                sa_assets::decode_txd(bytes, name)
-                                    .with_context(|| format!("atomic {} ({}) texture {}", index, piece.frame_name, name))?;
-                                println!("{{\"atomic\":{},\"frame\":{:?},\"texture\":{:?},\"status\":\"ok\"}}",
-                                    index, piece.frame_name, name);
+                                sa_assets::decode_txd(bytes, name).with_context(|| {
+                                    format!(
+                                        "atomic {} ({}) texture {}",
+                                        index, piece.frame_name, name
+                                    )
+                                })?;
+                                println!(
+                                    "{{\"atomic\":{},\"frame\":{:?},\"texture\":{:?},\"status\":\"ok\"}}",
+                                    index, piece.frame_name, name
+                                );
                             }
                             None => anyhow::bail!("--materials requires a TXD argument"),
                         }
@@ -93,7 +102,9 @@ fn main() -> Result<()> {
                     texture_names.insert(name.clone());
                     if has("--materials") {
                         sa_assets::decode_txd(
-                            dictionary.as_deref().context("--materials requires a TXD argument")?,
+                            dictionary
+                                .as_deref()
+                                .context("--materials requires a TXD argument")?,
                             name,
                         )?;
                     }
