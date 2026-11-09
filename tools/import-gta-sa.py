@@ -558,7 +558,7 @@ def import_resource(root, output, kind='auto', models=(), model_id=30000,
                     manifest['placements'] = placement_rows
 
         manifest_path = stage / 'resource.json'
-        manifest_path.write_text(json.dumps(manifest, indent=2, allow_nan=False) + '\n', encoding='utf-8')
+        manifest_path.write_bytes((json.dumps(manifest, indent=2, allow_nan=False) + '\n').encode('utf-8'))
         # A standard FiveM-style resource manifest lets the SARE server discover
         # and ensure the same resource alongside its native resource.json.
         fx_description = manifest['name'].replace('\\', '\\\\').replace("'", "\\'")
