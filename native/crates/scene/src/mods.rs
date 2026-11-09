@@ -325,6 +325,9 @@ pub fn share_resource_folders(
 pub(super) struct Resources {
     pub original_vehicle_handling: HashMap<String, crate::vehicle::Handling>,
     pub geometry: HashMap<String, Vec<Geometry>>,
+    /// Per-atomic DFF data for custom map models. Kept alongside flattened
+    /// geometry so later scene/runtime stages can animate named map parts.
+    pub map_pieces: HashMap<String, Vec<sa_assets::VehiclePiece>>,
     pub dictionaries: HashMap<String, Vec<u8>>,
     pub textures: HashMap<String, Texture>,
     pub excluded: HashSet<i32>,
@@ -605,8 +608,12 @@ impl WorldLoader {
             for model in manifest.models {
                 ensure!(model.id >= 0, "negative mod model ID");
                 let key = format!("mod_{}_{}", folder_name.to_ascii_lowercase(), model.id);
-                let geometry = decode_dff(&resource(&folder, &model.dff)?)
+                let map_pieces = sa_assets::decode_map_dff_pieces(&resource(&folder, &model.dff)?)
                     .with_context(|| format!("mod model {}", model.dff))?;
+                let geometry: Vec<Geometry> = map_pieces
+                    .iter()
+                    .map(|piece| piece.geometry.clone())
+                    .collect();
                 ensure!(
                     model.txd.is_none() || model.original_txd.is_none(),
                     "model must use either txd or original_txd, not both"
@@ -645,9 +652,9 @@ impl WorldLoader {
                     collision.name = key.clone();
                     self.collision_models.insert(key.clone(), collision);
                 }
-                self.resources
-                    .geometry
-                    .insert(format!("{key}.dff"), geometry);
+                let dff_key = format!("{key}.dff");
+                self.resources.geometry.insert(dff_key.clone(), geometry);
+                self.resources.map_pieces.insert(dff_key, map_pieces);
                 self.defs.insert(
                     model.id,
                     Definition {
@@ -831,11 +838,17 @@ impl WorldLoader {
         ensure!(model.id >= 0, "negative model ID");
         let key = format!("mod_{}_{}", folder_name.to_ascii_lowercase(), model.id);
         let original = self.defs.get(&model.id);
-        let geometry = model
+        let map_pieces = model
             .dff
             .as_deref()
-            .map(|path| decode_dff(&resource(folder, path)?).with_context(|| path.to_owned()))
+            .map(|path| {
+                sa_assets::decode_map_dff_pieces(&resource(folder, path)?)
+                    .with_context(|| path.to_owned())
+            })
             .transpose()?;
+        let geometry: Option<Vec<Geometry>> = map_pieces
+            .as_ref()
+            .map(|pieces| pieces.iter().map(|piece| piece.geometry.clone()).collect());
         let dictionary = model
             .txd
             .as_deref()
@@ -878,6 +891,11 @@ impl WorldLoader {
             self.resources
                 .geometry
                 .insert(format!("{key}.dff"), geometry);
+        }
+        if let Some(pieces) = map_pieces {
+            self.resources
+                .map_pieces
+                .insert(format!("{key}.dff"), pieces);
         }
         if let Some(dictionary) = dictionary {
             self.resources.dictionaries.insert(key.clone(), dictionary);
@@ -1060,6 +1078,15 @@ mod tests {
         )
         .unwrap();
         loader.enable_mods(&root.join("mods")).unwrap();
+        let room_pieces = &loader.resources.map_pieces["mod_room_30000.dff"];
+        assert!(
+            !room_pieces.is_empty(),
+            "custom map DFF atomics are retained"
+        );
+        assert_eq!(
+            room_pieces.len(),
+            loader.resources.geometry["mod_room_30000.dff"].len()
+        );
         fs::write(extra.join("private.txt"), b"Do not share adjacent files").unwrap();
         let shared = share_resources(&root.join("mods")).unwrap();
         assert_eq!(shared.manifest.resources.len(), 2);

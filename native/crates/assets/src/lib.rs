@@ -360,6 +360,13 @@ fn compose(a: &[f32; 12], b: &[f32; 12]) -> [f32; 12] {
 pub fn decode_dff(data: &[u8]) -> Result<Vec<Geometry>> {
     decode_dff_parts(data, false, &HashMap::new())
 }
+/// Decode a map DFF while retaining the RenderWare frame name for every atomic.
+/// Map objects often contain separately modelled doors, gates and moving props;
+/// flattening them into anonymous geometry makes those parts impossible to
+/// identify in the scene/runtime layers.
+pub fn decode_map_dff_pieces(data: &[u8]) -> Result<Vec<VehiclePiece>> {
+    decode_pieces(data, false, &HashMap::new())
+}
 pub fn decode_dff_with_uv(
     data: &[u8],
     tracks: &HashMap<String, std::sync::Arc<uvanim::UvAnimation>>,
@@ -441,6 +448,8 @@ impl VehiclePart {
 #[derive(Clone)]
 pub struct VehiclePiece {
     pub geometry: Geometry,
+    /// Lowercase RenderWare frame name associated with this atomic.
+    pub frame_name: String,
     pub part: VehiclePart,
     /// The `_dam` look of a part, shown once that part has been hit.
     pub damaged: bool,
@@ -597,6 +606,7 @@ fn decode_pieces(
                     }
                     out.push(VehiclePiece {
                         geometry: wheel,
+                        frame_name: name.clone(),
                         part: VehiclePart::from_frame(name).unwrap_or(VehiclePart::Body),
                         damaged: false,
                         pivot: [matrix[9], matrix[10], matrix[11]],
@@ -611,25 +621,26 @@ fn decode_pieces(
             VehiclePart::Body,
             [frames[fi][9], frames[fi][10], frames[fi][11]],
         );
-        if vehicle {
-            let mut at = fi as i32;
-            for _ in 0..nf {
-                if at < 0 {
+        // Keep named pivots for map atomics too. GTA map objects use the
+        // same RenderWare frame conventions as vehicles for doors and gates;
+        // the vehicle-only filtering/damage rules remain below.
+        let mut at = fi as i32;
+        for _ in 0..nf {
+            if at < 0 {
+                break;
+            }
+            let index = at as usize;
+            if let Some(found) = frame_names
+                .get(index)
+                .and_then(|name| VehiclePart::from_frame(name))
+            {
+                let m = &frames[index];
+                part = (found, [m[9], m[10], m[11]]);
+                if frame_names[index].ends_with("_dummy") {
                     break;
                 }
-                let index = at as usize;
-                if let Some(found) = frame_names
-                    .get(index)
-                    .and_then(|name| VehiclePart::from_frame(name))
-                {
-                    let m = &frames[index];
-                    part = (found, [m[9], m[10], m[11]]);
-                    if frame_names[index].ends_with("_dummy") {
-                        break;
-                    }
-                }
-                at = parents[index];
             }
+            at = parents[index];
         }
         let mut g = geometries[gi].clone();
         if std::mem::replace(&mut effects_seen[gi], true) {
@@ -644,6 +655,7 @@ fn decode_pieces(
         }
         out.push(VehiclePiece {
             geometry: g,
+            frame_name: frame_name.to_owned(),
             part: part.0,
             damaged,
             pivot: part.1,
@@ -1041,6 +1053,14 @@ mod tests {
                 usize::from(visible)
             );
             // Damaged variants are kept as pieces for when the car is hit.
+            let map_pieces = decode_map_dff_pieces(&fixture).unwrap();
+            assert_eq!(map_pieces.len(), 1, "map atomics retain visibility: {name}");
+            assert_eq!(map_pieces[0].frame_name, name);
+            assert_eq!(
+                map_pieces[0].part,
+                VehiclePart::from_frame(name).unwrap_or(VehiclePart::Body),
+                "map atomic keeps named door/panel metadata: {name}"
+            );
             let pieces = decode_vehicle_pieces(&fixture).unwrap();
             let kept = !name.ends_with("_vlo") && !name.starts_with("extra");
             assert_eq!(pieces.len(), usize::from(kept), "{name}");

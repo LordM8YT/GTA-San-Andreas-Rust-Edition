@@ -1474,6 +1474,7 @@ mod streaming_tests {
                 let scene = car_scene(
                     &[sa_assets::VehiclePiece {
                         geometry,
+                        frame_name: "test".into(),
                         part: sa_assets::VehiclePart::Body,
                         damaged: false,
                         pivot: [0.0; 3],
