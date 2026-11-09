@@ -94,7 +94,11 @@ fn main() -> Result<()> {
         };
         for geometry in &geometries {
             ensure!(
-                geometry.positions.iter().flatten().all(|value| value.is_finite()),
+                geometry
+                    .positions
+                    .iter()
+                    .flatten()
+                    .all(|value| value.is_finite()),
                 "invalid posed vertex"
             );
             triangle_count += geometry.triangles.len();
