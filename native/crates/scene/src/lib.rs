@@ -1360,6 +1360,35 @@ mod streaming_tests {
         (folder, loader)
     }
     #[test]
+    fn custom_map_atomics_are_separate_batches_with_resolvable_texture_keys() {
+        let (folder, mut loader) = test_loader("map-atomic-batches");
+        let pieces = sa_assets::decode_map_dff_pieces(include_bytes!(
+            "../../../../mods/native-room-demo/room.dff"
+        ))
+        .unwrap();
+        loader.resources.geometry.insert(
+            "room.dff".into(),
+            pieces.iter().map(|piece| piece.geometry.clone()).collect(),
+        );
+        loader.resources.map_pieces.insert("room.dff".into(), pieces.clone());
+
+        let scene = loader.load([0.0; 2], [0.0; 2], 50.0).unwrap();
+        let map_batches: Vec<_> = scene
+            .batches
+            .iter()
+            .filter(|batch| batch.key.contains("|map|"))
+            .collect();
+        assert!(!pieces.is_empty());
+        assert!(!map_batches.is_empty(), "custom map atomics are split into batches");
+        assert!(map_batches.iter().all(|batch| scene.textures.contains_key(&batch.key)));
+        assert!(map_batches.iter().all(|batch| {
+            let texture = texture_key(&batch.key);
+            texture == "runtime:white" || texture.contains(':')
+        }));
+        drop(loader);
+        fs::remove_dir_all(folder).unwrap();
+    }
+    #[test]
     fn missing_txd_does_not_remove_untextured_geometry_or_its_floor() {
         let (folder, mut loader) = test_loader("missing-txd");
         let scene = loader.load([0.0; 2], [0.0; 2], 50.0).unwrap();
