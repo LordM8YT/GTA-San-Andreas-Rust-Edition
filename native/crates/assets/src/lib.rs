@@ -621,25 +621,26 @@ fn decode_pieces(
             VehiclePart::Body,
             [frames[fi][9], frames[fi][10], frames[fi][11]],
         );
-        if vehicle {
-            let mut at = fi as i32;
-            for _ in 0..nf {
-                if at < 0 {
+        // Keep named pivots for map atomics too. GTA map objects use the
+        // same RenderWare frame conventions as vehicles for doors and gates;
+        // the vehicle-only filtering/damage rules remain below.
+        let mut at = fi as i32;
+        for _ in 0..nf {
+            if at < 0 {
+                break;
+            }
+            let index = at as usize;
+            if let Some(found) = frame_names
+                .get(index)
+                .and_then(|name| VehiclePart::from_frame(name))
+            {
+                let m = &frames[index];
+                part = (found, [m[9], m[10], m[11]]);
+                if frame_names[index].ends_with("_dummy") {
                     break;
                 }
-                let index = at as usize;
-                if let Some(found) = frame_names
-                    .get(index)
-                    .and_then(|name| VehiclePart::from_frame(name))
-                {
-                    let m = &frames[index];
-                    part = (found, [m[9], m[10], m[11]]);
-                    if frame_names[index].ends_with("_dummy") {
-                        break;
-                    }
-                }
-                at = parents[index];
             }
+            at = parents[index];
         }
         let mut g = geometries[gi].clone();
         if std::mem::replace(&mut effects_seen[gi], true) {
@@ -1055,6 +1056,11 @@ mod tests {
             let map_pieces = decode_map_dff_pieces(&fixture).unwrap();
             assert_eq!(map_pieces.len(), 1, "map atomics retain visibility: {name}");
             assert_eq!(map_pieces[0].frame_name, name);
+            assert_eq!(
+                map_pieces[0].part,
+                VehiclePart::from_frame(name).unwrap_or(VehiclePart::Body),
+                "map atomic keeps named door/panel metadata: {name}"
+            );
             let pieces = decode_vehicle_pieces(&fixture).unwrap();
             let kept = !name.ends_with("_vlo") && !name.starts_with("extra");
             assert_eq!(pieces.len(), usize::from(kept), "{name}");
