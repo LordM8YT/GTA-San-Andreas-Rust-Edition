@@ -841,12 +841,14 @@ impl WorldLoader {
         let map_pieces = model
             .dff
             .as_deref()
-            .map(|path| sa_assets::decode_map_dff_pieces(&resource(folder, path)?)
-                .with_context(|| path.to_owned()))
+            .map(|path| {
+                sa_assets::decode_map_dff_pieces(&resource(folder, path)?)
+                    .with_context(|| path.to_owned())
+            })
             .transpose()?;
-        let geometry: Option<Vec<Geometry>> = map_pieces.as_ref().map(|pieces| {
-            pieces.iter().map(|piece| piece.geometry.clone()).collect()
-        });
+        let geometry: Option<Vec<Geometry>> = map_pieces
+            .as_ref()
+            .map(|pieces| pieces.iter().map(|piece| piece.geometry.clone()).collect());
         let dictionary = model
             .txd
             .as_deref()
@@ -886,10 +888,14 @@ impl WorldLoader {
                 })
             });
         if let Some(geometry) = geometry {
-            self.resources.geometry.insert(format!("{key}.dff"), geometry);
+            self.resources
+                .geometry
+                .insert(format!("{key}.dff"), geometry);
         }
         if let Some(pieces) = map_pieces {
-            self.resources.map_pieces.insert(format!("{key}.dff"), pieces);
+            self.resources
+                .map_pieces
+                .insert(format!("{key}.dff"), pieces);
         }
         if let Some(dictionary) = dictionary {
             self.resources.dictionaries.insert(key.clone(), dictionary);
@@ -1073,7 +1079,10 @@ mod tests {
         .unwrap();
         loader.enable_mods(&root.join("mods")).unwrap();
         let room_pieces = &loader.resources.map_pieces["mod_room_30000.dff"];
-        assert!(!room_pieces.is_empty(), "custom map DFF atomics are retained");
+        assert!(
+            !room_pieces.is_empty(),
+            "custom map DFF atomics are retained"
+        );
         assert_eq!(
             room_pieces.len(),
             loader.resources.geometry["mod_room_30000.dff"].len()
