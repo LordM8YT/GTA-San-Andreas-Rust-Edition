@@ -4,9 +4,9 @@ use std::{collections::BTreeSet, env, fs};
 
 fn main() -> Result<()> {
     let args: Vec<_> = env::args().skip(1).collect();
-    let path = args
-        .first()
-        .context("usage: audit_resource model.dff [textures.txd] [--map|--skin|--col] [--materials]")?;
+    let path = args.first().context(
+        "usage: audit_resource model.dff [textures.txd] [--map|--skin|--col] [--materials]",
+    )?;
     let bytes = fs::read(path)?;
     let has = |flag: &str| args.iter().any(|arg| arg == flag);
 
@@ -40,14 +40,15 @@ fn main() -> Result<()> {
 
     if has("--map") {
         let pieces = sa_assets::decode_map_dff_pieces(&bytes)?;
-        ensure!(
-            !pieces.is_empty(),
-            "map DFF contains no renderable atomics"
-        );
+        ensure!(!pieces.is_empty(), "map DFF contains no renderable atomics");
         for (index, piece) in pieces.iter().enumerate() {
             let geometry = &piece.geometry;
             ensure!(
-                geometry.positions.iter().flatten().all(|value| value.is_finite()),
+                geometry
+                    .positions
+                    .iter()
+                    .flatten()
+                    .all(|value| value.is_finite()),
                 "invalid vertex in atomic {} ({})",
                 index,
                 piece.frame_name
