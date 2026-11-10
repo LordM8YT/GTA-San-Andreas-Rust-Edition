@@ -30,6 +30,9 @@ struct Manifest {
     mta_models: Vec<MtaModel>,
     #[serde(default)]
     texture_overrides: HashMap<String, String>,
+    /// FiveM-inspired interior archetypes: rooms, portals and interior entities.
+    #[serde(default)]
+    mlo: Vec<crate::mlo::MloDefinition>,
 }
 impl Manifest {
     fn validate_vehicle_tuning(&self) -> Result<()> {
@@ -334,6 +337,8 @@ pub(super) struct Resources {
     /// Spawn points from MTA maps, as (label, IPL position).
     pub map_spawns: Vec<(String, [f32; 3])>,
     pub map_pickups: Vec<crate::MapPickup>,
+    /// Validated MLO definitions retained for interior-aware scene assembly.
+    pub mlo: Vec<crate::mlo::MloDefinition>,
     pub names: Vec<String>,
     pub vehicle: Option<Scene>,
     pub vehicles: Vec<(String, Scene)>,
@@ -605,6 +610,7 @@ impl WorldLoader {
                 self.resources.textures.len() + manifest.texture_overrides.len() <= 512,
                 "total mod texture budget"
             );
+            let mlo_model_ids: HashSet<i32> = manifest.models.iter().map(|model| model.id).collect();
             for model in manifest.models {
                 ensure!(model.id >= 0, "negative mod model ID");
                 let key = format!("mod_{}_{}", folder_name.to_ascii_lowercase(), model.id);
@@ -663,6 +669,11 @@ impl WorldLoader {
                     },
                 );
             }
+            for mlo in manifest.mlo {
+                mlo.validate(&mlo_model_ids).with_context(|| format!("{name}: invalid MLO {}", mlo.name))?;
+                self.resources.mlo.push(mlo);
+            }
+            ensure!(self.resources.mlo.len() <= 64, "total MLO definition limit (64)");
             for instance in manifest.placements {
                 ensure!(
                     self.defs.contains_key(&instance.model_id),
