@@ -151,7 +151,13 @@ class GtaSaImportTests(unittest.TestCase):
             (source / 'map.ipl').write_text(
                 'inst\n300, prop, 0, 1, 2, 3, 0, 0, 0, 1, -1\n'
                 '300, prop, 1, 4, 5, 6, 0, 0, 0, 1, -1\nend\n', encoding='utf-8')
-            (source / 'binary.ipl').write_bytes(b'bnry' + bytes(64))
+            binary_header = bytearray(32)
+            binary_header[:4] = b'bnry'
+            struct.pack_into('<I', binary_header, 4, 1)
+            struct.pack_into('<I', binary_header, 28, 32)
+            binary_row = struct.pack('<7f3i', 7.0, 8.0, 9.0, 0.0, 0.0, 0.0, 1.0,
+                                     300, 1, -1)
+            (source / 'binary.ipl').write_bytes(binary_header + binary_row)
             write_img(source / 'map.img', [('prop.dff', b'prop-dff')])
             out = temp / 'native_map'
             report = IMPORTER.import_resource(source, out, kind='map')
@@ -161,6 +167,9 @@ class GtaSaImportTests(unittest.TestCase):
             self.assertEqual(manifest['placements'][1]['interior'], 1)
             self.assertEqual(report['imported_interior_ipl_placements'], 1)
             self.assertEqual(report['binary_ipl_files'], ['binary.ipl'])
+            self.assertEqual(manifest['placements'][1]['model_id'], 300)
+            self.assertEqual(manifest['placements'][1]['interior'], 1)
+            self.assertEqual(manifest['placements'][1]['position'], [7.0, 8.0, 9.0])
 
     def test_props_require_position_and_start_disabled(self):
         with tempfile.TemporaryDirectory() as temp:
