@@ -19,6 +19,8 @@ struct Triangle {
 pub struct CollisionWorld {
     triangles: Vec<Triangle>,
     cells: HashMap<(i32, i32), Vec<usize>>,
+    /// Vertical COL/fallback triangles hidden while a matching map door is open.
+    open_door_bounds: Vec<(Vec3, Vec3)>,
 }
 impl CollisionWorld {
     pub fn from_batches(batches: &[Batch]) -> Self {
@@ -64,7 +66,28 @@ impl CollisionWorld {
                 }
             }
         }
-        Self { triangles, cells }
+        Self {
+            triangles,
+            cells,
+            open_door_bounds: Vec::new(),
+        }
+    }
+    /// Temporarily ignore vertical collision triangles inside animated door
+    /// bounds. Floors and ceilings remain solid so an open doorway stays walkable.
+    pub fn set_open_door_bounds(&mut self, bounds: Vec<[[f32; 3]; 2]>) {
+        self.open_door_bounds = bounds
+            .into_iter()
+            .filter_map(|bounds| {
+                let min = Vec3::from_array(bounds[0]);
+                let max = Vec3::from_array(bounds[1]);
+                (min.is_finite()
+                    && max.is_finite()
+                    && min.x <= max.x
+                    && min.y <= max.y
+                    && min.z <= max.z)
+                    .then_some((min, max))
+            })
+            .collect();
     }
     pub fn triangle_count(&self) -> usize {
         self.triangles.len()
@@ -147,6 +170,24 @@ impl CollisionWorld {
         // Stable contact order avoids changing the selected correction at corners.
         let mut indices: Vec<_> = seen.into_iter().collect();
         indices.sort_unstable();
+        if !self.open_door_bounds.is_empty() {
+            indices.retain(|&index| {
+                let triangle = self.triangles[index];
+                // Keep floors/ceilings even when they overlap the doorway AABB.
+                if triangle.normal.y.abs() >= 0.55 {
+                    return true;
+                }
+                let center = (triangle.a + triangle.b + triangle.c) / 3.0;
+                !self.open_door_bounds.iter().any(|(min, max)| {
+                    center.x >= min.x
+                        && center.x <= max.x
+                        && center.y >= min.y
+                        && center.y <= max.y
+                        && center.z >= min.z
+                        && center.z <= max.z
+                })
+            });
+        }
         indices
     }
     pub fn ground_below(&self, pos: Vec3, max_y: f32) -> Option<f32> {
@@ -501,6 +542,34 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+    #[test]
+    fn opening_map_door_ignores_its_wall_but_keeps_the_floor() {
+        let geometry = [
+            floor_patch(-5.0, 5.0, 0.0),
+            batch(&[
+                [1.0, 0.0, -2.0],
+                [1.0, 2.0, -2.0],
+                [1.0, 2.0, 2.0],
+                [1.0, 0.0, -2.0],
+                [1.0, 2.0, 2.0],
+                [1.0, 0.0, 2.0],
+            ]),
+        ];
+        let mut world = CollisionWorld::from_batches(&geometry);
+        let mut closed = Player::spawn(&world, Vec3::new(0.0, 1.6, 0.0));
+        for _ in 0..60 {
+            closed.step(&world, Vec3::X * 4.0, false, 1.0 / 60.0);
+        }
+        assert!(closed.feet.x < 0.75);
+        world.set_open_door_bounds(vec![[[0.8, -0.1, -2.1], [1.2, 2.1, 2.1]]]);
+        assert_eq!(world.ground_below(Vec3::ZERO, 1.0), Some(0.0));
+        let mut opened = Player::spawn(&world, Vec3::new(0.0, 1.6, 0.0));
+        for _ in 0..60 {
+            opened.step(&world, Vec3::X * 4.0, false, 1.0 / 60.0);
+        }
+        assert!(opened.grounded);
+        assert!(opened.feet.x > 3.0, "open doorway stopped at {:?}", opened.feet);
     }
     #[test]
     fn floor_and_wall() {
