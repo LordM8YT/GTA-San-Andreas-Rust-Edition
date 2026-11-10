@@ -2221,6 +2221,26 @@ impl State {
         );
     }
     /// World batches inside `frustum`, followed by every car and ped.
+    fn mlo_batch_visible(&self, batch: &GpuBatch) -> bool {
+        let Some((_, tag)) = batch.texture_key.split_once("|mlo|") else {
+            return true;
+        };
+        let mut fields = tag.split('|');
+        let (Some(mlo_index), Some(entity_index)) = (
+            fields.next().and_then(|value| value.parse::<usize>().ok()),
+            fields.next().and_then(|value| value.parse::<usize>().ok()),
+        ) else {
+            return true;
+        };
+        let world = [
+            ORIGIN[0] + self.position.x,
+            ORIGIN[1] - self.position.z,
+            self.position.y,
+        ];
+        self.streamer.as_ref().is_none_or(|streamer| {
+            streamer.mlo_entity_visible(mlo_index, entity_index, world)
+        })
+    }
     fn drawn_batches<'a>(
         &'a self,
         frustum: &'a culling::Frustum,
@@ -2228,6 +2248,7 @@ impl State {
         self.batches
             .iter()
             .filter(|batch| !is_glow(batch))
+            .filter(|batch| self.mlo_batch_visible(batch))
             .filter(move |batch| !self.culling_enabled || frustum.visible(batch.bounds))
             .chain(self.car.iter().flat_map(|(_, b)| b))
             .chain(self.spawned_peds.iter().flat_map(|p| &p.batches))

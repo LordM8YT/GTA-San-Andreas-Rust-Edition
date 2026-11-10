@@ -47,6 +47,8 @@ struct Placement {
     scale: f32,
     /// False for MTA objects with `collisions="false"`: drawn, never collided.
     solid: bool,
+    /// MLO definition and entity indices, used to keep room-owned geometry separate.
+    mlo_entity: Option<(usize, usize)>,
 }
 const NO_ROW: u32 = u32::MAX;
 const ALL_AREAS: i32 = 13;
@@ -139,6 +141,8 @@ pub struct Batch {
     pub uv_animation: Option<std::sync::Arc<sa_assets::uvanim::UvAnimation>>,
     /// Present for independently animated custom map doors.
     pub map_door: Option<MapDoor>,
+    /// MLO/entity indices encoded on a unique batch so room visibility can filter it.
+    pub mlo_entity: Option<(usize, usize)>,
 }
 pub struct Scene {
     pub vehicle_handling: vehicle::Handling,
@@ -265,6 +269,7 @@ fn placement(id: i32, interior: i32, pos: [f32; 3], quat: [f32; 4]) -> Result<Pl
         parent: NO_ROW,
         scale: 1.0,
         solid: true,
+        mlo_entity: None,
     })
 }
 fn binary_ipl(data: &[u8]) -> Result<Vec<Placement>> {
@@ -466,6 +471,7 @@ fn place(point: [f32; 3], r: &Placement, center: [f32; 2]) -> [f32; 3] {
 }
 /// Batch suffixes describe draw state; they are not part of the TXD entry name.
 fn texture_key(key: &str) -> &str {
+    let key = key.split_once("|mlo|").map_or(key, |(base, _)| base);
     let key = key.strip_suffix("|alpha").unwrap_or(key);
     let key = key.split_once("|map|").map_or(key, |(base, _)| base);
     key.split_once("|uv|").map_or(key, |(base, _)| base)
@@ -616,6 +622,9 @@ fn add_model(
             if alpha {
                 key.push_str("|alpha");
             }
+            if let Some((mlo_index, entity_index)) = r.mlo_entity {
+                key.push_str(&format!("|mlo|{mlo_index}|{entity_index}"));
+            }
             let batch = batches.entry(key.clone()).or_insert_with(|| Batch {
                 key,
                 vertices: Vec::new(),
@@ -623,6 +632,7 @@ fn add_model(
                 animated: false,
                 uv_animation: material.uv_animation.clone(),
                 map_door: None,
+                mlo_entity: r.mlo_entity,
             });
             for index in [t[0], t[1], t[2]] {
                 let i = index as usize;
@@ -970,7 +980,7 @@ impl WorldLoader {
         // MLO entities are real scene placements, not metadata-only records.
         // Their local transforms are composed with the owning MLO instance
         // before the ordinary model, material, door and collision pipeline.
-        for mlo in &self.resources.mlo {
+        for (mlo_index, mlo) in self.resources.mlo.iter().enumerate() {
             if i32::from(mlo.interior) != interior {
                 continue;
             }
@@ -979,9 +989,11 @@ impl WorldLoader {
             if dx * dx + dy * dy > (radius + 1600.0).powi(2) {
                 continue;
             }
-            for entity in &mlo.entities {
+            for (entity_index, entity) in mlo.entities.iter().enumerate() {
                 let (position, rotation) = mlo.world_entity_transform(entity);
-                rows.push(placement(entity.model_id, interior, position, rotation)?);
+                let mut row = placement(entity.model_id, interior, position, rotation)?;
+                row.mlo_entity = Some((mlo_index, entity_index));
+                rows.push(row);
             }
         }
         // Detailed placements first, nearest first. LOD groups are selected
@@ -1008,6 +1020,7 @@ impl WorldLoader {
             animated: false,
             uv_animation: None,
             map_door: None,
+            mlo_entity: None,
         };
         let mut fallback = HashMap::new();
         let mut count = 0;
@@ -1285,6 +1298,7 @@ impl WorldLoader {
                 animated: false,
                 uv_animation: None,
                 map_door: None,
+                mlo_entity: None,
             }
         };
         if !water_batch.vertices.is_empty() {
@@ -1321,6 +1335,7 @@ pub fn load_first_model(game: &Path) -> Result<Scene> {
         id: 0,
         scale: 1.0,
         solid: true,
+        mlo_entity: None,
         interior: 0,
         lod: -1,
         is_lod: false,
@@ -1418,6 +1433,7 @@ pub fn load_cuttest(game: &Path) -> Result<Scene> {
         id: 0,
         scale: 1.0,
         solid: true,
+        mlo_entity: None,
         interior: 0,
         lod: -1,
         is_lod: false,
@@ -1486,6 +1502,7 @@ pub fn load_prologue(game: &Path) -> Result<Scene> {
         id: 0,
         scale: 1.0,
         solid: true,
+        mlo_entity: None,
         interior: 0,
         lod: -1,
         is_lod: false,

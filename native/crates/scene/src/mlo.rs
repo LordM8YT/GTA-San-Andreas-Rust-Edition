@@ -296,7 +296,8 @@ impl MloDefinition {
 
     /// Convert an entity's MLO-local transform into GTA SA world space.
     pub fn world_entity_transform(&self, entity: &MloEntity) -> ([f32; 3], [f32; 4]) {
-        let local = super::rotate(entity.position, self.rotation);
+        let inverse = [-self.rotation[0], -self.rotation[1], -self.rotation[2], self.rotation[3]];
+        let local = super::rotate(entity.position, inverse);
         let position = std::array::from_fn(|axis| self.position[axis] + local[axis]);
         let [ax, ay, az, aw] = self.rotation;
         let [bx, by, bz, bw] = entity.rotation;
@@ -307,6 +308,12 @@ impl MloDefinition {
             aw * bw - ax * bx - ay * by - az * bz,
         ];
         (position, rotation)
+    }
+
+    /// Convert a GTA SA world-space point to this MLO's local coordinates.
+    pub fn local_position_from_world(&self, world: [f32; 3]) -> [f32; 3] {
+        let relative = std::array::from_fn(|axis| world[axis] - self.position[axis]);
+        super::rotate(relative, self.rotation)
     }
 
     /// Find the most specific room containing a local-space point.

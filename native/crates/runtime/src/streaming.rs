@@ -111,6 +111,24 @@ impl Streamer {
         let visible_rooms = mlo.visible_rooms(room);
         Some(mlo.visible_entity_indices(&visible_rooms))
     }
+    /// Check whether one MLO entity is visible from the player's world position.
+    pub fn mlo_entity_visible(
+        &self,
+        mlo_index: usize,
+        entity_index: usize,
+        world_position: [f32; 3],
+    ) -> bool {
+        let Some(mlo) = self.mlos.get(mlo_index) else {
+            return true;
+        };
+        let local = mlo.local_position_from_world(world_position);
+        let visible = mlo
+            .room_at(local)
+            .map(|room| mlo.visible_entity_indices(&mlo.visible_rooms(room)))
+            .unwrap_or_else(|| mlo.visible_entity_indices(&[]));
+        visible.binary_search(&entity_index).is_ok()
+    }
+
     /// Find the closest ENEX or resource portal containing a player in the requested interior.
     pub fn portal_at(&self, position: [f32; 3], interior: u8) -> Option<InteriorPortal> {
         self.portals
