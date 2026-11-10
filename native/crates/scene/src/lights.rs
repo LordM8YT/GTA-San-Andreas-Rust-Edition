@@ -106,6 +106,7 @@ mod tests {
             parent: 0,
             pos: [10.0, 20.0, 5.0],
             quat: [0.0, 0.0, 0.0, 1.0],
+            mlo_entity: None,
         };
         let mut batches = HashMap::new();
         add(&mut batches, &[geometry], &r, [0.0, 0.0]);
