@@ -116,6 +116,7 @@ mod tests {
             animated: false,
             uv_animation: None,
             map_door: None,
+            mlo_entity: None,
             vertices: [
                 [-100.0, 0.0, -100.0],
                 [100.0, 0.0, -100.0],
