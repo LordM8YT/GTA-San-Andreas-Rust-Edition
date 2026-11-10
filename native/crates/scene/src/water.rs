@@ -76,6 +76,7 @@ impl WaterMap {
             animated: false,
             uv_animation: None,
             map_door: None,
+            mlo_entity: None,
         };
         for (points, visible) in &self.triangles {
             if !visible {
