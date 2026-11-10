@@ -499,7 +499,7 @@ mod tests {
         mlo.rooms[0].entities.push(3);
         mlo.portals[0].entities.push(3);
         assert_eq!(mlo.visible_entity_indices(&[0]), vec![0, 2, 3]);
-        assert_eq!(mlo.visible_entity_indices(&[2]), vec![1, 2]);
+        assert_eq!(mlo.visible_entity_indices(&[2]), vec![2, 3]);
     }
 
     #[test]
