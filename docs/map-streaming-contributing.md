@@ -68,9 +68,10 @@ Room bounds and portal corners remain MLO-local.
 ```
 
 MLO entities are fed through the same model, TXD, DFF-atomic, map-door and
-COL pipeline as ordinary map placements. Room/portal-driven per-entity draw
-visibility is a separate renderer integration requirement; do not claim it is
-complete merely because the entities stream into the scene.
+COL pipeline as ordinary map placements. Their batches retain MLO/entity
+identity, and the renderer filters room-owned entities through the active room
+and open-portal graph. Validate this behaviour and its performance with real
+resources before treating the feature as production-ready.
 
 ## Pull request checklist
 
