@@ -20,6 +20,7 @@ fn mesh(points: &[[f32; 3]]) -> Batch {
         alpha: false,
         animated: false,
         uv_animation: None,
+        map_door: None,
         vertices: points
             .iter()
             .map(|p| Vertex {
