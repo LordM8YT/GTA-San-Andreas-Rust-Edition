@@ -73,6 +73,7 @@ struct GpuBatch {
 struct MapDoorState {
     id: String,
     pivot: Vec3,
+    bounds: [[f32; 3]; 2],
     door: u8,
     angle: f32,
     target: f32,
@@ -82,6 +83,7 @@ impl From<sa_scene::MapDoor> for MapDoorState {
         Self {
             id: door.id,
             pivot: Vec3::from_array(door.pivot),
+            bounds: door.bounds,
             door: door.door,
             angle: 0.0,
             target: 0.0,
@@ -1615,6 +1617,21 @@ impl State {
             door.angle += difference.signum() * (dt * 2.5).min(difference.abs());
             let raw = car_damage::pose_map_door(base, door.pivot, door.door, door.angle);
             queue.write_buffer(buffer, 0, bytemuck::cast_slice(&raw));
+        }
+        // The original COL is static. Once a hinged door is mostly open, ignore
+        // only the vertical collision faces under its DFF bounds so the player
+        // can pass through; floors and ceilings remain intact.
+        let mut open_bounds = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for batch in &self.batches {
+            if let Some(door) = &batch.map_door {
+                if door.angle >= 0.85 && seen.insert(door.id.as_str()) {
+                    open_bounds.push(door.bounds);
+                }
+            }
+        }
+        if let Some(collision) = &mut self.collision {
+            collision.set_open_door_bounds(open_bounds);
         }
     }
     fn update(&mut self) {
