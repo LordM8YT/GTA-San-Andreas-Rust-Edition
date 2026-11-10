@@ -302,7 +302,10 @@ mod tests {
             Some(0)
         );
         assert_eq!(stream.mlo_room_at("missing", [0.0; 3]), None);
-        assert_eq!(stream.mlo_visible_entities("police_station", 0), Some(vec![0, 1]));
+        assert_eq!(
+            stream.mlo_visible_entities("police_station", 0),
+            Some(vec![0, 1])
+        );
     }
     #[test]
     fn retirement_is_nonblocking_preserves_full_queue_and_does_not_mark_loading() {
