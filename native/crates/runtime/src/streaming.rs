@@ -277,6 +277,9 @@ mod tests {
     #[test]
     fn mlo_room_lookup_and_visibility_are_available_to_streaming() {
         let mlo = MloDefinition {
+            position: [0.0; 3],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            interior: 0,
             name: "police_station".into(),
             entities: vec![
                 sa_scene::mlo::MloEntity {
