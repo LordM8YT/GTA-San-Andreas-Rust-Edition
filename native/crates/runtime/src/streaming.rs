@@ -192,7 +192,10 @@ mod tests {
             std::f32::consts::FRAC_PI_2,
         );
         close(camera_yaw_from_sa_heading(180.0), 0.0);
-        close(camera_yaw_from_sa_heading(270.0), -std::f32::consts::FRAC_PI_2);
+        close(
+            camera_yaw_from_sa_heading(270.0),
+            -std::f32::consts::FRAC_PI_2,
+        );
     }
     #[test]
     fn resource_enex_portals_work_in_both_directions_and_respect_bounds() {
