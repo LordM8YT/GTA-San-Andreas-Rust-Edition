@@ -23,6 +23,7 @@ fn batch<'a>(batches: &'a mut HashMap<String, Batch>, key: &str) -> &'a mut Batc
         alpha: true,
         animated: false,
         uv_animation: None,
+        map_door: None,
     })
 }
 
