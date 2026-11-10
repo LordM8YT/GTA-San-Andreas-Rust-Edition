@@ -182,6 +182,16 @@ impl Retired {
 mod tests {
     use super::*;
     #[test]
+    fn sa_enex_headings_face_the_correct_runtime_direction() {
+        let close = |actual: f32, expected: f32| {
+            assert!((actual - expected).abs() < 0.0001);
+        };
+        close(camera_yaw_from_sa_heading(0.0), std::f32::consts::PI);
+        close(camera_yaw_from_sa_heading(90.0), std::f32::consts::FRAC_PI_2);
+        close(camera_yaw_from_sa_heading(180.0), 0.0);
+        close(camera_yaw_from_sa_heading(270.0), -std::f32::consts::FRAC_PI_2);
+    }
+    #[test]
     fn retirement_is_nonblocking_preserves_full_queue_and_does_not_mark_loading() {
         let (requests, receiver) = mpsc::sync_channel::<Work>(1);
         let (_sender, results) = mpsc::sync_channel(1);
