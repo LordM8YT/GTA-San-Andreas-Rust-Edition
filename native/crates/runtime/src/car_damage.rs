@@ -63,10 +63,10 @@ pub fn pose_car(batch: &GpuBatch, look: &Look, rotation: Quat, offset: Vec3) -> 
 /// Re-pose a named map-door batch around its world-space hinge.
 pub fn pose_map_door(base: &[f32], pivot: Vec3, door: u8, amount: f32) -> Vec<f32> {
     let mut raw = base.to_vec();
-    let side = if door % 2 == 0 { -1.0 } else { 1.0 };
+    let side = if door.is_multiple_of(2) { -1.0 } else { 1.0 };
     let rotation =
         Quat::from_rotation_y(side * amount.clamp(0.0, 1.0) * sa_scene::vehicle::DOOR_SWING);
-    for vertex in raw.chunks_exact_mut(9) {
+    for vertex in raw.as_chunks_mut::<9>().0 {
         let point = Vec3::new(vertex[0], vertex[1], vertex[2]);
         vertex[..3].copy_from_slice(&(rotation * (point - pivot) + pivot).to_array());
     }
