@@ -63,6 +63,9 @@ pub struct MapDoor {
     pub id: String,
     /// Hinge position in the streamed scene's world-relative coordinates.
     pub pivot: [f32; 3],
+    /// Tight world-relative bounds of the moving mesh, used to release its
+    /// static COL wall triangles while the door is open.
+    pub bounds: [[f32; 3]; 2],
     /// GTA SA door convention: 0/2 swing left, 1/3 swing right.
     pub door: u8,
 }
@@ -491,6 +494,36 @@ fn map_door_index(piece: &sa_assets::VehiclePiece) -> Option<u8> {
         _ => return None,
     })
 }
+fn map_piece_bounds(
+    piece: &sa_assets::VehiclePiece,
+    r: &Placement,
+    center: [f32; 2],
+) -> Option<[[f32; 3]; 2]> {
+    let mut min = [f32::INFINITY; 3];
+    let mut max = [f32::NEG_INFINITY; 3];
+    let mut points = 0;
+    for point in &piece.geometry.positions {
+        let world = place(*point, r, center);
+        if !world.iter().all(|value| value.is_finite()) {
+            continue;
+        }
+        for axis in 0..3 {
+            min[axis] = min[axis].min(world[axis]);
+            max[axis] = max[axis].max(world[axis]);
+        }
+        points += 1;
+    }
+    if points == 0 {
+        return None;
+    }
+    // The COL mesh can be a little coarser than the visual DFF. A small
+    // margin catches its door triangles without swallowing the surrounding wall.
+    for axis in 0..3 {
+        min[axis] -= 0.15;
+        max[axis] += 0.15;
+    }
+    Some([min, max])
+}
 /// Add a custom map DFF as independently batched RenderWare atomics.
 /// Each atomic gets a stable per-placement key while retaining the original
 /// TXD/material lookup key (the `|map|` suffix is draw metadata only).
@@ -503,6 +536,8 @@ fn add_map_pieces(
 ) -> Result<usize> {
     let mut triangles = 0;
     for (index, piece) in pieces.iter().enumerate() {
+        let door = map_door_index(piece)
+            .and_then(|door| map_piece_bounds(piece, r, center).map(|bounds| (door, bounds)));
         let mut atomic = HashMap::new();
         triangles += add_model(
             &mut atomic,
@@ -513,7 +548,7 @@ fn add_map_pieces(
         )?;
         for (key, mut batch) in atomic {
             let map_key = format!("|map|{}_{}_{}_{}", r.id, r.uid, index, piece.frame_name);
-            if let Some(door) = map_door_index(piece) {
+            if let Some((door, bounds)) = door {
                 batch.animated = true;
                 batch.map_door = Some(MapDoor {
                     id: format!(
@@ -526,6 +561,7 @@ fn add_map_pieces(
                         index
                     ),
                     pivot: place(piece.pivot, r, center),
+                    bounds,
                     door,
                 });
             }
