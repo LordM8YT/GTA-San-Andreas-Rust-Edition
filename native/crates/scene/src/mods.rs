@@ -1044,6 +1044,7 @@ mod tests {
         .unwrap();
         fs::write(folder.join("mod.json"),br#"{"enabled":true,"name":"Test room","models":[{"id":30000,"dff":"room.dff"}],"placements":[{"model_id":30000,"position":[0,0,0]}],"mlo":[{"name":"demo","entities":[{"model_id":30000,"room":0}],"rooms":[{"name":"room","min":[-2,-2,-2],"max":[2,2,2],"entities":[0]}]}],"vehicles":[{"dff":"car.dff"}]}"#).unwrap();
         let mut loader = WorldLoader {
+            portals: Vec::new(),
             water: std::sync::Arc::new(crate::water::WaterMap::default()),
             water_texture: None,
             roadsign_font: None,
@@ -1325,6 +1326,7 @@ mod tests {
             txd: "m".into(),
         };
         let mut loader = WorldLoader {
+            portals: Vec::new(),
             water: std::sync::Arc::new(crate::water::WaterMap::default()),
             water_texture: None,
             roadsign_font: None,
