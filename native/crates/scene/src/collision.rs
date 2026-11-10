@@ -569,10 +569,7 @@ mod tests {
             opened.step(&world, Vec3::X * 4.0, false, 1.0 / 60.0);
         }
         assert!(opened.grounded);
-        assert!(
-            opened.feet.x > 3.0,
-            "open doorway should be traversable"
-        );
+        assert!(opened.feet.x > 3.0, "open doorway should be traversable");
         world.set_open_door_bounds(Vec::new());
         let mut closed_again = Player::spawn(&world, Vec3::new(0.0, 1.6, 0.0));
         for _ in 0..60 {
