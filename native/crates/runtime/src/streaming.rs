@@ -82,9 +82,8 @@ impl Streamer {
             .iter()
             .filter(|portal| portal.source_interior == interior)
             .filter(|portal| {
-                (0..3).all(|axis| {
-                    (position[axis] - portal.source[axis]).abs() <= portal.radius[axis]
-                })
+                (0..3)
+                    .all(|axis| (position[axis] - portal.source[axis]).abs() <= portal.radius[axis])
             })
             .min_by(|a, b| {
                 let distance = |portal: &InteriorPortal| {
