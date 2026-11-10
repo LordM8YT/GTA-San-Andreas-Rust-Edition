@@ -57,12 +57,23 @@ pub struct Vertex {
     pub uv: [f32; 2],
     pub color: [f32; 4],
 }
+#[derive(Clone, Debug, PartialEq)]
+pub struct MapDoor {
+    /// Stable identity shared by every material batch belonging to this door.
+    pub id: String,
+    /// Hinge position in the streamed scene's world-relative coordinates.
+    pub pivot: [f32; 3],
+    /// GTA SA door convention: 0/2 swing left, 1/3 swing right.
+    pub door: u8,
+}
 pub struct Batch {
     pub key: String,
     pub vertices: Vec<Vertex>,
     pub alpha: bool,
     pub animated: bool,
     pub uv_animation: Option<std::sync::Arc<sa_assets::uvanim::UvAnimation>>,
+    /// Present for independently animated custom map doors.
+    pub map_door: Option<MapDoor>,
 }
 pub struct Scene {
     pub vehicle_handling: vehicle::Handling,
@@ -385,6 +396,22 @@ fn add_map_pieces(
         )?;
         for (key, mut batch) in atomic {
             let map_key = format!("|map|{}_{}_{}_{}", r.id, r.uid, index, piece.frame_name);
+            if let sa_assets::VehiclePart::Door(door) = piece.part {
+                batch.animated = true;
+                batch.map_door = Some(MapDoor {
+                    id: format!(
+                        "{}:{}:{}:{}:{}:{}",
+                        r.id,
+                        r.uid,
+                        r.pos[0].to_bits(),
+                        r.pos[1].to_bits(),
+                        r.pos[2].to_bits(),
+                        index
+                    ),
+                    pivot: place(piece.pivot, r, center),
+                    door,
+                });
+            }
             let renamed = if let Some(base) = key.strip_suffix("|alpha") {
                 format!("{base}{map_key}|alpha")
             } else {
@@ -437,6 +464,7 @@ fn add_model(
                 alpha,
                 animated: false,
                 uv_animation: material.uv_animation.clone(),
+                map_door: None,
             });
             for index in [t[0], t[1], t[2]] {
                 let i = index as usize;
@@ -794,6 +822,7 @@ impl WorldLoader {
             alpha: false,
             animated: false,
             uv_animation: None,
+            map_door: None,
         };
         let mut fallback = HashMap::new();
         let mut count = 0;
@@ -1070,6 +1099,7 @@ impl WorldLoader {
                 alpha: true,
                 animated: false,
                 uv_animation: None,
+                map_door: None,
             }
         };
         if !water_batch.vertices.is_empty() {
