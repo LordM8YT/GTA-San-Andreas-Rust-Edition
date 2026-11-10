@@ -519,12 +519,20 @@ mod tests {
     }
 
     #[test]
-    fn mlo_entity_local_transforms_are_composed_with_instance_origin() {
+    fn mlo_entity_local_transforms_are_composed_with_instance_origin_and_rotation() {
         let mut mlo = sample();
         mlo.position = [1030.0, -1987.0, 14.5];
+        let half = std::f32::consts::FRAC_1_SQRT_2;
+        mlo.rotation = [0.0, 0.0, half, half];
         let (position, rotation) = mlo.world_entity_transform(&mlo.entities[1]);
-        assert_eq!(position, [1031.0, -1987.0, 14.5]);
-        assert_eq!(rotation, identity());
+        assert!((position[0] - 1030.0).abs() < 0.0001);
+        assert!((position[1] - -1986.0).abs() < 0.0001);
+        assert!((position[2] - 14.5).abs() < 0.0001);
+        assert_eq!(rotation, mlo.rotation);
+        let local = mlo.local_position_from_world(position);
+        assert!((local[0] - 1.0).abs() < 0.0001);
+        assert!(local[1].abs() < 0.0001);
+        assert!(local[2].abs() < 0.0001);
     }
 
     #[test]
