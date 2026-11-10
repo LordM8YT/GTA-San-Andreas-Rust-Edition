@@ -928,6 +928,10 @@ impl WorldLoader {
     pub fn mod_names(&self) -> &[String] {
         &self.resources.names
     }
+    /// Validated FiveM-style MLO definitions available to interior-aware runtime systems.
+    pub fn mlo_definitions(&self) -> &[crate::mlo::MloDefinition] {
+        &self.resources.mlo
+    }
     pub fn model_names(&self) -> (String, String) {
         (
             if self.resources.car_name.is_empty() {
@@ -1015,7 +1019,7 @@ mod tests {
             include_bytes!("../../../../mods/native-car-demo/car.dff"),
         )
         .unwrap();
-        fs::write(folder.join("mod.json"),br#"{"enabled":true,"name":"Test room","models":[{"id":30000,"dff":"room.dff"}],"placements":[{"model_id":30000,"position":[0,0,0]}],"vehicles":[{"dff":"car.dff"}]}"#).unwrap();
+        fs::write(folder.join("mod.json"),br#"{"enabled":true,"name":"Test room","models":[{"id":30000,"dff":"room.dff"}],"placements":[{"model_id":30000,"position":[0,0,0]}],"mlo":[{"name":"demo","entities":[{"model_id":30000,"room":0}],"rooms":[{"name":"room","min":[-2,-2,-2],"max":[2,2,2],"entities":[0]}]}],"vehicles":[{"dff":"car.dff"}]}"#).unwrap();
         let mut loader = WorldLoader {
             water: std::sync::Arc::new(crate::water::WaterMap::default()),
             water_texture: None,
@@ -1176,6 +1180,8 @@ mod tests {
             .unwrap()
             .is_none());
         let scene = loader.load([0.0, 0.0], [0.0, 0.0], 100.0).unwrap();
+        assert_eq!(loader.mlo_definitions().len(), 1);
+        assert_eq!(loader.mlo_definitions()[0].name, "demo");
         assert_eq!(scene.placements, 1);
         assert_eq!(scene.triangles, 108);
         let mut interior_room = loader.rows[0].clone();
