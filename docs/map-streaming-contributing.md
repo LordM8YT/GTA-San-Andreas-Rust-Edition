@@ -42,6 +42,36 @@ A parser passing tests does not mean the feature works in-game. Contributions sh
 
 The main compatibility target is the New Police Station (`ppalace`): correct model placement, textures, interior visibility, collision and doors. Keep claims limited to what has actually been tested.
 
+## Native MLO manifest coordinates
+
+A native `resource.json` MLO definition describes one placed MLO instance. Its
+`position` and `rotation` are the instance transform in GTA SA world
+coordinates; each entity's `position` and `rotation` are local to that
+instance. `interior` selects the GTA SA streaming dimension (default `0`).
+Room bounds and portal corners remain MLO-local.
+
+```json
+{
+  "mlo": [{
+    "name": "police_station",
+    "position": [1030.0, -1987.05, 14.53],
+    "rotation": [0.0, 0.0, 0.0, 1.0],
+    "interior": 0,
+    "entities": [{
+      "model_id": 18697,
+      "position": [0.0, 0.0, 0.0],
+      "rotation": [0.0, 0.0, 0.0, 1.0],
+      "room": 0
+    }]
+  }]
+}
+```
+
+MLO entities are fed through the same model, TXD, DFF-atomic, map-door and
+COL pipeline as ordinary map placements. Room/portal-driven per-entity draw
+visibility is a separate renderer integration requirement; do not claim it is
+complete merely because the entities stream into the scene.
+
 ## Pull request checklist
 
 - [ ] Based on the latest `feat/fivem-mlo-runtime`
