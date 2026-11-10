@@ -277,6 +277,37 @@ def handling_profiles(paths, model_to_id):
             if handling_id in profiles}
 
 
+def parse_binary_ipl(data, name):
+    """Decode a bounded GTA SA bnry IPL instance table (40-byte records)."""
+    require(len(data) >= 32 and data[:4] == b'bnry',
+            f'{name}: invalid binary IPL header')
+    count, = struct.unpack_from('<I', data, 4)
+    offset, = struct.unpack_from('<I', data, 28)
+    require(count <= 100000 and offset >= 32 and
+            offset + count * 40 <= len(data),
+            f'{name}: binary IPL instance table is outside file bounds')
+    placements = []
+    for index in range(count):
+        row = struct.unpack_from('<7f3i', data, offset + index * 40)
+        position = list(row[0:3])
+        rotation = list(row[3:7])
+        model_id, interior, lod = row[7:10]
+        norm = sum(value * value for value in rotation)
+        require(model_id >= 0 and 0 <= interior <= 255 and
+                all(math.isfinite(v) for v in position + rotation) and
+                all(abs(v) <= 10000 for v in position) and
+                0.98 <= norm <= 1.02,
+                f'{name}: invalid binary IPL instance {index}')
+        placements.append({
+            'model_id': model_id,
+            'position': position,
+            'rotation': rotation,
+            '_interior': interior,
+            '_lod': lod,
+        })
+    return placements
+
+
 def parse_ipl(paths):
     placements = []
     malformed = 0
@@ -284,10 +315,12 @@ def parse_ipl(paths):
     for path in sorted(paths, key=lambda p: p.as_posix().casefold()):
         if path.suffix.casefold() != '.ipl':
             continue
-        with path.open('rb') as stream:
-            if stream.read(4) == b'bnry':
-                binary.append(path.name)
-                continue
+        raw = path.read_bytes()
+        if raw[:4] == b'bnry':
+            binary.append(path.name)
+            placements.extend(parse_binary_ipl(raw, path.name))
+            require(len(placements) <= 100000, 'IPL contains too many placement records')
+            continue
         section = ''
         for line in data_lines(path):
             if ',' not in line:
@@ -324,7 +357,6 @@ def parse_ipl(paths):
             })
             require(len(placements) <= 100000, 'IPL contains too many placement records')
     return placements, malformed, binary
-
 
 def installed_ide_paths(game_root):
     """Read IDE files registered by the installed game, matching the runtime."""
