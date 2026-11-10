@@ -67,6 +67,26 @@ struct GpuBatch {
     base: Vec<f32>,
     /// The door, wheel or panel of a car this batch draws.
     piece: Option<sa_scene::vehicle::RigPiece>,
+    /// A named custom-map door, independent of the car rig.
+    map_door: Option<MapDoorState>,
+}
+struct MapDoorState {
+    id: String,
+    pivot: Vec3,
+    door: u8,
+    angle: f32,
+    target: f32,
+}
+impl From<sa_scene::MapDoor> for MapDoorState {
+    fn from(door: sa_scene::MapDoor) -> Self {
+        Self {
+            id: door.id,
+            pivot: Vec3::from_array(door.pivot),
+            door: door.door,
+            angle: 0.0,
+            target: 0.0,
+        }
+    }
 }
 const HEADLIGHT_VERTICES: usize = 18;
 /// A light pool on the road ahead of the car and two coronas at its nose,
@@ -1286,6 +1306,7 @@ impl State {
                     Vec::new()
                 },
                 piece: pieces.get(&batch.key).copied(),
+                map_door: batch.map_door.map(Into::into),
             });
         }
         batches.sort_by_key(|b| b.alpha);
@@ -1511,6 +1532,60 @@ impl State {
         };
         if self.window.set_cursor_grab(mode).is_err() && on {
             let _ = self.window.set_cursor_grab(CursorGrabMode::Confined);
+        }
+    }
+    fn interact_map_door(&mut self) -> bool {
+        if !self.walking || self.driving || self.menu.page.is_some() {
+            return false;
+        }
+        let nearest = self
+            .batches
+            .iter()
+            .filter_map(|batch| batch.map_door.as_ref())
+            .filter_map(|door| {
+                let distance = door.pivot.distance_squared(self.position);
+                (distance <= 9.0).then_some((door.id.clone(), distance))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(id, _)| id);
+        let Some(id) = nearest else {
+            return false;
+        };
+        let is_open = self
+            .batches
+            .iter()
+            .filter_map(|batch| batch.map_door.as_ref())
+            .find(|door| door.id == id)
+            .is_some_and(|door| door.target > 0.5);
+        let target = if is_open { 0.0 } else { 1.0 };
+        for batch in &mut self.batches {
+            if let Some(door) = &mut batch.map_door {
+                if door.id == id {
+                    door.target = target;
+                }
+            }
+        }
+        self.menu.message = if target > 0.5 {
+            "Opening door".into()
+        } else {
+            "Closing door".into()
+        };
+        true
+    }
+    fn update_map_doors(&mut self, dt: f32) {
+        let queue = &self.queue;
+        for batch in &mut self.batches {
+            let (base, buffer, map_door) = (&batch.base, &batch.buffer, &mut batch.map_door);
+            let Some(door) = map_door else {
+                continue;
+            };
+            let difference = door.target - door.angle;
+            if difference.abs() <= 0.0001 {
+                continue;
+            }
+            door.angle += difference.signum() * (dt * 2.5).min(difference.abs());
+            let raw = car_damage::pose_map_door(base, door.pivot, door.door, door.angle);
+            queue.write_buffer(buffer, 0, bytemuck::cast_slice(&raw));
         }
     }
     fn update(&mut self) {
@@ -1816,6 +1891,7 @@ impl State {
                 }
             }
         }
+        self.update_map_doors(dt);
         self.pose_held_gun();
         self.npc_seconds += dt;
         for npc in &self.spawned_peds {
@@ -2292,6 +2368,7 @@ impl State {
                     uv_animation: None,
                     base: Vec::new(),
                     piece: None,
+                    map_door: None,
                 }
             })
             .collect();
@@ -4561,7 +4638,9 @@ impl ApplicationHandler for App {
                             KeyCode::KeyQ | KeyCode::KeyE
                                 if !event.repeat && state.walking && !state.driving =>
                             {
-                                state.arsenal.cycle(code == KeyCode::KeyE);
+                                if code != KeyCode::KeyE || !state.interact_map_door() {
+                                    state.arsenal.cycle(code == KeyCode::KeyE);
+                                }
                             }
                             KeyCode::KeyF if !event.repeat => {
                                 state.toggle_car();
