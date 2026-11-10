@@ -34,6 +34,8 @@ pub struct Streamer {
     retry_after: Option<Instant>,
     connected: bool,
     portals: Vec<InteriorPortal>,
+    // Kept as a staged runtime API until MLO entity placement is wired into scene loading.
+    #[allow(dead_code)]
     mlos: Vec<MloDefinition>,
 }
 impl Streamer {
@@ -86,10 +88,12 @@ impl Streamer {
     }
     /// MLO metadata loaded from resource manifests. Coordinates passed to the
     /// room helpers below are in the MLO's local space, before any instance transform.
+    #[allow(dead_code)]
     pub fn mlo_definitions(&self) -> &[MloDefinition] {
         &self.mlos
     }
     /// Resolve a room by MLO name using local-space bounds.
+    #[allow(dead_code)]
     pub fn mlo_room_at(&self, name: &str, local_position: [f32; 3]) -> Option<usize> {
         self.mlos
             .iter()
@@ -98,6 +102,7 @@ impl Streamer {
     }
     /// Return entity indices reachable from a room through open MLO portals.
     /// Exterior-shell entities (entities without a room) remain visible.
+    #[allow(dead_code)]
     pub fn mlo_visible_entities(&self, name: &str, room: usize) -> Option<Vec<usize>> {
         let mlo = self
             .mlos
