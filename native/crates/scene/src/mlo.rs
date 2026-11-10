@@ -314,7 +314,13 @@ impl MloDefinition {
     /// Convert a GTA SA world-space point to this MLO's local coordinates.
     pub fn local_position_from_world(&self, world: [f32; 3]) -> [f32; 3] {
         let relative = std::array::from_fn(|axis| world[axis] - self.position[axis]);
-        super::rotate(relative, self.rotation)
+        let inverse = [
+            -self.rotation[0],
+            -self.rotation[1],
+            -self.rotation[2],
+            self.rotation[3],
+        ];
+        super::rotate(relative, inverse)
     }
 
     /// Find the most specific room containing a local-space point.
