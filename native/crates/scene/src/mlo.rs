@@ -332,8 +332,13 @@ impl MloDefinition {
     }
 
     pub fn visible_entity_indices(&self, visible_rooms: &[usize]) -> Vec<usize> {
-        let visible: HashSet<_> = visible_rooms.iter().copied().collect();
-        self.entities
+        let visible: HashSet<_> = visible_rooms
+            .iter()
+            .copied()
+            .filter(|&room| room < self.rooms.len())
+            .collect();
+        let mut included: HashSet<usize> = self
+            .entities
             .iter()
             .enumerate()
             .filter_map(|(index, entity)| {
@@ -342,7 +347,23 @@ impl MloDefinition {
                     .is_none_or(|room| visible.contains(&room))
                     .then_some(index)
             })
-            .collect()
+            .collect();
+
+        // Some sidecars describe room membership on the room rather than
+        // repeating it on every entity. Support both representations.
+        for &room in &visible {
+            included.extend(self.rooms[room].entities.iter().copied());
+        }
+        // Portal-owned entities (doors, frames and portal props) are visible
+        // when either endpoint is in the traversed visibility set.
+        for portal in &self.portals {
+            if visible.contains(&portal.room_from) || visible.contains(&portal.room_to) {
+                included.extend(portal.entities.iter().copied());
+            }
+        }
+        let mut indices: Vec<_> = included.into_iter().collect();
+        indices.sort_unstable();
+        indices
     }
 }
 
@@ -464,6 +485,21 @@ mod tests {
         assert_eq!(mlo.room_at([40.0; 3]), None);
         assert_eq!(mlo.visible_rooms(0), vec![0, 1, 2]);
         assert_eq!(mlo.visible_entity_indices(&[0]), vec![0, 2]);
+    }
+
+    #[test]
+    fn room_and_portal_entity_lists_contribute_to_visibility() {
+        let mut mlo = sample();
+        mlo.entities.push(MloEntity {
+            model_id: 18697,
+            position: [0.0; 3],
+            rotation: identity(),
+            room: None,
+        });
+        mlo.rooms[0].entities.push(3);
+        mlo.portals[0].entities.push(3);
+        assert_eq!(mlo.visible_entity_indices(&[0]), vec![0, 2, 3]);
+        assert_eq!(mlo.visible_entity_indices(&[2]), vec![1, 2]);
     }
 
     #[test]
