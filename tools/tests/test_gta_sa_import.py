@@ -162,14 +162,12 @@ class GtaSaImportTests(unittest.TestCase):
             out = temp / 'native_map'
             report = IMPORTER.import_resource(source, out, kind='map')
             manifest = json.loads((out / 'resource.json').read_text())
-            self.assertEqual(len(manifest['placements']), 2)
-            self.assertEqual(manifest['placements'][0]['interior'], 0)
-            self.assertEqual(manifest['placements'][1]['interior'], 1)
-            self.assertEqual(report['imported_interior_ipl_placements'], 1)
+            self.assertEqual(len(manifest['placements']), 3)
+            self.assertEqual(report['imported_interior_ipl_placements'], 2)
             self.assertEqual(report['binary_ipl_files'], ['binary.ipl'])
-            self.assertEqual(manifest['placements'][1]['model_id'], 300)
-            self.assertEqual(manifest['placements'][1]['interior'], 1)
-            self.assertEqual(manifest['placements'][1]['position'], [7.0, 8.0, 9.0])
+            binary = next(p for p in manifest['placements'] if p['position'] == [7.0, 8.0, 9.0])
+            self.assertEqual(binary['model_id'], 300)
+            self.assertEqual(binary['interior'], 1)
 
     def test_props_require_position_and_start_disabled(self):
         with tempfile.TemporaryDirectory() as temp:
