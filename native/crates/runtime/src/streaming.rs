@@ -246,10 +246,63 @@ mod tests {
             retry_after: None,
             connected: true,
             portals: vec![portal.clone(), reverse.clone()],
+            mlos: Vec::new(),
         };
         assert_eq!(stream.portal_at(portal.source, 0), Some(portal));
         assert_eq!(stream.portal_at(reverse.source, 5), Some(reverse.clone()));
         assert!(stream.portal_at([105.0, 200.0, 10.0], 0).is_none());
+    }
+    #[test]
+    fn mlo_room_lookup_and_visibility_are_available_to_streaming() {
+        let mlo = MloDefinition {
+            name: "police_station".into(),
+            entities: vec![
+                sa_scene::mlo::MloEntity {
+                    model_id: 1,
+                    position: [0.0; 3],
+                    rotation: [0.0, 0.0, 0.0, 1.0],
+                    room: Some(0),
+                },
+                sa_scene::mlo::MloEntity {
+                    model_id: 1,
+                    position: [0.0; 3],
+                    rotation: [0.0, 0.0, 0.0, 1.0],
+                    room: None,
+                },
+            ],
+            rooms: vec![sa_scene::mlo::MloRoom {
+                name: "lobby".into(),
+                min: [-5.0; 3],
+                max: [5.0; 3],
+                flags: 0,
+                portal_count: 0,
+                floor_id: 0,
+                blend: 0.0,
+                timecycle: None,
+                exterior_visibility_depth: 0,
+                entities: vec![0],
+            }],
+            portals: Vec::new(),
+            entity_sets: Vec::new(),
+            timecycle_modifiers: Vec::new(),
+        };
+        let (requests, _receiver) = mpsc::sync_channel(1);
+        let (_sender, results) = mpsc::sync_channel(1);
+        let stream = Streamer {
+            requests,
+            results,
+            pending: None,
+            retry_after: None,
+            connected: true,
+            portals: Vec::new(),
+            mlos: vec![mlo],
+        };
+        assert_eq!(
+            stream.mlo_room_at("POLICE_STATION", [0.0, 0.0, 0.0]),
+            Some(0)
+        );
+        assert_eq!(stream.mlo_room_at("missing", [0.0; 3]), None);
+        assert_eq!(stream.mlo_visible_entities("police_station", 0), Some(vec![0, 1]));
     }
     #[test]
     fn retirement_is_nonblocking_preserves_full_queue_and_does_not_mark_loading() {
@@ -262,6 +315,7 @@ mod tests {
             retry_after: None,
             connected: true,
             portals: Vec::new(),
+            mlos: Vec::new(),
         };
         let empty = || Retired::Scene {
             batches: Vec::new(),
