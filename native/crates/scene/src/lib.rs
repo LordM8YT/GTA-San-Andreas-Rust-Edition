@@ -1526,18 +1526,14 @@ mod streaming_tests {
     }
     #[test]
     fn building_door_and_gate_frame_aliases_are_recognized_without_vehicle_names() {
-        let piece = |frame_name: &str| sa_assets::VehiclePiece {
-            geometry: sa_assets::Geometry {
-                positions: Vec::new(),
-                uvs: Vec::new(),
-                colors: Vec::new(),
-                materials: Vec::new(),
-                triangles: Vec::new(),
-            },
-            frame_name: frame_name.into(),
-            part: sa_assets::VehiclePart::Body,
-            damaged: false,
-            pivot: [1.0, 2.0, 3.0],
+        let fixture = include_bytes!("../../../../mods/native-room-demo/room.dff");
+        let template = sa_assets::decode_map_dff_pieces(fixture).unwrap()[0].clone();
+        let piece = |frame_name: &str| {
+            let mut piece = template.clone();
+            piece.frame_name = frame_name.into();
+            piece.part = sa_assets::VehiclePart::Body;
+            piece.pivot = [1.0, 2.0, 3.0];
+            piece
         };
         for (frame, expected) in [
             ("door", 0),
