@@ -159,7 +159,7 @@ impl CollisionWorld {
             ((pos.z - r) / CELL).floor() as i32,
             ((pos.z + r) / CELL).floor() as i32,
         );
-        let mut seen = HashSet::new();
+        let mut seen: HashSet<usize> = HashSet::new();
         for x in x0..=x1 {
             for z in z0..=z1 {
                 if let Some(indices) = self.cells.get(&(x, z)) {
