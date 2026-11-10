@@ -2,6 +2,7 @@
 pub mod collision;
 pub mod handling;
 pub mod lights;
+pub mod mlo;
 mod mods;
 mod mta_map;
 pub use mods::{share_resource_folders, share_resources};
