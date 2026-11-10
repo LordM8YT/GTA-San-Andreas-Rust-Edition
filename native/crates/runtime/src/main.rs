@@ -1383,6 +1383,9 @@ impl State {
                         portal.destination[2],
                         ORIGIN[1] - portal.destination[1],
                     ));
+                    self.yaw = streaming::camera_yaw_from_sa_heading(portal.exit_angle);
+                    self.ped_yaw = self.yaw;
+                    self.pitch = 0.0;
                     self.portal_exit_guard = Some((portal.destination, portal.radius));
                     self.menu.message = if portal.name.is_empty() {
                         "Entering interior".into()
