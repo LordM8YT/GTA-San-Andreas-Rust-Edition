@@ -156,6 +156,7 @@ pub(super) fn duplicate(device: &wgpu::Device, batches: &[GpuBatch]) -> Vec<GpuB
             uv_animation: b.uv_animation.clone(),
             base: b.base.clone(),
             piece: b.piece,
+            map_door: None,
         })
         .collect()
 }
