@@ -91,11 +91,16 @@ pub struct InteriorPortal {
 impl InteriorPortal {
     pub fn validate(&self) -> Result<()> {
         ensure!(
-            self.source.iter().chain(self.destination.iter()).all(|v| v.is_finite() && v.abs() <= 10000.0),
+            self.source
+                .iter()
+                .chain(self.destination.iter())
+                .all(|v| v.is_finite() && v.abs() <= 10000.0),
             "interior portal has invalid coordinates"
         );
         ensure!(
-            self.radius.iter().all(|v| v.is_finite() && *v > 0.0 && *v <= 100.0),
+            self.radius
+                .iter()
+                .all(|v| v.is_finite() && *v > 0.0 && *v <= 100.0),
             "interior portal has invalid trigger bounds"
         );
         ensure!(
@@ -364,8 +369,8 @@ fn placements(
                 continue;
             }
             if section == "enex" {
-                let portal = parse_enex(&line)
-                    .with_context(|| format!("{} ENEX record", path.display()))?;
+                let portal =
+                    parse_enex(&line).with_context(|| format!("{} ENEX record", path.display()))?;
                 if let Some(reverse) = portal.reverse() {
                     portals.push(reverse);
                 }
