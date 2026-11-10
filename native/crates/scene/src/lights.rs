@@ -24,6 +24,7 @@ fn batch<'a>(batches: &'a mut HashMap<String, Batch>, key: &str) -> &'a mut Batc
         animated: false,
         uv_animation: None,
         map_door: None,
+        mlo_entity: None,
     })
 }
 
