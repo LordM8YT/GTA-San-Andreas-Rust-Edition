@@ -172,7 +172,7 @@ impl CollisionWorld {
         indices.sort_unstable();
         if !self.open_door_bounds.is_empty() {
             indices.retain(|&index| {
-                let triangle = self.triangles[*index];
+                let triangle = self.triangles[index];
                 // Keep floors/ceilings even when they overlap the doorway AABB.
                 if triangle.normal.y.abs() >= 0.55 {
                     return true;
