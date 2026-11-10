@@ -1278,6 +1278,7 @@ mod tests {
             alpha: false,
             animated: false,
             uv_animation: None,
+            map_door: None,
             vertices: points
                 .iter()
                 .map(|p| Vertex {
@@ -1589,6 +1590,7 @@ mod tests {
             alpha: false,
             animated: false,
             uv_animation: None,
+            map_door: None,
             vertices: [
                 [-100.0, 0.0, -100.0],
                 [100.0, 0.0, -100.0],
