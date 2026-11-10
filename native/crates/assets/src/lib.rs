@@ -452,8 +452,8 @@ fn map_door_from_frame(name: &str) -> Option<u8> {
         .find_map(|suffix| name.strip_suffix(suffix))
         .unwrap_or(name);
     Some(match base {
-        "door" | "door_l" | "door_left" | "gate" | "gate_l" | "gate_left"
-        | "garage_door" | "garage_door_l" | "door_1" | "door1" | "gate_1" | "gate1" => 0,
+        "door" | "door_l" | "door_left" | "gate" | "gate_l" | "gate_left" | "garage_door"
+        | "garage_door_l" | "door_1" | "door1" | "gate_1" | "gate1" => 0,
         "door_r" | "door_right" | "gate_r" | "gate_right" | "door_2" | "door2" | "gate_2"
         | "gate2" => 1,
         "door_3" | "door3" | "gate_3" | "gate3" => 2,
