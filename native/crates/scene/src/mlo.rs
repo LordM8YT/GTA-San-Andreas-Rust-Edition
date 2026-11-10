@@ -284,9 +284,7 @@ impl MloDefinition {
             .iter()
             .enumerate()
             .filter(|(_, room)| {
-                (0..3).all(|axis| {
-                    point[axis] >= room.min[axis] && point[axis] <= room.max[axis]
-                })
+                (0..3).all(|axis| point[axis] >= room.min[axis] && point[axis] <= room.max[axis])
             })
             .min_by(|(_, a), (_, b)| {
                 let volume = |room: &MloRoom| {
