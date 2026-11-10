@@ -166,9 +166,29 @@ def vehicle_dictionaries(paths, names):
     return {name: records[name] for name in names}
 
 
+def mlo_metadata(paths, root, files):
+    """Load explicit SA-compatible MLO metadata sidecars."""
+    definitions = []
+    for relative in paths:
+        require(any(p.relative_to(root).as_posix() == relative and p.suffix.lower() == '.json'
+                    for p in files), 'MLO metadata must be an exact relative JSON path inside the resource')
+        path = root / relative
+        require(path.stat().st_size <= 256 * 1024, 'MLO metadata exceeds 256 KiB')
+        data = path.read_bytes()
+        require(b'\0' not in data, 'MLO metadata contains NUL bytes')
+        value = json.loads(data.decode('utf-8-sig'))
+        entries = value if isinstance(value, list) else [value]
+        require(0 < len(entries) <= 16, 'MLO metadata must contain 1-16 definitions')
+        for entry in entries:
+            require(isinstance(entry, dict), 'Each MLO definition must be a JSON object')
+            definitions.append(entry)
+            require(len(definitions) <= 64, 'MLO definition limit (64)')
+    return definitions
+
+
 def import_resource(root, output, kind, requested=(), position=None, model_id=30000, enable=False,
                     ymap=None, offset=(0., 0., 0.), ytyp=(), base_player=None, base_ifp=None,
-                    base_txd=None, bone_map=None, skeleton=None, texture_map=(), collision_map=(), world_collision=(), vehicles_meta=(), native_handling=()):
+                    base_txd=None, bone_map=None, skeleton=None, texture_map=(), collision_map=(), world_collision=(), vehicles_meta=(), native_handling=(), mlo_metadata_files=()):
     root = root.absolute()
     output = output.absolute()
     require(not output.exists(), 'Output already exists; choose a new directory')
@@ -186,6 +206,11 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
     for path in ytyp:
         require(any(p.relative_to(root).as_posix() == path and asset_name(p)[1] == '.ytyp' for p in files),
                 'YTYP must be an exact relative .ytyp or .ytyp.xml path inside the resource')
+    require(len(mlo_metadata_files) <= 16 and len(set(mlo_metadata_files)) == len(mlo_metadata_files),
+            'Select at most 16 distinct MLO metadata files')
+    for path in mlo_metadata_files:
+        require(any(p.relative_to(root).as_posix() == path and p.suffix.lower() == '.json' for p in files),
+                'MLO metadata must be an exact relative JSON path inside the resource')
     require(not vehicles_meta or kind == 'vehicles', '--vehicles-meta requires --kind vehicles')
     require(len(vehicles_meta) <= 16 and len(set(vehicles_meta)) == len(vehicles_meta),
             'Select at most 16 distinct vehicles.meta files')
@@ -302,6 +327,11 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
                             for index, name in enumerate(names)}
             report['vehicle_metadata'] = dict(sources=list(vehicles_meta), texture_dictionaries=associations)
             report['warnings'].append('vehicles.meta supplies only modelName/txdName pairing; handling, GXT labels, seats, audio, flags and tuning are not imported from this metadata.')
+        mlo_definitions = mlo_metadata(mlo_metadata_files, source, files) if mlo_metadata_files else []
+        if mlo_definitions:
+            manifest['mlo'] = mlo_definitions
+            report['mlo'] = dict(sources=list(mlo_metadata_files), definitions=len(mlo_definitions))
+            report['warnings'].append('MLO metadata is explicit SA-compatible room/portal data; GTA V YTYP/YMAP binary MLO parsing is not implied.')
         handling_profiles = {model: handling_converter.profile(source / path, converter.read)
                              for model, path in handling_choices.items()}
         if handling_profiles:
@@ -438,6 +468,7 @@ def main():
     parser.add_argument('--world-collision', action='append', default=[], help='Explicit world-space YBN or YBN XML path; map only, translated by --offset')
     parser.add_argument('--ymap', help='Exact relative Legacy .ymap or CodeWalker .ymap.xml path for static map placements')
     parser.add_argument('--ytyp', action='append', default=[], help='Exact relative static Legacy .ytyp or .ytyp.xml path; repeat for aliases/dictionaries')
+    parser.add_argument('--mlo-metadata', action='append', default=[], help='Exact relative JSON file describing SA-compatible MLO rooms/portals/entities; repeat')
     parser.add_argument('--offset', type=float, nargs=3, default=[0., 0., 0.], help='Translate imported map in SA world coordinates')
     parser.add_argument('--model', action='append', default=[], help='Exact relative model path; repeat to select assets')
     parser.add_argument('--position', type=float, nargs=3, help='Prop preview origin; models placed 3 m apart')
@@ -448,7 +479,7 @@ def main():
         if args.out:
             report = import_resource(args.input, args.out, args.kind, args.model, args.position, args.model_id, args.enable,
                                      args.ymap, args.offset, args.ytyp, args.base_player, args.base_ifp, args.base_txd,
-                                     args.bone_map, args.skeleton, args.texture, args.collision, args.world_collision, args.vehicles_meta, args.native_handling)
+                                     args.bone_map, args.skeleton, args.texture, args.collision, args.world_collision, args.vehicles_meta, args.native_handling, args.mlo_metadata)
         else:
             _, report = inspect_resource(args.input)
         print(json.dumps(report, indent=2))
