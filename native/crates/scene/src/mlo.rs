@@ -48,6 +48,10 @@ pub struct MloRoom {
     #[serde(default)]
     pub flags: u32,
     #[serde(default)]
+    pub portal_count: u32,
+    #[serde(default)]
+    pub floor_id: i32,
+    #[serde(default)]
     pub blend: f32,
     #[serde(default)]
     pub timecycle: Option<String>,
@@ -65,6 +69,8 @@ pub struct MloPortal {
     pub corners: Vec<[f32; 3]>,
     #[serde(default)]
     pub flags: u32,
+    #[serde(default)]
+    pub mirror_priority: u32,
     #[serde(default = "default_opacity")]
     pub opacity: f32,
     #[serde(default)]
@@ -78,6 +84,8 @@ pub struct MloPortal {
 #[derive(Clone, Debug, Deserialize)]
 pub struct MloEntitySet {
     pub name: String,
+    #[serde(default)]
+    pub locations: Vec<u32>,
     #[serde(default)]
     pub entities: Vec<usize>,
 }
@@ -238,6 +246,11 @@ impl MloDefinition {
                 "MLO entity set {} references an unknown entity",
                 set.name
             );
+            ensure!(
+                set.locations.is_empty() || set.locations.len() == set.entities.len(),
+                "MLO entity set {} has mismatched locations and entities",
+                set.name
+            );
         }
 
         for (index, modifier) in self.timecycle_modifiers.iter().enumerate() {
@@ -349,6 +362,8 @@ mod tests {
                     min: [-5.0; 3],
                     max: [5.0; 3],
                     flags: 0,
+                    portal_count: 1,
+                    floor_id: 0,
                     blend: 0.0,
                     timecycle: None,
                     exterior_visibility_depth: 0,
@@ -359,6 +374,8 @@ mod tests {
                     min: [5.0, -5.0, -5.0],
                     max: [15.0, 5.0, 5.0],
                     flags: 0,
+                    portal_count: 2,
+                    floor_id: 0,
                     blend: 0.0,
                     timecycle: None,
                     exterior_visibility_depth: 0,
@@ -369,6 +386,8 @@ mod tests {
                     min: [15.0, -5.0, -5.0],
                     max: [25.0, 5.0, 5.0],
                     flags: 0,
+                    portal_count: 1,
+                    floor_id: 0,
                     blend: 0.0,
                     timecycle: None,
                     exterior_visibility_depth: 0,
@@ -386,6 +405,7 @@ mod tests {
                         [5.0, -1.0, 1.0],
                     ],
                     flags: 0,
+                    mirror_priority: 0,
                     opacity: 1.0,
                     audio_occlusion: 0.0,
                     open: true,
@@ -401,6 +421,7 @@ mod tests {
                         [15.0, -1.0, 1.0],
                     ],
                     flags: 0,
+                    mirror_priority: 0,
                     opacity: 1.0,
                     audio_occlusion: 0.0,
                     open: true,
@@ -409,6 +430,7 @@ mod tests {
             ],
             entity_sets: vec![MloEntitySet {
                 name: "night_shift".into(),
+                locations: vec![0],
                 entities: vec![1],
             }],
             timecycle_modifiers: vec![],
