@@ -1078,7 +1078,10 @@ mod tests {
             assert_eq!(map_pieces[0].frame_name, name);
             assert_eq!(
                 map_pieces[0].part,
-                VehiclePart::from_frame(name).unwrap_or(VehiclePart::Body),
+                map_door_from_frame(name)
+                    .map(VehiclePart::Door)
+                    .or_else(|| VehiclePart::from_frame(name))
+                    .unwrap_or(VehiclePart::Body),
                 "map atomic keeps named door/panel metadata: {name}"
             );
             let pieces = decode_vehicle_pieces(&fixture).unwrap();
