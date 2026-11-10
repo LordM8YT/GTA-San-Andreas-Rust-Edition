@@ -279,11 +279,13 @@ def handling_profiles(paths, model_to_id):
 
 def parse_binary_ipl(data, name):
     """Decode a bounded GTA SA bnry IPL instance table (40-byte records)."""
-    require(len(data) >= 32 and data[:4] == b'bnry',
+    # Binary IPL uses an 0x4C-byte header (18 little-endian words after magic).
+    # The INST offset is the seventh word at byte 0x1C, commonly 0x4C.
+    require(len(data) >= 0x4C and data[:4] == b'bnry',
             f'{name}: invalid binary IPL header')
     count, = struct.unpack_from('<I', data, 4)
     offset, = struct.unpack_from('<I', data, 28)
-    require(count <= 100000 and offset >= 32 and
+    require(count <= 100000 and offset >= 0x4C and
             offset + count * 40 <= len(data),
             f'{name}: binary IPL instance table is outside file bounds')
     placements = []
