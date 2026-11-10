@@ -192,6 +192,38 @@ mod tests {
         close(camera_yaw_from_sa_heading(270.0), -std::f32::consts::FRAC_PI_2);
     }
     #[test]
+    fn resource_enex_portals_work_in_both_directions_and_respect_bounds() {
+        let portal = InteriorPortal {
+            source: [100.0, 200.0, 10.0],
+            destination: [250.0, 300.0, 1000.0],
+            radius: [1.5, 1.5, 3.0],
+            source_interior: 0,
+            target_interior: 5,
+            enter_angle: 90.0,
+            exit_angle: 180.0,
+            flags: 0,
+            name: "ppalace".into(),
+        };
+        portal.validate().unwrap();
+        let reverse = portal.reverse().unwrap();
+        let (requests, _receiver) = mpsc::sync_channel(1);
+        let (_sender, results) = mpsc::sync_channel(1);
+        let stream = Streamer {
+            requests,
+            results,
+            pending: None,
+            retry_after: None,
+            connected: true,
+            portals: vec![portal.clone(), reverse.clone()],
+        };
+        assert_eq!(stream.portal_at(portal.source, 0), Some(portal));
+        assert_eq!(
+            stream.portal_at(reverse.source, 5),
+            Some(reverse.clone())
+        );
+        assert!(stream.portal_at([105.0, 200.0, 10.0], 0).is_none());
+    }
+    #[test]
     fn retirement_is_nonblocking_preserves_full_queue_and_does_not_mark_loading() {
         let (requests, receiver) = mpsc::sync_channel::<Work>(1);
         let (_sender, results) = mpsc::sync_channel(1);
