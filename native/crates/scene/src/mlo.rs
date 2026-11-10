@@ -275,10 +275,28 @@ impl MloDefinition {
     }
 
     /// Find the most specific room containing a local-space point.
+    ///
+    /// MLO room bounds may overlap (for example, a small office inside a
+    /// larger corridor volume). Prefer the smallest containing volume rather
+    /// than whichever room happened to appear first in resource.json.
     pub fn room_at(&self, point: [f32; 3]) -> Option<usize> {
-        self.rooms.iter().position(|room| {
-            (0..3).all(|axis| point[axis] >= room.min[axis] && point[axis] <= room.max[axis])
-        })
+        self.rooms
+            .iter()
+            .enumerate()
+            .filter(|(_, room)| {
+                (0..3).all(|axis| {
+                    point[axis] >= room.min[axis] && point[axis] <= room.max[axis]
+                })
+            })
+            .min_by(|(_, a), (_, b)| {
+                let volume = |room: &MloRoom| {
+                    (0..3)
+                        .map(|axis| room.max[axis] - room.min[axis])
+                        .product::<f32>()
+                };
+                volume(a).total_cmp(&volume(b))
+            })
+            .map(|(index, _)| index)
     }
 
     /// Rooms visible through the currently open portal graph. Closed portals
@@ -446,6 +464,25 @@ mod tests {
         assert_eq!(mlo.room_at([40.0; 3]), None);
         assert_eq!(mlo.visible_rooms(0), vec![0, 1, 2]);
         assert_eq!(mlo.visible_entity_indices(&[0]), vec![0, 2]);
+    }
+
+    #[test]
+    fn overlapping_room_bounds_choose_the_smallest_containing_room() {
+        let mut mlo = sample();
+        mlo.rooms.push(MloRoom {
+            name: "small_office".into(),
+            min: [-1.0; 3],
+            max: [1.0; 3],
+            flags: 0,
+            portal_count: 0,
+            floor_id: 0,
+            blend: 0.0,
+            timecycle: None,
+            exterior_visibility_depth: 0,
+            entities: Vec::new(),
+        });
+        assert_eq!(mlo.room_at([0.0; 3]), Some(3));
+        assert_eq!(mlo.room_at([4.0, 0.0, 0.0]), Some(0));
     }
 
     #[test]
