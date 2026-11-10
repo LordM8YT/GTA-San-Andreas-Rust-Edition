@@ -569,7 +569,7 @@ mod tests {
             opened.step(&world, Vec3::X * 4.0, false, 1.0 / 60.0);
         }
         assert!(opened.grounded);
-        assert!(opened.feet.x > 3.0, "open doorway stopped at {:?}", opened.feet);
+        assert!(opened.feet.x > 3.0, "open doorway should be traversable");
     }
     #[test]
     fn floor_and_wall() {
