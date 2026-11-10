@@ -187,7 +187,10 @@ mod tests {
             assert!((actual - expected).abs() < 0.0001);
         };
         close(camera_yaw_from_sa_heading(0.0), std::f32::consts::PI);
-        close(camera_yaw_from_sa_heading(90.0), std::f32::consts::FRAC_PI_2);
+        close(
+            camera_yaw_from_sa_heading(90.0),
+            std::f32::consts::FRAC_PI_2,
+        );
         close(camera_yaw_from_sa_heading(180.0), 0.0);
         close(camera_yaw_from_sa_heading(270.0), -std::f32::consts::FRAC_PI_2);
     }
