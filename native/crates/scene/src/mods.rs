@@ -610,7 +610,8 @@ impl WorldLoader {
                 self.resources.textures.len() + manifest.texture_overrides.len() <= 512,
                 "total mod texture budget"
             );
-            let mlo_model_ids: HashSet<i32> = manifest.models.iter().map(|model| model.id).collect();
+            let mlo_model_ids: HashSet<i32> =
+                manifest.models.iter().map(|model| model.id).collect();
             for model in manifest.models {
                 ensure!(model.id >= 0, "negative mod model ID");
                 let key = format!("mod_{}_{}", folder_name.to_ascii_lowercase(), model.id);
@@ -670,10 +671,14 @@ impl WorldLoader {
                 );
             }
             for mlo in manifest.mlo {
-                mlo.validate(&mlo_model_ids).with_context(|| format!("{name}: invalid MLO {}", mlo.name))?;
+                mlo.validate(&mlo_model_ids)
+                    .with_context(|| format!("{name}: invalid MLO {}", mlo.name))?;
                 self.resources.mlo.push(mlo);
             }
-            ensure!(self.resources.mlo.len() <= 64, "total MLO definition limit (64)");
+            ensure!(
+                self.resources.mlo.len() <= 64,
+                "total MLO definition limit (64)"
+            );
             for instance in manifest.placements {
                 ensure!(
                     self.defs.contains_key(&instance.model_id),
