@@ -467,6 +467,30 @@ fn texture_key(key: &str) -> &str {
     let key = key.split_once("|map|").map_or(key, |(base, _)| base);
     key.split_once("|uv|").map_or(key, |(base, _)| base)
 }
+/// Resolve common non-vehicle door/gate frame names used by map DFFs.
+/// Vehicle-style names (door_lf_dummy etc.) are already decoded by the asset
+/// parser; these aliases let ordinary building doors use their own frame
+/// origin as the hinge without requiring vehicle naming conventions.
+fn map_door_index(piece: &sa_assets::VehiclePiece) -> Option<u8> {
+    if let sa_assets::VehiclePart::Door(index) = piece.part {
+        return Some(index);
+    }
+    let frame = piece
+        .frame_name
+        .strip_suffix("_dummy")
+        .or_else(|| piece.frame_name.strip_suffix("_ok"))
+        .or_else(|| piece.frame_name.strip_suffix("_dam"))
+        .unwrap_or(&piece.frame_name);
+    Some(match frame {
+        "door" | "door_l" | "door_left" | "gate" | "gate_l" | "gate_left"
+        | "garage_door" | "garage_door_l" | "door_1" | "door1" | "gate_1" | "gate1" => 0,
+        "door_r" | "door_right" | "gate_r" | "gate_right" | "door_2" | "door2"
+        | "gate_2" | "gate2" => 1,
+        "door_3" | "door3" | "gate_3" | "gate3" => 2,
+        "door_4" | "door4" | "gate_4" | "gate4" => 3,
+        _ => return None,
+    })
+}
 /// Add a custom map DFF as independently batched RenderWare atomics.
 /// Each atomic gets a stable per-placement key while retaining the original
 /// TXD/material lookup key (the `|map|` suffix is draw metadata only).
@@ -489,7 +513,7 @@ fn add_map_pieces(
         )?;
         for (key, mut batch) in atomic {
             let map_key = format!("|map|{}_{}_{}_{}", r.id, r.uid, index, piece.frame_name);
-            if let sa_assets::VehiclePart::Door(door) = piece.part {
+            if let Some(door) = map_door_index(piece) {
                 batch.animated = true;
                 batch.map_door = Some(MapDoor {
                     id: format!(
@@ -1499,6 +1523,33 @@ mod streaming_tests {
             uv_tracks: HashMap::new(),
         };
         (folder, loader)
+    }
+    #[test]
+    fn building_door_and_gate_frame_aliases_are_recognized_without_vehicle_names() {
+        let piece = |frame_name: &str| sa_assets::VehiclePiece {
+            geometry: sa_assets::Geometry {
+                positions: Vec::new(),
+                uvs: Vec::new(),
+                colors: Vec::new(),
+                materials: Vec::new(),
+                triangles: Vec::new(),
+            },
+            frame_name: frame_name.into(),
+            part: sa_assets::VehiclePart::Body,
+            damaged: false,
+            pivot: [1.0, 2.0, 3.0],
+        };
+        for (frame, expected) in [
+            ("door", 0),
+            ("door_left_dummy", 0),
+            ("door2", 1),
+            ("gate_right_ok", 1),
+            ("garage_door", 0),
+            ("door4_dam", 3),
+        ] {
+            assert_eq!(map_door_index(&piece(frame)), Some(expected), "{frame}");
+        }
+        assert_eq!(map_door_index(&piece("window")), None);
     }
     #[test]
     fn custom_map_atomics_are_separate_batches_with_resolvable_texture_keys() {
