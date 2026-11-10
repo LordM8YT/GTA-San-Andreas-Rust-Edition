@@ -213,3 +213,67 @@ impl MloDefinition {
         }).collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample() -> MloDefinition {
+        MloDefinition {
+            name: "police_station".into(),
+            entities: vec![
+                MloEntity { model_id: 18697, position: [0.0; 3], rotation: identity(), room: Some(0) },
+                MloEntity { model_id: 18698, position: [1.0, 0.0, 0.0], rotation: identity(), room: Some(1) },
+                MloEntity { model_id: 18699, position: [0.0; 3], rotation: identity(), room: None },
+            ],
+            rooms: vec![
+                MloRoom { name: "lobby".into(), min: [-5.0; 3], max: [5.0; 3], flags: 0, blend: 0.0, timecycle: None, exterior_visibility_depth: 0, entities: vec![0] },
+                MloRoom { name: "office".into(), min: [5.0, -5.0, -5.0], max: [15.0, 5.0, 5.0], flags: 0, blend: 0.0, timecycle: None, exterior_visibility_depth: 0, entities: vec![1] },
+                MloRoom { name: "cells".into(), min: [15.0, -5.0, -5.0], max: [25.0, 5.0, 5.0], flags: 0, blend: 0.0, timecycle: None, exterior_visibility_depth: 0, entities: vec![] },
+            ],
+            portals: vec![
+                MloPortal { room_from: 0, room_to: 1, corners: vec![[5.0,-1.0,-1.0],[5.0,1.0,-1.0],[5.0,1.0,1.0],[5.0,-1.0,1.0]], flags: 0, opacity: 1.0, audio_occlusion: 0.0, open: true, entities: vec![] },
+                MloPortal { room_from: 1, room_to: 2, corners: vec![[15.0,-1.0,-1.0],[15.0,1.0,-1.0],[15.0,1.0,1.0],[15.0,-1.0,1.0]], flags: 0, opacity: 1.0, audio_occlusion: 0.0, open: true, entities: vec![] },
+            ],
+            entity_sets: vec![MloEntitySet { name: "night_shift".into(), entities: vec![1] }],
+            timecycle_modifiers: vec![],
+        }
+    }
+
+    #[test]
+    fn validates_mlo_and_resolves_rooms_and_portal_visibility() {
+        let mlo = sample();
+        let ids = HashSet::from([18697, 18698, 18699]);
+        mlo.validate(&ids).unwrap();
+        assert_eq!(mlo.room_at([0.0; 3]), Some(0));
+        assert_eq!(mlo.room_at([10.0, 0.0, 0.0]), Some(1));
+        assert_eq!(mlo.room_at([40.0; 3]), None);
+        assert_eq!(mlo.visible_rooms(0), vec![0, 1, 2]);
+        assert_eq!(mlo.visible_entity_indices(&[0]), vec![0, 2]);
+    }
+
+    #[test]
+    fn closed_portal_blocks_visibility_and_invalid_references_are_rejected() {
+        let mut mlo = sample();
+        mlo.portals[1].open = false;
+        assert_eq!(mlo.visible_rooms(0), vec![0, 1]);
+        assert_eq!(mlo.visible_rooms(99), Vec::<usize>::new());
+        let ids = HashSet::from([18697, 18698, 18699]);
+        mlo.entities[0].room = Some(99);
+        assert!(mlo.validate(&ids).is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_models_bad_bounds_and_invalid_portal_endpoints() {
+        let ids = HashSet::from([18697, 18698, 18699]);
+        let mut mlo = sample();
+        mlo.entities[0].model_id = 99999;
+        assert!(mlo.validate(&ids).is_err());
+        let mut mlo = sample();
+        mlo.rooms[0].max[0] = mlo.rooms[0].min[0];
+        assert!(mlo.validate(&ids).is_err());
+        let mut mlo = sample();
+        mlo.portals[0].room_to = 77;
+        assert!(mlo.validate(&ids).is_err());
+    }
+}
