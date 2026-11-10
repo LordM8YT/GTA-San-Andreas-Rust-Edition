@@ -277,7 +277,7 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
         fingerprints = {}
         snapshot_bytes = 0
         for path in files:
-            if asset_name(path)[1] in ('.yft', '.ydr', '.ydd', '.ytd', '.ymap', '.ytyp', '.ybn') or path.suffix.lower() == '.dds' or path.relative_to(root).as_posix() in vehicles_meta or path.relative_to(root).as_posix() in handling_choices.values():
+            if asset_name(path)[1] in ('.yft', '.ydr', '.ydd', '.ytd', '.ymap', '.ytyp', '.ybn') or path.suffix.lower() == '.dds' or path.relative_to(root).as_posix() in vehicles_meta or path.relative_to(root).as_posix() in handling_choices.values() or path.relative_to(root).as_posix() in mlo_metadata_files:
                 require(not path.is_symlink() and path.resolve().is_relative_to(root.resolve()), 'Source changed during import')
                 data = converter.read(path, 128 * 1024 * 1024)
                 snapshot_bytes += len(data)
@@ -327,7 +327,7 @@ def import_resource(root, output, kind, requested=(), position=None, model_id=30
                             for index, name in enumerate(names)}
             report['vehicle_metadata'] = dict(sources=list(vehicles_meta), texture_dictionaries=associations)
             report['warnings'].append('vehicles.meta supplies only modelName/txdName pairing; handling, GXT labels, seats, audio, flags and tuning are not imported from this metadata.')
-        mlo_definitions = mlo_metadata(mlo_metadata_files, source, files) if mlo_metadata_files else []
+        mlo_definitions = mlo_metadata(mlo_metadata_files, source, list(source.rglob('*'))) if mlo_metadata_files else []
         if mlo_definitions:
             manifest['mlo'] = mlo_definitions
             report['mlo'] = dict(sources=list(mlo_metadata_files), definitions=len(mlo_definitions))
