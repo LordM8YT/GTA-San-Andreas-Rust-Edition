@@ -34,8 +34,7 @@ pub struct Streamer {
     retry_after: Option<Instant>,
     connected: bool,
     portals: Vec<InteriorPortal>,
-    // Kept as a staged runtime API until MLO entity placement is wired into scene loading.
-    #[allow(dead_code)]
+    // Definitions are retained for per-frame room and portal visibility checks.
     mlos: Vec<MloDefinition>,
 }
 impl Streamer {
