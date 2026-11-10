@@ -146,7 +146,9 @@ impl MloDefinition {
             "MLO entity limit ({MAX_ENTITIES})"
         );
         ensure!(
-            self.position.iter().all(|v| v.is_finite() && v.abs() <= 10000.0),
+            self.position
+                .iter()
+                .all(|v| v.is_finite() && v.abs() <= 10000.0),
             "MLO instance has invalid world position"
         );
         ensure!(
