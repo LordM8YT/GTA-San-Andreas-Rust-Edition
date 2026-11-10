@@ -296,7 +296,12 @@ impl MloDefinition {
 
     /// Convert an entity's MLO-local transform into GTA SA world space.
     pub fn world_entity_transform(&self, entity: &MloEntity) -> ([f32; 3], [f32; 4]) {
-        let inverse = [-self.rotation[0], -self.rotation[1], -self.rotation[2], self.rotation[3]];
+        let inverse = [
+            -self.rotation[0],
+            -self.rotation[1],
+            -self.rotation[2],
+            self.rotation[3],
+        ];
         let local = super::rotate(entity.position, inverse);
         let position = std::array::from_fn(|axis| self.position[axis] + local[axis]);
         let [ax, ay, az, aw] = self.rotation;

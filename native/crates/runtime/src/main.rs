@@ -2237,9 +2237,9 @@ impl State {
             ORIGIN[1] - self.position.z,
             self.position.y,
         ];
-        self.streamer.as_ref().is_none_or(|streamer| {
-            streamer.mlo_entity_visible(mlo_index, entity_index, world)
-        })
+        self.streamer
+            .as_ref()
+            .is_none_or(|streamer| streamer.mlo_entity_visible(mlo_index, entity_index, world))
     }
     fn drawn_batches<'a>(
         &'a self,
