@@ -204,6 +204,7 @@ mod tests {
                 alpha: false,
                 animated: false,
                 uv_animation: None,
+                map_door: None,
             }])
         };
         let save = fixture();
