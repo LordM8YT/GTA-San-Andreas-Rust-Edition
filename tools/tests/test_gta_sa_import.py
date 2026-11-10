@@ -150,7 +150,9 @@ class GtaSaImportTests(unittest.TestCase):
             (source / 'map.ide').write_text('objs\n300, prop, props, 100, 0\nend\n', encoding='utf-8')
             (source / 'map.ipl').write_text(
                 'inst\n300, prop, 0, 1, 2, 3, 0, 0, 0, 1, -1\n'
-                '300, prop, 1, 4, 5, 6, 0, 0, 0, 1, -1\nend\n', encoding='utf-8')
+                '300, prop, 1, 4, 5, 6, 0, 0, 0, 1, -1\nend\n'
+                'enex\n100, 200, 10, 90, 1.5, 1.5, 3, 250, 300, 1000, 180, 5, 0, "ppalace", 0, 24, 0, 0\nend\n',
+                encoding='utf-8')
             binary_header = bytearray(0x4C)
             binary_header[:4] = b'bnry'
             struct.pack_into('<I', binary_header, 4, 1)
@@ -164,6 +166,11 @@ class GtaSaImportTests(unittest.TestCase):
             manifest = json.loads((out / 'resource.json').read_text())
             self.assertEqual(len(manifest['placements']), 3)
             self.assertEqual(report['imported_interior_ipl_placements'], 2)
+            self.assertEqual(report['imported_interior_portals'], 1)
+            self.assertEqual(manifest['interior_portals'][0]['source'], [100.0, 200.0, 10.0])
+            self.assertEqual(manifest['interior_portals'][0]['destination'], [250.0, 300.0, 1000.0])
+            self.assertEqual(manifest['interior_portals'][0]['target_interior'], 5)
+            self.assertEqual(manifest['interior_portals'][0]['name'], 'ppalace')
             self.assertEqual(report['binary_ipl_files'], ['binary.ipl'])
             binary = next(p for p in manifest['placements'] if p['position'] == [7.0, 8.0, 9.0])
             self.assertEqual(binary['model_id'], 300)
