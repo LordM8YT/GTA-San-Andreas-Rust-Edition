@@ -967,6 +967,23 @@ impl WorldLoader {
                 x * x + y * y <= (range + 1600.0).powi(2)
             })
             .collect();
+        // MLO entities are real scene placements, not metadata-only records.
+        // Their local transforms are composed with the owning MLO instance
+        // before the ordinary model, material, door and collision pipeline.
+        for mlo in &self.resources.mlo {
+            if i32::from(mlo.interior) != interior {
+                continue;
+            }
+            let dx = mlo.position[0] - center[0];
+            let dy = mlo.position[1] - center[1];
+            if dx * dx + dy * dy > (radius + 1600.0).powi(2) {
+                continue;
+            }
+            for entity in &mlo.entities {
+                let (position, rotation) = mlo.world_entity_transform(entity);
+                rows.push(placement(entity.model_id, interior, position, rotation)?);
+            }
+        }
         // Detailed placements first, nearest first. LOD groups are selected
         // below, and a dense region sheds its farthest scenery instead of
         // failing to load.

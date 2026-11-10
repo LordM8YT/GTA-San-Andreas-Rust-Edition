@@ -16,6 +16,15 @@ const MAX_TIME_CYCLE_MODIFIERS: usize = 64;
 #[derive(Clone, Debug, Deserialize)]
 pub struct MloDefinition {
     pub name: String,
+    /// World-space origin of this MLO instance in GTA SA coordinates.
+    #[serde(default)]
+    pub position: [f32; 3],
+    /// World-space orientation of this MLO instance (x, y, z, w).
+    #[serde(default = "identity")]
+    pub rotation: [f32; 4],
+    /// GTA SA interior dimension used when streaming this MLO.
+    #[serde(default)]
+    pub interior: u8,
     #[serde(default)]
     pub entities: Vec<MloEntity>,
     #[serde(default)]
@@ -135,6 +144,15 @@ impl MloDefinition {
         ensure!(
             self.entities.len() <= MAX_ENTITIES,
             "MLO entity limit ({MAX_ENTITIES})"
+        );
+        ensure!(
+            self.position.iter().all(|v| v.is_finite() && v.abs() <= 10000.0),
+            "MLO instance has invalid world position"
+        );
+        ensure!(
+            self.rotation.iter().all(|v| v.is_finite())
+                && (0.98..=1.02).contains(&self.rotation.iter().map(|v| v * v).sum::<f32>()),
+            "MLO instance has invalid world rotation"
         );
         ensure!(
             self.entity_sets.len() <= MAX_ENTITY_SETS,
@@ -274,6 +292,21 @@ impl MloDefinition {
         Ok(())
     }
 
+    /// Convert an entity's MLO-local transform into GTA SA world space.
+    pub fn world_entity_transform(&self, entity: &MloEntity) -> ([f32; 3], [f32; 4]) {
+        let local = super::rotate(entity.position, self.rotation);
+        let position = std::array::from_fn(|axis| self.position[axis] + local[axis]);
+        let [ax, ay, az, aw] = self.rotation;
+        let [bx, by, bz, bw] = entity.rotation;
+        let rotation = [
+            aw * bx + ax * bw + ay * bz - az * by,
+            aw * by - ax * bz + ay * bw + az * bx,
+            aw * bz + ax * by - ay * bx + az * bw,
+            aw * bw - ax * bx - ay * by - az * bz,
+        ];
+        (position, rotation)
+    }
+
     /// Find the most specific room containing a local-space point.
     ///
     /// MLO room bounds may overlap (for example, a small office inside a
@@ -372,6 +405,9 @@ mod tests {
     fn sample() -> MloDefinition {
         MloDefinition {
             name: "police_station".into(),
+            position: [0.0; 3],
+            rotation: identity(),
+            interior: 0,
             entities: vec![
                 MloEntity {
                     model_id: 18697,
