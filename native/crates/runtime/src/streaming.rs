@@ -1,7 +1,7 @@
 //! One bounded background loader. The renderer keeps the old region until a
 //! complete replacement is ready; no GTA files are written.
 use anyhow::Result;
-use sa_scene::WorldLoader;
+use sa_scene::{InteriorPortal, WorldLoader};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
 use std::time::{Duration, Instant};
 
@@ -28,9 +28,11 @@ pub struct Streamer {
     pending: Option<Region>,
     retry_after: Option<Instant>,
     connected: bool,
+    portals: Vec<InteriorPortal>,
 }
 impl Streamer {
     pub fn new(mut loader: WorldLoader) -> Self {
+        let portals = loader.interior_portals();
         let (requests, receiver) = mpsc::sync_channel::<Work>(1);
         let (sender, results) = mpsc::sync_channel(1);
         std::thread::Builder::new()
@@ -71,7 +73,28 @@ impl Streamer {
             pending: None,
             retry_after: None,
             connected: true,
+            portals,
         }
+    }
+    /// Find the closest ENEX or resource portal containing a player in the requested interior.
+    pub fn portal_at(&self, position: [f32; 3], interior: u8) -> Option<InteriorPortal> {
+        self.portals
+            .iter()
+            .filter(|portal| portal.source_interior == interior)
+            .filter(|portal| {
+                (0..3).all(|axis| {
+                    (position[axis] - portal.source[axis]).abs() <= portal.radius[axis]
+                })
+            })
+            .min_by(|a, b| {
+                let distance = |portal: &InteriorPortal| {
+                    (0..3)
+                        .map(|axis| (position[axis] - portal.source[axis]).powi(2))
+                        .sum::<f32>()
+                };
+                distance(a).total_cmp(&distance(b))
+            })
+            .cloned()
     }
     pub fn pending(&self) -> bool {
         self.pending.is_some()
@@ -164,6 +187,7 @@ mod tests {
             pending: None,
             retry_after: None,
             connected: true,
+            portals: Vec::new(),
         };
         let empty = || Retired::Scene {
             batches: Vec::new(),
@@ -199,6 +223,7 @@ mod tests {
             pending: None,
             retry_after: None,
             connected: true,
+            portals: Vec::new(),
         };
         stream.request(ORIGIN);
         assert_eq!(
