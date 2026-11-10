@@ -28,6 +28,7 @@ build ID to distinguish builds. Existing commit-based release tags stay valid.
 
 New to SARE development? Start with the practical [server guide](docs/server-guide.md)
 or learn how to [create resources and mods](docs/creating-resources.md).
+For the ongoing map streaming and MLO work, see the [contributor guide](docs/map-streaming-contributing.md).
 The deeper references remain available for the [dedicated server API](docs/server-hosting.md)
 and [native resource format](docs/native-mods.md).
 
