@@ -66,6 +66,63 @@ pub struct MapDoor {
     /// GTA SA door convention: 0/2 swing left, 1/3 swing right.
     pub door: u8,
 }
+fn default_portal_radius() -> [f32; 3] {
+    [1.5, 1.5, 4.0]
+}
+/// A GTA San Andreas IPL ENEX entrance. Coordinates are in SA world space.
+#[derive(Clone, Debug, serde::Deserialize, PartialEq)]
+pub struct InteriorPortal {
+    pub source: [f32; 3],
+    pub destination: [f32; 3],
+    #[serde(default = "default_portal_radius")]
+    pub radius: [f32; 3],
+    #[serde(default)]
+    pub source_interior: u8,
+    pub target_interior: u8,
+    #[serde(default)]
+    pub enter_angle: f32,
+    #[serde(default)]
+    pub exit_angle: f32,
+    #[serde(default)]
+    pub flags: u32,
+    #[serde(default)]
+    pub name: String,
+}
+impl InteriorPortal {
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.source.iter().chain(self.destination.iter()).all(|v| v.is_finite() && v.abs() <= 10000.0),
+            "interior portal has invalid coordinates"
+        );
+        ensure!(
+            self.radius.iter().all(|v| v.is_finite() && *v > 0.0 && *v <= 100.0),
+            "interior portal has invalid trigger bounds"
+        );
+        ensure!(
+            self.enter_angle.is_finite()
+                && self.exit_angle.is_finite()
+                && self.enter_angle.abs() <= 360.0
+                && self.exit_angle.abs() <= 360.0,
+            "interior portal has invalid heading"
+        );
+        ensure!(self.name.len() <= 128, "interior portal name is too long");
+        Ok(())
+    }
+    /// Build the reverse side of a one-way ENEX record that targets an interior.
+    pub fn reverse(&self) -> Option<Self> {
+        (self.target_interior != 0).then(|| Self {
+            source: self.destination,
+            destination: self.source,
+            radius: self.radius,
+            source_interior: self.target_interior,
+            target_interior: self.source_interior,
+            enter_angle: self.exit_angle,
+            exit_angle: self.enter_angle,
+            flags: self.flags,
+            name: self.name.clone(),
+        })
+    }
+}
 pub struct Batch {
     pub key: String,
     pub vertices: Vec<Vertex>,
@@ -269,8 +326,29 @@ impl WorldArchive {
         }
     }
 }
-fn placements(root: &Path, img: &mut WorldArchive) -> Result<Vec<Placement>> {
+fn parse_enex(line: &str) -> Result<InteriorPortal> {
+    let fields: Vec<_> = line.split(',').map(str::trim).collect();
+    ensure!(fields.len() == 18, "unsupported text IPL ENEX record");
+    let portal = InteriorPortal {
+        source: [fields[0].parse()?, fields[1].parse()?, fields[2].parse()?],
+        enter_angle: fields[3].parse()?,
+        radius: [fields[4].parse()?, fields[5].parse()?, fields[6].parse()?],
+        destination: [fields[7].parse()?, fields[8].parse()?, fields[9].parse()?],
+        exit_angle: fields[10].parse()?,
+        target_interior: fields[11].parse()?,
+        flags: fields[12].parse()?,
+        name: fields[13].trim_matches('"').trim_matches('\'').to_owned(),
+        source_interior: 0,
+    };
+    portal.validate()?;
+    Ok(portal)
+}
+fn placements(
+    root: &Path,
+    img: &mut WorldArchive,
+) -> Result<(Vec<Placement>, Vec<InteriorPortal>)> {
     let mut out = Vec::new();
+    let mut portals = Vec::new();
     let names: Vec<_> = img.names().cloned().collect();
     for path in registered(root, "IPL", ".ipl")? {
         let mut base = Vec::new();
@@ -283,6 +361,16 @@ fn placements(root: &Path, img: &mut WorldArchive) -> Result<Vec<Placement>> {
                 } else {
                     line.to_ascii_lowercase()
                 };
+                continue;
+            }
+            if section == "enex" {
+                let portal = parse_enex(&line)
+                    .with_context(|| format!("{} ENEX record", path.display()))?;
+                if let Some(reverse) = portal.reverse() {
+                    portals.push(reverse);
+                }
+                portals.push(portal);
+                ensure!(portals.len() <= 2048, "too many IPL ENEX portals");
                 continue;
             }
             if section != "inst" {
@@ -340,7 +428,7 @@ fn placements(root: &Path, img: &mut WorldArchive) -> Result<Vec<Placement>> {
         out.extend(base);
         out.extend(children);
     }
-    Ok(out)
+    Ok((out, portals))
 }
 fn rotate(point: [f32; 3], q: [f32; 4]) -> [f32; 3] {
     let len = q.iter().map(|v| v * v).sum::<f32>().sqrt();
@@ -491,6 +579,7 @@ pub struct WorldLoader {
     img: WorldArchive,
     defs: HashMap<i32, Definition>,
     rows: Vec<Placement>,
+    portals: Vec<InteriorPortal>,
     collision_models: HashMap<String, sa_assets::col::CollisionModel>,
     resources: mods::Resources,
     texture_parents: HashMap<String, String>,
@@ -711,7 +800,7 @@ impl WorldLoader {
         for path in registered(&game, "IDE", ".ide")? {
             texture::add_parents(lines(&path)?, &mut texture_parents);
         }
-        let rows = placements(&game, &mut img)?;
+        let (rows, portals) = placements(&game, &mut img)?;
         let mut collision_models = HashMap::new();
         let mut files: Vec<_> = img
             .names()
@@ -737,6 +826,7 @@ impl WorldLoader {
             img,
             defs,
             rows,
+            portals,
             collision_models,
             resources: mods::Resources::default(),
             texture_parents,
@@ -745,6 +835,14 @@ impl WorldLoader {
             roadsign_font,
             uv_tracks,
         })
+    }
+    /// Original-game and enabled-resource ENEX portals, including generated reverse sides.
+    pub fn interior_portals(&self) -> Vec<InteriorPortal> {
+        self.portals
+            .iter()
+            .chain(self.resources.interior_portals.iter())
+            .cloned()
+            .collect()
     }
     pub fn placement_count(&self) -> usize {
         self.rows.iter().filter(|r| r.interior == 0).count()
@@ -1386,6 +1484,7 @@ mod streaming_tests {
                 },
             )]),
             rows: vec![placement(1, 0, [0.0; 3], [0.0, 0.0, 0.0, 1.0]).unwrap()],
+            portals: Vec::new(),
             collision_models: HashMap::new(),
             resources: mods::Resources::default(),
             texture_parents: HashMap::new(),
