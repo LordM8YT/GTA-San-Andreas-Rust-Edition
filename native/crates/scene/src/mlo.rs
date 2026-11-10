@@ -510,6 +510,15 @@ mod tests {
     }
 
     #[test]
+    fn mlo_entity_local_transforms_are_composed_with_instance_origin() {
+        let mut mlo = sample();
+        mlo.position = [1030.0, -1987.0, 14.5];
+        let (position, rotation) = mlo.world_entity_transform(&mlo.entities[1]);
+        assert_eq!(position, [1031.0, -1987.0, 14.5]);
+        assert_eq!(rotation, identity());
+    }
+
+    #[test]
     fn validates_mlo_and_resolves_rooms_and_portal_visibility() {
         let mlo = sample();
         let ids = HashSet::from([18697, 18698, 18699]);
