@@ -352,6 +352,7 @@ mod tests {
             retry_after: None,
             connected: true,
             portals: Vec::new(),
+            mlos: Vec::new(),
         };
         stream.request(ORIGIN);
         assert_eq!(
