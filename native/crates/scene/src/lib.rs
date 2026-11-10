@@ -482,10 +482,10 @@ fn map_door_index(piece: &sa_assets::VehiclePiece) -> Option<u8> {
         .or_else(|| piece.frame_name.strip_suffix("_dam"))
         .unwrap_or(&piece.frame_name);
     Some(match frame {
-        "door" | "door_l" | "door_left" | "gate" | "gate_l" | "gate_left"
-        | "garage_door" | "garage_door_l" | "door_1" | "door1" | "gate_1" | "gate1" => 0,
-        "door_r" | "door_right" | "gate_r" | "gate_right" | "door_2" | "door2"
-        | "gate_2" | "gate2" => 1,
+        "door" | "door_l" | "door_left" | "gate" | "gate_l" | "gate_left" | "garage_door"
+        | "garage_door_l" | "door_1" | "door1" | "gate_1" | "gate1" => 0,
+        "door_r" | "door_right" | "gate_r" | "gate_right" | "door_2" | "door2" | "gate_2"
+        | "gate2" => 1,
         "door_3" | "door3" | "gate_3" | "gate3" => 2,
         "door_4" | "door4" | "gate_4" | "gate4" => 3,
         _ => return None,
