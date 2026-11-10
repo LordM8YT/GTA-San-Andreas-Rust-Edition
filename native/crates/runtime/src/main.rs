@@ -226,7 +226,11 @@ struct State {
     region: [f32; 2],
     interior: u8,
     interior_destination: Option<usize>,
+    /// Interior dimension requested by the next streaming transition, including custom ENEX portals.
+    pending_interior_id: Option<u8>,
     room_entry: Option<Vec3>,
+    /// Prevents immediately re-entering the reverse side of the portal just used.
+    portal_exit_guard: Option<([f32; 3], [f32; 3])>,
     title_updated: Instant,
     frame_count: u32,
     destination: Option<[f32; 2]>,
@@ -1112,7 +1116,9 @@ impl State {
             region: ORIGIN,
             interior: 0,
             interior_destination: None,
+            pending_interior_id: None,
             room_entry: None,
+            portal_exit_guard: None,
             title_updated: Instant::now(),
             frame_count: 0,
             destination: None,
@@ -1321,10 +1327,7 @@ impl State {
         self.uploading.is_some() || self.streamer.as_ref().is_some_and(|s| s.pending())
     }
     fn stale_region(&self, region: streaming::Region) -> bool {
-        let wanted_interior = self
-            .interior_destination
-            .map(|index| streaming::INTERIORS[index].id)
-            .unwrap_or(0);
+        let wanted_interior = self.pending_interior_id.unwrap_or(0);
         self.destination.is_some_and(|target| {
             streaming::distance(target, region.center) >= 1.0 || wanted_interior != region.interior
         })
@@ -1355,6 +1358,46 @@ impl State {
         let Some(mut streamer) = self.streamer.take() else {
             return;
         };
+        let player_world = [
+            ORIGIN[0] + self.position.x,
+            ORIGIN[1] - self.position.z,
+            self.position.y,
+        ];
+        if let Some((guard, radius)) = self.portal_exit_guard {
+            if (0..3).any(|axis| {
+                (player_world[axis] - guard[axis]).abs() > radius[axis] + 0.5
+            }) {
+                self.portal_exit_guard = None;
+            }
+        }
+        if self.destination.is_none()
+            && self.walking
+            && !self.driving
+            && self.menu.page.is_none()
+        {
+            if let Some(portal) = streamer.portal_at(player_world, self.interior) {
+                let blocked = self.portal_exit_guard.is_some_and(|(guard, _)| {
+                    (0..3).all(|axis| (portal.source[axis] - guard[axis]).abs() <= 0.01)
+                });
+                if !blocked {
+                    self.leave_passenger();
+                    self.interior_destination = None;
+                    self.pending_interior_id = Some(portal.target_interior);
+                    self.destination = Some([portal.destination[0], portal.destination[1]]);
+                    self.room_entry = Some(Vec3::new(
+                        portal.destination[0] - ORIGIN[0],
+                        portal.destination[2],
+                        ORIGIN[1] - portal.destination[1],
+                    ));
+                    self.portal_exit_guard = Some((portal.destination, portal.radius));
+                    self.menu.message = if portal.name.is_empty() {
+                        "Entering interior".into()
+                    } else {
+                        format!("Entering {}", portal.name)
+                    };
+                }
+            }
+        }
         while let Some(retired) = self.retired.pop() {
             if let Some(retired) = streamer.retire(retired) {
                 self.retired.push(retired);
@@ -1367,14 +1410,8 @@ impl State {
                     Ok(scene) => {
                         let valid_entry =
                             if self.destination.is_some() && region.interior != 0 {
-                                self.interior_destination
-                                    .and_then(|index| {
-                                        let destination = streaming::INTERIORS[index];
-                                        let point = Vec3::new(
-                                            destination.position[0] - ORIGIN[0],
-                                            destination.position[2],
-                                            ORIGIN[1] - destination.position[1],
-                                        );
+                                self.room_entry
+                                    .and_then(|point| {
                                         scene.scene.collision.as_ref().and_then(|world| {
                                             world.standing_at(point, point.y + 1.0)
                                         })
@@ -1439,10 +1476,8 @@ impl State {
                             .is_some_and(|target| streaming::distance(target, region.center) < 1.0)
                         {
                             self.destination = None;
-                            self.room_entry = self.interior_destination.take().map(|index| {
-                                let p = streaming::INTERIORS[index].position;
-                                Vec3::new(p[0] - ORIGIN[0], p[2], ORIGIN[1] - p[1])
-                            });
+                            self.interior_destination = None;
+                            self.pending_interior_id = None;
                             self.respawn();
                         }
                         eprintln!(
@@ -1464,10 +1499,7 @@ impl State {
             if let Some(destination) = self.destination {
                 streamer.request_region(streaming::Region {
                     center: destination,
-                    interior: self
-                        .interior_destination
-                        .map(|index| streaming::INTERIORS[index].id)
-                        .unwrap_or(0),
+                    interior: self.pending_interior_id.unwrap_or(0),
                 });
             } else if self.interior == 0
                 && self.trailer_camera.is_none()
@@ -2405,6 +2437,9 @@ impl State {
             Some(menu::Action::Teleport(index)) => {
                 self.leave_passenger();
                 self.interior_destination = None;
+                self.pending_interior_id = Some(0);
+                self.room_entry = None;
+                self.portal_exit_guard = None;
                 self.destination = Some(streaming::DESTINATIONS[index].1);
                 self.menu.has_played = true;
                 self.menu.page = None;
@@ -2416,6 +2451,13 @@ impl State {
                 let target = streaming::INTERIORS[index];
                 self.destination = Some([target.position[0], target.position[1]]);
                 self.interior_destination = Some(index);
+                self.pending_interior_id = Some(target.id);
+                self.room_entry = Some(Vec3::new(
+                    target.position[0] - ORIGIN[0],
+                    target.position[2],
+                    ORIGIN[1] - target.position[1],
+                ));
+                self.portal_exit_guard = None;
                 self.menu.has_played = true;
                 self.menu.page = None;
                 self.keys.clear();
@@ -4672,6 +4714,9 @@ impl ApplicationHandler for App {
                                 };
                                 state.leave_passenger();
                                 state.interior_destination = None;
+                                state.pending_interior_id = Some(0);
+                                state.room_entry = None;
+                                state.portal_exit_guard = None;
                                 state.destination = Some(streaming::DESTINATIONS[index].1);
                                 state.keys.clear();
                             }
@@ -4679,6 +4724,9 @@ impl ApplicationHandler for App {
                                 state.leave_passenger();
                                 if state.streamer.is_some() {
                                     state.interior_destination = None;
+                                    state.pending_interior_id = Some(0);
+                                    state.room_entry = None;
+                                    state.portal_exit_guard = None;
                                     state.destination = Some(ORIGIN);
                                     state.keys.clear();
                                     return;
