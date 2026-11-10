@@ -180,6 +180,7 @@ mod tests {
             alpha: false,
             animated: false,
             uv_animation: None,
+            map_door: None,
             vertices: [
                 [-50.0, 0.0, -50.0],
                 [50.0, 0.0, -50.0],
