@@ -169,6 +169,21 @@ class GtaSaImportTests(unittest.TestCase):
             self.assertEqual(binary['model_id'], 300)
             self.assertEqual(binary['interior'], 1)
 
+    def test_binary_ipl_rejects_short_headers_and_out_of_bounds_tables(self):
+        with self.assertRaisesRegex(ValueError, 'invalid binary IPL header'):
+            IMPORTER.parse_binary_ipl(b'bnry' + bytes(28), 'short.ipl')
+
+        header = bytearray(0x4C)
+        header[:4] = b'bnry'
+        struct.pack_into('<I', header, 4, 1)
+        struct.pack_into('<I', header, 28, 0x4C)
+        with self.assertRaisesRegex(ValueError, 'outside file bounds'):
+            IMPORTER.parse_binary_ipl(bytes(header), 'truncated.ipl')
+
+        struct.pack_into('<I', header, 28, 0x40)
+        with self.assertRaisesRegex(ValueError, 'outside file bounds'):
+            IMPORTER.parse_binary_ipl(bytes(header) + bytes(40), 'overlapping.ipl')
+
     def test_props_require_position_and_start_disabled(self):
         with tempfile.TemporaryDirectory() as temp:
             temp = Path(temp)
