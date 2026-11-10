@@ -977,6 +977,9 @@ impl WorldLoader {
                 x * x + y * y <= (range + 1600.0).powi(2)
             })
             .collect();
+        // Keep generated placements owned for as long as the borrowed IPL rows
+        // are used by the shared scene assembly path.
+        let mut mlo_rows = Vec::new();
         // MLO entities are real scene placements, not metadata-only records.
         // Their local transforms are composed with the owning MLO instance
         // before the ordinary model, material, door and collision pipeline.
@@ -993,9 +996,10 @@ impl WorldLoader {
                 let (position, rotation) = mlo.world_entity_transform(entity);
                 let mut row = placement(entity.model_id, interior, position, rotation)?;
                 row.mlo_entity = Some((mlo_index, entity_index));
-                rows.push(row);
+                mlo_rows.push(row);
             }
         }
+        rows.extend(mlo_rows.iter());
         // Detailed placements first, nearest first. LOD groups are selected
         // below, and a dense region sheds its farthest scenery instead of
         // failing to load.
