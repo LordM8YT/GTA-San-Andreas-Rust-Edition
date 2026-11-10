@@ -535,9 +535,14 @@ fn add_map_pieces(
     txd: &str,
 ) -> Result<usize> {
     let mut triangles = 0;
+    let collision_placement = Placement {
+        scale: 1.0,
+        ..r.clone()
+    };
     for (index, piece) in pieces.iter().enumerate() {
-        let door = map_door_index(piece)
-            .and_then(|door| map_piece_bounds(piece, r, center).map(|bounds| (door, bounds)));
+        let door = map_door_index(piece).and_then(|door| {
+            map_piece_bounds(piece, &collision_placement, center).map(|bounds| (door, bounds))
+        });
         let mut atomic = HashMap::new();
         triangles += add_model(
             &mut atomic,
