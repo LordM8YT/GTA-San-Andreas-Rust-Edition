@@ -10,6 +10,11 @@ pub use locations::*;
 pub fn distance(a: [f32; 2], b: [f32; 2]) -> f32 {
     ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt()
 }
+/// Convert a GTA SA compass heading (0=north, clockwise) to runtime camera yaw
+/// (0=south, increasing toward east).
+pub fn camera_yaw_from_sa_heading(heading_degrees: f32) -> f32 {
+    std::f32::consts::PI - heading_degrees.to_radians()
+}
 pub enum Retired {
     Scene {
         batches: Vec<crate::GpuBatch>,
