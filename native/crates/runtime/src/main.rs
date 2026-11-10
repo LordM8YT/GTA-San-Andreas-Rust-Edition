@@ -1625,7 +1625,7 @@ impl State {
         let mut seen = std::collections::HashSet::new();
         for batch in &self.batches {
             if let Some(door) = &batch.map_door {
-                if door.angle >= 0.85 && seen.insert(door.id.as_str()) {
+                if door.angle >= 0.85 && seen.insert(door.id.clone()) {
                     open_bounds.push(door.bounds);
                 }
             }
