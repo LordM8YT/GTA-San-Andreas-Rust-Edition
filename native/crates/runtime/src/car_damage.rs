@@ -64,9 +64,8 @@ pub fn pose_car(batch: &GpuBatch, look: &Look, rotation: Quat, offset: Vec3) -> 
 pub fn pose_map_door(base: &[f32], pivot: Vec3, door: u8, amount: f32) -> Vec<f32> {
     let mut raw = base.to_vec();
     let side = if door % 2 == 0 { -1.0 } else { 1.0 };
-    let rotation = Quat::from_rotation_y(
-        side * amount.clamp(0.0, 1.0) * sa_scene::vehicle::DOOR_SWING,
-    );
+    let rotation =
+        Quat::from_rotation_y(side * amount.clamp(0.0, 1.0) * sa_scene::vehicle::DOOR_SWING);
     for vertex in raw.chunks_exact_mut(9) {
         let point = Vec3::new(vertex[0], vertex[1], vertex[2]);
         vertex[..3].copy_from_slice(&(rotation * (point - pivot) + pivot).to_array());
@@ -360,15 +359,16 @@ mod tests {
 
     #[test]
     fn map_door_rotates_around_its_hinge_and_preserves_material_data() {
-        let base = vec![
-            1.0, 0.0, 0.0, 0.25, 0.75, 1.0, 0.5, 0.25, 1.0,
-        ];
+        let base = vec![1.0, 0.0, 0.0, 0.25, 0.75, 1.0, 0.5, 0.25, 1.0];
         let posed = pose_map_door(&base, Vec3::ZERO, 0, 1.0);
         let point = Vec3::new(posed[0], posed[1], posed[2]);
-        let expected = Quat::from_rotation_y(-sa_scene::vehicle::DOOR_SWING)
-            * Vec3::X;
+        let expected = Quat::from_rotation_y(-sa_scene::vehicle::DOOR_SWING) * Vec3::X;
         assert!(point.abs_diff_eq(expected, 0.0001));
-        assert_eq!(&posed[3..], &base[3..], "UV and vertex color stay unchanged");
+        assert_eq!(
+            &posed[3..],
+            &base[3..],
+            "UV and vertex color stay unchanged"
+        );
         let closed = pose_map_door(&base, Vec3::ZERO, 0, 0.0);
         assert_eq!(closed, base);
     }
