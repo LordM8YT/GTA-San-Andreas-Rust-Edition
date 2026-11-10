@@ -1,7 +1,7 @@
 //! One bounded background loader. The renderer keeps the old region until a
 //! complete replacement is ready; no GTA files are written.
 use anyhow::Result;
-use sa_scene::{InteriorPortal, WorldLoader};
+use sa_scene::{mlo::MloDefinition, InteriorPortal, WorldLoader};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
 use std::time::{Duration, Instant};
 
@@ -34,10 +34,12 @@ pub struct Streamer {
     retry_after: Option<Instant>,
     connected: bool,
     portals: Vec<InteriorPortal>,
+    mlos: Vec<MloDefinition>,
 }
 impl Streamer {
     pub fn new(mut loader: WorldLoader) -> Self {
         let portals = loader.interior_portals();
+        let mlos = loader.mlo_definitions().to_vec();
         let (requests, receiver) = mpsc::sync_channel::<Work>(1);
         let (sender, results) = mpsc::sync_channel(1);
         std::thread::Builder::new()
@@ -79,7 +81,30 @@ impl Streamer {
             retry_after: None,
             connected: true,
             portals,
+            mlos,
         }
+    }
+    /// MLO metadata loaded from resource manifests. Coordinates passed to the
+    /// room helpers below are in the MLO's local space, before any instance transform.
+    pub fn mlo_definitions(&self) -> &[MloDefinition] {
+        &self.mlos
+    }
+    /// Resolve a room by MLO name using local-space bounds.
+    pub fn mlo_room_at(&self, name: &str, local_position: [f32; 3]) -> Option<usize> {
+        self.mlos
+            .iter()
+            .find(|mlo| mlo.name.eq_ignore_ascii_case(name))
+            .and_then(|mlo| mlo.room_at(local_position))
+    }
+    /// Return entity indices reachable from a room through open MLO portals.
+    /// Exterior-shell entities (entities without a room) remain visible.
+    pub fn mlo_visible_entities(&self, name: &str, room: usize) -> Option<Vec<usize>> {
+        let mlo = self
+            .mlos
+            .iter()
+            .find(|mlo| mlo.name.eq_ignore_ascii_case(name))?;
+        let visible_rooms = mlo.visible_rooms(room);
+        Some(mlo.visible_entity_indices(&visible_rooms))
     }
     /// Find the closest ENEX or resource portal containing a player in the requested interior.
     pub fn portal_at(&self, position: [f32; 3], interior: u8) -> Option<InteriorPortal> {
