@@ -33,6 +33,9 @@ struct Manifest {
     /// FiveM-inspired interior archetypes: rooms, portals and interior entities.
     #[serde(default)]
     mlo: Vec<crate::mlo::MloDefinition>,
+    /// GTA SA IPL ENEX-style doors and interior transitions.
+    #[serde(default)]
+    interior_portals: Vec<crate::InteriorPortal>,
 }
 impl Manifest {
     fn validate_vehicle_tuning(&self) -> Result<()> {
@@ -339,6 +342,8 @@ pub(super) struct Resources {
     pub map_pickups: Vec<crate::MapPickup>,
     /// Validated MLO definitions retained for interior-aware scene assembly.
     pub mlo: Vec<crate::mlo::MloDefinition>,
+    /// Local-resource ENEX portals, including generated reverse sides.
+    pub interior_portals: Vec<crate::InteriorPortal>,
     pub names: Vec<String>,
     pub vehicle: Option<Scene>,
     pub vehicles: Vec<(String, Scene)>,
@@ -679,6 +684,18 @@ impl WorldLoader {
                 self.resources.mlo.len() <= 64,
                 "total MLO definition limit (64)"
             );
+            for portal in manifest.interior_portals {
+                portal.validate()
+                    .with_context(|| format!("{name}: invalid interior portal {}", portal.name))?;
+                if let Some(reverse) = portal.reverse() {
+                    self.resources.interior_portals.push(reverse);
+                }
+                self.resources.interior_portals.push(portal);
+                ensure!(
+                    self.resources.interior_portals.len() <= 2048,
+                    "total resource interior portal limit (2048)"
+                );
+            }
             for instance in manifest.placements {
                 ensure!(
                     self.defs.contains_key(&instance.model_id),
