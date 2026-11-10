@@ -217,10 +217,7 @@ mod tests {
             portals: vec![portal.clone(), reverse.clone()],
         };
         assert_eq!(stream.portal_at(portal.source, 0), Some(portal));
-        assert_eq!(
-            stream.portal_at(reverse.source, 5),
-            Some(reverse.clone())
-        );
+        assert_eq!(stream.portal_at(reverse.source, 5), Some(reverse.clone()));
         assert!(stream.portal_at([105.0, 200.0, 10.0], 0).is_none());
     }
     #[test]
