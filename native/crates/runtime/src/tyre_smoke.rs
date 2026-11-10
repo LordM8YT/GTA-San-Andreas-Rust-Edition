@@ -181,6 +181,7 @@ mod tests {
             animated: false,
             uv_animation: None,
             map_door: None,
+            mlo_entity: None,
             vertices: [
                 [-50.0, 0.0, -50.0],
                 [50.0, 0.0, -50.0],
