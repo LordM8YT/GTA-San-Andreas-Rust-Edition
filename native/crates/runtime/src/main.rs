@@ -1364,17 +1364,11 @@ impl State {
             self.position.y,
         ];
         if let Some((guard, radius)) = self.portal_exit_guard {
-            if (0..3).any(|axis| {
-                (player_world[axis] - guard[axis]).abs() > radius[axis] + 0.5
-            }) {
+            if (0..3).any(|axis| (player_world[axis] - guard[axis]).abs() > radius[axis] + 0.5) {
                 self.portal_exit_guard = None;
             }
         }
-        if self.destination.is_none()
-            && self.walking
-            && !self.driving
-            && self.menu.page.is_none()
-        {
+        if self.destination.is_none() && self.walking && !self.driving && self.menu.page.is_none() {
             if let Some(portal) = streamer.portal_at(player_world, self.interior) {
                 let blocked = self.portal_exit_guard.is_some_and(|(guard, _)| {
                     (0..3).all(|axis| (portal.source[axis] - guard[axis]).abs() <= 0.01)
