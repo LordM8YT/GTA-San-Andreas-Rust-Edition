@@ -1409,7 +1409,7 @@ impl State {
                 match result {
                     Ok(scene) => {
                         let valid_entry =
-                            if self.destination.is_some() && region.interior != 0 {
+                            if self.destination.is_some() && self.room_entry.is_some() {
                                 self.room_entry
                                     .and_then(|point| {
                                         scene.scene.collision.as_ref().and_then(|world| {
@@ -1428,7 +1428,7 @@ impl State {
                                 Some((region, upload::Upload::reusing(scene, &self.batches)));
                         } else {
                             self.menu.message =
-                                "Interior entrance has no safe standing position".into();
+                                "Portal destination has no safe standing position".into();
                             streamer.retry_later();
                         }
                     }
