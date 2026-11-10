@@ -1819,6 +1819,7 @@ mod streaming_tests {
         let archive = folder.join("empty.img");
         fs::write(&archive, [b"VER2".as_slice(), &0u32.to_le_bytes()].concat()).unwrap();
         let mut loader = WorldLoader {
+            portals: Vec::new(),
             img: WorldArchive {
                 exterior: Img::open(&archive).unwrap(),
                 interior: None,
