@@ -685,7 +685,8 @@ impl WorldLoader {
                 "total MLO definition limit (64)"
             );
             for portal in manifest.interior_portals {
-                portal.validate()
+                portal
+                    .validate()
                     .with_context(|| format!("{name}: invalid interior portal {}", portal.name))?;
                 if let Some(reverse) = portal.reverse() {
                     self.resources.interior_portals.push(reverse);
