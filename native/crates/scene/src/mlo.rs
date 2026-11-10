@@ -218,8 +218,7 @@ impl MloDefinition {
                 "MLO portal {index} opacity must be between 0 and 1"
             );
             ensure!(
-                portal.audio_occlusion.is_finite()
-                    && (0.0..=1.0).contains(&portal.audio_occlusion),
+                portal.audio_occlusion.is_finite() && (0.0..=1.0).contains(&portal.audio_occlusion),
                 "MLO portal {index} audio occlusion must be between 0 and 1"
             );
             ensure!(
