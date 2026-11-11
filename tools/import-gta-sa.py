@@ -323,7 +323,7 @@ def parse_enex(fields, name):
         flags = int(fields[12], 10)
     except ValueError as error:
         raise ValueError(f'{name}: invalid ENEX numeric field') from error
-    portal_name = fields[13].strip().strip('"').strip("'")
+    portal_name = fields[17].strip().strip('"').strip("'")
     require(all(math.isfinite(v) and abs(v) <= 10000 for v in source + destination),
             f'{name}: ENEX coordinates are invalid')
     require(all(math.isfinite(v) and 0 < v <= 100 for v in radius),
