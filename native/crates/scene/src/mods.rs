@@ -82,24 +82,30 @@ fn apply_map_door_overrides(
     pieces: &mut [sa_assets::VehiclePiece],
     overrides: &[MapDoorOverride],
 ) -> Result<()> {
-    ensure!(overrides.len() <= 32, "map door override limit (32 per model)");
+    ensure!(
+        overrides.len() <= 32,
+        "map door override limit (32 per model)"
+    );
     let mut frames = HashSet::new();
     for override_ in overrides {
         let frame = override_.frame.trim();
         ensure!(
-            !frame.is_empty()
-                && frame.len() <= 64
-                && frame.chars().all(|ch| !ch.is_control()),
+            !frame.is_empty() && frame.len() <= 64 && frame.chars().all(|ch| !ch.is_control()),
             "map door override frame must contain 1-64 printable characters"
         );
-        ensure!(override_.door <= 3, "map door index must be between 0 and 3");
+        ensure!(
+            override_.door <= 3,
+            "map door index must be between 0 and 3"
+        );
         ensure!(
             frames.insert(frame.to_ascii_lowercase()),
             "duplicate map door override frame: {frame}"
         );
         if let Some(pivot) = override_.pivot {
             ensure!(
-                pivot.iter().all(|value| value.is_finite() && value.abs() <= 1000.0),
+                pivot
+                    .iter()
+                    .all(|value| value.is_finite() && value.abs() <= 1000.0),
                 "map door override pivot is invalid"
             );
         }
@@ -676,8 +682,9 @@ impl WorldLoader {
             for model in manifest.models {
                 ensure!(model.id >= 0, "negative mod model ID");
                 let key = format!("mod_{}_{}", folder_name.to_ascii_lowercase(), model.id);
-                let mut map_pieces = sa_assets::decode_map_dff_pieces(&resource(&folder, &model.dff)?)
-                    .with_context(|| format!("mod model {}", model.dff))?;
+                let mut map_pieces =
+                    sa_assets::decode_map_dff_pieces(&resource(&folder, &model.dff)?)
+                        .with_context(|| format!("mod model {}", model.dff))?;
                 apply_map_door_overrides(&mut map_pieces, &model.map_doors)
                     .with_context(|| format!("{name}: map door overrides for {}", model.dff))?;
                 let geometry: Vec<Geometry> = map_pieces
@@ -1107,11 +1114,9 @@ mod tests {
         };
         assert!(apply_map_door_overrides(&mut pieces, &[entry("missing_frame", 0)]).is_err());
         pieces[0].frame_name = "door".into();
-        assert!(apply_map_door_overrides(
-            &mut pieces,
-            &[entry("door", 0), entry("DOOR", 1)]
-        )
-        .is_err());
+        assert!(
+            apply_map_door_overrides(&mut pieces, &[entry("door", 0), entry("DOOR", 1)]).is_err()
+        );
         assert!(apply_map_door_overrides(&mut pieces, &[entry("door", 4)]).is_err());
     }
     #[test]
