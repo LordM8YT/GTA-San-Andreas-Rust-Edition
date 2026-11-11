@@ -1687,6 +1687,54 @@ mod streaming_tests {
         fs::remove_dir_all(folder).unwrap();
     }
     #[test]
+    fn map_atomic_materials_resolve_after_alpha_mlo_and_map_batch_tags() {
+        let (folder, mut loader) = test_loader("map-material-keys");
+        let mut pieces = sa_assets::decode_map_dff_pieces(include_bytes!(
+            "../../../../mods/native-room-demo/room.dff"
+        ))
+        .unwrap();
+        for piece in &mut pieces {
+            for material in &mut piece.geometry.materials {
+                material.texture = Some("door".into());
+                material.color[3] = 128;
+            }
+        }
+        loader.resources.geometry.insert(
+            "room.dff".into(),
+            pieces.iter().map(|piece| piece.geometry.clone()).collect(),
+        );
+        loader
+            .resources
+            .map_pieces
+            .insert("room.dff".into(), pieces);
+        loader.resources.textures.insert(
+            "absent:door".into(),
+            Texture {
+                width: 1,
+                height: 1,
+                rgba: vec![255; 4],
+                has_alpha: false,
+            },
+        );
+        loader.rows[0].mlo_entity = Some((0, 1));
+
+        let scene = loader.load([0.0; 2], [0.0; 2], 50.0).unwrap();
+        let map_batches: Vec<_> = scene
+            .batches
+            .iter()
+            .filter(|batch| batch.key.contains("|map|"))
+            .collect();
+        assert!(!map_batches.is_empty());
+        assert!(map_batches
+            .iter()
+            .all(|batch| texture_key(&batch.key) == "absent:door"));
+        assert!(map_batches
+            .iter()
+            .all(|batch| scene.textures.contains_key(&batch.key)));
+        drop(loader);
+        fs::remove_dir_all(folder).unwrap();
+    }
+    #[test]
     fn atomics_with_the_same_map_door_hinge_share_one_interaction_id() {
         let fixture = include_bytes!("../../../../mods/native-room-demo/room.dff");
         let template = sa_assets::decode_map_dff_pieces(fixture).unwrap()[0].clone();
