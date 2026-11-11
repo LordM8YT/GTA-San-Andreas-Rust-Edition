@@ -1206,8 +1206,9 @@ mod tests {
         let scene = loader.load([0.0, 0.0], [0.0, 0.0], 100.0).unwrap();
         assert_eq!(loader.mlo_definitions().len(), 1);
         assert_eq!(loader.mlo_definitions()[0].name, "demo");
-        assert_eq!(scene.placements, 1);
-        assert_eq!(scene.triangles, 108);
+        // One ordinary IPL placement plus the MLO-owned room entity.
+        assert_eq!(scene.placements, 2);
+        assert_eq!(scene.triangles, 216);
         let mut interior_room = loader.rows[0].clone();
         interior_room.interior = 3;
         interior_room.pos[2] = 1000.0;
@@ -1216,7 +1217,7 @@ mod tests {
         assert_eq!(loader.interior_placement_count(), 1);
         assert_eq!(
             loader.load([0.0; 2], [0.0; 2], 100.0).unwrap().placements,
-            1
+            2
         );
         let interior = loader.load_interior([0.0; 2], [0.0; 2], 100.0, 3).unwrap();
         assert_eq!(interior.placements, 1);
