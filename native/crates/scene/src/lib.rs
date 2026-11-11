@@ -567,7 +567,7 @@ fn add_map_pieces(
                 // door rather than only its first material/atomic.
                 batch.map_door = Some(MapDoor {
                     id: format!(
-                        "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+                        "{}:{}:{}:{}:{}:{}:{}:{}:{}",
                         r.id,
                         r.uid,
                         r.pos[0].to_bits(),
@@ -576,8 +576,7 @@ fn add_map_pieces(
                         door,
                         pivot[0].to_bits(),
                         pivot[1].to_bits(),
-                        pivot[2].to_bits(),
-                        "hinge"
+                        pivot[2].to_bits()
                     ),
                     pivot,
                     bounds,
