@@ -350,7 +350,7 @@ fn parse_enex(line: &str) -> Result<InteriorPortal> {
         exit_angle: fields[10].parse()?,
         target_interior: fields[11].parse()?,
         flags: fields[12].parse()?,
-        name: fields[13].trim_matches('"').trim_matches('\'').to_owned(),
+        name: fields[17].trim_matches('"').trim_matches('\'').to_owned(),
         source_interior: 0,
     };
     portal.validate()?;
@@ -1612,6 +1612,19 @@ mod streaming_tests {
             uv_tracks: HashMap::new(),
         };
         (folder, loader)
+    }
+    #[test]
+    fn enex_name_comes_from_the_final_ipl_field_and_reverse_targets_exterior() {
+        let portal = parse_enex(
+            "100, 200, 10, 90, 1.5, 1.5, 3, 250, 300, 1000, 180, 5, 0, 0, 0, 24, 0, \"ppalace\"",
+        )
+        .unwrap();
+        assert_eq!(portal.name, "ppalace");
+        assert_eq!(portal.target_interior, 5);
+        let reverse = portal.reverse().unwrap();
+        assert_eq!(reverse.source, portal.destination);
+        assert_eq!(reverse.source_interior, 5);
+        assert_eq!(reverse.target_interior, 0);
     }
     #[test]
     fn building_door_and_gate_frame_aliases_are_recognized_without_vehicle_names() {
