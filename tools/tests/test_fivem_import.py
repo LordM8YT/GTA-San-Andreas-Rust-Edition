@@ -198,7 +198,7 @@ class FiveMImportTests(unittest.TestCase):
                 result=subprocess.run([str(AUDIT),str(col),'--col','--points'], capture_output=True,text=True)
                 self.assertEqual(result.returncode,0,result.stderr)
                 summary, points=[json.loads(line) for line in result.stdout.splitlines()]
-                self.assertEqual(summary,dict(min=[-69.,24.,127.],max=[-60.,28.,127.],triangles=1))
+                self.assertEqual(summary,dict(name='fivem_collision',min=[-69.,24.,127.],max=[-60.,28.,127.],triangles=1))
                 self.assertEqual(points,[[[-60.,24.,127.],[-60.,28.,127.],[-69.,24.,127.]]])
 
     def test_world_collision_has_its_own_invisible_bounds_and_offset_once(self):
