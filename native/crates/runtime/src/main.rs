@@ -1622,10 +1622,12 @@ impl State {
         // only the vertical collision faces under its DFF bounds so the player
         // can pass through; floors and ceilings remain intact.
         let mut open_bounds = Vec::new();
-        let mut seen = std::collections::HashSet::new();
         for batch in &self.batches {
             if let Some(door) = &batch.map_door {
-                if door.angle >= 0.85 && seen.insert(door.id.clone()) {
+                // A single door can contain several atomics/material batches.
+                // Keep every atomic's bounds so all corresponding COL faces
+                // are released while the complete door assembly is open.
+                if door.angle >= 0.85 {
                     open_bounds.push(door.bounds);
                 }
             }
