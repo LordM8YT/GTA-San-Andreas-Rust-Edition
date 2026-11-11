@@ -1213,7 +1213,10 @@ impl WorldLoader {
         // Draw-state variants ("|alpha", UV animation) share one decoded image,
         // whichever variant the unordered batch map yields first.
         let mut decoded = HashMap::<&str, Texture>::new();
-        for key in batches.keys() {
+        // Collision fallback batches can contain room-owned MLO entities that are
+        // intentionally hidden from the current room's render batches. Resolve
+        // their material alpha too before building the collision world.
+        for key in batches.keys().chain(fallback.keys()) {
             if textures.contains_key(key) {
                 continue;
             }
