@@ -151,7 +151,7 @@ class GtaSaImportTests(unittest.TestCase):
             (source / 'map.ipl').write_text(
                 'inst\n300, prop, 0, 1, 2, 3, 0, 0, 0, 1, -1\n'
                 '300, prop, 1, 4, 5, 6, 0, 0, 0, 1, -1\nend\n'
-                'enex\n100, 200, 10, 90, 1.5, 1.5, 3, 250, 300, 1000, 180, 5, 0, "ppalace", 0, 24, 0, 0\nend\n',
+                'enex\n100, 200, 10, 90, 1.5, 1.5, 3, 250, 300, 1000, 180, 5, 0, 0, 0, 24, 0, "ppalace"\nend\n',
                 encoding='utf-8')
             binary_header = bytearray(0x4C)
             binary_header[:4] = b'bnry'
