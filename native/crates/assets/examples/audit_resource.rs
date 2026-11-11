@@ -55,6 +55,9 @@ fn main() -> Result<()> {
             );
             triangle_count += geometry.triangles.len();
             for material in &geometry.materials {
+                if has("--materials") {
+                    println!("{{\"color\":{:?}}}", material.color);
+                }
                 if let Some(name) = &material.texture {
                     texture_names.insert(name.clone());
                     if has("--materials") {
@@ -103,6 +106,9 @@ fn main() -> Result<()> {
             );
             triangle_count += geometry.triangles.len();
             for material in &geometry.materials {
+                if has("--materials") {
+                    println!("{{\"color\":{:?}}}", material.color);
+                }
                 if let Some(name) = &material.texture {
                     texture_names.insert(name.clone());
                     if has("--materials") {
