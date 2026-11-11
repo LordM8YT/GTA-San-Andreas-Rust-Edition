@@ -561,17 +561,25 @@ fn add_map_pieces(
             let map_key = format!("|map|{}_{}_{}_{}", r.id, r.uid, index, piece.frame_name);
             if let Some((door, bounds)) = door {
                 batch.animated = true;
+                let pivot = place(piece.pivot, r, center);
+                // Multiple atomics can belong to one named door frame. Group
+                // them by hinge and side so one interaction poses the complete
+                // door rather than only its first material/atomic.
                 batch.map_door = Some(MapDoor {
                     id: format!(
-                        "{}:{}:{}:{}:{}:{}",
+                        "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
                         r.id,
                         r.uid,
                         r.pos[0].to_bits(),
                         r.pos[1].to_bits(),
                         r.pos[2].to_bits(),
-                        index
+                        door,
+                        pivot[0].to_bits(),
+                        pivot[1].to_bits(),
+                        pivot[2].to_bits(),
+                        "hinge"
                     ),
-                    pivot: place(piece.pivot, r, center),
+                    pivot,
                     bounds,
                     door,
                 });
@@ -1665,6 +1673,30 @@ mod streaming_tests {
         }));
         drop(loader);
         fs::remove_dir_all(folder).unwrap();
+    }
+    #[test]
+    fn atomics_with_the_same_map_door_hinge_share_one_interaction_id() {
+        let fixture = include_bytes!("../../../../mods/native-room-demo/room.dff");
+        let template = sa_assets::decode_map_dff_pieces(fixture).unwrap()[0].clone();
+        let mut first = template.clone();
+        let mut second = template;
+        first.frame_name = "door_leaf".into();
+        second.frame_name = "door_glass".into();
+        first.part = sa_assets::VehiclePart::Door(0);
+        second.part = sa_assets::VehiclePart::Door(0);
+        first.pivot = [1.0, 2.0, 3.0];
+        second.pivot = first.pivot;
+        for point in &mut second.geometry.positions {
+            point[0] += 2.0;
+        }
+        let row = placement(18697, 0, [10.0, 20.0, 30.0], [0.0, 0.0, 0.0, 1.0]).unwrap();
+        let mut batches = HashMap::new();
+        add_map_pieces(&mut batches, &[first, second], &row, [0.0; 2], "station").unwrap();
+        let ids: std::collections::HashSet<_> = batches
+            .values()
+            .filter_map(|batch| batch.map_door.as_ref().map(|door| door.id.clone()))
+            .collect();
+        assert_eq!(ids.len(), 1, "all atomics sharing a hinge move together");
     }
     #[test]
     fn missing_txd_does_not_remove_untextured_geometry_or_its_floor() {
