@@ -31,10 +31,13 @@ or CLEO scripts are not run.
 The offline importer inspects resource manifests as text and converts supported assets;
 see [GTA V / FiveM conversion](gta5-conversion.md). For classic San Andreas packages, use the
 [GTA SA mod importer](gta-sa-conversion.md): it can read loose DFF/TXD/COL/IFP assets,
-uncompressed VER2 IMG entries, selected IDE declarations and text IPL placements, including interior IDs.
-It creates a native JSON resource and a server-facing fxmanifest.lua; this is a conversion
-workflow, not direct execution of old mod-loader code. Compressed IMG entries, binary IPLs,
-interiors, ASI/DLL plugins and CLEO scripts remain unsupported.
+uncompressed VER2 IMG entries, selected IDE declarations, text IPL placements, standalone
+binary IPL instance tables, and text IPL ENEX portals. It preserves interior IDs and creates
+native interior_portals entries for supported ENEX transitions. It creates a native JSON
+resource and a server-facing fxmanifest.lua; this is a conversion workflow, not direct
+execution of old mod-loader code. Compressed IMG archives, automatic room-boundary discovery,
+arbitrary binary IPL sections, ASI/DLL plugins and CLEO scripts remain unsupported. Use
+explicit mlo metadata when a building needs room-based visibility.
 
 ## Create a resource
 
@@ -79,7 +82,16 @@ own assets and manifests instead.
   "enabled": true,
   "name": "My building",
   "models": [
-    { "id": 30000, "dff": "building.dff", "txd": "building.txd", "col": "building.col" }
+    {
+      "id": 30000,
+      "dff": "building.dff",
+      "txd": "building.txd",
+      "col": "building.col",
+      "map_doors": [
+        { "frame": "security_door_leaf", "door": 0 },
+        { "frame": "garage_gate", "door": 1, "pivot": [0.0, 0.0, 0.0] }
+      ]
+    }
   ],
   "placements": [
     { "model_id": 30000, "position": [2500, -1670, 12.35], "rotation": [0, 0, 0, 1] }
@@ -99,12 +111,58 @@ supported for `player`, as described below. Native and multimorph geometry are
 not supported. TXD files use the D3D9 decoders. PNG images can be up to
 4096 × 4096. A COL file must contain exactly one model. Without a COL file,
 visible opaque triangles are used as a collision fallback. With a COL file,
-its collision geometry is used. This supports custom buildings and enterable
-rooms, but is not GTA V MLO import.
+its collision geometry is used. The loader preserves map DFF atomics and named
+door pivots. Common GTA SA door/gate frame names are detected automatically; press
+**E** within 3 metres of a detected hinge to open or close it. For a non-standard
+frame, add map_doors to that model as shown above. frame must exactly match an
+atomic frame name reported by the map DFF audit; door is 0-3; optional pivot
+overrides the DFF-local hinge position. Opening a door releases matching vertical
+COL faces inside the moving mesh bounds while keeping floors and ceilings solid.
+This is a geometry-based match, so validate the actual doorway and collision in-game.
+
+Native mlo metadata can describe SA-compatible interior instances, entities,
+rooms, and open/closed portal visibility. It does not decode GTA V binary MLO assets
+or infer room boundaries from a DFF. Keep exterior shell models as unassigned
+entities and put separate interior geometry models in rooms. Each entity's
+model_id must be declared in the same resource; its position and rotation are
+local to the MLO instance.
 
 `placements` can reference an original model ID without a `models` entry.
 Texture overrides use the `dictionary:texture` key format. Legacy manifest
 settings are not part of the native schema.
+
+A GTA SA importer-generated interior_portals entry uses world-space coordinates
+and the target interior ID; supported ENEX records also create the reverse exit
+side. For room-by-room MLO visibility, provide explicit room metadata:
+
+```json
+{
+  "mlo": [{
+    "name": "police_station",
+    "position": [1030.0, -1987.05, 14.53],
+    "rotation": [0.0, 0.0, 0.0, 1.0],
+    "interior": 0,
+    "entities": [
+      { "model_id": 30000, "room": null },
+      { "model_id": 30001, "position": [0.0, 0.0, 0.0], "room": 0 }
+    ],
+    "rooms": [{
+      "name": "lobby",
+      "min": [-8.0, -6.0, -1.0],
+      "max": [8.0, 6.0, 5.0],
+      "entities": [1]
+    }],
+    "portals": []
+  }]
+}
+```
+
+Room bounds and portal corners are MLO-local. Use a separate shell entity (room
+omitted or null) for exterior geometry and assign only interior geometry to
+room indices. Portal records connect room_from and room_to with local-space
+polygon corners; their open field defaults to true. The importer can embed
+an explicit JSON sidecar with tools/import-fivem.py --mlo-metadata; it does not
+guess rooms from GTA V assets or legacy SA DFF geometry.
 
 `mods/native-room-demo` contains a custom DFF room with a door, floor, ceiling,
 walls, and bench. Set `enabled` to `true` to place it on Grove Street. It is
