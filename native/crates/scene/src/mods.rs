@@ -64,6 +64,62 @@ struct Model {
     original_txd: Option<String>,
     #[serde(default)]
     col: Option<String>,
+    /// Explicit frame-name overrides for non-standard building doors.
+    #[serde(default)]
+    map_doors: Vec<MapDoorOverride>,
+}
+#[derive(Deserialize)]
+struct MapDoorOverride {
+    /// Exact lowercase atomic frame name reported by the map DFF audit.
+    frame: String,
+    /// Hinge direction/index: 0-3, matching GTA's door swing convention.
+    door: u8,
+    /// Optional DFF-local hinge pivot. Omit to use the parent dummy transform.
+    #[serde(default)]
+    pivot: Option<[f32; 3]>,
+}
+fn apply_map_door_overrides(
+    pieces: &mut [sa_assets::VehiclePiece],
+    overrides: &[MapDoorOverride],
+) -> Result<()> {
+    ensure!(overrides.len() <= 32, "map door override limit (32 per model)");
+    let mut frames = HashSet::new();
+    for override_ in overrides {
+        let frame = override_.frame.trim();
+        ensure!(
+            !frame.is_empty()
+                && frame.len() <= 64
+                && frame.chars().all(|ch| !ch.is_control()),
+            "map door override frame must contain 1-64 printable characters"
+        );
+        ensure!(override_.door <= 3, "map door index must be between 0 and 3");
+        ensure!(
+            frames.insert(frame.to_ascii_lowercase()),
+            "duplicate map door override frame: {frame}"
+        );
+        if let Some(pivot) = override_.pivot {
+            ensure!(
+                pivot.iter().all(|value| value.is_finite() && value.abs() <= 1000.0),
+                "map door override pivot is invalid"
+            );
+        }
+        let mut matched = 0;
+        for piece in pieces
+            .iter_mut()
+            .filter(|piece| piece.frame_name.eq_ignore_ascii_case(frame))
+        {
+            piece.part = sa_assets::VehiclePart::Door(override_.door);
+            if let Some(pivot) = override_.pivot {
+                piece.pivot = pivot;
+            }
+            matched += 1;
+        }
+        ensure!(
+            matched > 0,
+            "map door override frame {frame} does not match a DFF atomic"
+        );
+    }
+    Ok(())
 }
 /// Original game objects that mark race pickups: the nitro bottle upgrade,
 /// the health heart and the information icon.
@@ -620,8 +676,10 @@ impl WorldLoader {
             for model in manifest.models {
                 ensure!(model.id >= 0, "negative mod model ID");
                 let key = format!("mod_{}_{}", folder_name.to_ascii_lowercase(), model.id);
-                let map_pieces = sa_assets::decode_map_dff_pieces(&resource(&folder, &model.dff)?)
+                let mut map_pieces = sa_assets::decode_map_dff_pieces(&resource(&folder, &model.dff)?)
                     .with_context(|| format!("mod model {}", model.dff))?;
+                apply_map_door_overrides(&mut map_pieces, &model.map_doors)
+                    .with_context(|| format!("{name}: map door overrides for {}", model.dff))?;
                 let geometry: Vec<Geometry> = map_pieces
                     .iter()
                     .map(|piece| piece.geometry.clone())
@@ -1018,6 +1076,42 @@ mod tests {
             assert!(share_resources(&root).is_err(), "{model}");
         }
         fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn custom_map_door_overrides_support_nonstandard_frame_names_and_pivots() {
+        let fixture = include_bytes!("../../../../mods/native-room-demo/room.dff");
+        let mut pieces = sa_assets::decode_map_dff_pieces(fixture).unwrap();
+        pieces[0].frame_name = "station_security_leaf".into();
+        pieces[0].part = sa_assets::VehiclePart::Body;
+        pieces[0].pivot = [4.0, 5.0, 6.0];
+        apply_map_door_overrides(
+            &mut pieces,
+            &[MapDoorOverride {
+                frame: "station_security_leaf".into(),
+                door: 1,
+                pivot: Some([1.0, 2.0, 3.0]),
+            }],
+        )
+        .unwrap();
+        assert_eq!(pieces[0].part, sa_assets::VehiclePart::Door(1));
+        assert_eq!(pieces[0].pivot, [1.0, 2.0, 3.0]);
+    }
+    #[test]
+    fn custom_map_door_overrides_reject_unknown_duplicate_and_invalid_entries() {
+        let fixture = include_bytes!("../../../../mods/native-room-demo/room.dff");
+        let mut pieces = sa_assets::decode_map_dff_pieces(fixture).unwrap();
+        let entry = |frame: &str, door| MapDoorOverride {
+            frame: frame.into(),
+            door,
+            pivot: None,
+        };
+        assert!(apply_map_door_overrides(&mut pieces, &[entry("missing_frame", 0)]).is_err());
+        assert!(apply_map_door_overrides(
+            &mut pieces,
+            &[entry("door", 0), entry("DOOR", 1)]
+        )
+        .is_err());
+        assert!(apply_map_door_overrides(&mut pieces, &[entry("door", 4)]).is_err());
     }
     #[test]
     fn custom_room_loads_and_player_can_enter() {
