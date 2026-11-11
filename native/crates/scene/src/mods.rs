@@ -1106,6 +1106,7 @@ mod tests {
             pivot: None,
         };
         assert!(apply_map_door_overrides(&mut pieces, &[entry("missing_frame", 0)]).is_err());
+        pieces[0].frame_name = "door".into();
         assert!(apply_map_door_overrides(
             &mut pieces,
             &[entry("door", 0), entry("DOOR", 1)]
