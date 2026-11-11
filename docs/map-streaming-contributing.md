@@ -4,12 +4,11 @@ This guide describes how to contribute to the ongoing GTA San Andreas map and ML
 
 ## Starting point
 
-- Base branch: `feat/fivem-mlo-runtime`
-- Current integration PR: [#95](https://github.com/LordM8YT/GTA-San-Andreas-Rust-Edition/pull/95)
-- Do not base new work on `main` for this feature.
-- Open contribution PRs against `feat/fivem-mlo-runtime`, not `main`.
+- Start new work from the latest `main` branch.
+- Use a dedicated feature branch for each change.
+- Target `main` for independent PRs unless an active integration PR explicitly documents a shared feature branch.
 
-Before starting, check the open PRs and Discord development thread. If a task touches the same files or subsystem as existing work, coordinate first.
+Before starting, check open PRs and current branch heads. If a task touches the same files or subsystem as existing work, coordinate first rather than creating a duplicate implementation.
 
 ## Split work into independent areas
 
@@ -75,9 +74,9 @@ resources before treating the feature as production-ready.
 
 ## Pull request checklist
 
-- [ ] Based on the latest `feat/fivem-mlo-runtime`
+- [ ] Based on the latest `main` or an explicitly agreed integration branch
 - [ ] Scope and touched subsystems are stated
 - [ ] No duplicate parser/loader was introduced
 - [ ] Relevant automated tests pass
 - [ ] Unsupported cases and in-game test status are documented
-- [ ] PR targets `feat/fivem-mlo-runtime`
+- [ ] PR targets `main` or the agreed integration branch
