@@ -533,7 +533,9 @@ mod tests {
         mlo.rotation = [0.0, 0.0, half, half];
         let (position, rotation) = mlo.world_entity_transform(&mlo.entities[1]);
         assert!((position[0] - 1030.0).abs() < 0.0001);
-        assert!((position[1] - -1986.0).abs() < 0.0001);
+        // GTA SA's model-to-world convention applies the conjugate of the
+        // stored quaternion, so +90 degrees around Z moves local +X to -Y.
+        assert!((position[1] - -1988.0).abs() < 0.0001);
         assert!((position[2] - 14.5).abs() < 0.0001);
         assert_eq!(rotation, mlo.rotation);
         let local = mlo.local_position_from_world(position);
