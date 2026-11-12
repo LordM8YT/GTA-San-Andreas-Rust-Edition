@@ -67,6 +67,28 @@ struct GpuBatch {
     base: Vec<f32>,
     /// The door, wheel or panel of a car this batch draws.
     piece: Option<sa_scene::vehicle::RigPiece>,
+    /// A named custom-map door, independent of the car rig.
+    map_door: Option<MapDoorState>,
+}
+struct MapDoorState {
+    id: String,
+    pivot: Vec3,
+    bounds: [[f32; 3]; 2],
+    door: u8,
+    angle: f32,
+    target: f32,
+}
+impl From<sa_scene::MapDoor> for MapDoorState {
+    fn from(door: sa_scene::MapDoor) -> Self {
+        Self {
+            id: door.id,
+            pivot: Vec3::from_array(door.pivot),
+            bounds: door.bounds,
+            door: door.door,
+            angle: 0.0,
+            target: 0.0,
+        }
+    }
 }
 const HEADLIGHT_VERTICES: usize = 18;
 /// A light pool on the road ahead of the car and two coronas at its nose,
@@ -206,7 +228,11 @@ struct State {
     region: [f32; 2],
     interior: u8,
     interior_destination: Option<usize>,
+    /// Interior dimension requested by the next streaming transition, including custom ENEX portals.
+    pending_interior_id: Option<u8>,
     room_entry: Option<Vec3>,
+    /// Prevents immediately re-entering the reverse side of the portal just used.
+    portal_exit_guard: Option<([f32; 3], [f32; 3])>,
     title_updated: Instant,
     frame_count: u32,
     destination: Option<[f32; 2]>,
@@ -1092,7 +1118,9 @@ impl State {
             region: ORIGIN,
             interior: 0,
             interior_destination: None,
+            pending_interior_id: None,
             room_entry: None,
+            portal_exit_guard: None,
             title_updated: Instant::now(),
             frame_count: 0,
             destination: None,
@@ -1286,6 +1314,7 @@ impl State {
                     Vec::new()
                 },
                 piece: pieces.get(&batch.key).copied(),
+                map_door: batch.map_door.map(Into::into),
             });
         }
         batches.sort_by_key(|b| b.alpha);
@@ -1300,10 +1329,7 @@ impl State {
         self.uploading.is_some() || self.streamer.as_ref().is_some_and(|s| s.pending())
     }
     fn stale_region(&self, region: streaming::Region) -> bool {
-        let wanted_interior = self
-            .interior_destination
-            .map(|index| streaming::INTERIORS[index].id)
-            .unwrap_or(0);
+        let wanted_interior = self.pending_interior_id.unwrap_or(0);
         self.destination.is_some_and(|target| {
             streaming::distance(target, region.center) >= 1.0 || wanted_interior != region.interior
         })
@@ -1334,6 +1360,43 @@ impl State {
         let Some(mut streamer) = self.streamer.take() else {
             return;
         };
+        let player_world = [
+            ORIGIN[0] + self.position.x,
+            ORIGIN[1] - self.position.z,
+            self.position.y,
+        ];
+        if let Some((guard, radius)) = self.portal_exit_guard {
+            if (0..3).any(|axis| (player_world[axis] - guard[axis]).abs() > radius[axis] + 0.5) {
+                self.portal_exit_guard = None;
+            }
+        }
+        if self.destination.is_none() && self.walking && !self.driving && self.menu.page.is_none() {
+            if let Some(portal) = streamer.portal_at(player_world, self.interior) {
+                let blocked = self.portal_exit_guard.is_some_and(|(guard, _)| {
+                    (0..3).all(|axis| (portal.source[axis] - guard[axis]).abs() <= 0.01)
+                });
+                if !blocked {
+                    self.leave_passenger();
+                    self.interior_destination = None;
+                    self.pending_interior_id = Some(portal.target_interior);
+                    self.destination = Some([portal.destination[0], portal.destination[1]]);
+                    self.room_entry = Some(Vec3::new(
+                        portal.destination[0] - ORIGIN[0],
+                        portal.destination[2],
+                        ORIGIN[1] - portal.destination[1],
+                    ));
+                    self.yaw = streaming::camera_yaw_from_sa_heading(portal.exit_angle);
+                    self.ped_yaw = self.yaw;
+                    self.pitch = 0.0;
+                    self.portal_exit_guard = Some((portal.destination, portal.radius));
+                    self.menu.message = if portal.name.is_empty() {
+                        "Entering interior".into()
+                    } else {
+                        format!("Entering {}", portal.name)
+                    };
+                }
+            }
+        }
         while let Some(retired) = self.retired.pop() {
             if let Some(retired) = streamer.retire(retired) {
                 self.retired.push(retired);
@@ -1345,15 +1408,9 @@ impl State {
                 match result {
                     Ok(scene) => {
                         let valid_entry =
-                            if self.destination.is_some() && region.interior != 0 {
-                                self.interior_destination
-                                    .and_then(|index| {
-                                        let destination = streaming::INTERIORS[index];
-                                        let point = Vec3::new(
-                                            destination.position[0] - ORIGIN[0],
-                                            destination.position[2],
-                                            ORIGIN[1] - destination.position[1],
-                                        );
+                            if self.destination.is_some() && self.room_entry.is_some() {
+                                self.room_entry
+                                    .and_then(|point| {
                                         scene.scene.collision.as_ref().and_then(|world| {
                                             world.standing_at(point, point.y + 1.0)
                                         })
@@ -1370,7 +1427,7 @@ impl State {
                                 Some((region, upload::Upload::reusing(scene, &self.batches)));
                         } else {
                             self.menu.message =
-                                "Interior entrance has no safe standing position".into();
+                                "Portal destination has no safe standing position".into();
                             streamer.retry_later();
                         }
                     }
@@ -1418,10 +1475,8 @@ impl State {
                             .is_some_and(|target| streaming::distance(target, region.center) < 1.0)
                         {
                             self.destination = None;
-                            self.room_entry = self.interior_destination.take().map(|index| {
-                                let p = streaming::INTERIORS[index].position;
-                                Vec3::new(p[0] - ORIGIN[0], p[2], ORIGIN[1] - p[1])
-                            });
+                            self.interior_destination = None;
+                            self.pending_interior_id = None;
                             self.respawn();
                         }
                         eprintln!(
@@ -1443,10 +1498,7 @@ impl State {
             if let Some(destination) = self.destination {
                 streamer.request_region(streaming::Region {
                     center: destination,
-                    interior: self
-                        .interior_destination
-                        .map(|index| streaming::INTERIORS[index].id)
-                        .unwrap_or(0),
+                    interior: self.pending_interior_id.unwrap_or(0),
                 });
             } else if self.interior == 0
                 && self.trailer_camera.is_none()
@@ -1511,6 +1563,77 @@ impl State {
         };
         if self.window.set_cursor_grab(mode).is_err() && on {
             let _ = self.window.set_cursor_grab(CursorGrabMode::Confined);
+        }
+    }
+    fn interact_map_door(&mut self) -> bool {
+        if !self.walking || self.driving || self.menu.page.is_some() {
+            return false;
+        }
+        let nearest = self
+            .batches
+            .iter()
+            .filter_map(|batch| batch.map_door.as_ref())
+            .filter_map(|door| {
+                let distance = door.pivot.distance_squared(self.position);
+                (distance <= 9.0).then_some((door.id.clone(), distance))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(id, _)| id);
+        let Some(id) = nearest else {
+            return false;
+        };
+        let is_open = self
+            .batches
+            .iter()
+            .filter_map(|batch| batch.map_door.as_ref())
+            .find(|door| door.id == id)
+            .is_some_and(|door| door.target > 0.5);
+        let target = if is_open { 0.0 } else { 1.0 };
+        for batch in &mut self.batches {
+            if let Some(door) = &mut batch.map_door {
+                if door.id == id {
+                    door.target = target;
+                }
+            }
+        }
+        self.menu.message = if target > 0.5 {
+            "Opening door".into()
+        } else {
+            "Closing door".into()
+        };
+        true
+    }
+    fn update_map_doors(&mut self, dt: f32) {
+        let queue = &self.queue;
+        for batch in &mut self.batches {
+            let (base, buffer, map_door) = (&batch.base, &batch.buffer, &mut batch.map_door);
+            let Some(door) = map_door else {
+                continue;
+            };
+            let difference = door.target - door.angle;
+            if difference.abs() <= 0.0001 {
+                continue;
+            }
+            door.angle += difference.signum() * (dt * 2.5).min(difference.abs());
+            let raw = car_damage::pose_map_door(base, door.pivot, door.door, door.angle);
+            queue.write_buffer(buffer, 0, bytemuck::cast_slice(&raw));
+        }
+        // The original COL is static. Once a hinged door is mostly open, ignore
+        // only the vertical collision faces under its DFF bounds so the player
+        // can pass through; floors and ceilings remain intact.
+        let mut open_bounds = Vec::new();
+        for batch in &self.batches {
+            if let Some(door) = &batch.map_door {
+                // A single door can contain several atomics/material batches.
+                // Keep every atomic's bounds so all corresponding COL faces
+                // are released while the complete door assembly is open.
+                if door.angle >= 0.85 {
+                    open_bounds.push(door.bounds);
+                }
+            }
+        }
+        if let Some(collision) = &mut self.collision {
+            collision.set_open_door_bounds(open_bounds);
         }
     }
     fn update(&mut self) {
@@ -1816,6 +1939,7 @@ impl State {
                 }
             }
         }
+        self.update_map_doors(dt);
         self.pose_held_gun();
         self.npc_seconds += dt;
         for npc in &self.spawned_peds {
@@ -2099,6 +2223,26 @@ impl State {
         );
     }
     /// World batches inside `frustum`, followed by every car and ped.
+    fn mlo_batch_visible(&self, batch: &GpuBatch) -> bool {
+        let Some((_, tag)) = batch.texture_key.split_once("|mlo|") else {
+            return true;
+        };
+        let mut fields = tag.split('|');
+        let (Some(mlo_index), Some(entity_index)) = (
+            fields.next().and_then(|value| value.parse::<usize>().ok()),
+            fields.next().and_then(|value| value.parse::<usize>().ok()),
+        ) else {
+            return true;
+        };
+        let world = [
+            ORIGIN[0] + self.position.x,
+            ORIGIN[1] - self.position.z,
+            self.position.y,
+        ];
+        self.streamer
+            .as_ref()
+            .is_none_or(|streamer| streamer.mlo_entity_visible(mlo_index, entity_index, world))
+    }
     fn drawn_batches<'a>(
         &'a self,
         frustum: &'a culling::Frustum,
@@ -2106,6 +2250,7 @@ impl State {
         self.batches
             .iter()
             .filter(|batch| !is_glow(batch))
+            .filter(|batch| self.mlo_batch_visible(batch))
             .filter(move |batch| !self.culling_enabled || frustum.visible(batch.bounds))
             .chain(self.car.iter().flat_map(|(_, b)| b))
             .chain(self.spawned_peds.iter().flat_map(|p| &p.batches))
@@ -2292,6 +2437,7 @@ impl State {
                     uv_animation: None,
                     base: Vec::new(),
                     piece: None,
+                    map_door: None,
                 }
             })
             .collect();
@@ -2328,6 +2474,9 @@ impl State {
             Some(menu::Action::Teleport(index)) => {
                 self.leave_passenger();
                 self.interior_destination = None;
+                self.pending_interior_id = Some(0);
+                self.room_entry = None;
+                self.portal_exit_guard = None;
                 self.destination = Some(streaming::DESTINATIONS[index].1);
                 self.menu.has_played = true;
                 self.menu.page = None;
@@ -2339,6 +2488,13 @@ impl State {
                 let target = streaming::INTERIORS[index];
                 self.destination = Some([target.position[0], target.position[1]]);
                 self.interior_destination = Some(index);
+                self.pending_interior_id = Some(target.id);
+                self.room_entry = Some(Vec3::new(
+                    target.position[0] - ORIGIN[0],
+                    target.position[2],
+                    ORIGIN[1] - target.position[1],
+                ));
+                self.portal_exit_guard = None;
                 self.menu.has_played = true;
                 self.menu.page = None;
                 self.keys.clear();
@@ -4561,7 +4717,9 @@ impl ApplicationHandler for App {
                             KeyCode::KeyQ | KeyCode::KeyE
                                 if !event.repeat && state.walking && !state.driving =>
                             {
-                                state.arsenal.cycle(code == KeyCode::KeyE);
+                                if code != KeyCode::KeyE || !state.interact_map_door() {
+                                    state.arsenal.cycle(code == KeyCode::KeyE);
+                                }
                             }
                             KeyCode::KeyF if !event.repeat => {
                                 state.toggle_car();
@@ -4593,6 +4751,9 @@ impl ApplicationHandler for App {
                                 };
                                 state.leave_passenger();
                                 state.interior_destination = None;
+                                state.pending_interior_id = Some(0);
+                                state.room_entry = None;
+                                state.portal_exit_guard = None;
                                 state.destination = Some(streaming::DESTINATIONS[index].1);
                                 state.keys.clear();
                             }
@@ -4600,6 +4761,9 @@ impl ApplicationHandler for App {
                                 state.leave_passenger();
                                 if state.streamer.is_some() {
                                     state.interior_destination = None;
+                                    state.pending_interior_id = Some(0);
+                                    state.room_entry = None;
+                                    state.portal_exit_guard = None;
                                     state.destination = Some(ORIGIN);
                                     state.keys.clear();
                                     return;

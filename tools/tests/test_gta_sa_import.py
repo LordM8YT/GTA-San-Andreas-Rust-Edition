@@ -150,17 +150,46 @@ class GtaSaImportTests(unittest.TestCase):
             (source / 'map.ide').write_text('objs\n300, prop, props, 100, 0\nend\n', encoding='utf-8')
             (source / 'map.ipl').write_text(
                 'inst\n300, prop, 0, 1, 2, 3, 0, 0, 0, 1, -1\n'
-                '300, prop, 1, 4, 5, 6, 0, 0, 0, 1, -1\nend\n', encoding='utf-8')
-            (source / 'binary.ipl').write_bytes(b'bnry' + bytes(64))
+                '300, prop, 1, 4, 5, 6, 0, 0, 0, 1, -1\nend\n'
+                'enex\n100, 200, 10, 90, 1.5, 1.5, 3, 250, 300, 1000, 180, 5, 0, 0, 0, 24, 0, "ppalace"\nend\n',
+                encoding='utf-8')
+            binary_header = bytearray(0x4C)
+            binary_header[:4] = b'bnry'
+            struct.pack_into('<I', binary_header, 4, 1)
+            struct.pack_into('<I', binary_header, 28, 0x4C)
+            binary_row = struct.pack('<7f3i', 7.0, 8.0, 9.0, 0.0, 0.0, 0.0, 1.0,
+                                     300, 1, -1)
+            (source / 'binary.ipl').write_bytes(binary_header + binary_row)
             write_img(source / 'map.img', [('prop.dff', b'prop-dff')])
             out = temp / 'native_map'
             report = IMPORTER.import_resource(source, out, kind='map')
             manifest = json.loads((out / 'resource.json').read_text())
-            self.assertEqual(len(manifest['placements']), 2)
-            self.assertEqual(manifest['placements'][0]['interior'], 0)
-            self.assertEqual(manifest['placements'][1]['interior'], 1)
-            self.assertEqual(report['imported_interior_ipl_placements'], 1)
+            self.assertEqual(len(manifest['placements']), 3)
+            self.assertEqual(report['imported_interior_ipl_placements'], 2)
+            self.assertEqual(report['imported_interior_portals'], 1)
+            self.assertEqual(manifest['interior_portals'][0]['source'], [100.0, 200.0, 10.0])
+            self.assertEqual(manifest['interior_portals'][0]['destination'], [250.0, 300.0, 1000.0])
+            self.assertEqual(manifest['interior_portals'][0]['target_interior'], 5)
+            self.assertEqual(manifest['interior_portals'][0]['name'], 'ppalace')
             self.assertEqual(report['binary_ipl_files'], ['binary.ipl'])
+            binary = next(p for p in manifest['placements'] if p['position'] == [7.0, 8.0, 9.0])
+            self.assertEqual(binary['model_id'], 300)
+            self.assertEqual(binary['interior'], 1)
+
+    def test_binary_ipl_rejects_short_headers_and_out_of_bounds_tables(self):
+        with self.assertRaisesRegex(ValueError, 'invalid binary IPL header'):
+            IMPORTER.parse_binary_ipl(b'bnry' + bytes(28), 'short.ipl')
+
+        header = bytearray(0x4C)
+        header[:4] = b'bnry'
+        struct.pack_into('<I', header, 4, 1)
+        struct.pack_into('<I', header, 28, 0x4C)
+        with self.assertRaisesRegex(ValueError, 'outside file bounds'):
+            IMPORTER.parse_binary_ipl(bytes(header), 'truncated.ipl')
+
+        struct.pack_into('<I', header, 28, 0x40)
+        with self.assertRaisesRegex(ValueError, 'outside file bounds'):
+            IMPORTER.parse_binary_ipl(bytes(header) + bytes(40), 'overlapping.ipl')
 
     def test_props_require_position_and_start_disabled(self):
         with tempfile.TemporaryDirectory() as temp:

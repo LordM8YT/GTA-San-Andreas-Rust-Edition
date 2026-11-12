@@ -444,6 +444,23 @@ impl VehiclePart {
         })
     }
 }
+/// Common building door/gate frames are not vehicle parts, but their
+/// dummy frame still supplies the correct hinge pivot for map DFFs.
+fn map_door_from_frame(name: &str) -> Option<u8> {
+    let base = ["_dummy", "_ok", "_dam"]
+        .iter()
+        .find_map(|suffix| name.strip_suffix(suffix))
+        .unwrap_or(name);
+    Some(match base {
+        "door" | "door_l" | "door_left" | "gate" | "gate_l" | "gate_left" | "garage_door"
+        | "garage_door_l" | "door_1" | "door1" | "gate_1" | "gate1" => 0,
+        "door_r" | "door_right" | "gate_r" | "gate_right" | "door_2" | "door2" | "gate_2"
+        | "gate2" => 1,
+        "door_3" | "door3" | "gate_3" | "gate3" => 2,
+        "door_4" | "door4" | "gate_4" | "gate4" => 3,
+        _ => return None,
+    })
+}
 /// One atomic of a vehicle model in model space.
 #[derive(Clone)]
 pub struct VehiclePiece {
@@ -630,10 +647,13 @@ fn decode_pieces(
                 break;
             }
             let index = at as usize;
-            if let Some(found) = frame_names
-                .get(index)
-                .and_then(|name| VehiclePart::from_frame(name))
-            {
+            if let Some(found) = frame_names.get(index).and_then(|name| {
+                VehiclePart::from_frame(name).or_else(|| {
+                    (!vehicle)
+                        .then(|| map_door_from_frame(name).map(VehiclePart::Door))
+                        .flatten()
+                })
+            }) {
                 let m = &frames[index];
                 part = (found, [m[9], m[10], m[11]]);
                 if frame_names[index].ends_with("_dummy") {
@@ -1058,7 +1078,10 @@ mod tests {
             assert_eq!(map_pieces[0].frame_name, name);
             assert_eq!(
                 map_pieces[0].part,
-                VehiclePart::from_frame(name).unwrap_or(VehiclePart::Body),
+                map_door_from_frame(name)
+                    .map(VehiclePart::Door)
+                    .or_else(|| VehiclePart::from_frame(name))
+                    .unwrap_or(VehiclePart::Body),
                 "map atomic keeps named door/panel metadata: {name}"
             );
             let pieces = decode_vehicle_pieces(&fixture).unwrap();
@@ -1071,6 +1094,11 @@ mod tests {
     }
     #[test]
     fn vehicle_parts_come_from_frame_names() {
+        assert_eq!(map_door_from_frame("door_dummy"), Some(0));
+        assert_eq!(map_door_from_frame("door_left_dummy"), Some(0));
+        assert_eq!(map_door_from_frame("door_right_dummy"), Some(1));
+        assert_eq!(map_door_from_frame("gate2_dummy"), Some(1));
+        assert_eq!(map_door_from_frame("window_dummy"), None);
         assert_eq!(
             VehiclePart::from_frame("wheel_lf_dummy"),
             Some(VehiclePart::Wheel {

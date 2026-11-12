@@ -334,6 +334,7 @@ impl Upload {
                             Vec::new()
                         },
                         piece: None,
+                        map_door: batch.map_door.map(Into::into),
                     });
                 }
             }

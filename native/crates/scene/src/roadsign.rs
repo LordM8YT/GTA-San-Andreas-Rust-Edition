@@ -66,6 +66,8 @@ pub(super) fn add(
                 alpha: false,
                 animated: false,
                 uv_animation: None,
+                map_door: None,
+                mlo_entity: None,
             })
             .vertices
             .extend(vertices);

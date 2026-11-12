@@ -1,7 +1,7 @@
 //! One bounded background loader. The renderer keeps the old region until a
 //! complete replacement is ready; no GTA files are written.
 use anyhow::Result;
-use sa_scene::WorldLoader;
+use sa_scene::{mlo::MloDefinition, InteriorPortal, WorldLoader};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
 use std::time::{Duration, Instant};
 
@@ -9,6 +9,11 @@ mod locations;
 pub use locations::*;
 pub fn distance(a: [f32; 2], b: [f32; 2]) -> f32 {
     ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt()
+}
+/// Convert a GTA SA compass heading (0=north, clockwise) to runtime camera yaw
+/// (0=south, increasing toward east).
+pub fn camera_yaw_from_sa_heading(heading_degrees: f32) -> f32 {
+    std::f32::consts::PI - heading_degrees.to_radians()
 }
 pub enum Retired {
     Scene {
@@ -28,9 +33,14 @@ pub struct Streamer {
     pending: Option<Region>,
     retry_after: Option<Instant>,
     connected: bool,
+    portals: Vec<InteriorPortal>,
+    // Definitions are retained for per-frame room and portal visibility checks.
+    mlos: Vec<MloDefinition>,
 }
 impl Streamer {
     pub fn new(mut loader: WorldLoader) -> Self {
+        let portals = loader.interior_portals();
+        let mlos = loader.mlo_definitions().to_vec();
         let (requests, receiver) = mpsc::sync_channel::<Work>(1);
         let (sender, results) = mpsc::sync_channel(1);
         std::thread::Builder::new()
@@ -71,7 +81,71 @@ impl Streamer {
             pending: None,
             retry_after: None,
             connected: true,
+            portals,
+            mlos,
         }
+    }
+    /// MLO metadata loaded from resource manifests. Coordinates passed to the
+    /// room helpers below are in the MLO's local space, before any instance transform.
+    #[allow(dead_code)]
+    pub fn mlo_definitions(&self) -> &[MloDefinition] {
+        &self.mlos
+    }
+    /// Resolve a room by MLO name using local-space bounds.
+    #[allow(dead_code)]
+    pub fn mlo_room_at(&self, name: &str, local_position: [f32; 3]) -> Option<usize> {
+        self.mlos
+            .iter()
+            .find(|mlo| mlo.name.eq_ignore_ascii_case(name))
+            .and_then(|mlo| mlo.room_at(local_position))
+    }
+    /// Return entity indices reachable from a room through open MLO portals.
+    /// Exterior-shell entities (entities without a room) remain visible.
+    #[allow(dead_code)]
+    pub fn mlo_visible_entities(&self, name: &str, room: usize) -> Option<Vec<usize>> {
+        let mlo = self
+            .mlos
+            .iter()
+            .find(|mlo| mlo.name.eq_ignore_ascii_case(name))?;
+        let visible_rooms = mlo.visible_rooms(room);
+        Some(mlo.visible_entity_indices(&visible_rooms))
+    }
+    /// Check whether one MLO entity is visible from the player's world position.
+    pub fn mlo_entity_visible(
+        &self,
+        mlo_index: usize,
+        entity_index: usize,
+        world_position: [f32; 3],
+    ) -> bool {
+        let Some(mlo) = self.mlos.get(mlo_index) else {
+            return true;
+        };
+        let local = mlo.local_position_from_world(world_position);
+        let visible = mlo
+            .room_at(local)
+            .map(|room| mlo.visible_entity_indices(&mlo.visible_rooms(room)))
+            .unwrap_or_else(|| mlo.visible_entity_indices(&[]));
+        visible.binary_search(&entity_index).is_ok()
+    }
+
+    /// Find the closest ENEX or resource portal containing a player in the requested interior.
+    pub fn portal_at(&self, position: [f32; 3], interior: u8) -> Option<InteriorPortal> {
+        self.portals
+            .iter()
+            .filter(|portal| portal.source_interior == interior)
+            .filter(|portal| {
+                (0..3)
+                    .all(|axis| (position[axis] - portal.source[axis]).abs() <= portal.radius[axis])
+            })
+            .min_by(|a, b| {
+                let distance = |portal: &InteriorPortal| {
+                    (0..3)
+                        .map(|axis| (position[axis] - portal.source[axis]).powi(2))
+                        .sum::<f32>()
+                };
+                distance(a).total_cmp(&distance(b))
+            })
+            .cloned()
     }
     pub fn pending(&self) -> bool {
         self.pending.is_some()
@@ -155,6 +229,110 @@ impl Retired {
 mod tests {
     use super::*;
     #[test]
+    fn sa_enex_headings_face_the_correct_runtime_direction() {
+        let close = |actual: f32, expected: f32| {
+            assert!((actual - expected).abs() < 0.0001);
+        };
+        close(camera_yaw_from_sa_heading(0.0), std::f32::consts::PI);
+        close(
+            camera_yaw_from_sa_heading(90.0),
+            std::f32::consts::FRAC_PI_2,
+        );
+        close(camera_yaw_from_sa_heading(180.0), 0.0);
+        close(
+            camera_yaw_from_sa_heading(270.0),
+            -std::f32::consts::FRAC_PI_2,
+        );
+    }
+    #[test]
+    fn resource_enex_portals_work_in_both_directions_and_respect_bounds() {
+        let portal = InteriorPortal {
+            source: [100.0, 200.0, 10.0],
+            destination: [250.0, 300.0, 1000.0],
+            radius: [1.5, 1.5, 3.0],
+            source_interior: 0,
+            target_interior: 5,
+            enter_angle: 90.0,
+            exit_angle: 180.0,
+            flags: 0,
+            name: "ppalace".into(),
+        };
+        portal.validate().unwrap();
+        let reverse = portal.reverse().unwrap();
+        let (requests, _receiver) = mpsc::sync_channel(1);
+        let (_sender, results) = mpsc::sync_channel(1);
+        let stream = Streamer {
+            requests,
+            results,
+            pending: None,
+            retry_after: None,
+            connected: true,
+            portals: vec![portal.clone(), reverse.clone()],
+            mlos: Vec::new(),
+        };
+        assert_eq!(stream.portal_at(portal.source, 0), Some(portal));
+        assert_eq!(stream.portal_at(reverse.source, 5), Some(reverse.clone()));
+        assert!(stream.portal_at([105.0, 200.0, 10.0], 0).is_none());
+    }
+    #[test]
+    fn mlo_room_lookup_and_visibility_are_available_to_streaming() {
+        let mlo = MloDefinition {
+            position: [0.0; 3],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            interior: 0,
+            name: "police_station".into(),
+            entities: vec![
+                sa_scene::mlo::MloEntity {
+                    model_id: 1,
+                    position: [0.0; 3],
+                    rotation: [0.0, 0.0, 0.0, 1.0],
+                    room: Some(0),
+                },
+                sa_scene::mlo::MloEntity {
+                    model_id: 1,
+                    position: [0.0; 3],
+                    rotation: [0.0, 0.0, 0.0, 1.0],
+                    room: None,
+                },
+            ],
+            rooms: vec![sa_scene::mlo::MloRoom {
+                name: "lobby".into(),
+                min: [-5.0; 3],
+                max: [5.0; 3],
+                flags: 0,
+                portal_count: 0,
+                floor_id: 0,
+                blend: 0.0,
+                timecycle: None,
+                exterior_visibility_depth: 0,
+                entities: vec![0],
+            }],
+            portals: Vec::new(),
+            entity_sets: Vec::new(),
+            timecycle_modifiers: Vec::new(),
+        };
+        let (requests, _receiver) = mpsc::sync_channel(1);
+        let (_sender, results) = mpsc::sync_channel(1);
+        let stream = Streamer {
+            requests,
+            results,
+            pending: None,
+            retry_after: None,
+            connected: true,
+            portals: Vec::new(),
+            mlos: vec![mlo],
+        };
+        assert_eq!(
+            stream.mlo_room_at("POLICE_STATION", [0.0, 0.0, 0.0]),
+            Some(0)
+        );
+        assert_eq!(stream.mlo_room_at("missing", [0.0; 3]), None);
+        assert_eq!(
+            stream.mlo_visible_entities("police_station", 0),
+            Some(vec![0, 1])
+        );
+    }
+    #[test]
     fn retirement_is_nonblocking_preserves_full_queue_and_does_not_mark_loading() {
         let (requests, receiver) = mpsc::sync_channel::<Work>(1);
         let (_sender, results) = mpsc::sync_channel(1);
@@ -164,6 +342,8 @@ mod tests {
             pending: None,
             retry_after: None,
             connected: true,
+            portals: Vec::new(),
+            mlos: Vec::new(),
         };
         let empty = || Retired::Scene {
             batches: Vec::new(),
@@ -199,6 +379,8 @@ mod tests {
             pending: None,
             retry_after: None,
             connected: true,
+            portals: Vec::new(),
+            mlos: Vec::new(),
         };
         stream.request(ORIGIN);
         assert_eq!(

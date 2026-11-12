@@ -66,6 +66,40 @@ def collision_xml(path, nested=False, polygon='Triangle', kind='Geometry'):
 
 
 class FiveMImportTests(unittest.TestCase):
+    def test_explicit_mlo_metadata_is_embedded_in_native_resource(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp); root = resource(temp / 'input')
+            mesh(root / 'stream/prop.ydr.xml')
+            metadata = {
+                'name': 'police_station',
+                'entities': [{'model_id': 30000, 'position': [0, 0, 0], 'room': 0}],
+                'rooms': [{'name': 'lobby', 'min': [-5, -5, -2], 'max': [5, 5, 4], 'entities': [0]}],
+                'portals': [],
+                'entity_sets': [],
+                'timecycle_modifiers': []
+            }
+            (root / 'mlo.json').write_text(json.dumps(metadata), encoding='utf-8')
+            report = f.import_resource(root, temp / 'native', 'props', position=[0, 0, 0],
+                                       mlo_metadata_files=['mlo.json'])
+            manifest = json.loads((temp / 'native/resource.json').read_text())
+            self.assertEqual(manifest['mlo'], [metadata])
+            self.assertEqual(report['mlo']['definitions'], 1)
+            self.assertIn('mlo.json', report['mlo']['sources'])
+
+    def test_mlo_metadata_rejects_external_missing_and_oversized_inputs(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp); root = resource(temp / 'input')
+            mesh(root / 'stream/prop.ydr.xml')
+            (temp / 'outside.json').write_text('{}', encoding='utf-8')
+            for paths in (['../outside.json'], ['missing.json'], ['fxmanifest.lua'], ['mlo.json'] * 2):
+                with self.assertRaises(ValueError):
+                    f.import_resource(root, temp / 'bad', 'props', position=[0, 0, 0],
+                                      mlo_metadata_files=paths)
+                self.assertFalse((temp / 'bad').exists())
+            (root / 'mlo.json').write_bytes(b' ' * (256 * 1024 + 1))
+            with self.assertRaisesRegex(ValueError, '256 KiB'):
+                f.import_resource(root, temp / 'bad', 'props', position=[0, 0, 0],
+                                  mlo_metadata_files=['mlo.json'])
     def test_native_handling_is_selected_hashed_and_embedded_without_source_file(self):
         with tempfile.TemporaryDirectory() as temp:
             temp = Path(temp); root = resource(temp / 'input')

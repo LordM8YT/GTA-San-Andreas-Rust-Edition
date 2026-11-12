@@ -30,6 +30,12 @@ struct Manifest {
     mta_models: Vec<MtaModel>,
     #[serde(default)]
     texture_overrides: HashMap<String, String>,
+    /// FiveM-inspired interior archetypes: rooms, portals and interior entities.
+    #[serde(default)]
+    mlo: Vec<crate::mlo::MloDefinition>,
+    /// GTA SA IPL ENEX-style doors and interior transitions.
+    #[serde(default)]
+    interior_portals: Vec<crate::InteriorPortal>,
 }
 impl Manifest {
     fn validate_vehicle_tuning(&self) -> Result<()> {
@@ -58,6 +64,68 @@ struct Model {
     original_txd: Option<String>,
     #[serde(default)]
     col: Option<String>,
+    /// Explicit frame-name overrides for non-standard building doors.
+    #[serde(default)]
+    map_doors: Vec<MapDoorOverride>,
+}
+#[derive(Deserialize)]
+struct MapDoorOverride {
+    /// Exact lowercase atomic frame name reported by the map DFF audit.
+    frame: String,
+    /// Hinge direction/index: 0-3, matching GTA's door swing convention.
+    door: u8,
+    /// Optional DFF-local hinge pivot. Omit to use the parent dummy transform.
+    #[serde(default)]
+    pivot: Option<[f32; 3]>,
+}
+fn apply_map_door_overrides(
+    pieces: &mut [sa_assets::VehiclePiece],
+    overrides: &[MapDoorOverride],
+) -> Result<()> {
+    ensure!(
+        overrides.len() <= 32,
+        "map door override limit (32 per model)"
+    );
+    let mut frames = HashSet::new();
+    for override_ in overrides {
+        let frame = override_.frame.trim();
+        ensure!(
+            !frame.is_empty() && frame.len() <= 64 && frame.chars().all(|ch| !ch.is_control()),
+            "map door override frame must contain 1-64 printable characters"
+        );
+        ensure!(
+            override_.door <= 3,
+            "map door index must be between 0 and 3"
+        );
+        ensure!(
+            frames.insert(frame.to_ascii_lowercase()),
+            "duplicate map door override frame: {frame}"
+        );
+        if let Some(pivot) = override_.pivot {
+            ensure!(
+                pivot
+                    .iter()
+                    .all(|value| value.is_finite() && value.abs() <= 1000.0),
+                "map door override pivot is invalid"
+            );
+        }
+        let mut matched = 0;
+        for piece in pieces
+            .iter_mut()
+            .filter(|piece| piece.frame_name.eq_ignore_ascii_case(frame))
+        {
+            piece.part = sa_assets::VehiclePart::Door(override_.door);
+            if let Some(pivot) = override_.pivot {
+                piece.pivot = pivot;
+            }
+            matched += 1;
+        }
+        ensure!(
+            matched > 0,
+            "map door override frame {frame} does not match a DFF atomic"
+        );
+    }
+    Ok(())
 }
 /// Original game objects that mark race pickups: the nitro bottle upgrade,
 /// the health heart and the information icon.
@@ -334,6 +402,10 @@ pub(super) struct Resources {
     /// Spawn points from MTA maps, as (label, IPL position).
     pub map_spawns: Vec<(String, [f32; 3])>,
     pub map_pickups: Vec<crate::MapPickup>,
+    /// Validated MLO definitions retained for interior-aware scene assembly.
+    pub mlo: Vec<crate::mlo::MloDefinition>,
+    /// Local-resource ENEX portals, including generated reverse sides.
+    pub interior_portals: Vec<crate::InteriorPortal>,
     pub names: Vec<String>,
     pub vehicle: Option<Scene>,
     pub vehicles: Vec<(String, Scene)>,
@@ -605,11 +677,16 @@ impl WorldLoader {
                 self.resources.textures.len() + manifest.texture_overrides.len() <= 512,
                 "total mod texture budget"
             );
+            let mlo_model_ids: HashSet<i32> =
+                manifest.models.iter().map(|model| model.id).collect();
             for model in manifest.models {
                 ensure!(model.id >= 0, "negative mod model ID");
                 let key = format!("mod_{}_{}", folder_name.to_ascii_lowercase(), model.id);
-                let map_pieces = sa_assets::decode_map_dff_pieces(&resource(&folder, &model.dff)?)
-                    .with_context(|| format!("mod model {}", model.dff))?;
+                let mut map_pieces =
+                    sa_assets::decode_map_dff_pieces(&resource(&folder, &model.dff)?)
+                        .with_context(|| format!("mod model {}", model.dff))?;
+                apply_map_door_overrides(&mut map_pieces, &model.map_doors)
+                    .with_context(|| format!("{name}: map door overrides for {}", model.dff))?;
                 let geometry: Vec<Geometry> = map_pieces
                     .iter()
                     .map(|piece| piece.geometry.clone())
@@ -661,6 +738,28 @@ impl WorldLoader {
                         model: key.clone(),
                         txd: dictionary_name,
                     },
+                );
+            }
+            for mlo in manifest.mlo {
+                mlo.validate(&mlo_model_ids)
+                    .with_context(|| format!("{name}: invalid MLO {}", mlo.name))?;
+                self.resources.mlo.push(mlo);
+            }
+            ensure!(
+                self.resources.mlo.len() <= 64,
+                "total MLO definition limit (64)"
+            );
+            for portal in manifest.interior_portals {
+                portal
+                    .validate()
+                    .with_context(|| format!("{name}: invalid interior portal {}", portal.name))?;
+                if let Some(reverse) = portal.reverse() {
+                    self.resources.interior_portals.push(reverse);
+                }
+                self.resources.interior_portals.push(portal);
+                ensure!(
+                    self.resources.interior_portals.len() <= 2048,
+                    "total resource interior portal limit (2048)"
                 );
             }
             for instance in manifest.placements {
@@ -917,6 +1016,10 @@ impl WorldLoader {
     pub fn mod_names(&self) -> &[String] {
         &self.resources.names
     }
+    /// Validated FiveM-style MLO definitions available to interior-aware runtime systems.
+    pub fn mlo_definitions(&self) -> &[crate::mlo::MloDefinition] {
+        &self.resources.mlo
+    }
     pub fn model_names(&self) -> (String, String) {
         (
             if self.resources.car_name.is_empty() {
@@ -982,6 +1085,41 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
+    fn custom_map_door_overrides_support_nonstandard_frame_names_and_pivots() {
+        let fixture = include_bytes!("../../../../mods/native-room-demo/room.dff");
+        let mut pieces = sa_assets::decode_map_dff_pieces(fixture).unwrap();
+        pieces[0].frame_name = "station_security_leaf".into();
+        pieces[0].part = sa_assets::VehiclePart::Body;
+        pieces[0].pivot = [4.0, 5.0, 6.0];
+        apply_map_door_overrides(
+            &mut pieces,
+            &[MapDoorOverride {
+                frame: "station_security_leaf".into(),
+                door: 1,
+                pivot: Some([1.0, 2.0, 3.0]),
+            }],
+        )
+        .unwrap();
+        assert_eq!(pieces[0].part, sa_assets::VehiclePart::Door(1));
+        assert_eq!(pieces[0].pivot, [1.0, 2.0, 3.0]);
+    }
+    #[test]
+    fn custom_map_door_overrides_reject_unknown_duplicate_and_invalid_entries() {
+        let fixture = include_bytes!("../../../../mods/native-room-demo/room.dff");
+        let mut pieces = sa_assets::decode_map_dff_pieces(fixture).unwrap();
+        let entry = |frame: &str, door| MapDoorOverride {
+            frame: frame.into(),
+            door,
+            pivot: None,
+        };
+        assert!(apply_map_door_overrides(&mut pieces, &[entry("missing_frame", 0)]).is_err());
+        pieces[0].frame_name = "door".into();
+        assert!(
+            apply_map_door_overrides(&mut pieces, &[entry("door", 0), entry("DOOR", 1)]).is_err()
+        );
+        assert!(apply_map_door_overrides(&mut pieces, &[entry("door", 4)]).is_err());
+    }
+    #[test]
     fn custom_room_loads_and_player_can_enter() {
         let root = std::env::temp_dir().join(format!("sa-native-room-{}", std::process::id()));
         let folder = root.join("mods/[maps]/room");
@@ -1004,8 +1142,9 @@ mod tests {
             include_bytes!("../../../../mods/native-car-demo/car.dff"),
         )
         .unwrap();
-        fs::write(folder.join("mod.json"),br#"{"enabled":true,"name":"Test room","models":[{"id":30000,"dff":"room.dff"}],"placements":[{"model_id":30000,"position":[0,0,0]}],"vehicles":[{"dff":"car.dff"}]}"#).unwrap();
+        fs::write(folder.join("mod.json"),br#"{"enabled":true,"name":"Test room","models":[{"id":30000,"dff":"room.dff"}],"placements":[{"model_id":30000,"position":[0,0,0]}],"mlo":[{"name":"demo","entities":[{"model_id":30000,"room":0}],"rooms":[{"name":"room","min":[-2,-2,-2],"max":[2,2,2],"entities":[0]}]}],"vehicles":[{"dff":"car.dff"}]}"#).unwrap();
         let mut loader = WorldLoader {
+            portals: Vec::new(),
             water: std::sync::Arc::new(crate::water::WaterMap::default()),
             water_texture: None,
             roadsign_font: None,
@@ -1165,8 +1304,11 @@ mod tests {
             .unwrap()
             .is_none());
         let scene = loader.load([0.0, 0.0], [0.0, 0.0], 100.0).unwrap();
-        assert_eq!(scene.placements, 1);
-        assert_eq!(scene.triangles, 108);
+        assert_eq!(loader.mlo_definitions().len(), 1);
+        assert_eq!(loader.mlo_definitions()[0].name, "demo");
+        // One ordinary IPL placement plus the MLO-owned room entity.
+        assert_eq!(scene.placements, 2);
+        assert_eq!(scene.triangles, 216);
         let mut interior_room = loader.rows[0].clone();
         interior_room.interior = 3;
         interior_room.pos[2] = 1000.0;
@@ -1175,7 +1317,7 @@ mod tests {
         assert_eq!(loader.interior_placement_count(), 1);
         assert_eq!(
             loader.load([0.0; 2], [0.0; 2], 100.0).unwrap().placements,
-            1
+            2
         );
         let interior = loader.load_interior([0.0; 2], [0.0; 2], 100.0, 3).unwrap();
         assert_eq!(interior.placements, 1);
@@ -1285,6 +1427,7 @@ mod tests {
             txd: "m".into(),
         };
         let mut loader = WorldLoader {
+            portals: Vec::new(),
             water: std::sync::Arc::new(crate::water::WaterMap::default()),
             water_texture: None,
             roadsign_font: None,

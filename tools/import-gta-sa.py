@@ -277,25 +277,100 @@ def handling_profiles(paths, model_to_id):
             if handling_id in profiles}
 
 
+def parse_binary_ipl(data, name):
+    """Decode a bounded GTA SA bnry IPL instance table (40-byte records)."""
+    # Binary IPL uses an 0x4C-byte header (18 little-endian words after magic).
+    # The INST offset is the seventh word at byte 0x1C, commonly 0x4C.
+    require(len(data) >= 0x4C and data[:4] == b'bnry',
+            f'{name}: invalid binary IPL header')
+    count, = struct.unpack_from('<I', data, 4)
+    offset, = struct.unpack_from('<I', data, 28)
+    require(count <= 100000 and offset >= 0x4C and
+            offset + count * 40 <= len(data),
+            f'{name}: binary IPL instance table is outside file bounds')
+    placements = []
+    for index in range(count):
+        row = struct.unpack_from('<7f3i', data, offset + index * 40)
+        position = list(row[0:3])
+        rotation = list(row[3:7])
+        model_id, interior, lod = row[7:10]
+        norm = sum(value * value for value in rotation)
+        require(model_id >= 0 and 0 <= interior <= 255 and
+                all(math.isfinite(v) for v in position + rotation) and
+                all(abs(v) <= 10000 for v in position) and
+                0.98 <= norm <= 1.02,
+                f'{name}: invalid binary IPL instance {index}')
+        placements.append({
+            'model_id': model_id,
+            'position': position,
+            'rotation': rotation,
+            '_interior': interior,
+            '_lod': lod,
+        })
+    return placements
+
+
+def parse_enex(fields, name):
+    """Decode one GTA SA ENEX transition into the native resource schema."""
+    require(len(fields) == 18, f'{name}: unsupported ENEX record')
+    try:
+        source = [float(fields[i]) for i in (0, 1, 2)]
+        enter_angle = float(fields[3])
+        radius = [float(fields[i]) for i in (4, 5, 6)]
+        destination = [float(fields[i]) for i in (7, 8, 9)]
+        exit_angle = float(fields[10])
+        target_interior = int(fields[11], 10)
+        flags = int(fields[12], 10)
+    except ValueError as error:
+        raise ValueError(f'{name}: invalid ENEX numeric field') from error
+    portal_name = fields[17].strip().strip('"').strip("'")
+    require(all(math.isfinite(v) and abs(v) <= 10000 for v in source + destination),
+            f'{name}: ENEX coordinates are invalid')
+    require(all(math.isfinite(v) and 0 < v <= 100 for v in radius),
+            f'{name}: ENEX trigger bounds are invalid')
+    require(math.isfinite(enter_angle) and math.isfinite(exit_angle)
+            and abs(enter_angle) <= 360 and abs(exit_angle) <= 360,
+            f'{name}: ENEX heading is invalid')
+    require(0 <= target_interior <= 255 and len(portal_name) <= 128,
+            f'{name}: ENEX destination or name is invalid')
+    return {
+        'source': source,
+        'destination': destination,
+        'radius': radius,
+        'target_interior': target_interior,
+        'enter_angle': enter_angle,
+        'exit_angle': exit_angle,
+        'flags': flags,
+        'name': portal_name,
+    }
+
+
 def parse_ipl(paths):
     placements = []
+    portals = []
     malformed = 0
     binary = []
     for path in sorted(paths, key=lambda p: p.as_posix().casefold()):
         if path.suffix.casefold() != '.ipl':
             continue
-        with path.open('rb') as stream:
-            if stream.read(4) == b'bnry':
-                binary.append(path.name)
-                continue
+        raw = path.read_bytes()
+        if raw[:4] == b'bnry':
+            binary.append(path.name)
+            placements.extend(parse_binary_ipl(raw, path.name))
+            require(len(placements) <= 100000, 'IPL contains too many placement records')
+            continue
         section = ''
         for line in data_lines(path):
             if ',' not in line:
                 section = '' if line.casefold() == 'end' else line.casefold()
                 continue
+            fields = [field.strip() for field in line.split(',')]
+            if section == 'enex':
+                portals.append(parse_enex(fields, path.name))
+                require(len(portals) <= 2048, 'IPL contains too many ENEX portals')
+                continue
             if section != 'inst':
                 continue
-            fields = [field.strip() for field in line.split(',')]
             if len(fields) != 11:
                 malformed += 1
                 continue
@@ -323,8 +398,7 @@ def parse_ipl(paths):
                 '_lod': lod,
             })
             require(len(placements) <= 100000, 'IPL contains too many placement records')
-    return placements, malformed, binary
-
+    return placements, portals, malformed, binary
 
 def installed_ide_paths(game_root):
     """Read IDE files registered by the installed game, matching the runtime."""
@@ -416,7 +490,7 @@ def import_resource(root, output, kind='auto', models=(), model_id=30000,
             original_txd_names.update(
                 Path(entry).stem for entry in archive_entries if entry.endswith('.txd')
             )
-    placements, malformed_placements, binary_ipls = parse_ipl(ipl_paths)
+    placements, interior_portals, malformed_placements, binary_ipls = parse_ipl(ipl_paths)
 
     car_handling_ids = vehicle_handling_ids(ide_paths)
     custom_handling = handling_profiles(files, car_handling_ids)
@@ -556,6 +630,8 @@ def import_resource(root, output, kind='auto', models=(), model_id=30000,
                 manifest['models'] = model_rows
                 if placement_rows:
                     manifest['placements'] = placement_rows
+                if interior_portals:
+                    manifest['interior_portals'] = interior_portals
 
         manifest_path = stage / 'resource.json'
         manifest_path.write_bytes((json.dumps(manifest, indent=2, allow_nan=False) + '\n').encode('utf-8'))
@@ -587,6 +663,7 @@ def import_resource(root, output, kind='auto', models=(), model_id=30000,
             'output_bytes': total,
             'skipped_unknown_ipl_placements': locals().get('skipped_unknown', 0),
             'imported_interior_ipl_placements': locals().get('imported_interiors', 0),
+            'imported_interior_portals': len(interior_portals),
             'malformed_ipl_placements': malformed_placements,
             'compressed_img_entries': compressed_entries,
             'duplicate_asset_names': duplicates,

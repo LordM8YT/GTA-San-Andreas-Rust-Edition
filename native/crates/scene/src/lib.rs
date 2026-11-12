@@ -2,6 +2,7 @@
 pub mod collision;
 pub mod handling;
 pub mod lights;
+pub mod mlo;
 mod mods;
 mod mta_map;
 pub use mods::{share_resource_folders, share_resources};
@@ -46,6 +47,8 @@ struct Placement {
     scale: f32,
     /// False for MTA objects with `collisions="false"`: drawn, never collided.
     solid: bool,
+    /// MLO definition and entity indices, used to keep room-owned geometry separate.
+    mlo_entity: Option<(usize, usize)>,
 }
 const NO_ROW: u32 = u32::MAX;
 const ALL_AREAS: i32 = 13;
@@ -56,12 +59,90 @@ pub struct Vertex {
     pub uv: [f32; 2],
     pub color: [f32; 4],
 }
+#[derive(Clone, Debug, PartialEq)]
+pub struct MapDoor {
+    /// Stable identity shared by every material batch belonging to this door.
+    pub id: String,
+    /// Hinge position in the streamed scene's world-relative coordinates.
+    pub pivot: [f32; 3],
+    /// Tight world-relative bounds of the moving mesh, used to release its
+    /// static COL wall triangles while the door is open.
+    pub bounds: [[f32; 3]; 2],
+    /// GTA SA door convention: 0/2 swing left, 1/3 swing right.
+    pub door: u8,
+}
+fn default_portal_radius() -> [f32; 3] {
+    [1.5, 1.5, 4.0]
+}
+/// A GTA San Andreas IPL ENEX entrance. Coordinates are in SA world space.
+#[derive(Clone, Debug, serde::Deserialize, PartialEq)]
+pub struct InteriorPortal {
+    pub source: [f32; 3],
+    pub destination: [f32; 3],
+    #[serde(default = "default_portal_radius")]
+    pub radius: [f32; 3],
+    #[serde(default)]
+    pub source_interior: u8,
+    pub target_interior: u8,
+    #[serde(default)]
+    pub enter_angle: f32,
+    #[serde(default)]
+    pub exit_angle: f32,
+    #[serde(default)]
+    pub flags: u32,
+    #[serde(default)]
+    pub name: String,
+}
+impl InteriorPortal {
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.source
+                .iter()
+                .chain(self.destination.iter())
+                .all(|v| v.is_finite() && v.abs() <= 10000.0),
+            "interior portal has invalid coordinates"
+        );
+        ensure!(
+            self.radius
+                .iter()
+                .all(|v| v.is_finite() && *v > 0.0 && *v <= 100.0),
+            "interior portal has invalid trigger bounds"
+        );
+        ensure!(
+            self.enter_angle.is_finite()
+                && self.exit_angle.is_finite()
+                && self.enter_angle.abs() <= 360.0
+                && self.exit_angle.abs() <= 360.0,
+            "interior portal has invalid heading"
+        );
+        ensure!(self.name.len() <= 128, "interior portal name is too long");
+        Ok(())
+    }
+    /// Build the reverse side of a one-way ENEX record that targets an interior.
+    pub fn reverse(&self) -> Option<Self> {
+        (self.target_interior != 0).then(|| Self {
+            source: self.destination,
+            destination: self.source,
+            radius: self.radius,
+            source_interior: self.target_interior,
+            target_interior: self.source_interior,
+            enter_angle: self.exit_angle,
+            exit_angle: self.enter_angle,
+            flags: self.flags,
+            name: self.name.clone(),
+        })
+    }
+}
 pub struct Batch {
     pub key: String,
     pub vertices: Vec<Vertex>,
     pub alpha: bool,
     pub animated: bool,
     pub uv_animation: Option<std::sync::Arc<sa_assets::uvanim::UvAnimation>>,
+    /// Present for independently animated custom map doors.
+    pub map_door: Option<MapDoor>,
+    /// MLO/entity indices encoded on a unique batch so room visibility can filter it.
+    pub mlo_entity: Option<(usize, usize)>,
 }
 pub struct Scene {
     pub vehicle_handling: vehicle::Handling,
@@ -188,6 +269,7 @@ fn placement(id: i32, interior: i32, pos: [f32; 3], quat: [f32; 4]) -> Result<Pl
         parent: NO_ROW,
         scale: 1.0,
         solid: true,
+        mlo_entity: None,
     })
 }
 fn binary_ipl(data: &[u8]) -> Result<Vec<Placement>> {
@@ -257,8 +339,29 @@ impl WorldArchive {
         }
     }
 }
-fn placements(root: &Path, img: &mut WorldArchive) -> Result<Vec<Placement>> {
+fn parse_enex(line: &str) -> Result<InteriorPortal> {
+    let fields: Vec<_> = line.split(',').map(str::trim).collect();
+    ensure!(fields.len() == 18, "unsupported text IPL ENEX record");
+    let portal = InteriorPortal {
+        source: [fields[0].parse()?, fields[1].parse()?, fields[2].parse()?],
+        enter_angle: fields[3].parse()?,
+        radius: [fields[4].parse()?, fields[5].parse()?, fields[6].parse()?],
+        destination: [fields[7].parse()?, fields[8].parse()?, fields[9].parse()?],
+        exit_angle: fields[10].parse()?,
+        target_interior: fields[11].parse()?,
+        flags: fields[12].parse()?,
+        name: fields[17].trim_matches('"').trim_matches('\'').to_owned(),
+        source_interior: 0,
+    };
+    portal.validate()?;
+    Ok(portal)
+}
+fn placements(
+    root: &Path,
+    img: &mut WorldArchive,
+) -> Result<(Vec<Placement>, Vec<InteriorPortal>)> {
     let mut out = Vec::new();
+    let mut portals = Vec::new();
     let names: Vec<_> = img.names().cloned().collect();
     for path in registered(root, "IPL", ".ipl")? {
         let mut base = Vec::new();
@@ -271,6 +374,16 @@ fn placements(root: &Path, img: &mut WorldArchive) -> Result<Vec<Placement>> {
                 } else {
                     line.to_ascii_lowercase()
                 };
+                continue;
+            }
+            if section == "enex" {
+                let portal =
+                    parse_enex(&line).with_context(|| format!("{} ENEX record", path.display()))?;
+                if let Some(reverse) = portal.reverse() {
+                    portals.push(reverse);
+                }
+                portals.push(portal);
+                ensure!(portals.len() <= 2048, "too many IPL ENEX portals");
                 continue;
             }
             if section != "inst" {
@@ -328,7 +441,7 @@ fn placements(root: &Path, img: &mut WorldArchive) -> Result<Vec<Placement>> {
         out.extend(base);
         out.extend(children);
     }
-    Ok(out)
+    Ok((out, portals))
 }
 fn rotate(point: [f32; 3], q: [f32; 4]) -> [f32; 3] {
     let len = q.iter().map(|v| v * v).sum::<f32>().sqrt();
@@ -358,9 +471,64 @@ fn place(point: [f32; 3], r: &Placement, center: [f32; 2]) -> [f32; 3] {
 }
 /// Batch suffixes describe draw state; they are not part of the TXD entry name.
 fn texture_key(key: &str) -> &str {
+    let key = key.split_once("|mlo|").map_or(key, |(base, _)| base);
     let key = key.strip_suffix("|alpha").unwrap_or(key);
     let key = key.split_once("|map|").map_or(key, |(base, _)| base);
     key.split_once("|uv|").map_or(key, |(base, _)| base)
+}
+/// Resolve common non-vehicle door/gate frame names used by map DFFs.
+/// Vehicle-style names (door_lf_dummy etc.) are already decoded by the asset
+/// parser; these aliases let ordinary building doors use their own frame
+/// origin as the hinge without requiring vehicle naming conventions.
+fn map_door_index(piece: &sa_assets::VehiclePiece) -> Option<u8> {
+    if let sa_assets::VehiclePart::Door(index) = piece.part {
+        return Some(index);
+    }
+    let frame = piece
+        .frame_name
+        .strip_suffix("_dummy")
+        .or_else(|| piece.frame_name.strip_suffix("_ok"))
+        .or_else(|| piece.frame_name.strip_suffix("_dam"))
+        .unwrap_or(&piece.frame_name);
+    Some(match frame {
+        "door" | "door_l" | "door_left" | "gate" | "gate_l" | "gate_left" | "garage_door"
+        | "garage_door_l" | "door_1" | "door1" | "gate_1" | "gate1" => 0,
+        "door_r" | "door_right" | "gate_r" | "gate_right" | "door_2" | "door2" | "gate_2"
+        | "gate2" => 1,
+        "door_3" | "door3" | "gate_3" | "gate3" => 2,
+        "door_4" | "door4" | "gate_4" | "gate4" => 3,
+        _ => return None,
+    })
+}
+fn map_piece_bounds(
+    piece: &sa_assets::VehiclePiece,
+    r: &Placement,
+    center: [f32; 2],
+) -> Option<[[f32; 3]; 2]> {
+    let mut min = [f32::INFINITY; 3];
+    let mut max = [f32::NEG_INFINITY; 3];
+    let mut points = 0;
+    for point in &piece.geometry.positions {
+        let world = place(*point, r, center);
+        if !world.iter().all(|value| value.is_finite()) {
+            continue;
+        }
+        for axis in 0..3 {
+            min[axis] = min[axis].min(world[axis]);
+            max[axis] = max[axis].max(world[axis]);
+        }
+        points += 1;
+    }
+    if points == 0 {
+        return None;
+    }
+    // The COL mesh can be a little coarser than the visual DFF. A small
+    // margin catches its door triangles without swallowing the surrounding wall.
+    for axis in 0..3 {
+        min[axis] -= 0.15;
+        max[axis] += 0.15;
+    }
+    Some([min, max])
 }
 /// Add a custom map DFF as independently batched RenderWare atomics.
 /// Each atomic gets a stable per-placement key while retaining the original
@@ -373,7 +541,14 @@ fn add_map_pieces(
     txd: &str,
 ) -> Result<usize> {
     let mut triangles = 0;
+    let collision_placement = Placement {
+        scale: 1.0,
+        ..r.clone()
+    };
     for (index, piece) in pieces.iter().enumerate() {
+        let door = map_door_index(piece).and_then(|door| {
+            map_piece_bounds(piece, &collision_placement, center).map(|bounds| (door, bounds))
+        });
         let mut atomic = HashMap::new();
         triangles += add_model(
             &mut atomic,
@@ -384,6 +559,30 @@ fn add_map_pieces(
         )?;
         for (key, mut batch) in atomic {
             let map_key = format!("|map|{}_{}_{}_{}", r.id, r.uid, index, piece.frame_name);
+            if let Some((door, bounds)) = door {
+                batch.animated = true;
+                let pivot = place(piece.pivot, r, center);
+                // Multiple atomics can belong to one named door frame. Group
+                // them by hinge and side so one interaction poses the complete
+                // door rather than only its first material/atomic.
+                batch.map_door = Some(MapDoor {
+                    id: format!(
+                        "{}:{}:{}:{}:{}:{}:{}:{}:{}",
+                        r.id,
+                        r.uid,
+                        r.pos[0].to_bits(),
+                        r.pos[1].to_bits(),
+                        r.pos[2].to_bits(),
+                        door,
+                        pivot[0].to_bits(),
+                        pivot[1].to_bits(),
+                        pivot[2].to_bits()
+                    ),
+                    pivot,
+                    bounds,
+                    door,
+                });
+            }
             let renamed = if let Some(base) = key.strip_suffix("|alpha") {
                 format!("{base}{map_key}|alpha")
             } else {
@@ -430,12 +629,17 @@ fn add_model(
             if alpha {
                 key.push_str("|alpha");
             }
+            if let Some((mlo_index, entity_index)) = r.mlo_entity {
+                key.push_str(&format!("|mlo|{mlo_index}|{entity_index}"));
+            }
             let batch = batches.entry(key.clone()).or_insert_with(|| Batch {
                 key,
                 vertices: Vec::new(),
                 alpha,
                 animated: false,
                 uv_animation: material.uv_animation.clone(),
+                map_door: None,
+                mlo_entity: r.mlo_entity,
             });
             for index in [t[0], t[1], t[2]] {
                 let i = index as usize;
@@ -462,6 +666,7 @@ pub struct WorldLoader {
     img: WorldArchive,
     defs: HashMap<i32, Definition>,
     rows: Vec<Placement>,
+    portals: Vec<InteriorPortal>,
     collision_models: HashMap<String, sa_assets::col::CollisionModel>,
     resources: mods::Resources,
     texture_parents: HashMap<String, String>,
@@ -682,7 +887,7 @@ impl WorldLoader {
         for path in registered(&game, "IDE", ".ide")? {
             texture::add_parents(lines(&path)?, &mut texture_parents);
         }
-        let rows = placements(&game, &mut img)?;
+        let (rows, portals) = placements(&game, &mut img)?;
         let mut collision_models = HashMap::new();
         let mut files: Vec<_> = img
             .names()
@@ -708,6 +913,7 @@ impl WorldLoader {
             img,
             defs,
             rows,
+            portals,
             collision_models,
             resources: mods::Resources::default(),
             texture_parents,
@@ -716,6 +922,14 @@ impl WorldLoader {
             roadsign_font,
             uv_tracks,
         })
+    }
+    /// Original-game and enabled-resource ENEX portals, including generated reverse sides.
+    pub fn interior_portals(&self) -> Vec<InteriorPortal> {
+        self.portals
+            .iter()
+            .chain(self.resources.interior_portals.iter())
+            .cloned()
+            .collect()
     }
     pub fn placement_count(&self) -> usize {
         self.rows.iter().filter(|r| r.interior == 0).count()
@@ -770,6 +984,29 @@ impl WorldLoader {
                 x * x + y * y <= (range + 1600.0).powi(2)
             })
             .collect();
+        // Keep generated placements owned for as long as the borrowed IPL rows
+        // are used by the shared scene assembly path.
+        let mut mlo_rows = Vec::new();
+        // MLO entities are real scene placements, not metadata-only records.
+        // Their local transforms are composed with the owning MLO instance
+        // before the ordinary model, material, door and collision pipeline.
+        for (mlo_index, mlo) in self.resources.mlo.iter().enumerate() {
+            if i32::from(mlo.interior) != interior {
+                continue;
+            }
+            let dx = mlo.position[0] - center[0];
+            let dy = mlo.position[1] - center[1];
+            if dx * dx + dy * dy > (radius + 1600.0).powi(2) {
+                continue;
+            }
+            for (entity_index, entity) in mlo.entities.iter().enumerate() {
+                let (position, rotation) = mlo.world_entity_transform(entity);
+                let mut row = placement(entity.model_id, interior, position, rotation)?;
+                row.mlo_entity = Some((mlo_index, entity_index));
+                mlo_rows.push(row);
+            }
+        }
+        rows.extend(mlo_rows.iter());
         // Detailed placements first, nearest first. LOD groups are selected
         // below, and a dense region sheds its farthest scenery instead of
         // failing to load.
@@ -793,6 +1030,8 @@ impl WorldLoader {
             alpha: false,
             animated: false,
             uv_animation: None,
+            map_door: None,
+            mlo_entity: None,
         };
         let mut fallback = HashMap::new();
         let mut count = 0;
@@ -981,7 +1220,10 @@ impl WorldLoader {
         // Draw-state variants ("|alpha", UV animation) share one decoded image,
         // whichever variant the unordered batch map yields first.
         let mut decoded = HashMap::<&str, Texture>::new();
-        for key in batches.keys() {
+        // Collision fallback batches can contain room-owned MLO entities that are
+        // intentionally hidden from the current room's render batches. Resolve
+        // their material alpha too before building the collision world.
+        for key in batches.keys().chain(fallback.keys()) {
             if textures.contains_key(key) {
                 continue;
             }
@@ -1069,6 +1311,8 @@ impl WorldLoader {
                 alpha: true,
                 animated: false,
                 uv_animation: None,
+                map_door: None,
+                mlo_entity: None,
             }
         };
         if !water_batch.vertices.is_empty() {
@@ -1105,6 +1349,7 @@ pub fn load_first_model(game: &Path) -> Result<Scene> {
         id: 0,
         scale: 1.0,
         solid: true,
+        mlo_entity: None,
         interior: 0,
         lod: -1,
         is_lod: false,
@@ -1202,6 +1447,7 @@ pub fn load_cuttest(game: &Path) -> Result<Scene> {
         id: 0,
         scale: 1.0,
         solid: true,
+        mlo_entity: None,
         interior: 0,
         lod: -1,
         is_lod: false,
@@ -1270,6 +1516,7 @@ pub fn load_prologue(game: &Path) -> Result<Scene> {
         id: 0,
         scale: 1.0,
         solid: true,
+        mlo_entity: None,
         interior: 0,
         lod: -1,
         is_lod: false,
@@ -1355,6 +1602,7 @@ mod streaming_tests {
                 },
             )]),
             rows: vec![placement(1, 0, [0.0; 3], [0.0, 0.0, 0.0, 1.0]).unwrap()],
+            portals: Vec::new(),
             collision_models: HashMap::new(),
             resources: mods::Resources::default(),
             texture_parents: HashMap::new(),
@@ -1364,6 +1612,42 @@ mod streaming_tests {
             uv_tracks: HashMap::new(),
         };
         (folder, loader)
+    }
+    #[test]
+    fn enex_name_comes_from_the_final_ipl_field_and_reverse_targets_exterior() {
+        let portal = parse_enex(
+            "100, 200, 10, 90, 1.5, 1.5, 3, 250, 300, 1000, 180, 5, 0, 0, 0, 24, 0, \"ppalace\"",
+        )
+        .unwrap();
+        assert_eq!(portal.name, "ppalace");
+        assert_eq!(portal.target_interior, 5);
+        let reverse = portal.reverse().unwrap();
+        assert_eq!(reverse.source, portal.destination);
+        assert_eq!(reverse.source_interior, 5);
+        assert_eq!(reverse.target_interior, 0);
+    }
+    #[test]
+    fn building_door_and_gate_frame_aliases_are_recognized_without_vehicle_names() {
+        let fixture = include_bytes!("../../../../mods/native-room-demo/room.dff");
+        let template = sa_assets::decode_map_dff_pieces(fixture).unwrap()[0].clone();
+        let piece = |frame_name: &str| {
+            let mut piece = template.clone();
+            piece.frame_name = frame_name.into();
+            piece.part = sa_assets::VehiclePart::Body;
+            piece.pivot = [1.0, 2.0, 3.0];
+            piece
+        };
+        for (frame, expected) in [
+            ("door", 0),
+            ("door_left_dummy", 0),
+            ("door2", 1),
+            ("gate_right_ok", 1),
+            ("garage_door", 0),
+            ("door4_dam", 3),
+        ] {
+            assert_eq!(map_door_index(&piece(frame)), Some(expected), "{frame}");
+        }
+        assert_eq!(map_door_index(&piece("window")), None);
     }
     #[test]
     fn custom_map_atomics_are_separate_batches_with_resolvable_texture_keys() {
@@ -1401,6 +1685,78 @@ mod streaming_tests {
         }));
         drop(loader);
         fs::remove_dir_all(folder).unwrap();
+    }
+    #[test]
+    fn map_atomic_materials_resolve_after_alpha_mlo_and_map_batch_tags() {
+        let (folder, mut loader) = test_loader("map-material-keys");
+        let mut pieces = sa_assets::decode_map_dff_pieces(include_bytes!(
+            "../../../../mods/native-room-demo/room.dff"
+        ))
+        .unwrap();
+        for piece in &mut pieces {
+            for material in &mut piece.geometry.materials {
+                material.texture = Some("door".into());
+                material.color[3] = 128;
+            }
+        }
+        loader.resources.geometry.insert(
+            "room.dff".into(),
+            pieces.iter().map(|piece| piece.geometry.clone()).collect(),
+        );
+        loader
+            .resources
+            .map_pieces
+            .insert("room.dff".into(), pieces);
+        loader.resources.textures.insert(
+            "absent:door".into(),
+            Texture {
+                width: 1,
+                height: 1,
+                rgba: vec![255; 4],
+                has_alpha: false,
+            },
+        );
+        loader.rows[0].mlo_entity = Some((0, 1));
+
+        let scene = loader.load([0.0; 2], [0.0; 2], 50.0).unwrap();
+        let map_batches: Vec<_> = scene
+            .batches
+            .iter()
+            .filter(|batch| batch.key.contains("|map|"))
+            .collect();
+        assert!(!map_batches.is_empty());
+        assert!(map_batches
+            .iter()
+            .all(|batch| texture_key(&batch.key) == "absent:door"));
+        assert!(map_batches
+            .iter()
+            .all(|batch| scene.textures.contains_key(&batch.key)));
+        drop(loader);
+        fs::remove_dir_all(folder).unwrap();
+    }
+    #[test]
+    fn atomics_with_the_same_map_door_hinge_share_one_interaction_id() {
+        let fixture = include_bytes!("../../../../mods/native-room-demo/room.dff");
+        let template = sa_assets::decode_map_dff_pieces(fixture).unwrap()[0].clone();
+        let mut first = template.clone();
+        let mut second = template;
+        first.frame_name = "door_leaf".into();
+        second.frame_name = "door_glass".into();
+        first.part = sa_assets::VehiclePart::Door(0);
+        second.part = sa_assets::VehiclePart::Door(0);
+        first.pivot = [1.0, 2.0, 3.0];
+        second.pivot = first.pivot;
+        for point in &mut second.geometry.positions {
+            point[0] += 2.0;
+        }
+        let row = placement(18697, 0, [10.0, 20.0, 30.0], [0.0, 0.0, 0.0, 1.0]).unwrap();
+        let mut batches = HashMap::new();
+        add_map_pieces(&mut batches, &[first, second], &row, [0.0; 2], "station").unwrap();
+        let ids: std::collections::HashSet<_> = batches
+            .values()
+            .filter_map(|batch| batch.map_door.as_ref().map(|door| door.id.clone()))
+            .collect();
+        assert_eq!(ids.len(), 1, "all atomics sharing a hinge move together");
     }
     #[test]
     fn missing_txd_does_not_remove_untextured_geometry_or_its_floor() {
@@ -1596,6 +1952,7 @@ mod streaming_tests {
         let archive = folder.join("empty.img");
         fs::write(&archive, [b"VER2".as_slice(), &0u32.to_le_bytes()].concat()).unwrap();
         let mut loader = WorldLoader {
+            portals: Vec::new(),
             img: WorldArchive {
                 exterior: Img::open(&archive).unwrap(),
                 interior: None,

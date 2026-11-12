@@ -1,0 +1,617 @@
+//! FiveM-inspired MLO interior definitions and deterministic portal visibility.
+//!
+//! The data model mirrors the useful runtime concepts from Cfx/FiveM while
+//! remaining independent of GTA V binary YTYP/YMAP serialization. Legacy SA
+//! DFF/TXD/COL resources can describe the same rooms and portals in resource.json.
+use anyhow::{ensure, Result};
+use serde::Deserialize;
+use std::collections::{HashSet, VecDeque};
+
+const MAX_ROOMS: usize = 128;
+const MAX_PORTALS: usize = 512;
+const MAX_ENTITIES: usize = 2048;
+const MAX_ENTITY_SETS: usize = 64;
+const MAX_TIME_CYCLE_MODIFIERS: usize = 64;
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct MloDefinition {
+    pub name: String,
+    /// World-space origin of this MLO instance in GTA SA coordinates.
+    #[serde(default)]
+    pub position: [f32; 3],
+    /// World-space orientation of this MLO instance (x, y, z, w).
+    #[serde(default = "identity")]
+    pub rotation: [f32; 4],
+    /// GTA SA interior dimension used when streaming this MLO.
+    #[serde(default)]
+    pub interior: u8,
+    #[serde(default)]
+    pub entities: Vec<MloEntity>,
+    #[serde(default)]
+    pub rooms: Vec<MloRoom>,
+    #[serde(default)]
+    pub portals: Vec<MloPortal>,
+    #[serde(default)]
+    pub entity_sets: Vec<MloEntitySet>,
+    #[serde(default)]
+    pub timecycle_modifiers: Vec<MloTimecycleModifier>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct MloEntity {
+    pub model_id: i32,
+    #[serde(default)]
+    pub position: [f32; 3],
+    #[serde(default = "identity")]
+    pub rotation: [f32; 4],
+    /// None means the entity belongs to the exterior shell.
+    #[serde(default)]
+    pub room: Option<usize>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct MloRoom {
+    pub name: String,
+    pub min: [f32; 3],
+    pub max: [f32; 3],
+    #[serde(default)]
+    pub flags: u32,
+    #[serde(default)]
+    pub portal_count: u32,
+    #[serde(default)]
+    pub floor_id: i32,
+    #[serde(default)]
+    pub blend: f32,
+    #[serde(default)]
+    pub timecycle: Option<String>,
+    #[serde(default)]
+    pub exterior_visibility_depth: u8,
+    #[serde(default)]
+    pub entities: Vec<usize>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct MloPortal {
+    pub room_from: usize,
+    pub room_to: usize,
+    /// Four or more local-space polygon corners, in winding order.
+    pub corners: Vec<[f32; 3]>,
+    #[serde(default)]
+    pub flags: u32,
+    #[serde(default)]
+    pub mirror_priority: u32,
+    #[serde(default = "default_opacity")]
+    pub opacity: f32,
+    #[serde(default)]
+    pub audio_occlusion: f32,
+    #[serde(default = "default_true")]
+    pub open: bool,
+    #[serde(default)]
+    pub entities: Vec<usize>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct MloEntitySet {
+    pub name: String,
+    #[serde(default)]
+    pub locations: Vec<u32>,
+    #[serde(default)]
+    pub entities: Vec<usize>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct MloTimecycleModifier {
+    pub name: String,
+    pub sphere: [f32; 4],
+    #[serde(default)]
+    pub percentage: f32,
+    #[serde(default)]
+    pub range: f32,
+    #[serde(default)]
+    pub start_hour: u8,
+    #[serde(default = "default_end_hour")]
+    pub end_hour: u8,
+}
+
+fn identity() -> [f32; 4] {
+    [0.0, 0.0, 0.0, 1.0]
+}
+fn default_opacity() -> f32 {
+    1.0
+}
+fn default_true() -> bool {
+    true
+}
+fn default_end_hour() -> u8 {
+    24
+}
+
+impl MloDefinition {
+    /// Reject malformed or excessively large metadata before it reaches the renderer.
+    pub fn validate(&self, model_ids: &HashSet<i32>) -> Result<()> {
+        ensure!(
+            !self.name.trim().is_empty() && self.name.len() <= 128,
+            "MLO name must contain 1-128 characters"
+        );
+        ensure!(
+            self.rooms.len() <= MAX_ROOMS,
+            "MLO room limit ({MAX_ROOMS})"
+        );
+        ensure!(
+            self.portals.len() <= MAX_PORTALS,
+            "MLO portal limit ({MAX_PORTALS})"
+        );
+        ensure!(
+            self.entities.len() <= MAX_ENTITIES,
+            "MLO entity limit ({MAX_ENTITIES})"
+        );
+        ensure!(
+            self.position
+                .iter()
+                .all(|v| v.is_finite() && v.abs() <= 10000.0),
+            "MLO instance has invalid world position"
+        );
+        ensure!(
+            self.rotation.iter().all(|v| v.is_finite())
+                && (0.98..=1.02).contains(&self.rotation.iter().map(|v| v * v).sum::<f32>()),
+            "MLO instance has invalid world rotation"
+        );
+        ensure!(
+            self.entity_sets.len() <= MAX_ENTITY_SETS,
+            "MLO entity-set limit ({MAX_ENTITY_SETS})"
+        );
+        ensure!(
+            self.timecycle_modifiers.len() <= MAX_TIME_CYCLE_MODIFIERS,
+            "MLO timecycle modifier limit ({MAX_TIME_CYCLE_MODIFIERS})"
+        );
+
+        for (index, entity) in self.entities.iter().enumerate() {
+            ensure!(
+                model_ids.contains(&entity.model_id),
+                "MLO entity {index} references unknown model {}",
+                entity.model_id
+            );
+            ensure!(
+                entity
+                    .position
+                    .iter()
+                    .chain(entity.rotation.iter())
+                    .all(|v| v.is_finite()),
+                "MLO entity {index} has a non-finite transform"
+            );
+            let norm = entity.rotation.iter().map(|v| v * v).sum::<f32>();
+            ensure!(
+                (0.98..=1.02).contains(&norm),
+                "MLO entity {index} has an invalid rotation"
+            );
+            ensure!(
+                entity.room.is_none_or(|room| room < self.rooms.len()),
+                "MLO entity {index} references an unknown room"
+            );
+        }
+
+        for (index, room) in self.rooms.iter().enumerate() {
+            ensure!(
+                !room.name.trim().is_empty() && room.name.len() <= 128,
+                "MLO room {index} needs a 1-128 character name"
+            );
+            ensure!(
+                room.min
+                    .iter()
+                    .chain(room.max.iter())
+                    .all(|v| v.is_finite()),
+                "MLO room {index} has non-finite bounds"
+            );
+            ensure!(
+                (0..3).all(|axis| room.min[axis] < room.max[axis]),
+                "MLO room {index} has inverted or empty bounds"
+            );
+            ensure!(
+                room.blend.is_finite() && (0.0..=100.0).contains(&room.blend),
+                "MLO room {index} blend must be between 0 and 100"
+            );
+            ensure!(
+                room.entities
+                    .iter()
+                    .all(|&entity| entity < self.entities.len()),
+                "MLO room {index} references an unknown entity"
+            );
+        }
+
+        for (index, portal) in self.portals.iter().enumerate() {
+            ensure!(
+                portal.room_from < self.rooms.len()
+                    && portal.room_to < self.rooms.len()
+                    && portal.room_from != portal.room_to,
+                "MLO portal {index} has invalid room endpoints"
+            );
+            ensure!(
+                portal.corners.len() >= 3 && portal.corners.len() <= 32,
+                "MLO portal {index} must have 3-32 polygon corners"
+            );
+            ensure!(
+                portal.corners.iter().flatten().all(|v| v.is_finite()),
+                "MLO portal {index} has non-finite corners"
+            );
+            ensure!(
+                portal.opacity.is_finite() && (0.0..=1.0).contains(&portal.opacity),
+                "MLO portal {index} opacity must be between 0 and 1"
+            );
+            ensure!(
+                portal.audio_occlusion.is_finite() && (0.0..=1.0).contains(&portal.audio_occlusion),
+                "MLO portal {index} audio occlusion must be between 0 and 1"
+            );
+            ensure!(
+                portal
+                    .entities
+                    .iter()
+                    .all(|&entity| entity < self.entities.len()),
+                "MLO portal {index} references an unknown entity"
+            );
+        }
+
+        let mut set_names = HashSet::new();
+        for set in &self.entity_sets {
+            ensure!(
+                !set.name.trim().is_empty()
+                    && set.name.len() <= 128
+                    && set_names.insert(set.name.to_ascii_lowercase()),
+                "MLO entity-set names must be unique and 1-128 characters"
+            );
+            ensure!(
+                set.entities
+                    .iter()
+                    .all(|&entity| entity < self.entities.len()),
+                "MLO entity set {} references an unknown entity",
+                set.name
+            );
+            ensure!(
+                set.locations.is_empty() || set.locations.len() == set.entities.len(),
+                "MLO entity set {} has mismatched locations and entities",
+                set.name
+            );
+        }
+
+        for (index, modifier) in self.timecycle_modifiers.iter().enumerate() {
+            ensure!(
+                !modifier.name.trim().is_empty() && modifier.name.len() <= 128,
+                "MLO timecycle modifier {index} needs a name"
+            );
+            ensure!(
+                modifier.sphere.iter().all(|v| v.is_finite()) && modifier.sphere[3] >= 0.0,
+                "MLO timecycle modifier {index} has an invalid sphere"
+            );
+            ensure!(
+                modifier.percentage.is_finite()
+                    && (0.0..=100.0).contains(&modifier.percentage)
+                    && modifier.range.is_finite()
+                    && modifier.range >= 0.0
+                    && modifier.start_hour <= 23
+                    && modifier.end_hour <= 24,
+                "MLO timecycle modifier {index} has invalid parameters"
+            );
+        }
+        Ok(())
+    }
+
+    /// Convert an entity's MLO-local transform into GTA SA world space.
+    pub fn world_entity_transform(&self, entity: &MloEntity) -> ([f32; 3], [f32; 4]) {
+        // Entity coordinates are MLO-local: rotate them by the instance
+        // orientation before adding the instance's world-space origin.
+        let local = super::rotate(entity.position, self.rotation);
+        let position = std::array::from_fn(|axis| self.position[axis] + local[axis]);
+        let [ax, ay, az, aw] = self.rotation;
+        let [bx, by, bz, bw] = entity.rotation;
+        let rotation = [
+            aw * bx + ax * bw + ay * bz - az * by,
+            aw * by - ax * bz + ay * bw + az * bx,
+            aw * bz + ax * by - ay * bx + az * bw,
+            aw * bw - ax * bx - ay * by - az * bz,
+        ];
+        (position, rotation)
+    }
+
+    /// Convert a GTA SA world-space point to this MLO's local coordinates.
+    pub fn local_position_from_world(&self, world: [f32; 3]) -> [f32; 3] {
+        let relative = std::array::from_fn(|axis| world[axis] - self.position[axis]);
+        let inverse = [
+            -self.rotation[0],
+            -self.rotation[1],
+            -self.rotation[2],
+            self.rotation[3],
+        ];
+        super::rotate(relative, inverse)
+    }
+
+    /// Find the most specific room containing a local-space point.
+    ///
+    /// MLO room bounds may overlap (for example, a small office inside a
+    /// larger corridor volume). Prefer the smallest containing volume rather
+    /// than whichever room happened to appear first in resource.json.
+    pub fn room_at(&self, point: [f32; 3]) -> Option<usize> {
+        self.rooms
+            .iter()
+            .enumerate()
+            .filter(|(_, room)| {
+                (0..3).all(|axis| point[axis] >= room.min[axis] && point[axis] <= room.max[axis])
+            })
+            .min_by(|(_, a), (_, b)| {
+                let volume = |room: &MloRoom| {
+                    (0..3)
+                        .map(|axis| room.max[axis] - room.min[axis])
+                        .product::<f32>()
+                };
+                volume(a).total_cmp(&volume(b))
+            })
+            .map(|(index, _)| index)
+    }
+
+    /// Rooms visible through the currently open portal graph. Closed portals
+    /// stop traversal; exterior visibility is handled by the caller.
+    pub fn visible_rooms(&self, start: usize) -> Vec<usize> {
+        if start >= self.rooms.len() {
+            return Vec::new();
+        }
+        let mut seen = vec![false; self.rooms.len()];
+        let mut queue = VecDeque::from([start]);
+        seen[start] = true;
+        while let Some(room) = queue.pop_front() {
+            for portal in self.portals.iter().filter(|portal| portal.open) {
+                let next = if portal.room_from == room {
+                    Some(portal.room_to)
+                } else if portal.room_to == room {
+                    Some(portal.room_from)
+                } else {
+                    None
+                };
+                if let Some(next) = next {
+                    if !seen[next] {
+                        seen[next] = true;
+                        queue.push_back(next);
+                    }
+                }
+            }
+        }
+        seen.into_iter()
+            .enumerate()
+            .filter_map(|(index, visible)| visible.then_some(index))
+            .collect()
+    }
+
+    pub fn visible_entity_indices(&self, visible_rooms: &[usize]) -> Vec<usize> {
+        let visible: HashSet<_> = visible_rooms
+            .iter()
+            .copied()
+            .filter(|&room| room < self.rooms.len())
+            .collect();
+        let mut included: HashSet<usize> = self
+            .entities
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entity)| {
+                entity
+                    .room
+                    .is_none_or(|room| visible.contains(&room))
+                    .then_some(index)
+            })
+            .collect();
+
+        // Some sidecars describe room membership on the room rather than
+        // repeating it on every entity. Support both representations.
+        for &room in &visible {
+            included.extend(self.rooms[room].entities.iter().copied());
+        }
+        // Portal-owned entities (doors, frames and portal props) are visible
+        // when either endpoint is in the traversed visibility set.
+        for portal in &self.portals {
+            if visible.contains(&portal.room_from) || visible.contains(&portal.room_to) {
+                included.extend(portal.entities.iter().copied());
+            }
+        }
+        let mut indices: Vec<_> = included.into_iter().collect();
+        indices.sort_unstable();
+        indices
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample() -> MloDefinition {
+        MloDefinition {
+            name: "police_station".into(),
+            position: [0.0; 3],
+            rotation: identity(),
+            interior: 0,
+            entities: vec![
+                MloEntity {
+                    model_id: 18697,
+                    position: [0.0; 3],
+                    rotation: identity(),
+                    room: Some(0),
+                },
+                MloEntity {
+                    model_id: 18698,
+                    position: [1.0, 0.0, 0.0],
+                    rotation: identity(),
+                    room: Some(1),
+                },
+                MloEntity {
+                    model_id: 18699,
+                    position: [0.0; 3],
+                    rotation: identity(),
+                    room: None,
+                },
+            ],
+            rooms: vec![
+                MloRoom {
+                    name: "lobby".into(),
+                    min: [-5.0; 3],
+                    max: [5.0; 3],
+                    flags: 0,
+                    portal_count: 1,
+                    floor_id: 0,
+                    blend: 0.0,
+                    timecycle: None,
+                    exterior_visibility_depth: 0,
+                    entities: vec![0],
+                },
+                MloRoom {
+                    name: "office".into(),
+                    min: [5.0, -5.0, -5.0],
+                    max: [15.0, 5.0, 5.0],
+                    flags: 0,
+                    portal_count: 2,
+                    floor_id: 0,
+                    blend: 0.0,
+                    timecycle: None,
+                    exterior_visibility_depth: 0,
+                    entities: vec![1],
+                },
+                MloRoom {
+                    name: "cells".into(),
+                    min: [15.0, -5.0, -5.0],
+                    max: [25.0, 5.0, 5.0],
+                    flags: 0,
+                    portal_count: 1,
+                    floor_id: 0,
+                    blend: 0.0,
+                    timecycle: None,
+                    exterior_visibility_depth: 0,
+                    entities: vec![],
+                },
+            ],
+            portals: vec![
+                MloPortal {
+                    room_from: 0,
+                    room_to: 1,
+                    corners: vec![
+                        [5.0, -1.0, -1.0],
+                        [5.0, 1.0, -1.0],
+                        [5.0, 1.0, 1.0],
+                        [5.0, -1.0, 1.0],
+                    ],
+                    flags: 0,
+                    mirror_priority: 0,
+                    opacity: 1.0,
+                    audio_occlusion: 0.0,
+                    open: true,
+                    entities: vec![],
+                },
+                MloPortal {
+                    room_from: 1,
+                    room_to: 2,
+                    corners: vec![
+                        [15.0, -1.0, -1.0],
+                        [15.0, 1.0, -1.0],
+                        [15.0, 1.0, 1.0],
+                        [15.0, -1.0, 1.0],
+                    ],
+                    flags: 0,
+                    mirror_priority: 0,
+                    opacity: 1.0,
+                    audio_occlusion: 0.0,
+                    open: true,
+                    entities: vec![],
+                },
+            ],
+            entity_sets: vec![MloEntitySet {
+                name: "night_shift".into(),
+                locations: vec![0],
+                entities: vec![1],
+            }],
+            timecycle_modifiers: vec![],
+        }
+    }
+
+    #[test]
+    fn mlo_entity_local_transforms_are_composed_with_instance_origin_and_rotation() {
+        let mut mlo = sample();
+        mlo.position = [1030.0, -1987.0, 14.5];
+        let half = std::f32::consts::FRAC_1_SQRT_2;
+        mlo.rotation = [0.0, 0.0, half, half];
+        let (position, rotation) = mlo.world_entity_transform(&mlo.entities[1]);
+        assert!((position[0] - 1030.0).abs() < 0.0001);
+        // GTA SA's model-to-world convention applies the conjugate of the
+        // stored quaternion, so +90 degrees around Z moves local +X to -Y.
+        assert!((position[1] - -1988.0).abs() < 0.0001);
+        assert!((position[2] - 14.5).abs() < 0.0001);
+        assert_eq!(rotation, mlo.rotation);
+        let local = mlo.local_position_from_world(position);
+        assert!((local[0] - 1.0).abs() < 0.0001);
+        assert!(local[1].abs() < 0.0001);
+        assert!(local[2].abs() < 0.0001);
+    }
+
+    #[test]
+    fn validates_mlo_and_resolves_rooms_and_portal_visibility() {
+        let mlo = sample();
+        let ids = HashSet::from([18697, 18698, 18699]);
+        mlo.validate(&ids).unwrap();
+        assert_eq!(mlo.room_at([0.0; 3]), Some(0));
+        assert_eq!(mlo.room_at([10.0, 0.0, 0.0]), Some(1));
+        assert_eq!(mlo.room_at([40.0; 3]), None);
+        assert_eq!(mlo.visible_rooms(0), vec![0, 1, 2]);
+        assert_eq!(mlo.visible_entity_indices(&[0]), vec![0, 2]);
+    }
+
+    #[test]
+    fn room_and_portal_entity_lists_contribute_to_visibility() {
+        let mut mlo = sample();
+        mlo.entities.push(MloEntity {
+            model_id: 18697,
+            position: [0.0; 3],
+            rotation: identity(),
+            room: None,
+        });
+        mlo.rooms[0].entities.push(3);
+        mlo.portals[0].entities.push(3);
+        assert_eq!(mlo.visible_entity_indices(&[0]), vec![0, 2, 3]);
+        assert_eq!(mlo.visible_entity_indices(&[2]), vec![2, 3]);
+    }
+
+    #[test]
+    fn overlapping_room_bounds_choose_the_smallest_containing_room() {
+        let mut mlo = sample();
+        mlo.rooms.push(MloRoom {
+            name: "small_office".into(),
+            min: [-1.0; 3],
+            max: [1.0; 3],
+            flags: 0,
+            portal_count: 0,
+            floor_id: 0,
+            blend: 0.0,
+            timecycle: None,
+            exterior_visibility_depth: 0,
+            entities: Vec::new(),
+        });
+        assert_eq!(mlo.room_at([0.0; 3]), Some(3));
+        assert_eq!(mlo.room_at([4.0, 0.0, 0.0]), Some(0));
+    }
+
+    #[test]
+    fn closed_portal_blocks_visibility_and_invalid_references_are_rejected() {
+        let mut mlo = sample();
+        mlo.portals[1].open = false;
+        assert_eq!(mlo.visible_rooms(0), vec![0, 1]);
+        assert_eq!(mlo.visible_rooms(99), Vec::<usize>::new());
+        let ids = HashSet::from([18697, 18698, 18699]);
+        mlo.entities[0].room = Some(99);
+        assert!(mlo.validate(&ids).is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_models_bad_bounds_and_invalid_portal_endpoints() {
+        let ids = HashSet::from([18697, 18698, 18699]);
+        let mut mlo = sample();
+        mlo.entities[0].model_id = 99999;
+        assert!(mlo.validate(&ids).is_err());
+        let mut mlo = sample();
+        mlo.rooms[0].max[0] = mlo.rooms[0].min[0];
+        assert!(mlo.validate(&ids).is_err());
+        let mut mlo = sample();
+        mlo.portals[0].room_to = 77;
+        assert!(mlo.validate(&ids).is_err());
+    }
+}
