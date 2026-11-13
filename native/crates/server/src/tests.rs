@@ -715,3 +715,98 @@ fn sarebox_saves_characters_by_license_and_admin_needs_the_acl() {
     drop(shared);
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[test]
+fn routing_buckets_hide_players_in_other_instances() {
+    let root = temp_root();
+    let commands = [
+        "endpoint_add_tcp 127.0.0.1:0",
+        "ensure chat",
+        "ensure sare_instances",
+    ]
+    .iter()
+    .map(|l| words(l))
+    .collect();
+    let Server {
+        shared,
+        mut console,
+        session,
+        publication: _,
+    } = boot(commands, root.join("resources")).unwrap();
+    assert!(shared.borrow().resources["sare_instances"].started);
+    let a = sa_net::Session::join(session.address, "Alice").unwrap();
+    let b = sa_net::Session::join(session.address, "Bob").unwrap();
+    let mut known = BTreeMap::new();
+    let names = |s: &sa_net::Session| -> Vec<String> {
+        let mut names: Vec<String> = s
+            .update(sa_net::Pose::default())
+            .map(|r| r.peers.into_iter().map(|p| p.name).collect())
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+    let mut run = |console: &mut Console, until: &mut dyn FnMut() -> bool| {
+        let start = Instant::now();
+        loop {
+            pump(&shared, console, &session, &mut known).unwrap();
+            if until() {
+                return;
+            }
+            assert!(start.elapsed() < Duration::from_secs(30), "timed out");
+            thread::sleep(Duration::from_millis(5));
+        }
+    };
+    run(&mut console, &mut || {
+        names(&a) == ["Alice", "Bob"] && names(&b) == ["Alice", "Bob"]
+    });
+    let alice = a.update(sa_net::Pose::default()).unwrap().local_id;
+    let command = |client: &sa_net::Session, line: &str| {
+        client
+            .trigger(
+                None,
+                "__cfx_internal:commandFallback",
+                &Json::Array(vec![line.into()]).to_string(),
+            )
+            .unwrap()
+    };
+
+    // /instance moves Alice into her own bucket: neither sees the other.
+    command(&a, "/instance");
+    run(&mut console, &mut || {
+        names(&a) == ["Alice"] && names(&b) == ["Bob"]
+    });
+    assert_eq!(session.routing_bucket(alice), 1000 + alice);
+    assert_eq!(
+        shared.borrow().bags[&format!("player:{alice}")]["instance"],
+        Json::from(1000 + alice)
+    );
+    // The native and the example's export agree; negative buckets fail.
+    let lua = shared.borrow().resources["chat"].lua.clone().unwrap();
+    let (native, export): (u32, u32) = lua
+        .load(format!(
+            "return GetPlayerRoutingBucket({alice}), exports.sare_instances:GetInstance({alice})"
+        ))
+        .eval()
+        .unwrap();
+    assert_eq!((native, export), (1000 + alice, 1000 + alice));
+    assert!(lua
+        .load(format!("SetPlayerRoutingBucket({alice}, -1)"))
+        .exec()
+        .is_err());
+
+    // Bob joins the same instance by number, then both return.
+    command(&b, &format!("/instance {}", 1000 + alice));
+    run(&mut console, &mut || {
+        names(&a) == ["Alice", "Bob"] && names(&b) == ["Alice", "Bob"]
+    });
+    command(&a, "/instance 0");
+    run(&mut console, &mut || {
+        names(&a) == ["Alice"] && names(&b) == ["Bob"]
+    });
+    command(&b, "/instance 0");
+    run(&mut console, &mut || {
+        names(&a) == ["Alice", "Bob"] && names(&b) == ["Alice", "Bob"]
+    });
+    assert_eq!(session.routing_bucket(alice), 0);
+    std::fs::remove_dir_all(root).unwrap();
+}

@@ -310,12 +310,16 @@ impl Console {
                 state.convar("gametype").unwrap_or("-"),
                 state.convar("mapname").unwrap_or("-")
             ),
-            "id   name                      position".into(),
+            "id   name                      bucket  position".into(),
         ];
         for peer in &state.peers {
             let [x, y, z] = crate::natives::world_position(&peer.pose);
+            let bucket = state
+                .session
+                .as_ref()
+                .map_or(0, |s| s.routing_bucket(peer.id));
             lines.push(format!(
-                "{:<4} {:<25} {x:.0}, {y:.0}, {z:.0}",
+                "{:<4} {:<25} {bucket:<7} {x:.0}, {y:.0}, {z:.0}",
                 peer.id, peer.name
             ));
         }

@@ -7,7 +7,7 @@ pub mod relay;
 pub mod resources;
 pub use passengers::{PassengerSeat, RideReply, RideRequest, RideResult};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     io::{self, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
     sync::{
@@ -468,6 +468,10 @@ struct Mailbox {
     /// This game's own traffic, and other players' traffic by owner.
     traffic_out: Mutex<Vec<TrafficPose>>,
     traffic_in: Mutex<HashMap<u32, (Instant, Vec<TrafficPose>)>>,
+    /// Hosts: routing buckets (FiveM-style instances). Players not listed
+    /// are in bucket 0; buckets listed in `quiet_buckets` share no traffic.
+    buckets: Mutex<HashMap<u32, u32>>,
+    quiet_buckets: Mutex<HashSet<u32>>,
 }
 impl Mailbox {
     fn receive(&self, event: NetEvent) {
@@ -478,6 +482,9 @@ impl Mailbox {
     }
     fn take(&self) -> Vec<Outbound> {
         std::mem::take(&mut *self.outbox.lock().unwrap())
+    }
+    fn bucket_of(&self, id: u32) -> u32 {
+        self.buckets.lock().unwrap().get(&id).copied().unwrap_or(0)
     }
     fn capacity(&self) -> usize {
         match self.max_clients.load(Ordering::Relaxed) {
@@ -710,6 +717,35 @@ impl Session {
     pub fn max_clients(&self) -> usize {
         self.mail.capacity()
     }
+    /// Hosts only: move a player into a routing bucket, like FiveM's
+    /// `SetPlayerRoutingBucket`. Players only see, and share traffic and
+    /// passenger seats with, players in their own bucket. Bucket 0 is the
+    /// default world. Script events are not filtered.
+    pub fn set_routing_bucket(&self, id: u32, bucket: u32) {
+        let mut buckets = self.mail.buckets.lock().unwrap();
+        if bucket == 0 {
+            buckets.remove(&id);
+        } else if buckets.len() < MAX_PLAYERS * 2 || buckets.contains_key(&id) {
+            buckets.insert(id, bucket);
+        }
+    }
+    /// Hosts only: the player's routing bucket (0 when never set).
+    pub fn routing_bucket(&self, id: u32) -> u32 {
+        self.mail.bucket_of(id)
+    }
+    /// Hosts only: whether players in `bucket` share their traffic NPCs,
+    /// like FiveM's `SetRoutingBucketPopulationEnabled`. Enabled by default.
+    pub fn set_bucket_population(&self, bucket: u32, enabled: bool) {
+        let mut quiet = self.mail.quiet_buckets.lock().unwrap();
+        if enabled {
+            quiet.remove(&bucket);
+        } else if quiet.len() < 1024 {
+            quiet.insert(bucket);
+        }
+    }
+    pub fn bucket_population(&self, bucket: u32) -> bool {
+        !self.mail.quiet_buckets.lock().unwrap().contains(&bucket)
+    }
     pub fn update(&self, pose: Pose) -> Option<Report> {
         if pose.valid() {
             if let Ok(mut local) = self.local.try_lock() {
@@ -814,7 +850,15 @@ fn host_worker(
             });
         }
         source.extend(guests.iter().filter(|g| g.ready).map(|g| g.peer.clone()));
+        // Forget buckets of players who left, so a reused ID starts in 0.
+        mail.buckets
+            .lock()
+            .unwrap()
+            .retain(|id, _| guests.iter().any(|g| g.peer.id == *id));
+        let buckets = mail.buckets.lock().unwrap().clone();
+        let bucket = |id: u32| buckets.get(&id).copied().unwrap_or(0);
         seats.reconcile(&source);
+        seats.release_across(bucket);
         let mut admitted = guests.iter().filter(|g| g.hello).count();
         guests.retain_mut(|guest| {
             if guest.wire.last.elapsed() > TIMEOUT {
@@ -919,7 +963,11 @@ fn host_worker(
                         guest.traffic = cars;
                     }
                     Message::Pose(pose) if guest.hello && pose.valid() => {
-                        guest.peer.pose = seats.apply(guest.peer.id, pose, &source);
+                        // Only cars in the player's own bucket can be boarded.
+                        let own = bucket(guest.peer.id);
+                        let visible: Vec<Peer> =
+                            source.iter().filter(|p| bucket(p.id) == own).cloned().collect();
+                        guest.peer.pose = seats.apply(guest.peer.id, pose, &visible);
                         guest.ready = true;
                     }
                     Message::Event { name, payload } if guest.hello && valid_event(&name, &payload) => {
@@ -995,6 +1043,7 @@ fn host_worker(
             }
             peers.extend(guests.iter().filter(|g| g.ready).map(|g| g.peer.clone()));
             seats.reconcile(&peers);
+            seats.release_across(bucket);
             let source = peers.clone();
             for peer in &mut peers {
                 peer.pose = if host_player && peer.id == 0 {
@@ -1008,13 +1057,27 @@ fn host_worker(
                 .filter_map(|g| g.identity.clone().map(|i| (g.peer.id, i)))
                 .collect();
             publish(&report, &status, true, 0, peers.clone());
-            let snapshot = Message::Snapshot(peers);
+            // One snapshot per routing bucket: players see their own bucket.
+            let mut snapshots: HashMap<u32, Message> = HashMap::new();
             guests.retain_mut(|guest| {
-                !guest.ready || (guest.wire.queue(&snapshot).is_ok() && guest.wire.flush().is_ok())
+                if !guest.ready {
+                    return true;
+                }
+                let own = bucket(guest.peer.id);
+                let snapshot = snapshots.entry(own).or_insert_with(|| {
+                    Message::Snapshot(
+                        peers
+                            .iter()
+                            .filter(|p| bucket(p.id) == own)
+                            .cloned()
+                            .collect(),
+                    )
+                });
+                guest.wire.queue(snapshot).is_ok() && guest.wire.flush().is_ok()
             });
             traffic_tick = !traffic_tick;
             if traffic_tick {
-                relay_traffic(&mut guests, host_player, &local, &mail);
+                relay_traffic(&mut guests, host_player, &local, &mail, &bucket);
             }
         }
         thread::sleep(Duration::from_millis(5));
@@ -1022,11 +1085,20 @@ fn host_worker(
     publish(&report, "Disconnected", false, 0, Vec::new());
 }
 /// Pass every player's traffic to the nearby players, at half the pose rate.
-fn relay_traffic(guests: &mut [Guest], host_player: bool, local: &Mutex<Pose>, mail: &Mailbox) {
+/// Traffic stays inside its owner's routing bucket and is not shared at all
+/// in buckets whose population is disabled.
+fn relay_traffic(
+    guests: &mut [Guest],
+    host_player: bool,
+    local: &Mutex<Pose>,
+    mail: &Mailbox,
+    bucket: &dyn Fn(u32) -> u32,
+) {
     let near = |a: [f32; 3], b: [f32; 3]| {
         let (dx, dz) = (a[0] - b[0], a[2] - b[2]);
         dx * dx + dz * dz <= TRAFFIC_RANGE * TRAFFIC_RANGE
     };
+    let quiet = mail.quiet_buckets.lock().unwrap().clone();
     let host_pose = host_player.then(|| local.lock().unwrap().position);
     let mut owners: Vec<(u32, [f32; 3], Vec<TrafficPose>)> = guests
         .iter()
@@ -1040,7 +1112,11 @@ fn relay_traffic(guests: &mut [Guest], host_player: bool, local: &Mutex<Pose>, m
         }
     }
     for (owner, at, cars) in owners {
-        if let Some(host) = host_pose.filter(|_| owner != 0) {
+        let own = bucket(owner);
+        if quiet.contains(&own) {
+            continue;
+        }
+        if let Some(host) = host_pose.filter(|_| owner != 0 && bucket(0) == own) {
             if near(at, host) {
                 mail.traffic_in
                     .lock()
@@ -1050,7 +1126,11 @@ fn relay_traffic(guests: &mut [Guest], host_player: bool, local: &Mutex<Pose>, m
         }
         let message = Message::TrafficOf { owner, cars };
         for guest in guests.iter_mut().filter(|g| {
-            g.ready && g.traffic_ok && g.peer.id != owner && near(at, g.peer.pose.position)
+            g.ready
+                && g.traffic_ok
+                && g.peer.id != owner
+                && bucket(g.peer.id) == own
+                && near(at, g.peer.pose.position)
         }) {
             // A full queue drops this update; the next one follows shortly.
             let _ = guest.wire.queue(&message);
@@ -1948,5 +2028,80 @@ mod tests {
         wait(|| report(&replacement).connected && report(&server).peers.len() == MAX_PLAYERS);
         drop(server);
         wait(|| !report(&replacement).connected);
+    }
+    #[test]
+    fn routing_buckets_split_snapshots_traffic_and_reset_on_leave() {
+        let server =
+            Session::dedicated_resources(address(), "Server", resources::Share::default()).unwrap();
+        let a = Session::join(server.address, "A").unwrap();
+        let b = Session::join(server.address, "B").unwrap();
+        let c = Session::join(server.address, "C").unwrap();
+        let pose = Pose::default();
+        let seen = |s: &Session| {
+            let mut names: Vec<String> = s
+                .update(pose)
+                .map(|r| r.peers.into_iter().map(|p| p.name).collect())
+                .unwrap_or_default();
+            names.sort();
+            names
+        };
+        wait(|| {
+            server.update(pose);
+            [&a, &b, &c].iter().all(|s| seen(s) == ["A", "B", "C"])
+        });
+        let id = |s: &Session| s.report.lock().unwrap().local_id;
+        let (a_id, b_id, c_id) = (id(&a), id(&b), id(&c));
+        assert_eq!(server.routing_bucket(a_id), 0);
+        server.set_routing_bucket(a_id, 7);
+        server.set_routing_bucket(b_id, 7);
+        assert_eq!(server.routing_bucket(b_id), 7);
+        wait(|| {
+            server.update(pose);
+            seen(&a) == ["A", "B"] && seen(&b) == ["A", "B"] && seen(&c) == ["C"]
+        });
+        // The server itself still sees everyone.
+        assert_eq!(report(&server).peers.len(), 3);
+
+        // Traffic stays in its bucket; a bucket without population shares none.
+        a.set_traffic(vec![TrafficPose::new(1, 3, [0.0; 3], 0.0, 0.0)]);
+        wait(|| {
+            server.update(pose);
+            seen(&a);
+            seen(&c);
+            b.update(pose);
+            b.traffic().iter().any(|(owner, _)| *owner == a_id)
+        });
+        let deadline = Instant::now() + Duration::from_millis(400);
+        while Instant::now() < deadline {
+            c.update(pose);
+            assert!(c.traffic().is_empty(), "traffic leaked across buckets");
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(server.bucket_population(7));
+        server.set_bucket_population(7, false);
+        assert!(!server.bucket_population(7));
+        wait(|| {
+            server.update(pose);
+            a.update(pose);
+            b.update(pose);
+            b.traffic().is_empty()
+        });
+
+        // Back to the default bucket: everyone is visible again.
+        server.set_routing_bucket(a_id, 0);
+        server.set_routing_bucket(b_id, 0);
+        wait(|| {
+            server.update(pose);
+            [&a, &b, &c].iter().all(|s| seen(s) == ["A", "B", "C"])
+        });
+        // A departed player's bucket is forgotten.
+        server.set_routing_bucket(c_id, 3);
+        drop(c);
+        wait(|| {
+            server.update(pose);
+            seen(&a);
+            seen(&b);
+            report(&server).peers.len() == 2 && server.routing_bucket(c_id) == 0
+        });
     }
 }
