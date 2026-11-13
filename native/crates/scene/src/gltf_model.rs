@@ -144,7 +144,7 @@ impl Model {
         let triangles: Vec<[[f32; 3]; 3]> = self
             .collision
             .iter()
-            .flat_map(|b| b.vertices.chunks_exact(3))
+            .flat_map(|b| b.vertices.as_chunks::<3>().0)
             .map(|t| {
                 std::array::from_fn(|i| {
                     let p = t[i].position;
