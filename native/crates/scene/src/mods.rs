@@ -55,6 +55,8 @@ impl Manifest {
 #[derive(Deserialize)]
 struct Model {
     id: i32,
+    /// A RenderWare `.dff`, or a glTF `.glb` (also accepted as `model`).
+    #[serde(alias = "model")]
     dff: String,
     #[serde(default)]
     txd: Option<String>,
@@ -441,6 +443,76 @@ fn manifest_bytes(folder: &Path) -> Result<Option<(&'static str, Vec<u8>)>> {
         .with_context(|| format!("MTA resource {}", folder.display()))?;
     Ok(Some(("mod.json", serde_json::to_vec(&manifest)?)))
 }
+impl crate::WorldLoader {
+    /// A `.glb` map model: drawn like a DFF, its PNG textures registered under
+    /// the model's own dictionary key. Without a `col`, its visible opaque
+    /// triangles collide, as for DFF models.
+    fn gltf_model(&mut self, folder: &Path, key: &str, model: &Model) -> Result<()> {
+        ensure!(
+            model.dff.to_ascii_lowercase().ends_with(".glb"),
+            "use a single .glb file for mod models (it carries its own textures)"
+        );
+        ensure!(
+            model.txd.is_none() && model.original_txd.is_none(),
+            ".glb models carry their own textures; remove txd/original_txd"
+        );
+        ensure!(
+            model.map_doors.is_empty(),
+            "map_doors are only supported for DFF models"
+        );
+        let bytes = resource(folder, &model.dff)?;
+        let parsed = crate::gltf_model::parse(&bytes, folder, key)?;
+        ensure!(!parsed.drawn.is_empty(), "the model has no visible meshes");
+        ensure!(
+            self.resources.textures.len() + parsed.textures.len() <= 512,
+            "total mod texture budget"
+        );
+        // A COL file wins; otherwise the glTF's own solid meshes, so COL_,
+        // NOCOL_ and see-through materials behave as in content packs.
+        let collision = if let Some(col) = &model.col {
+            let mut collisions = sa_assets::col::decode_col(&resource(folder, col)?)?;
+            ensure!(
+                collisions.len() == 1,
+                "each mod model COL must contain exactly one model"
+            );
+            Some(collisions.remove(0))
+        } else {
+            parsed.to_collision(key)
+        };
+        match collision {
+            Some(mut collision) => {
+                collision.name = key.to_owned();
+                self.collision_models.insert(key.to_owned(), collision);
+            }
+            // Nothing solid: an empty model stops the visible-triangle fallback.
+            None => {
+                self.collision_models.insert(
+                    key.to_owned(),
+                    sa_assets::col::CollisionModel {
+                        name: key.to_owned(),
+                        triangles: Vec::new(),
+                        min: [0.0; 3],
+                        max: [0.0; 3],
+                    },
+                );
+            }
+        }
+        let geometry = parsed.to_geometry(key);
+        self.resources.textures.extend(parsed.textures);
+        self.resources
+            .geometry
+            .insert(format!("{key}.dff"), geometry);
+        self.defs.insert(
+            model.id,
+            Definition {
+                model: key.to_owned(),
+                txd: key.to_owned(),
+            },
+        );
+        Ok(())
+    }
+}
+
 /// Canonical containment also rejects escapes through directory junctions.
 fn resource(root: &Path, relative: &str) -> Result<Vec<u8>> {
     let path = root
@@ -682,6 +754,11 @@ impl WorldLoader {
             for model in manifest.models {
                 ensure!(model.id >= 0, "negative mod model ID");
                 let key = format!("mod_{}_{}", folder_name.to_ascii_lowercase(), model.id);
+                if crate::gltf_model::is_gltf_path(&model.dff) {
+                    self.gltf_model(&folder, &key, &model)
+                        .with_context(|| format!("{name}: mod model {}", model.dff))?;
+                    continue;
+                }
                 let mut map_pieces =
                     sa_assets::decode_map_dff_pieces(&resource(&folder, &model.dff)?)
                         .with_context(|| format!("mod model {}", model.dff))?;
@@ -1373,6 +1450,71 @@ mod tests {
         fs::remove_dir(root.join("mods")).unwrap();
         fs::remove_dir(root).unwrap();
     }
+    #[test]
+    fn gltf_mod_models_draw_collide_and_refuse_txds() {
+        let root = std::env::temp_dir().join(format!("sa-native-glb-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let folder = root.join("mods/[props]/platform");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(root.join("empty.img"), b"VER2\0\0\0\0").unwrap();
+        fs::write(
+            folder.join("platform.glb"),
+            crate::gltf_model::tests::quad_glb("Platform", [0.0, 0.0, 0.0]),
+        )
+        .unwrap();
+        let manifest = br#"{"enabled":true,"models":[{"id":30100,"model":"platform.glb"}],
+            "placements":[{"model_id":30100,"position":[0,0,5]}]}"#;
+        fs::write(folder.join("mod.json"), manifest).unwrap();
+        let new_loader = || WorldLoader {
+            portals: Vec::new(),
+            water: std::sync::Arc::new(crate::water::WaterMap::default()),
+            water_texture: None,
+            roadsign_font: None,
+            uv_tracks: HashMap::new(),
+            texture_parents: HashMap::new(),
+            img: WorldArchive {
+                exterior: Img::open(&root.join("empty.img")).unwrap(),
+                interior: None,
+            },
+            defs: HashMap::new(),
+            rows: Vec::new(),
+            collision_models: HashMap::new(),
+            resources: Resources::default(),
+        };
+        let mut loader = new_loader();
+        loader.enable_mods(&root.join("mods")).unwrap();
+        let scene = loader.load([0.0, 0.0], [0.0, 0.0], 100.0).unwrap();
+        assert_eq!((scene.placements, scene.triangles), (1, 2));
+        // The 2 m quad lies flat at height 5 and is solid.
+        let world = scene.collision.unwrap();
+        assert!(world
+            .standing_at(glam::Vec3::new(0.0, 5.0, 0.0), 6.0)
+            .is_some_and(|p| (p.feet.y - 5.0).abs() < 0.1));
+
+        // NOCOL_ is drawn but not solid.
+        fs::write(
+            folder.join("platform.glb"),
+            crate::gltf_model::tests::quad_glb("NOCOL_Rug", [0.0, 0.0, 0.0]),
+        )
+        .unwrap();
+        let mut loader = new_loader();
+        loader.enable_mods(&root.join("mods")).unwrap();
+        let scene = loader.load([0.0, 0.0], [0.0, 0.0], 100.0).unwrap();
+        assert_eq!(scene.triangles, 2);
+        assert!(scene.collision.is_none_or(|world| world
+            .standing_at(glam::Vec3::new(0.0, 5.0, 0.0), 6.0)
+            .is_none_or(|p| p.feet.y < 4.0)));
+
+        fs::write(
+            folder.join("mod.json"),
+            br#"{"enabled":true,"models":[{"id":30100,"model":"platform.glb","txd":"x.txd"}]}"#,
+        )
+        .unwrap();
+        let error = new_loader().enable_mods(&root.join("mods")).unwrap_err();
+        assert!(format!("{error:#}").contains("own textures"), "{error:#}");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
     #[test]
     fn native_manifests_accept_utf8_bom() {
         let raw = b"\xEF\xBB\xBF{\"enabled\":true,\"name\":\"BOM test\"}";
