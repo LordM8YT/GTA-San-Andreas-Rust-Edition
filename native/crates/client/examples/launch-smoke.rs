@@ -13,7 +13,7 @@ fn main() -> anyhow::Result<()> {
         cache: profile.join("cache"),
         player: "Launcher test".into(),
         session: sa_client::launch::Session::Offline,
-        testbed: false,
+        content: None,
     };
     let mut command = launch.command(std::path::Path::new(&args[1]))?;
     command

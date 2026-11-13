@@ -1,6 +1,8 @@
 //! Manifest-ordered SA world placement and small bounded scene assembly.
 pub mod collision;
 pub mod content;
+pub mod content_pack;
+pub mod gltf_model;
 pub mod handling;
 pub mod lights;
 pub mod mlo;
@@ -548,9 +550,7 @@ fn add_map_pieces(
         ..r.clone()
     };
     for (index, piece) in pieces.iter().enumerate() {
-        let door = map_door_index(piece).and_then(|door| {
-            map_piece_bounds(piece, &collision_placement, center).map(|bounds| (door, bounds))
-        });
+        let door = map_door_index(piece).zip(map_piece_bounds(piece, &collision_placement, center));
         let mut atomic = HashMap::new();
         triangles += add_model(
             &mut atomic,

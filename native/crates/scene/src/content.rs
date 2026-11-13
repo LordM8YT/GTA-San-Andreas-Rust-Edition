@@ -12,9 +12,13 @@ pub enum ContentSource {
     Original(PathBuf),
     /// SARE Testbed: original generated geometry, no game files needed.
     Testbed,
+    /// A content pack folder with `content.json` (see docs/content-packs.md).
+    Pack(PathBuf),
 }
 impl ContentSource {
-    /// `--content testbed`, or the original installation in `game_dir`.
+    /// `--content testbed`, `--content <pack id or folder>`, or the original
+    /// installation in `game_dir`. Pack ids are looked up in `--content-dir`
+    /// (default `content/`).
     pub fn from_args(args: &[String], game_dir: Option<PathBuf>) -> Result<Self> {
         match args.windows(2).find(|w| w[0] == "--content").map(|w| w[1].as_str()) {
             Some("testbed") => Ok(Self::Testbed),
@@ -23,7 +27,16 @@ impl ContentSource {
                     "No San Andreas installation found. Pass --game-dir <folder>, or use --content testbed."
                 )
             }),
-            Some(other) => anyhow::bail!("Unknown content source {other}; use original or testbed"),
+            Some(other) => {
+                let packs = args
+                    .windows(2)
+                    .find(|w| w[0] == "--content-dir")
+                    .map(|w| PathBuf::from(&w[1]))
+                    .unwrap_or_else(|| PathBuf::from(crate::content_pack::DEFAULT_DIR));
+                crate::content_pack::resolve(other, &packs).map(Self::Pack).map_err(|error| {
+                    anyhow::anyhow!("{error:#}. Use original, testbed or a content pack.")
+                })
+            }
         }
     }
     pub fn needs_original_game(&self) -> bool {
@@ -33,6 +46,7 @@ impl ContentSource {
         Ok(match self {
             Self::Original(game) => Box::new(WorldLoader::open(game)?),
             Self::Testbed => Box::new(Testbed),
+            Self::Pack(folder) => Box::new(crate::content_pack::PackWorld::open(folder)?),
         })
     }
 }

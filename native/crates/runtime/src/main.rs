@@ -370,8 +370,10 @@ struct State {
     ped: Option<(sa_scene::ped::Ped, Vec<GpuBatch>)>,
     third_person: bool,
     ped_visible: bool,
-    /// SARE Testbed: running on built-in content, without game files.
+    /// SARE Testbed or a content pack: running without game files.
     standalone: bool,
+    /// The standalone world's name, shown where SA shows the area name.
+    world_name: String,
     /// The blocky stand-in drawn for the player when no ped model exists.
     placeholder_player: Vec<GpuBatch>,
     ped_animator: animation::Animator,
@@ -1235,6 +1237,7 @@ impl State {
             third_person: true,
             ped_visible: true,
             standalone: false,
+            world_name: String::new(),
             placeholder_player: Vec::new(),
             ped_animator: animation::Animator::default(),
             ped_yaw: 0.0,
@@ -1507,14 +1510,16 @@ impl State {
             }
         }
         if self.standalone && self.destination.is_some_and(|target| target != ORIGIN) {
-            // The testbed is the whole world: map teleports and interiors
-            // bring the player back to its centre instead.
+            // A standalone world is loaded whole: map teleports and
+            // interiors bring the player back to its centre instead.
             self.destination = Some(ORIGIN);
             self.pending_interior_id = Some(0);
             self.interior_destination = None;
             self.room_entry = None;
-            self.menu.message =
-                "SARE Testbed has no other areas yet; back to the testbed centre".into();
+            self.menu.message = format!(
+                "{} has no other areas yet; back to the centre",
+                self.world_name
+            );
         }
         if self.uploading.is_none() && self.retired.is_empty() {
             let center = [ORIGIN[0] + self.position.x, ORIGIN[1] - self.position.z];
@@ -2803,7 +2808,7 @@ impl State {
             }
             self.update_map_overlay(coordinates);
             self.menu.zone = if self.standalone {
-                Some("SARE Testbed".into())
+                Some(self.world_name.clone())
             } else {
                 self.zones.name_at(coordinates).map(str::to_owned)
             };
@@ -3114,8 +3119,11 @@ struct App {
     state: Option<State>,
     first_model: bool,
     streamer: Option<Streamer>,
-    /// `--content testbed`: no San Andreas installation is used.
+    /// `--content testbed` or a content pack: no San Andreas installation is used.
     standalone: bool,
+    world_name: String,
+    /// Where a content pack asks the player to start, in runtime space.
+    spawn_eye: Option<Vec3>,
     smoke: bool,
     smoke_region: usize,
     smoke_frames: usize,
@@ -3394,6 +3402,13 @@ impl ApplicationHandler for App {
             Ok(mut state) => {
                 state.roads = roads;
                 state.standalone = self.standalone;
+                state.world_name = self.world_name.clone();
+                if let (Some(eye), Some(world)) = (self.spawn_eye, &state.collision) {
+                    let player = Player::spawn(world, eye);
+                    state.position = player.eye();
+                    state.player = Some(player);
+                    state.walking = true;
+                }
                 // The game folder does not exist in testbed mode, so these
                 // fall back to built-in day colours and no area names.
                 state.daycycle = daycycle::DayCycle::load(&self.game_dir);
@@ -5420,53 +5435,74 @@ fn main() -> Result<()> {
     } else {
         Some(sa_client::launch::RuntimeGuard::acquire()?)
     };
-    // Standalone check: SARE's own testbed world, with no game files at all.
+    // Standalone check: SARE's own testbed world or a content pack, with no
+    // game files at all.
     if args.iter().any(|arg| arg == "--probe-standalone") {
-        let source = sa_scene::content::ContentSource::from_args(&args, None)
-            .unwrap_or(sa_scene::content::ContentSource::Testbed);
+        let source = if args.iter().any(|a| a == "--content") {
+            sa_scene::content::ContentSource::from_args(&args, None)?
+        } else {
+            sa_scene::content::ContentSource::Testbed
+        };
         anyhow::ensure!(
             !source.needs_original_game(),
-            "--probe-standalone runs without game files; use --content testbed"
+            "--probe-standalone runs without game files; use --content testbed or a content pack"
         );
+        let testbed = source == sa_scene::content::ContentSource::Testbed;
         let mut world = source.open()?;
         let started = Instant::now();
-        let scene = world.load([0.0, 0.0], ORIGIN, RADIUS)?;
+        let scene = world.load(ORIGIN, ORIGIN, RADIUS)?;
         let collision = scene
             .collision
             .as_ref()
-            .context("testbed collision missing")?;
-        let [x, y, z] = world.spawn().context("testbed spawn missing")?;
+            .context("world collision missing")?;
+        let [x, y, z] = world.spawn().context("world spawn missing")?;
         let point = Vec3::new(x - ORIGIN[0], z, ORIGIN[1] - y);
-        let mut player = collision
-            .standing_at(point, z + 2.0)
-            .context("testbed spawn is not a standing position")?;
+        let mut player = collision.standing_at(point, z + 2.0).context(
+            "the spawn point is not a standing position: is there solid ground under world.spawn?",
+        )?;
+        let start = player.feet.y;
+        // The testbed checks a walk up its ramp; a pack only checks that the
+        // player can stand and walk for a few seconds without falling out.
+        let walk = if testbed { -Vec3::Z * 4.0 } else { Vec3::ZERO };
         for frame in 0..600 {
-            // Walk north up the ramp onto the platform.
-            player.step(collision, -Vec3::Z * 4.0, frame == 300, 1.0 / 60.0);
-            anyhow::ensure!(player.feet.is_finite(), "testbed walk diverged");
+            player.step(collision, walk, frame == 300, 1.0 / 60.0);
+            anyhow::ensure!(
+                player.feet.is_finite() && player.feet.y > start - 50.0,
+                "the player fell out of the world"
+            );
         }
         anyhow::ensure!(
-            player.feet.y > z + 3.0,
+            !testbed || player.feet.y > z + 3.0,
             "testbed walk did not reach the platform: {:?}",
             player.feet
         );
         println!(
-            "{}: {} triangles, {} collision triangles; walked from height {z:.1} to {:.1} in 600 steps; {:.3}s, no game files read",
+            "{}: {} triangles, {} collision triangles, {} textures; stood at height {start:.1}, ended at {:.1} after 600 steps; {:.3}s, no game files read",
             world.name(),
             scene.triangles,
             collision.triangle_count(),
+            scene.textures.len(),
             player.feet.y,
             started.elapsed().as_secs_f32()
         );
         return Ok(());
     }
-    // SARE Testbed needs no San Andreas installation at all.
-    let testbed = matches!(
-        sa_scene::content::ContentSource::from_args(&args, None),
-        Ok(sa_scene::content::ContentSource::Testbed)
-    );
-    if testbed {
-        eprintln!("Starting SARE Testbed: built-in content, no game files are read");
+    // SARE Testbed and content packs need no San Andreas installation at all.
+    let wants_pack = args
+        .windows(2)
+        .any(|w| w[0] == "--content" && w[1] != "original");
+    let standalone_source = if wants_pack {
+        Some(sa_scene::content::ContentSource::from_args(&args, None)?)
+    } else {
+        None
+    };
+    let mut standalone_world = standalone_source.as_ref().map(|s| s.open()).transpose()?;
+    let testbed = standalone_world.is_some();
+    if let Some(world) = &standalone_world {
+        eprintln!(
+            "Starting {}: SARE content, no game files are read",
+            world.name()
+        );
     }
     // Without an explicit folder, use GTA_SA_DIR or a detected installation
     // instead of one developer's drive layout. The testbed points at a folder
@@ -5657,9 +5693,18 @@ fn main() -> Result<()> {
     } else {
         None
     };
-    let mut testbed_world = testbed.then(|| {
-        Box::new(sa_scene::content::Testbed) as Box<dyn sa_scene::content::WorldSource + Send>
-    });
+    let world_name = standalone_world
+        .as_ref()
+        .map(|w| w.name().to_owned())
+        .unwrap_or_default();
+    // The testbed's own start point is its centre; packs choose theirs.
+    let spawn_eye = match (&standalone_source, &standalone_world) {
+        (Some(sa_scene::content::ContentSource::Pack(_)), Some(world)) => world
+            .spawn()
+            .map(|[x, y, z]| Vec3::new(x - ORIGIN[0], z + 2.0, ORIGIN[1] - y)),
+        _ => None,
+    };
+    let mut testbed_world = standalone_world.take();
     if let Some(loader) = &mut loader {
         if !args.iter().any(|a| a == "--no-mods") {
             let directory = args
@@ -5944,6 +5989,8 @@ fn main() -> Result<()> {
             .map(|loader| Streamer::new(Box::new(loader)))
             .or_else(|| testbed_world.map(Streamer::new)),
         standalone: testbed,
+        world_name,
+        spawn_eye,
         smoke: args.iter().any(|a| {
             a == "--smoke-save"
                 || a == "--smoke-tour"

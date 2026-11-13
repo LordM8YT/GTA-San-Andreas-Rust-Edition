@@ -1,0 +1,12 @@
+{
+  "id": "example-town",
+  "name": "Example Town",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "author": "SARE contributors",
+  "description": "A tiny original town to copy and change. Made by tools/make-example-pack.py.",
+  "world": {
+    "scene": "world.glb",
+    "spawn": [0, -20, 0]
+  }
+}

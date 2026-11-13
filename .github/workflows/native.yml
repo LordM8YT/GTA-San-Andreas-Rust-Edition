@@ -54,6 +54,10 @@ jobs:
         working-directory: .
         run: python -m unittest discover -s tools/tests -v
       - run: cargo build --release --workspace
+      - name: Standalone worlds load without game files
+        run: |
+          cargo run --release -p sa-runtime -- --probe-standalone --content testbed
+          cargo run --release -p sa-runtime -- --probe-standalone --content ../content/example-town
       - name: Package review client
         working-directory: .
         run: python tools/package-client.py --platform ${{ matrix.platform }}
