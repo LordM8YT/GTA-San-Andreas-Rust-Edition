@@ -1,5 +1,13 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.45.0:
+- Play without GTA San Andreas: Home → Play SARE Testbed opens a small built-in test world where you can walk, jump and drive SARE Kart (F9). No game files are needed or read.
+- Content packs: make your own world in Blender, export it as .glb and put it in the new content/ folder. The launcher shows a button for every pack, and it runs without San Andreas too. Copy content/example-town from GitHub to try one, and read docs/content-packs.md to make your own.
+- Mods: classic GTA SA mods (DFF/TXD/COL/IFP, IDE, IPL and ENEX doors) can be converted with tools/import-gta-sa.py, and custom map doors open with E.
+- Servers: routing buckets (separate instances of the world) and script-created vehicles, peds and objects with FiveM-style functions such as CreateVehicle and DeleteEntity.
+
+The content packs and the testbed passed automated tests and a rendered check on Linux. They still need a try on a real Windows PC.
+
 Version 0.44.1:
 - Fixed a crash during police chases when a police car backing up drove back onto the road.
 

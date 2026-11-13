@@ -12,8 +12,17 @@ pub struct Entry {
     pub error: Option<String>,
 }
 pub fn root() -> PathBuf {
+    folder("mods")
+}
+/// Content packs live in `content/`, next to `mods/`.
+pub fn content_root() -> PathBuf {
+    folder(sa_scene::content_pack::DEFAULT_DIR)
+}
+/// A folder beside the launcher in packaged builds, or in the repository
+/// root for development builds.
+fn folder(name: &str) -> PathBuf {
     let exe = std::env::current_exe().unwrap_or_default();
-    let sibling = exe.parent().unwrap_or(Path::new(".")).join("mods");
+    let sibling = exe.parent().unwrap_or(Path::new(".")).join(name);
     if sibling.is_dir() {
         return sibling;
     }
@@ -21,16 +30,17 @@ pub fn root() -> PathBuf {
         .and_then(Path::parent)
         .and_then(Path::parent)
         .and_then(Path::parent)
-        .map(|p| p.join("mods"))
+        .map(|p| p.join(name))
         .filter(|p| p.is_dir())
         .unwrap_or(sibling)
 }
 /// Packages ship without `mods/`; create it so players can drop resources in.
 pub fn ensure_root() {
-    let root = root();
-    if !root.exists() {
-        if let Err(error) = fs::create_dir(&root) {
-            eprintln!("Could not create {}: {error}", root.display());
+    for root in [root(), content_root()] {
+        if !root.exists() {
+            if let Err(error) = fs::create_dir(&root) {
+                eprintln!("Could not create {}: {error}", root.display());
+            }
         }
     }
 }

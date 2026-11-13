@@ -73,6 +73,8 @@ struct Launcher {
     report: String,
     cache: Option<sa_net::resources::CachePlan>,
     mods: Vec<local_mods::Entry>,
+    /// Content packs found in `content/`: folder and display name.
+    packs: Vec<(PathBuf, String)>,
     gilrs: Option<gilrs::Gilrs>,
     refresh: Instant,
     preview_frames: u32,
@@ -80,7 +82,9 @@ struct Launcher {
 }
 impl Launcher {
     fn new(ctx: &egui::Context) -> Self {
-        Self::configured(ctx, LauncherConfig::load(), Settings::load(), true)
+        let mut app = Self::configured(ctx, LauncherConfig::load(), Settings::load(), true);
+        app.scan_packs();
+        app
     }
     fn configured(
         ctx: &egui::Context,
@@ -154,6 +158,7 @@ impl Launcher {
             report: String::new(),
             cache: None,
             mods: Vec::new(),
+            packs: Vec::new(),
             gilrs: if detect {
                 gilrs::Gilrs::new().ok()
             } else {
@@ -362,13 +367,25 @@ impl Launcher {
         );
     }
     fn start(&mut self, session: Session) {
-        self.start_with(session, false);
+        self.start_with(session, None);
     }
     /// Offline SARE Testbed on built-in content, without game files.
     fn start_testbed(&mut self) {
-        self.start_with(Session::Offline, true);
+        self.start_with(Session::Offline, Some("testbed".into()));
     }
-    fn start_with(&mut self, session: Session, testbed: bool) {
+    /// Offline play in a content pack, without game files.
+    fn start_pack(&mut self, folder: PathBuf) {
+        self.start_with(Session::Offline, Some(folder.into_os_string()));
+    }
+    /// Find content packs again (on start and from the Home page).
+    fn scan_packs(&mut self) {
+        self.packs = sa_scene::content_pack::list(&local_mods::content_root())
+            .into_iter()
+            .map(|(folder, manifest)| (folder, manifest.name))
+            .collect();
+    }
+    fn start_with(&mut self, session: Session, content: Option<std::ffi::OsString>) {
+        let testbed = content.is_some();
         let network = !matches!(session, Session::Offline);
         if testbed && !self.testbed_ready() {
             self.message = "Close the running game first.".into();
@@ -426,7 +443,7 @@ impl Launcher {
                 cache: sa_client::cache_dir(),
                 player: self.config.player.clone(),
                 session,
-                testbed,
+                content,
             };
             let mut command = launch.command(&exe)?;
             let logs = sa_client::config_dir().join("logs");
@@ -456,7 +473,7 @@ impl Launcher {
                     }
                 }
                 self.message = if testbed {
-                    "Starting SARE Testbed: a built-in test world, no game files needed.".into()
+                    "Starting SARE content: no game files needed.".into()
                 } else {
                     "Starting the native game. Map loading continues in the game window.".into()
                 };
@@ -684,6 +701,35 @@ impl Launcher {
                     .color(MUTED),
             );
         });
+        if !self.packs.is_empty() {
+            ui.add_space(6.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("Content packs:").color(MUTED));
+                let mut chosen = None;
+                for (folder, name) in &self.packs {
+                    let button = ui
+                        .add_enabled(self.testbed_ready(), egui::Button::new(name.as_str()))
+                        .on_hover_text(format!(
+                            "Play {name} from {}. No San Andreas installation needed.",
+                            folder.display()
+                        ))
+                        .on_disabled_hover_text("Close the running game first");
+                    if button.clicked() {
+                        chosen = Some(folder.clone());
+                    }
+                }
+                if ui
+                    .small_button("Refresh")
+                    .on_hover_text("Look for new folders in content/")
+                    .clicked()
+                {
+                    self.scan_packs();
+                }
+                if let Some(folder) = chosen {
+                    self.start_pack(folder);
+                }
+            });
+        }
         ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
             ui_theme::key_hint(ui, "Enter", "Select");

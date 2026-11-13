@@ -34,6 +34,10 @@ for running SARE without San Andreas game files.
 `sa-runtime --content testbed`. It opens a small built-in test world where you can walk,
 jump and drive a placeholder car. No San Andreas installation is needed.
 
+**Make your own world:** build it in Blender, export a `.glb`, and drop it into `content/`
+as a [content pack](docs/content-packs.md). It runs without San Andreas game files too;
+[`content/example-town`](content/example-town) is a ready example to copy.
+
 New to SARE development? Start with the practical [server guide](docs/server-guide.md)
 or learn how to [create resources and mods](docs/creating-resources.md).
 For the ongoing map streaming and MLO work, see the [contributor guide](docs/map-streaming-contributing.md).

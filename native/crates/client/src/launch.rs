@@ -66,8 +66,9 @@ pub struct Launch {
     pub cache: PathBuf,
     pub player: String,
     pub session: Session,
-    /// Start SARE Testbed on built-in content; `game` is not passed.
-    pub testbed: bool,
+    /// Start on SARE content instead of the installation: `testbed` or a
+    /// content pack folder. `game` is then not passed.
+    pub content: Option<OsString>,
 }
 impl Launch {
     pub fn args(&self) -> Result<Vec<OsString>> {
@@ -75,8 +76,8 @@ impl Launch {
             self.player.chars().count() <= 24 && !self.player.chars().any(char::is_control),
             "Use a player name up to 24 characters"
         );
-        let mut args: Vec<OsString> = if self.testbed {
-            vec!["--content".into(), "testbed".into()]
+        let mut args: Vec<OsString> = if let Some(content) = &self.content {
+            vec!["--content".into(), content.clone()]
         } else {
             vec!["--game-dir".into(), self.game.as_os_str().into()]
         };
@@ -182,7 +183,7 @@ mod tests {
                 address: "127.0.0.1:7778".into(),
                 code: "abcdef123456".into(),
             },
-            testbed: false,
+            content: None,
         };
         let args = launch.args().unwrap();
         assert_eq!(args[1], launch.game.as_os_str());
@@ -220,7 +221,7 @@ mod tests {
             cache: "cache".into(),
             player: "Tester".into(),
             session: Session::Offline,
-            testbed: true,
+            content: Some("testbed".into()),
         };
         let args: Vec<_> = launch
             .args()

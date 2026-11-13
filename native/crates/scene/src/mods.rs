@@ -457,7 +457,7 @@ fn resource(root: &Path, relative: &str) -> Result<Vec<u8>> {
     );
     Ok(fs::read(path)?)
 }
-fn png_texture(data: &[u8]) -> Result<Texture> {
+pub(crate) fn png_texture(data: &[u8]) -> Result<Texture> {
     let mut decoder = png::Decoder::new(std::io::Cursor::new(data));
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut reader = decoder.read_info()?;
