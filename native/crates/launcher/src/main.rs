@@ -222,7 +222,11 @@ impl Launcher {
         self.validation
             .as_ref()
             .is_some_and(|(p, v)| p == &self.config.game_dir && v.ready())
-            && self.child.is_none()
+            && self.testbed_ready()
+    }
+    /// SARE Testbed needs no installation, only a free runtime slot.
+    fn testbed_ready(&self) -> bool {
+        self.child.is_none()
             && self.worker.is_none()
             && !self.updates.restarting
             && !self.updates.recovery_blocked
@@ -358,8 +362,19 @@ impl Launcher {
         );
     }
     fn start(&mut self, session: Session) {
+        self.start_with(session, false);
+    }
+    /// Offline SARE Testbed on built-in content, without game files.
+    fn start_testbed(&mut self) {
+        self.start_with(Session::Offline, true);
+    }
+    fn start_with(&mut self, session: Session, testbed: bool) {
         let network = !matches!(session, Session::Offline);
-        if !self.ready() {
+        if testbed && !self.testbed_ready() {
+            self.message = "Close the running game first.".into();
+            return;
+        }
+        if !testbed && !self.ready() {
             self.message =
                 "Choose and validate the installation, and close any running game first.".into();
             return;
@@ -411,6 +426,7 @@ impl Launcher {
                 cache: sa_client::cache_dir(),
                 player: self.config.player.clone(),
                 session,
+                testbed,
             };
             let mut command = launch.command(&exe)?;
             let logs = sa_client::config_dir().join("logs");
@@ -439,8 +455,11 @@ impl Launcher {
                         eprintln!("Could not save recent session: {error}");
                     }
                 }
-                self.message =
-                    "Starting the native game. Map loading continues in the game window.".into();
+                self.message = if testbed {
+                    "Starting SARE Testbed: a built-in test world, no game files needed.".into()
+                } else {
+                    "Starting the native game. Map loading continues in the game window.".into()
+                };
             }
             Err(error) => {
                 let error = format!("Could not start SARE: {error:#}");
@@ -647,6 +666,25 @@ impl Launcher {
             }
         }
         ui.add_space(12.0);
+        ui.horizontal_wrapped(|ui| {
+            let testbed = ui
+                .add_enabled(
+                    self.testbed_ready(),
+                    egui::Button::new(RichText::new("Play SARE Testbed").strong()),
+                )
+                .on_hover_text(
+                    "Walk, jump and drive in a small built-in test world. No San Andreas installation needed.",
+                )
+                .on_disabled_hover_text("Close the running game first");
+            if testbed.clicked() {
+                self.start_testbed();
+            }
+            ui.label(
+                RichText::new("No game files needed: a built-in test world for walking and driving.")
+                    .color(MUTED),
+            );
+        });
+        ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
             ui_theme::key_hint(ui, "Enter", "Select");
             ui_theme::key_hint(ui, "Tab", "Move focus");
@@ -1925,5 +1963,18 @@ mod tests {
         assert!(!app.ready());
         app.start(Session::Offline);
         assert!(app.child.is_none());
+        // The testbed needs no installation, only a free runtime slot.
+        assert!(app.testbed_ready());
+        app.child = Some(
+            std::process::Command::new(std::env::current_exe().unwrap())
+                .arg("--list")
+                .stdout(std::process::Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
+        assert!(!app.testbed_ready());
+        app.start_testbed();
+        assert!(app.message.contains("Close the running game"));
+        let _ = app.child.take().unwrap().wait();
     }
 }

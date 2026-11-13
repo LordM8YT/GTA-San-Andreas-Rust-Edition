@@ -25,7 +25,7 @@ Much of the foundation is already in place:
 | Framework compatibility (ox_lib starts; Qbox not yet) | Partial | [framework compatibility](framework-compatibility.md) |
 | Routing buckets (instances) | Done (step 1) | [server hosting](server-hosting.md#resources-and-lua) |
 | **Server-owned vehicles, peds and objects** | **New (step 2)** | [server hosting](server-hosting.md#server-entities) |
-| **Content abstraction and SARE Testbed (no game files)** | **New (step 2), first step** | [standalone plan](STANDALONE.md) |
+| **SARE Testbed: play without game files** (`--content testbed`, launcher button) | **New (step 3)** | [standalone plan](STANDALONE.md) |
 
 ## Step 1: routing buckets
 
@@ -161,7 +161,7 @@ the next one.
 ### Phase 5 — Standalone content
 
 Make GTA San Andreas an optional content pack: a content abstraction, the
-generated SARE Testbed (first step done), glTF content packs with original
+generated SARE Testbed (playable in a window: walk, jump, drive), glTF content packs with original
 default characters, vehicles and sounds, and servers that name the pack they
 need. See [STANDALONE.md](STANDALONE.md).
 

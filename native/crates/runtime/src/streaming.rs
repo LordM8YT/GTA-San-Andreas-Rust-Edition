@@ -1,7 +1,7 @@
 //! One bounded background loader. The renderer keeps the old region until a
 //! complete replacement is ready; no GTA files are written.
 use anyhow::Result;
-use sa_scene::{mlo::MloDefinition, InteriorPortal, WorldLoader};
+use sa_scene::{content::WorldSource, mlo::MloDefinition, InteriorPortal};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
 use std::time::{Duration, Instant};
 
@@ -38,9 +38,11 @@ pub struct Streamer {
     mlos: Vec<MloDefinition>,
 }
 impl Streamer {
-    pub fn new(mut loader: WorldLoader) -> Self {
+    /// Stream from any content source: the player's San Andreas
+    /// installation or the built-in SARE Testbed.
+    pub fn new(mut loader: Box<dyn WorldSource + Send>) -> Self {
         let portals = loader.interior_portals();
-        let mlos = loader.mlo_definitions().to_vec();
+        let mlos = loader.mlo_definitions();
         let (requests, receiver) = mpsc::sync_channel::<Work>(1);
         let (sender, results) = mpsc::sync_channel(1);
         std::thread::Builder::new()

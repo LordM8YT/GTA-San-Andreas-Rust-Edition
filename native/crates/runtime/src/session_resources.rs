@@ -333,7 +333,7 @@ impl Installing {
             pickups: crate::pickups::Pickups::new(
                 self.loader.as_ref().map_or(&[][..], |l| l.map_pickups()),
             ),
-            streamer: Some(Streamer::new(self.loader.take().unwrap())),
+            streamer: Some(Streamer::new(Box::new(self.loader.take().unwrap()))),
             uploading: None,
             retired: Vec::new(),
             car,

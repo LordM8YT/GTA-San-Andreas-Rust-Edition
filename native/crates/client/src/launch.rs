@@ -66,6 +66,8 @@ pub struct Launch {
     pub cache: PathBuf,
     pub player: String,
     pub session: Session,
+    /// Start SARE Testbed on built-in content; `game` is not passed.
+    pub testbed: bool,
 }
 impl Launch {
     pub fn args(&self) -> Result<Vec<OsString>> {
@@ -73,9 +75,12 @@ impl Launch {
             self.player.chars().count() <= 24 && !self.player.chars().any(char::is_control),
             "Use a player name up to 24 characters"
         );
-        let mut args: Vec<OsString> = vec![
-            "--game-dir".into(),
-            self.game.as_os_str().into(),
+        let mut args: Vec<OsString> = if self.testbed {
+            vec!["--content".into(), "testbed".into()]
+        } else {
+            vec!["--game-dir".into(), self.game.as_os_str().into()]
+        };
+        args.extend::<[OsString; 7]>([
             "--mods-dir".into(),
             self.mods.as_os_str().into(),
             "--cache-dir".into(),
@@ -83,7 +88,7 @@ impl Launch {
             "--name".into(),
             self.player.clone().into(),
             "--play".into(),
-        ];
+        ]);
         match &self.session {
             Session::Offline => {}
             Session::Direct(address) => {
@@ -177,6 +182,7 @@ mod tests {
                 address: "127.0.0.1:7778".into(),
                 code: "abcdef123456".into(),
             },
+            testbed: false,
         };
         let args = launch.args().unwrap();
         assert_eq!(args[1], launch.game.as_os_str());
@@ -205,5 +211,27 @@ mod tests {
             code: "x\";bad".into(),
         };
         assert!(invalid.args().is_err());
+    }
+    #[test]
+    fn testbed_launch_skips_the_game_folder() {
+        let launch = Launch {
+            game: PathBuf::from("C:/Games/GTA San Andreas"),
+            mods: "mods".into(),
+            cache: "cache".into(),
+            player: "Tester".into(),
+            session: Session::Offline,
+            testbed: true,
+        };
+        let args: Vec<_> = launch
+            .args()
+            .unwrap()
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(&args[..2], ["--content", "testbed"]);
+        assert!(!args
+            .iter()
+            .any(|a| a == "--game-dir" || a.contains("San Andreas")));
+        assert!(args.iter().any(|a| a == "--play"));
     }
 }

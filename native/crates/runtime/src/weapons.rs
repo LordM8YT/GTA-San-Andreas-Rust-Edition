@@ -303,7 +303,7 @@ impl State {
             ),
             // Say how to get a gun, or why there is none, instead of
             // showing nothing at all.
-            None if self.arsenal.guns.is_empty() => (
+            None if self.arsenal.guns.is_empty() && !self.standalone => (
                 "No guns: weapon.dat not found".to_owned(),
                 0,
                 0,
