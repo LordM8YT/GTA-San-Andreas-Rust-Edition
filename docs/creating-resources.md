@@ -1,5 +1,9 @@
 # Creating resources (mods) for SARE
 
+> New here? The [creator handbook](MODDING.md) has step-by-step tutorials. The quickest
+> start is `python tools/new-resource.py my_crate --type prop`, which makes a working
+> `.glb` prop you can open in Blender, or `--type world` for a standalone world.
+
 SARE resources are the way to add supported assets to the Rust runtime. A resource is a self-contained folder with a JSON manifest and the files it uses.
 
 There are currently **two different resource types**:
@@ -31,6 +35,8 @@ Use the offline [GTA SA mod importer](gta-sa-conversion.md) to convert supported
 From the repository root, with Python 3 installed, run one of:
 
 ```bash
+python tools/new-resource.py my_prop --type prop          # working .glb prop, enabled
+python tools/new-resource.py my-world --type world        # content pack in content/
 python tools/new-resource.py my_vehicle --type vehicle
 python tools/new-resource.py my_map --type map
 python tools/new-resource.py my_character --type player
