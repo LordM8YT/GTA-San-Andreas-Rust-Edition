@@ -3,6 +3,7 @@
 use crate::script::{self, json_to_pack, out, pack_to_json, Shared};
 use anyhow::Result;
 use mlua::{Function, Lua, LuaOptions, LuaSerdeExt, StdLib, Table, Value};
+use sa_net::entities::{EntityKind, ModelRef};
 use serde_json::Value as Json;
 use std::fs;
 
@@ -31,6 +32,44 @@ fn player_id(value: &Value) -> Option<u32> {
 fn peer(shared: &Shared, id: &Value) -> Option<sa_net::Peer> {
     let id = player_id(id)?;
     shared.borrow().peers.iter().find(|p| p.id == id).cloned()
+}
+fn server_entity(shared: &Shared, entity: &Value) -> Option<crate::entities::Entity> {
+    let handle = player_id(entity)?;
+    shared.borrow().entities.get(handle).cloned()
+}
+/// A model argument: a name string or a number (hash or model ID).
+fn model_ref(model: &Value) -> Option<ModelRef> {
+    match model {
+        Value::Integer(i) => Some(ModelRef::Hash(*i)),
+        Value::Number(n) if n.fract() == 0.0 && n.abs() < 1e15 => Some(ModelRef::Hash(*n as i64)),
+        Value::String(s) => Some(ModelRef::Name(s.to_str().ok()?.trim().to_string())),
+        _ => None,
+    }
+}
+fn create_entity(
+    shared: &Shared,
+    resource: &str,
+    kind: EntityKind,
+    model: &Value,
+    position: [f32; 3],
+    heading: f32,
+) -> mlua::Result<u32> {
+    let model =
+        model_ref(model).ok_or_else(|| mlua::Error::runtime("model must be a name or a hash"))?;
+    let created = shared
+        .borrow_mut()
+        .entities
+        .create(resource, kind, model, position, heading);
+    match created {
+        Ok(handle) => Ok(handle),
+        Err(reason) => {
+            out(
+                shared,
+                format!("[{resource}] Cannot create entity: {reason}"),
+            );
+            Ok(0)
+        }
+    }
 }
 fn vector3(lua: &Lua, [x, y, z]: [f32; 3]) -> mlua::Result<Value> {
     let make: Function = lua.globals().get("vector3")?;
@@ -925,11 +964,16 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
         }
         Ok(())
     });
+    // Entities: players' peds (handle = player ID) and server-owned
+    // vehicles, peds and objects (handles from `sa_net::entities::FIRST_HANDLE`).
     func!(g, "DoesEntityExist", shared, name, |_lua, entity: Value| {
-        Ok(peer(&shared, &entity).is_some())
+        Ok(server_entity(&shared, &entity).is_some() || peer(&shared, &entity).is_some())
     });
     func!(g, "GetEntityCoords", shared, name, |lua, entity: Value| {
-        let position = peer(&shared, &entity).map_or([0.0; 3], |p| world_position(&p.pose));
+        let position = match server_entity(&shared, &entity) {
+            Some(e) => e.state.position,
+            None => peer(&shared, &entity).map_or([0.0; 3], |p| world_position(&p.pose)),
+        };
         vector3(lua, position)
     });
     func!(
@@ -937,8 +981,163 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
         "GetEntityHeading",
         shared,
         name,
-        |_lua, entity: Value| { Ok(peer(&shared, &entity).map_or(0.0, |p| heading(&p.pose))) }
+        |_lua, entity: Value| {
+            Ok(match server_entity(&shared, &entity) {
+                Some(e) => e.state.heading,
+                None => peer(&shared, &entity).map_or(0.0, |p| heading(&p.pose)),
+            })
+        }
     );
+    func!(g, "GetHashKey", shared, name, |_lua, text: String| {
+        Ok(sa_lua::cfxlua::joaat(&text))
+    });
+    func!(g, "GetEntityModel", shared, name, |_lua, entity: Value| {
+        Ok(
+            match server_entity(&shared, &entity).map(|e| e.state.model) {
+                Some(ModelRef::Hash(hash)) => hash,
+                Some(ModelRef::Name(model)) => i64::from(sa_lua::cfxlua::joaat(&model)),
+                None => 0,
+            },
+        )
+    });
+    func!(g, "GetEntityType", shared, name, |_lua, entity: Value| {
+        Ok(match server_entity(&shared, &entity) {
+            Some(e) => e.state.kind.type_id(),
+            None => u8::from(peer(&shared, &entity).is_some()),
+        })
+    });
+    for (key, kind) in [
+        ("GetAllVehicles", Some(EntityKind::Vehicle)),
+        ("GetAllObjects", Some(EntityKind::Object)),
+        ("GetAllPeds", None),
+    ] {
+        func!(g, key, shared, name, |lua, (): ()| {
+            let state = shared.borrow();
+            let handles: Vec<u32> = match kind {
+                Some(kind) => state.entities.all(kind),
+                // Players' peds first, then server peds.
+                None => state
+                    .peers
+                    .iter()
+                    .map(|p| p.id)
+                    .chain(state.entities.all(EntityKind::Ped))
+                    .collect(),
+            };
+            drop(state);
+            lua.create_sequence_from(handles)
+        });
+    }
+    // FiveM: CreateVehicle(model, x, y, z, heading, isNetwork, netMissionEntity)
+    func!(g, "CreateVehicle", shared, name, |_lua,
+                                             (
+        model,
+        x,
+        y,
+        z,
+        h,
+        _rest,
+    ): (
+        Value,
+        f32,
+        f32,
+        f32,
+        Option<f32>,
+        mlua::Variadic<Value>
+    )| {
+        create_entity(
+            &shared,
+            &name,
+            EntityKind::Vehicle,
+            &model,
+            [x, y, z],
+            h.unwrap_or(0.0),
+        )
+    });
+    // FiveM: CreateVehicleServerSetter(model, type, x, y, z, heading)
+    func!(g, "CreateVehicleServerSetter", shared, name, |_lua,
+                                                         (
+        model,
+        _kind,
+        x,
+        y,
+        z,
+        h,
+    ): (
+        Value,
+        Value,
+        f32,
+        f32,
+        f32,
+        Option<f32>
+    )| {
+        create_entity(
+            &shared,
+            &name,
+            EntityKind::Vehicle,
+            &model,
+            [x, y, z],
+            h.unwrap_or(0.0),
+        )
+    });
+    // FiveM: CreatePed(pedType, model, x, y, z, heading, isNetwork, bScriptHostPed)
+    func!(g, "CreatePed", shared, name, |_lua,
+                                         (
+        _ped_type,
+        model,
+        x,
+        y,
+        z,
+        h,
+        _rest,
+    ): (
+        Value,
+        Value,
+        f32,
+        f32,
+        f32,
+        Option<f32>,
+        mlua::Variadic<Value>
+    )| {
+        create_entity(
+            &shared,
+            &name,
+            EntityKind::Ped,
+            &model,
+            [x, y, z],
+            h.unwrap_or(0.0),
+        )
+    });
+    // FiveM: CreateObject(model, x, y, z, isNetwork, netMissionEntity, doorFlag)
+    for key in ["CreateObject", "CreateObjectNoOffset"] {
+        func!(g, key, shared, name, |_lua,
+                                     (model, x, y, z, _rest): (
+            Value,
+            f32,
+            f32,
+            f32,
+            mlua::Variadic<Value>
+        )| {
+            create_entity(&shared, &name, EntityKind::Object, &model, [x, y, z], 0.0)
+        });
+    }
+    func!(g, "DeleteEntity", shared, name, |_lua, entity: Value| {
+        if let Some(handle) = player_id(&entity) {
+            let mut state = shared.borrow_mut();
+            if state.entities.delete(handle) {
+                state.bags.remove(&format!("entity:{handle}"));
+            }
+        }
+        Ok(())
+    });
+    // Network IDs are the entity handles.
+    for key in [
+        "NetworkGetNetworkIdFromEntity",
+        "NetworkGetEntityFromNetworkId",
+    ] {
+        func!(g, key, shared, name, |_lua, entity: Value| {
+            Ok(server_entity(&shared, &entity).map_or(0, |e| e.state.handle))
+        });
+    }
     func!(g, "GetEntitySpeed", shared, name, |_lua, entity: Value| {
         Ok(peer(&shared, &entity).map_or(0.0, |p| p.pose.speed))
     });
@@ -950,19 +1149,26 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
         Ok(peer(&shared, &ped).is_some_and(|p| p.pose.driving || p.pose.ride.is_some()))
     });
     // Routing buckets (instances): players only see, share traffic and ride
-    // with players in the same bucket. Players are the only entities, so the
-    // entity variants take player IDs too.
+    // with players in the same bucket, and only get the server entities of
+    // their own bucket. New server entities start in bucket 0.
     for key in ["SetPlayerRoutingBucket", "SetEntityRoutingBucket"] {
         func!(
             g,
             key,
             shared,
             name,
-            |_lua, (player, bucket): (Value, i64)| {
+            |_lua, (entity, bucket): (Value, i64)| {
                 let bucket = u32::try_from(bucket)
                     .map_err(|_| mlua::Error::runtime("routing bucket must be 0 or more"))?;
+                if let Some(e) = server_entity(&shared, &entity) {
+                    shared
+                        .borrow_mut()
+                        .entities
+                        .set_bucket(e.state.handle, bucket);
+                    return Ok(());
+                }
                 let session = shared.borrow().session.clone();
-                if let (Some(session), Some(id)) = (session, peer(&shared, &player).map(|p| p.id)) {
+                if let (Some(session), Some(id)) = (session, peer(&shared, &entity).map(|p| p.id)) {
                     session.set_routing_bucket(id, bucket);
                 }
                 Ok(())
@@ -970,9 +1176,12 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
         );
     }
     for key in ["GetPlayerRoutingBucket", "GetEntityRoutingBucket"] {
-        func!(g, key, shared, name, |_lua, player: Value| {
+        func!(g, key, shared, name, |_lua, entity: Value| {
+            if let Some(e) = server_entity(&shared, &entity) {
+                return Ok(e.bucket);
+            }
             let session = shared.borrow().session.clone();
-            Ok(match (session, player_id(&player)) {
+            Ok(match (session, player_id(&entity)) {
                 (Some(session), Some(id)) => session.routing_bucket(id),
                 _ => 0,
             })
@@ -993,52 +1202,44 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
             Ok(())
         }
     );
-    // Movement is client-authoritative: these ask the owning client to move.
-    func!(g, "SetEntityCoords", shared, name, |_lua,
-                                               (entity, x, y, z): (
-        Value,
-        f32,
-        f32,
-        f32
-    )| {
-        if let Some(id) = player_id(&entity) {
-            send_client(
-                &shared,
-                Some(id),
-                "__sare:setCoords",
-                &[x.into(), y.into(), z.into(), Json::Null],
-            );
-        }
-        Ok(())
-    });
-    func!(g, "SetEntityCoordsNoOffset", shared, name, |_lua,
-                                                       (
-        entity,
-        x,
-        y,
-        z,
-    ): (
-        Value,
-        f32,
-        f32,
-        f32
-    )| {
-        if let Some(id) = player_id(&entity) {
-            send_client(
-                &shared,
-                Some(id),
-                "__sare:setCoords",
-                &[x.into(), y.into(), z.into(), Json::Null],
-            );
-        }
-        Ok(())
-    });
+    // Server entities move at once; players' peds are client-authoritative,
+    // so these ask the owning client to move.
+    for key in ["SetEntityCoords", "SetEntityCoordsNoOffset"] {
+        func!(g, key, shared, name, |_lua,
+                                     (entity, x, y, z, _rest): (
+            Value,
+            f32,
+            f32,
+            f32,
+            mlua::Variadic<Value>
+        )| {
+            if let Some(e) = server_entity(&shared, &entity) {
+                shared
+                    .borrow_mut()
+                    .entities
+                    .set_position(e.state.handle, [x, y, z]);
+            } else if let Some(id) = player_id(&entity) {
+                send_client(
+                    &shared,
+                    Some(id),
+                    "__sare:setCoords",
+                    &[x.into(), y.into(), z.into(), Json::Null],
+                );
+            }
+            Ok(())
+        });
+    }
     func!(g, "SetEntityHeading", shared, name, |_lua,
                                                 (entity, value): (
         Value,
         f32
     )| {
-        if let Some(id) = player_id(&entity) {
+        if let Some(e) = server_entity(&shared, &entity) {
+            shared
+                .borrow_mut()
+                .entities
+                .set_heading(e.state.handle, value);
+        } else if let Some(id) = player_id(&entity) {
             send_client(&shared, Some(id), "__sare:setHeading", &[value.into()]);
         }
         Ok(())

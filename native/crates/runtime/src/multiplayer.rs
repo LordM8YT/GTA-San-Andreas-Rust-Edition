@@ -120,6 +120,8 @@ mod parked_tests {
 
 pub(super) struct RemoteActor {
     pub id: u32,
+    /// A server-owned entity rather than another player.
+    pub entity: Option<sa_net::entities::EntityKind>,
     pub current: Pose,
     pub target: Pose,
     pub visible: bool,
@@ -242,6 +244,7 @@ impl State {
         let nearest = self
             .remote_actors
             .iter()
+            .filter(|actor| actor.entity.is_none())
             .filter_map(|actor| {
                 let car = actor.target.vehicle?;
                 if car.interior != self.interior {
@@ -338,6 +341,7 @@ impl State {
         self.pending_coords = None;
         self.scripts.stop_all();
         self.script_peers.clear();
+        self.server_entities = Default::default();
         self.release_script_cursor();
         self.chat.reset_server_state();
     }
@@ -443,6 +447,7 @@ impl State {
         }?;
         Some(RemoteActor {
             id: peer.id,
+            entity: self.server_entities.entities.get(&peer.id).map(|e| e.kind),
             current: peer.pose,
             target: peer.pose,
             visible: false,
@@ -459,6 +464,52 @@ impl State {
             animator: crate::animation::Animator::default(),
             animated: None,
         })
+    }
+    /// Remote-actor poses of the server's vehicles and peds, rebuilt when the
+    /// entity list changes. Entities with models this game lacks are left out.
+    fn refresh_entity_peers(&mut self) {
+        use crate::server_entities::{entity_peer, resolve_model};
+        use sa_net::entities::EntityKind;
+        if self.server_entities.peers_revision == Some(self.server_entities.revision) {
+            return;
+        }
+        let no_ids = std::collections::HashMap::new();
+        let mut peers = Vec::new();
+        for entity in self.server_entities.entities.values() {
+            let (ped, car) = match entity.kind {
+                EntityKind::Vehicle => (
+                    Some(self.active_ped),
+                    resolve_model(
+                        &entity.model,
+                        &self.menu.cars,
+                        &self.original_car_models,
+                        &self.car_ids,
+                    ),
+                ),
+                EntityKind::Ped => (
+                    resolve_model(
+                        &entity.model,
+                        &self.menu.peds,
+                        &self.original_ped_models,
+                        &no_ids,
+                    ),
+                    Some(self.active_car),
+                ),
+                EntityKind::Object => continue,
+            };
+            match ped
+                .zip(car)
+                .and_then(|(ped, car)| entity_peer(entity, ped, car))
+            {
+                Some(peer) => peers.push(peer),
+                None => eprintln!(
+                    "Server entity {}: model {:?} is not available",
+                    entity.handle, entity.model
+                ),
+            }
+        }
+        self.server_entities.peers = peers;
+        self.server_entities.peers_revision = Some(self.server_entities.revision);
     }
     fn appearance_indices(&self, pose: Pose) -> Option<(usize, usize)> {
         let ped = usize::from(pose.ped_model);
@@ -620,7 +671,13 @@ impl State {
                     )
                 })
                 .collect();
-            if report.revision != self.network_revision {
+            self.refresh_entity_peers();
+            let mut actor_peers = report.peers.clone();
+            actor_peers.extend(self.server_entities.peers.iter().cloned());
+            if report.revision != self.network_revision
+                || self.server_entities.revision != self.server_entities_seen
+            {
+                self.server_entities_seen = self.server_entities.revision;
                 self.network_revision = report.revision;
                 self.remote_actors.retain(|actor| {
                     report
@@ -629,7 +686,7 @@ impl State {
                         .any(|p| p.id == actor.id && p.id != report.local_id)
                 });
                 for actor in &mut self.remote_actors {
-                    if let Some(peer) = report.peers.iter().find(|p| p.id == actor.id) {
+                    if let Some(peer) = actor_peers.iter().find(|p| p.id == actor.id) {
                         actor.target = peer.pose;
                     }
                 }
@@ -644,7 +701,7 @@ impl State {
             });
             if let Some(index) = changed {
                 let id = self.remote_actors[index].id;
-                if let Some(peer) = report.peers.iter().find(|p| p.id == id) {
+                if let Some(peer) = actor_peers.iter().find(|p| p.id == id) {
                     if let Some((ped, car)) = self.appearance_indices(peer.pose) {
                         self.ensure_ped_loaded(ped);
                         self.ensure_car_loaded(car);
@@ -655,7 +712,7 @@ impl State {
                         self.network_pose_last = now - Duration::from_secs(1);
                     }
                 }
-            } else if let Some(peer) = report.peers.iter().find(|p| {
+            } else if let Some(peer) = actor_peers.iter().find(|p| {
                 p.id != report.local_id && !self.remote_actors.iter().any(|a| a.id == p.id)
             }) {
                 if let Some((ped, car)) = self.appearance_indices(peer.pose) {
@@ -672,7 +729,8 @@ impl State {
         for actor in &mut self.remote_actors {
             interpolate(&mut actor.current, actor.target, dt);
             let previous_visibility = (actor.ped_visible, actor.car_visible);
-            actor.ped_visible = !actor.current.driving
+            actor.ped_visible = actor.entity != Some(sa_net::entities::EntityKind::Vehicle)
+                && !actor.current.driving
                 && actor.current.ride.is_none()
                 && actor.current.interior == self.interior
                 && Vec3::from_array(actor.current.position).distance(self.position) < 300.0;

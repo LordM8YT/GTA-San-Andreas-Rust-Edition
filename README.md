@@ -27,7 +27,8 @@ build ID to distinguish builds. Existing commit-based release tags stay valid.
 ## Guides for server owners and creators
 
 SARE is growing into a free creator platform: see the [platform roadmap](docs/PLATFORM.md)
-for the plan and what each step delivers.
+for the plan and what each step delivers, and the [standalone plan](docs/STANDALONE.md)
+for running SARE without San Andreas game files.
 
 New to SARE development? Start with the practical [server guide](docs/server-guide.md)
 or learn how to [create resources and mods](docs/creating-resources.md).

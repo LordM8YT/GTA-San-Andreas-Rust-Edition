@@ -52,7 +52,7 @@ NUI kjører ikke.
 | Database (oxmysql-API) | qbx_core, ox_inventory | Mangler |
 | `PerformHttpRequest`, `AddConvarChangeListener` | ox_lib | Mangler |
 | `glm`-matematikk, `Citizen.InvokeNative` | ox_lib | Mangler |
-| Serverentiteter (OneSync): `CreateVehicle`, `GetGamePool`, nettverks-ID-er | ox_lib, qbx_core | Mangler |
+| Serverentiteter (OneSync): `CreateVehicle`, `CreatePed`, `CreateObject`, `DeleteEntity`, `GetAllVehicles`, nettverks-ID-er | ox_lib, qbx_core | **Delvis** (nytt): serveren eier dem, de sendes til spillere i samme routing bucket, slettes når ressursen stopper; kjøretøy kan ikke kjøres ennå, objekter tegnes ikke ennå, `GetGamePool` på klienten mangler |
 | Routing buckets: `Set/GetPlayerRoutingBucket`, `Set/GetEntityRoutingBucket`, `SetRoutingBucketPopulationEnabled` | ox_lib, qbx_core | **Delvis** (nytt): spillere ser, deler trafikk og passasjerseter bare med spillere i samme bucket; entiteter er bare spillere, `SetRoutingBucketEntityLockdownMode` mangler |
 | Klient-Lua (`client_script`) | alle Qbox-ressurser | **Delvis** (nytt): kjører i sandkasse; spiller- og posisjonsnatives, events, kommandoer, tastebindinger |
 | UI: varsler, kontekstmeny, input-dialog, fremdriftslinje, tekst-UI | ox_lib (`lib.notify`, `lib.registerContext`, `lib.inputDialog` ...) | **Delvis** (nytt): eget `UI`-API med samme felter; ox_libs NUI-versjon kjører ikke |
@@ -74,9 +74,9 @@ NUI kjører ikke.
    for akkurat denne serveren, sjekket med signert challenge-response på hver
    tilkobling (se [SARE Box](sarebox.md#player-identity)). Gjenstår: kryptert
    transport, og deferrals før spilleren slippes inn.
-5. **Serverentiteter:** biler, peds og objekter som serveren eier og
-   replikerte state bags. Routing buckets for spillere er ferdig; se
-   [plattformplanen](PLATFORM.md).
+5. **Serverentiteter:** routing buckets og serverentiteter (opprette, slette,
+   sende per bucket) er ferdig. Gjenstår: kjøre serverbiler, tegne objekter og
+   replikerte state bags; se [plattformplanen](PLATFORM.md).
 6. **Klient-Lua og UI (delvis ferdig):** sandkasse, nedlasting med SHA-256,
    UI tegnet av spillet. Gjenstår: flere SA-varianter av GTA V-natives og en
    ox_lib-bro som oversetter `lib.notify`/`lib.registerContext` til `UI`.

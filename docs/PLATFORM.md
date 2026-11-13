@@ -23,9 +23,11 @@ Much of the foundation is already in place:
 | Server browser and join codes through `sa-relay` | Prototype | [multiplayer](multiplayer.md) |
 | Importers for classic SA mods and FiveM/GTA V assets | Partial | [SA import](gta-sa-conversion.md), [FiveM conversion](gta5-conversion.md) |
 | Framework compatibility (ox_lib starts; Qbox not yet) | Partial | [framework compatibility](framework-compatibility.md) |
-| **Routing buckets (instances)** | **New in this step** | [server hosting](server-hosting.md#resources-and-lua) |
+| Routing buckets (instances) | Done (step 1) | [server hosting](server-hosting.md#resources-and-lua) |
+| **Server-owned vehicles, peds and objects** | **New (step 2)** | [server hosting](server-hosting.md#server-entities) |
+| **Content abstraction and SARE Testbed (no game files)** | **New (step 2), first step** | [standalone plan](STANDALONE.md) |
 
-## This step: routing buckets
+## Step 1: routing buckets
 
 Instances are a basic building block for almost every game mode: private
 garages and apartments, races and deathmatch lobbies, character selection,
@@ -59,6 +61,45 @@ modes), filtering of script events by bucket (FiveM does not do that either),
 and client-side bucket awareness beyond what the snapshot already hides. The
 change needs no protocol bump: older clients simply receive fewer players.
 
+## Step 2: server entities and the first standalone step
+
+Delivered:
+
+- A server entity registry (`sa-server`, `entities.rs`): vehicles, peds and
+  objects created by scripts, with handles from `0x100000` so they never
+  collide with players' ped handles, a limit of 2048 entities, and handles
+  that are never reused while the server runs.
+- FiveM-named natives: `CreateVehicle`, `CreateVehicleServerSetter`,
+  `CreatePed`, `CreateObject`, `CreateObjectNoOffset`, `DeleteEntity`,
+  `DoesEntityExist`, `GetEntityCoords`, `GetEntityHeading`,
+  `SetEntityCoords`, `SetEntityHeading`, `GetEntityModel`, `GetEntityType`,
+  `GetAllVehicles`, `GetAllPeds`, `GetAllObjects`, `Set/GetEntityRoutingBucket`,
+  `NetworkGetNetworkIdFromEntity`, `NetworkGetEntityFromNetworkId` and
+  `GetHashKey`. `Entity(handle).state` works for them.
+- Replication per routing bucket over two internal script events
+  (`sa_net::entities`), so no protocol bump was needed: every player gets the
+  entities of their own bucket once, changes when they happen, and removals
+  when an entity is deleted or the player or entity changes bucket. Batches
+  that do not fit the outgoing queue are retried on the next frame.
+- Entities belong to the resource that created them and are deleted when it
+  stops, together with their state bags.
+- The game draws server vehicles and peds through the same path as other
+  players' parked cars and avatars, resolving models by file name
+  (`infernus`), catalog name, original model ID (`411`) or hash
+  (`` `infernus` ``). Server cars are solid for the local player's car and
+  ignored for passenger seats. Objects are replicated but not drawn yet.
+- Example resource `[examples]/sare_vehicles`: `/car [model]` spawns a server
+  vehicle in front of you, in your instance, and `/dv` deletes it; vehicles
+  follow their owner between `/instance` buckets.
+- The first standalone step: a content-source abstraction and the generated
+  SARE Testbed world, checked without game files by
+  `sa-runtime --probe-standalone --content testbed`. See [STANDALONE.md](STANDALONE.md).
+
+Not in this step: driving or entering server vehicles (needs an owning
+client that simulates them), drawing objects, server entity velocity and
+physics, client Lua access to server entities, and distance culling (all
+entities of a bucket are sent; the limit keeps that bounded).
+
 ## The full roadmap
 
 The order follows dependencies: each phase is useful on its own and unlocks
@@ -67,10 +108,9 @@ the next one.
 ### Phase 1 — Server world model
 
 1. **Routing buckets** — done for players (this step).
-2. **Server-owned entities.** Vehicles, peds and objects created by the server
-   (`CreateVehicle`, `CreateObject`, `DeleteEntity`, `GetGamePool`, network
-   IDs), replicated to the players in the entity's bucket and simulated by an
-   owning client. This replaces "personal cars only" with scripted cars.
+2. **Server-owned entities** — registry, natives, per-bucket replication and
+   drawing of vehicles and peds done (step 2). Next: an owning client that
+   simulates and drives them, drawing objects, and client Lua access.
 3. **Replicated state bags.** `replicated = true` values on `GlobalState`,
    `Player(src).state` and `Entity(h).state` reach client Lua, with size limits
    and server-only write access by default.
@@ -118,7 +158,14 @@ the next one.
 4. **Map editor:** place SA and native-resource models in game and export
    them as a map resource.
 
-### Phase 5 — Compatibility targets
+### Phase 5 — Standalone content
+
+Make GTA San Andreas an optional content pack: a content abstraction, the
+generated SARE Testbed (first step done), glTF content packs with original
+default characters, vehicles and sounds, and servers that name the pack they
+need. See [STANDALONE.md](STANDALONE.md).
+
+### Phase 6 — Compatibility targets
 
 1. Qbox core with ox_lib, the oxmysql replacement and ox_inventory, pinned and
    tested in CI.

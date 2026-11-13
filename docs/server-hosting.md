@@ -138,7 +138,31 @@ still reach every player, and a player's bucket resets to 0 when they leave.
 `[examples]/sare_instances` adds `/instance` (a private instance),
 `/instance <number>` and `/instance 0`, and the exports `SetInstance`/`GetInstance`.
 
-Not supported yet: NUI pages (by design: use the script UI), OneSync entities, entity lockdown modes, replicated state bags,
+### Server entities
+
+Scripts can create vehicles, peds and objects that the server owns:
+
+```lua
+local car = CreateVehicle('infernus', 2495.0, -1665.0, 13.3, 90.0, true, true)
+SetEntityRoutingBucket(car, GetPlayerRoutingBucket(source))
+Entity(car).state:set('owner', source, false)
+DeleteEntity(car)
+```
+
+Models are names (`'infernus'`), hashes (`` `infernus` ``, `GetHashKey`) or
+original model IDs (`411`). `CreateVehicleServerSetter`, `CreatePed`,
+`CreateObject`, `CreateObjectNoOffset`, `DeleteEntity`, `DoesEntityExist`,
+`GetEntityCoords`, `GetEntityHeading`, `SetEntityCoords`, `SetEntityHeading`,
+`GetEntityModel`, `GetEntityType`, `GetAllVehicles`, `GetAllPeds`,
+`GetAllObjects` and the network ID natives are supported. Entities start in
+bucket 0; players only receive the entities of their own bucket. An entity
+belongs to the resource that created it and is deleted when that resource
+stops. At most 2048 entities exist at a time; creation then returns 0.
+Players see server vehicles and peds whose models their game has (others are
+skipped); they cannot drive them yet, and objects are not drawn yet. The
+example `[examples]/sare_vehicles` adds `/car [model]` and `/dv`.
+
+Not supported yet: NUI pages (by design: use the script UI), driving server vehicles, OneSync population, entity lockdown modes, replicated state bags,
 databases (oxmysql is a Node.js resource), `PerformHttpRequest`, and identifiers
 other than `license`, `sare` and `legacy`. `playerConnecting` runs after the player has
 joined, so a rejection drops them. FiveM resources that use GTA V natives must

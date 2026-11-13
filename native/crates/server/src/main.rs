@@ -4,6 +4,7 @@
 mod acl;
 mod cfg;
 mod console;
+mod entities;
 mod kvp;
 mod manifest;
 mod natives;
@@ -417,6 +418,7 @@ fn pump(
         script::dispatch(shared, &event.name, event.source, &args, true);
     }
     script::tick(shared);
+    script::replicate_entities(shared);
     for _ in 0..64 {
         let pending = std::mem::take(&mut shared.borrow_mut().pending);
         if pending.is_empty() {

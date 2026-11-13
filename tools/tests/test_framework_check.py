@@ -16,7 +16,9 @@ class FrameworkCheckTests(unittest.TestCase):
         for name in ['GetPlayerName', 'AddStateBagChangeHandler', 'GetPlayerIdentifierByType', 'Player',
                      'RegisterNetEvent', 'Citizen.CreateThread', 'msgpack']:
             self.assertIn(name, provided)
-        self.assertNotIn('CreateVehicle', provided)
+        for name in ['CreateVehicle', 'CreateObject', 'GetAllVehicles', 'GetAllPeds', 'SetPlayerRoutingBucket', 'GetEntityRoutingBucket']:
+            self.assertIn(name, provided)
+        self.assertNotIn('SetVehicleNumberPlateText', provided)
 
     def test_shipped_examples_need_nothing_missing(self):
         resources = framework_check.discover(REPO / 'server-data' / 'resources')
@@ -41,11 +43,12 @@ class FrameworkCheckTests(unittest.TestCase):
                 encoding='utf-8')
             (folder / 'server' / 'main.lua').write_text(
                 "local function Helper() end\nHelper()\nCreateVehicle(`adder`, 0, 0, 0, 0, true, true)\n"
+                "SetVehicleNumberPlateText(1, 'SARE')\n"
                 "print('GetGamePool(not a call)')\nlocal p = Player(source).state\nGetPlayerName(source)\n",
                 encoding='utf-8')
             report = framework_check.check('fw', folder, {'fw': folder}, framework_check.provided_names())
-        self.assertEqual(report['missing'], {'CreateVehicle': 1})
-        self.assertEqual(report['supported'], {'GetPlayerName': 1, 'Player': 1})
+        self.assertEqual(report['missing'], {'SetVehicleNumberPlateText': 1})
+        self.assertEqual(report['supported'], {'CreateVehicle': 1, 'GetPlayerName': 1, 'Player': 1})
         self.assertEqual(report['provides'], ['qb-core'])
         self.assertIn('CfxLua syntax', report['features'])
         notes = ' '.join(report['notes'])

@@ -33,6 +33,7 @@ impl State {
                         self.yaw = heading.to_radians();
                     }
                 }
+                name if self.server_entities.handle_event(name, &event.payload) => {}
                 name => {
                     let chat = self.chat.handle_event(name, &args);
                     let scripts = self.scripts.handle_event(name, &event.payload);
