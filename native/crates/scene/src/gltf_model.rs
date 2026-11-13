@@ -87,6 +87,83 @@ impl Model {
     }
 }
 
+/// Is this path a glTF model (by extension)?
+pub fn is_gltf_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    lower.ends_with(".glb") || lower.ends_with(".gltf")
+}
+
+impl Model {
+    /// The drawn meshes as map-model geometry for native mods: Z-up model
+    /// space like a DFF (glTF -Z north becomes +Y north), one material per
+    /// batch, split into pieces of at most 65535 vertices. Texture names are
+    /// the part of each batch key after `key_prefix:`, so the textures are
+    /// found as `<key_prefix>:<name>` in the mod texture table.
+    pub fn to_geometry(&self, key_prefix: &str) -> Vec<sa_assets::Geometry> {
+        let mut out = Vec::new();
+        let white = format!("{key_prefix}:white");
+        for batch in &self.drawn {
+            let texture = (batch.key != white)
+                .then(|| batch.key.strip_prefix(&format!("{key_prefix}:")))
+                .flatten()
+                .map(str::to_owned);
+            // Alpha below 255 marks the material as see-through, which also
+            // keeps it out of the visible-triangle collision fallback.
+            let alpha = if batch.alpha { 254 } else { 255 };
+            for chunk in batch.vertices.chunks(65535 / 3 * 3) {
+                let to_u8 = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+                out.push(sa_assets::Geometry {
+                    positions: chunk
+                        .iter()
+                        .map(|v| [v.position[0], -v.position[2], v.position[1]])
+                        .collect(),
+                    normals: Vec::new(),
+                    uvs: chunk.iter().map(|v| v.uv).collect(),
+                    colors: chunk.iter().map(|v| v.color.map(to_u8)).collect(),
+                    triangles: (0..chunk.len() as u16 / 3)
+                        .map(|t| [t * 3, t * 3 + 1, t * 3 + 2, 0])
+                        .collect(),
+                    materials: vec![sa_assets::Material {
+                        color: [255, 255, 255, alpha],
+                        texture: texture.clone(),
+                        uv_animation: None,
+                    }],
+                    road_signs: Vec::new(),
+                    lights: Vec::new(),
+                });
+            }
+        }
+        out
+    }
+}
+
+impl Model {
+    /// The solid part (`COL_` meshes plus opaque, non-`NOCOL_` meshes) as a
+    /// Z-up collision model like a COL file, or `None` if nothing is solid.
+    pub fn to_collision(&self, name: &str) -> Option<sa_assets::col::CollisionModel> {
+        let triangles: Vec<[[f32; 3]; 3]> = self
+            .collision
+            .iter()
+            .flat_map(|b| b.vertices.as_chunks::<3>().0)
+            .map(|t| {
+                std::array::from_fn(|i| {
+                    let p = t[i].position;
+                    [p[0], -p[2], p[1]]
+                })
+            })
+            .collect();
+        let points = || triangles.iter().flatten();
+        let min = std::array::from_fn(|a| points().map(|p| p[a]).fold(f32::INFINITY, f32::min));
+        let max = std::array::from_fn(|a| points().map(|p| p[a]).fold(f32::NEG_INFINITY, f32::max));
+        (!triangles.is_empty()).then(|| sa_assets::col::CollisionModel {
+            name: name.to_owned(),
+            triangles,
+            min,
+            max,
+        })
+    }
+}
+
 /// Load a `.glb` or `.gltf` file. Texture keys start with `key_prefix`, so
 /// two models never share a texture by accident.
 pub fn load(path: &Path, key_prefix: &str) -> Result<Model> {
@@ -482,6 +559,32 @@ pub(crate) mod tests {
         assert_eq!(model.collision[0].vertices.len(), 6);
         let (drawn, _) = model.translated(Vec3::new(10.0, 0.0, 0.0));
         assert!(drawn[0].vertices.iter().all(|v| v.position[0].abs() >= 9.0));
+    }
+
+    #[test]
+    fn mod_geometry_is_z_up_with_textures_by_name() {
+        assert!(is_gltf_path("models/Chair.GLB") && !is_gltf_path("chair.dff"));
+        let model = parse(
+            &quad_glb("Sign", [1.0, 2.0, -3.0]),
+            Path::new("."),
+            "mod_x_1",
+        )
+        .unwrap();
+        let geometry = model.to_geometry("mod_x_1");
+        assert_eq!(geometry.len(), 1);
+        let g = &geometry[0];
+        // glTF (1, 2, -3) is 1 m east, 3 m north and 2 m up.
+        assert!(g.positions.iter().all(|p| p[2] == 2.0));
+        assert!(g.positions.iter().any(|p| (p[1] - 4.0).abs() < 1e-5));
+        assert_eq!(g.triangles, vec![[0, 1, 2, 0], [3, 4, 5, 0]]);
+        assert!(g.materials[0].texture.is_none() && g.materials[0].color[3] == 255);
+        assert!(g.colors[0][0] > 240 && g.colors[0][1] == 0);
+        let col = model.to_collision("x").unwrap();
+        assert_eq!(col.triangles.len(), 2);
+        assert_eq!((col.min[2], col.max[2]), (2.0, 2.0));
+        assert_eq!((col.min[1], col.max[1]), (2.0, 4.0));
+        let deco = parse(&quad_glb("NOCOL_x", [0.0; 3]), Path::new("."), "m").unwrap();
+        assert!(deco.to_collision("m").is_none());
     }
 
     #[test]
