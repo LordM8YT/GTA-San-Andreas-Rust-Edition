@@ -289,8 +289,8 @@ pub fn parse(bytes: &[u8], folder: &Path, key_prefix: &str) -> Result<Model> {
                 model.drawn.len() - 1
             });
             let out = &mut model.drawn[slot].vertices;
-            for tri in indices.chunks_exact(3) {
-                let [a, b, c] = [tri[0], tri[1], tri[2]].map(|i| i as usize);
+            for tri in indices.as_chunks::<3>().0 {
+                let [a, b, c] = tri.map(|i| i as usize);
                 let face = (positions[b] - positions[a])
                     .cross(positions[c] - positions[a])
                     .normalize_or_zero();
