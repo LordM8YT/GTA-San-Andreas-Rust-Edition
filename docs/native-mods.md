@@ -269,6 +269,37 @@ og 256 MiB mod-ressurser. Ressurser kan ikke referere til filer utenfor egen
 mappe. Del egne assets; originaldata leses fra brukerens installasjon.
 Dekodede spillerteksturer har en egen grense på 128 MiB.
 
+## glTF models from Blender (`.glb`)
+
+A map model can be a glTF binary file instead of a DFF, so you can make props
+and buildings in Blender without any RenderWare tools:
+
+```json
+{
+  "enabled": true,
+  "name": "My bench",
+  "models": [{ "id": 30100, "model": "bench.glb" }],
+  "placements": [{ "model_id": 30100, "position": [2495, -1665, 13.5] }]
+}
+```
+
+- Export with *File → Export → glTF 2.0*, **Format: glTF Binary (.glb)** and
+  **+Y Up** ticked. Blender axes stay as they are: X east, Y north, Z up, in
+  metres. The object's origin is the placement point.
+- The `.glb` carries its own textures (PNG only), so leave out `txd` and
+  `original_txd`. Materials use their Base Color and Base Color texture;
+  Alpha Blend/Clip materials are see-through and not solid.
+- Collision works as in content packs: opaque meshes are solid, objects
+  named `COL_…` are invisible but solid, and `NOCOL_…` objects are drawn but
+  not solid. A `col` file, if you add one, replaces all of that.
+- `"model"` is another name for `"dff"`; both accept `.dff` and `.glb`.
+  `map_doors` works only with DFF models for now.
+- Servers share `.glb` files with players like DFFs (players need SARE
+  0.46.0 or newer).
+
+The same format builds whole worlds that run without San Andreas: see
+[content packs](content-packs.md).
+
 ## MTA:SA maps
 
 Only load and share maps you are allowed to use. Servers send map files and
