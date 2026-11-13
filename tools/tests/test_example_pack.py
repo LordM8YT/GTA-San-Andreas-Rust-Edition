@@ -44,5 +44,33 @@ class ExamplePackTests(unittest.TestCase):
         self.assertEqual(manifest['world']['scene'], 'world.glb')
 
 
+class StarterTemplateTests(unittest.TestCase):
+    def run_tool(self, *args):
+        import subprocess
+        import sys
+        return subprocess.run([sys.executable, str(REPO / 'tools/new-resource.py'), *args],
+                              capture_output=True, text=True)
+
+    def test_prop_and_world_templates_work_at_once(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            done = self.run_tool('my_crate', '--type', 'prop', '--mods-dir', str(root / 'mods'))
+            self.assertEqual(done.returncode, 0, done.stderr)
+            prop = root / 'mods/[props]/my_crate'
+            manifest = json.loads((prop / 'resource.json').read_text())
+            self.assertTrue(manifest['enabled'])
+            self.assertEqual(manifest['models'][0]['model'], 'stream/prop.glb')
+            self.assertEqual((prop / 'stream/prop.glb').read_bytes()[:4], b'glTF')
+
+            done = self.run_tool('my-world', '--type', 'world', '--content-dir', str(root / 'content'))
+            self.assertEqual(done.returncode, 0, done.stderr)
+            pack = json.loads((root / 'content/my-world/content.json').read_text())
+            self.assertEqual((pack['id'], pack['world']['scene']), ('my-world', 'world.glb'))
+            self.assertEqual((root / 'content/my-world/world.glb').read_bytes()[:4], b'glTF')
+            # Never overwrite.
+            again = self.run_tool('my-world', '--type', 'world', '--content-dir', str(root / 'content'))
+            self.assertNotEqual(again.returncode, 0)
+
+
 if __name__ == '__main__':
     unittest.main()

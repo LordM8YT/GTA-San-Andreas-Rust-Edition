@@ -3,6 +3,7 @@ SARE free-roam test client, built and tested from the linked commit.
 Version 0.46.0:
 - Mods: props and buildings can now be .glb files straight from Blender, no RenderWare tools needed. Use "model": "bench.glb" in mod.json. Textures come inside the file, and COL_/NOCOL_ object names choose what is solid, just like content packs.
 - Servers can share .glb mod files with players.
+- New creator handbook (docs/MODDING.md) with tutorials, and starter templates: tools/new-resource.py --type prop makes a working .glb prop, --type world a working world.
 
 Version 0.45.0:
 - Play without GTA San Andreas: Home → Play SARE Testbed opens a small built-in test world where you can walk, jump and drive SARE Kart (F9). No game files are needed or read.
