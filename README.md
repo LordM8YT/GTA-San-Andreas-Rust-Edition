@@ -38,6 +38,9 @@ jump and drive a placeholder car. No San Andreas installation is needed.
 as a [content pack](docs/content-packs.md). It runs without San Andreas game files too;
 [`content/example-town`](content/example-town) is a ready example to copy.
 
+**Want to make something?** The [creator handbook](docs/MODDING.md) walks you through your
+first prop, your own world and your first server script, step by step.
+
 New to SARE development? Start with the practical [server guide](docs/server-guide.md)
 or learn how to [create resources and mods](docs/creating-resources.md).
 For the ongoing map streaming and MLO work, see the [contributor guide](docs/map-streaming-contributing.md).
