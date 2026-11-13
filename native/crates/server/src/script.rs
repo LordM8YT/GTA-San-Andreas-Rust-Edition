@@ -63,6 +63,8 @@ pub struct State {
     pub client_bundles: Vec<(String, String)>,
     /// Resource KVP, saved in `kvp/` next to server.cfg.
     pub kvp: crate::kvp::Store,
+    /// Server-owned vehicles, peds and objects.
+    pub entities: crate::entities::Registry,
 }
 impl State {
     pub fn new(resources_dir: PathBuf) -> Self {
@@ -90,6 +92,7 @@ impl State {
             bags: BTreeMap::new(),
             client_bundles: Vec::new(),
             kvp,
+            entities: crate::entities::Registry::default(),
         }
     }
     pub fn convar(&self, name: &str) -> Option<&str> {
@@ -236,6 +239,48 @@ pub fn tick(shared: &Shared) {
         if let Err(error) = result {
             report_error(shared, &resource, error);
         }
+    }
+}
+
+/// Send every player the server entities of their routing bucket that they
+/// do not have yet, and remove the ones that left their scope. Batches that
+/// do not fit the outgoing queue are sent on a later frame.
+pub fn replicate_entities(shared: &Shared) {
+    use sa_net::entities::{ENTITIES_EVENT, ENTITY_DELETE_EVENT};
+    let Some(session) = shared.borrow().session.clone() else {
+        return;
+    };
+    let players: BTreeSet<u32> = shared.borrow().peers.iter().map(|p| p.id).collect();
+    shared.borrow_mut().entities.retain_players(&players);
+    for player in players {
+        let bucket = session.routing_bucket(player);
+        let update = shared.borrow().entities.pending(player, bucket);
+        if update.is_empty() {
+            continue;
+        }
+        let deletes_sent = update.deletes.is_empty()
+            || session
+                .trigger(
+                    Some(player),
+                    ENTITY_DELETE_EVENT,
+                    &Json::Array(vec![Json::from(update.deletes.clone())]).to_string(),
+                )
+                .is_ok();
+        let mut sent = 0;
+        for batch in &update.upserts {
+            let payload = serde_json::to_string(&(batch,)).unwrap_or_default();
+            if session
+                .trigger(Some(player), ENTITIES_EVENT, &payload)
+                .is_err()
+            {
+                break;
+            }
+            sent += 1;
+        }
+        shared
+            .borrow_mut()
+            .entities
+            .confirm(player, &update, sent, deletes_sent);
     }
 }
 
@@ -522,6 +567,10 @@ fn stop_one(shared: &Shared, name: &str) -> Result<()> {
     state
         .refs
         .retain(|key, _| key.rsplit_once(':').map(|(owner, _)| owner) != Some(name));
+    // Entities a resource created leave with it, as in FiveM.
+    for handle in state.entities.delete_owned_by(name) {
+        state.bags.remove(&format!("entity:{handle}"));
+    }
     drop(state);
     out(shared, format!("Stopping resource {name}"));
     Ok(())

@@ -40,8 +40,9 @@ FEATURES = [
     ('Citizen.InvokeNative', r'Citizen\.InvokeNative', 'missing'),
     ('playerConnecting deferrals', r'deferrals\.', 'partial: the player is already connected'),
     ('license identifiers', r"['\"](license2?|discord|steam|fivem|xbl|live)['\"]", 'partial: license (per server, unsigned) and sare:<id>; no discord/steam/fivem'),
-    ('routing buckets', r'RoutingBucket', 'missing'),
-    ('OneSync entities', r'\b(CreateVehicle|CreatePed|CreateObject|NetworkGetEntityFromNetworkId|GetGamePool)\b', 'missing'),
+    ('routing buckets', r'RoutingBucket', 'partial: players and server entities; no entity lockdown modes'),
+    ('OneSync entities', r'\b(CreateVehicle|CreatePed|CreateObject|NetworkGetEntityFromNetworkId|GetGamePool)\b',
+     'partial: server-owned, sent per routing bucket; not drivable yet, objects not drawn, no client GetGamePool'),
 ]
 
 
@@ -50,6 +51,9 @@ def provided_names() -> set[str]:
     prelude = (SERVER_SRC / 'prelude.lua').read_text(encoding='utf-8')
     prelude += '\n' + COMMON_LUA.read_text(encoding='utf-8')
     names = set(re.findall(r'func!\(\s*g,\s*"(\w+)"', natives))
+    # Natives registered in a loop: `for key in ["A", "B"] { func!(g, key, ...`.
+    for group in re.findall(r'for\s+[^{]*?\bin\s*\[(.*?)\]\s*\{\s*func!\(\s*g,\s*key\b', natives, re.S):
+        names |= set(re.findall(r'"(\w+)"', group))
     names |= set(re.findall(r'g\.set\("(\w+)"', natives))
     names |= set(re.findall(r'^function\s+([A-Za-z_][\w.]*)\s*\(', prelude, re.M))
     for line in re.findall(r'^([A-Za-z_][\w, .]*?)\s*=', prelude, re.M):

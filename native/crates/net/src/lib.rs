@@ -1,6 +1,7 @@
 //! Player-hosted prototype. Networking never runs on the render thread.
 //! Host assigns identities and relays poses; movement is client-authoritative.
 use serde::{Deserialize, Serialize};
+pub mod entities;
 pub mod identity;
 pub mod passengers;
 pub mod relay;

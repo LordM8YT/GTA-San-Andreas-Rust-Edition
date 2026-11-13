@@ -810,3 +810,131 @@ fn routing_buckets_hide_players_in_other_instances() {
     assert_eq!(session.routing_bucket(alice), 0);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn server_vehicles_reach_players_in_their_bucket_and_leave_with_their_resource() {
+    use sa_net::entities::{parse_deletes, parse_entities, ENTITIES_EVENT, ENTITY_DELETE_EVENT};
+    let root = temp_root();
+    let commands = [
+        "endpoint_add_tcp 127.0.0.1:0",
+        "ensure chat",
+        "ensure sare_instances",
+        "ensure sare_vehicles",
+    ]
+    .iter()
+    .map(|l| words(l))
+    .collect();
+    let Server {
+        shared,
+        mut console,
+        session,
+        publication: _,
+    } = boot(commands, root.join("resources")).unwrap();
+    let a = sa_net::Session::join(session.address, "Alice").unwrap();
+    let b = sa_net::Session::join(session.address, "Bob").unwrap();
+    let mut known = BTreeMap::new();
+    // Each client's view: entity handle -> model, from replication events.
+    type Views = [RefCell<BTreeMap<u32, String>>; 2];
+    let views: Views = Default::default();
+    let mut run = |console: &mut Console, until: &mut dyn FnMut(&Views) -> bool| {
+        let start = Instant::now();
+        loop {
+            for (client, view) in [&a, &b].into_iter().zip(&views) {
+                client.update(sa_net::Pose::default());
+                for event in client.events() {
+                    let mut view = view.borrow_mut();
+                    if event.name == ENTITIES_EVENT {
+                        for e in parse_entities(&event.payload) {
+                            view.insert(e.handle, format!("{:?}", e.model));
+                        }
+                    } else if event.name == ENTITY_DELETE_EVENT {
+                        for h in parse_deletes(&event.payload) {
+                            view.remove(&h);
+                        }
+                    }
+                }
+            }
+            pump(&shared, console, &session, &mut known).unwrap();
+            if until(&views) {
+                return;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(30),
+                "timed out: {views:?}"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+    };
+    run(&mut console, &mut |_| shared.borrow().peers.len() == 2);
+    let command = |client: &sa_net::Session, line: &str| {
+        client
+            .trigger(
+                None,
+                "__cfx_internal:commandFallback",
+                &Json::Array(vec![line.into()]).to_string(),
+            )
+            .unwrap()
+    };
+    // Alice spawns a car: both players in bucket 0 get it.
+    command(&a, "/car infernus");
+    run(&mut console, &mut |v| {
+        v[0].borrow().len() == 1 && v[1].borrow().len() == 1
+    });
+    let car = *views[0].borrow().keys().next().unwrap();
+    assert!(views[1].borrow()[&car].contains("infernus"));
+    let lua = shared.borrow().resources["chat"].lua.clone().unwrap();
+    let (kind, model, all, exists): (u8, i64, usize, bool) = lua
+        .load(format!(
+            "return GetEntityType({car}), GetEntityModel({car}), #GetAllVehicles(), DoesEntityExist({car})"
+        ))
+        .eval()
+        .unwrap();
+    assert_eq!(
+        (kind, model, all, exists),
+        (2, i64::from(sa_lua::cfxlua::joaat("infernus")), 1, true)
+    );
+    // Moving it is replicated; Bob changing instance removes it for him only.
+    lua.load(format!("SetEntityCoords({car}, 1.0, 2.0, 3.0)"))
+        .exec()
+        .unwrap();
+    assert_eq!(
+        shared.borrow().entities.get(car).unwrap().state.position,
+        [1.0, 2.0, 3.0]
+    );
+    command(&b, "/instance 5");
+    run(&mut console, &mut |v| v[1].borrow().is_empty());
+    assert_eq!(views[0].borrow().len(), 1);
+    // Alice follows into instance 5 and her car follows her.
+    command(&a, "/instance 5");
+    run(&mut console, &mut |v| {
+        v[1].borrow().len() == 1 && v[0].borrow().len() == 1
+    });
+    assert_eq!(shared.borrow().entities.get(car).unwrap().bucket, 5);
+    // /dv deletes it for both.
+    command(&a, "/dv");
+    run(&mut console, &mut |v| {
+        v[0].borrow().is_empty() && v[1].borrow().is_empty()
+    });
+    // Script entities leave with their resource; other resources' stay.
+    command(&a, "/car taxi");
+    let ped: u32 = lua
+        .load("local p = CreatePed(4, GetHashKey('wmybar'), 0.0, 0.0, 3.0, 90.0, true, true) SetEntityRoutingBucket(p, 5) return p")
+        .eval()
+        .unwrap();
+    run(&mut console, &mut |v| v[0].borrow().len() == 2);
+    console.execute_line(0, "stop sare_vehicles");
+    run(&mut console, &mut |v| {
+        v[0].borrow().keys().copied().collect::<Vec<_>>() == [ped]
+    });
+    assert_eq!(
+        lua.load("return #GetAllVehicles(), #GetAllPeds()")
+            .eval::<(usize, usize)>()
+            .unwrap(),
+        (0, 3)
+    );
+    lua.load(format!("DeleteEntity({ped})")).exec().unwrap();
+    run(&mut console, &mut |v| {
+        v[0].borrow().is_empty() && v[1].borrow().is_empty()
+    });
+    std::fs::remove_dir_all(root).unwrap();
+}

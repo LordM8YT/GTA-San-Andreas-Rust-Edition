@@ -28,6 +28,7 @@ mod postprocess;
 mod progress;
 mod rain;
 mod script_ui;
+mod server_entities;
 mod server_events;
 mod session_resources;
 mod settings;
@@ -315,6 +316,10 @@ struct State {
     resource_installing: Option<session_resources::Installing>,
     offline_world: Option<session_resources::World>,
     remote_actors: Vec<multiplayer::RemoteActor>,
+    /// Server-owned vehicles and peds in this player's routing bucket, and
+    /// the list revision the remote actors were last built from.
+    server_entities: server_entities::ServerEntities,
+    server_entities_seen: u64,
     traffic: traffic::Traffic,
     police: police::Police,
     arsenal: weapons::Arsenal,
@@ -1185,6 +1190,8 @@ impl State {
             resource_installing: None,
             offline_world: None,
             remote_actors: Vec::new(),
+            server_entities: Default::default(),
+            server_entities_seen: 0,
             traffic: traffic::Traffic::default(),
             police: police::Police::default(),
             arsenal: weapons::Arsenal::default(),
@@ -5327,6 +5334,46 @@ fn main() -> Result<()> {
     } else {
         Some(sa_client::launch::RuntimeGuard::acquire()?)
     };
+    // Standalone check: SARE's own testbed world, with no game files at all.
+    if args.iter().any(|arg| arg == "--probe-standalone") {
+        let source = sa_scene::content::ContentSource::from_args(&args, None)
+            .unwrap_or(sa_scene::content::ContentSource::Testbed);
+        anyhow::ensure!(
+            !source.needs_original_game(),
+            "--probe-standalone runs without game files; use --content testbed"
+        );
+        let mut world = source.open()?;
+        let started = Instant::now();
+        let scene = world.load([0.0, 0.0], ORIGIN, RADIUS)?;
+        let collision = scene
+            .collision
+            .as_ref()
+            .context("testbed collision missing")?;
+        let [x, y, z] = world.spawn().context("testbed spawn missing")?;
+        let point = Vec3::new(x - ORIGIN[0], z, ORIGIN[1] - y);
+        let mut player = collision
+            .standing_at(point, z + 2.0)
+            .context("testbed spawn is not a standing position")?;
+        for frame in 0..600 {
+            // Walk north up the ramp onto the platform.
+            player.step(collision, -Vec3::Z * 4.0, frame == 300, 1.0 / 60.0);
+            anyhow::ensure!(player.feet.is_finite(), "testbed walk diverged");
+        }
+        anyhow::ensure!(
+            player.feet.y > z + 3.0,
+            "testbed walk did not reach the platform: {:?}",
+            player.feet
+        );
+        println!(
+            "{}: {} triangles, {} collision triangles; walked from height {z:.1} to {:.1} in 600 steps; {:.3}s, no game files read",
+            world.name(),
+            scene.triangles,
+            collision.triangle_count(),
+            player.feet.y,
+            started.elapsed().as_secs_f32()
+        );
+        return Ok(());
+    }
     // Without an explicit folder, use GTA_SA_DIR or a detected installation
     // instead of one developer's drive layout.
     let game = match args

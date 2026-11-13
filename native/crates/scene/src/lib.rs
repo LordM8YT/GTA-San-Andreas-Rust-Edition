@@ -1,5 +1,6 @@
 //! Manifest-ordered SA world placement and small bounded scene assembly.
 pub mod collision;
+pub mod content;
 pub mod handling;
 pub mod lights;
 pub mod mlo;
@@ -11,6 +12,7 @@ pub mod ped;
 pub mod ped_list;
 pub mod roads;
 mod roadsign;
+pub mod testbed;
 mod texture;
 pub mod vehicle;
 pub mod vehicle_list;
