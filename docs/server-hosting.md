@@ -126,7 +126,19 @@ Resource KVP (`SetResourceKvp`, `GetResourceKvpString` ...) saves to
 Saves are atomic, keep the previous file as `.json.bak`, and a damaged file is
 moved aside instead of being overwritten.
 
-Not supported yet: NUI pages (by design: use the script UI), OneSync entities, routing buckets, replicated state bags,
+Routing buckets split the world into instances, as in FiveM.
+`SetPlayerRoutingBucket(src, bucket)` and `GetPlayerRoutingBucket(src)` (and
+the `Entity` variants, which take player IDs) move players between buckets;
+bucket 0 is the default world. Players only see, share traffic with and ride
+as passengers with players in their own bucket; a ride ends when the passenger
+and driver end up in different buckets. `SetRoutingBucketPopulationEnabled(bucket, false)`
+stops traffic sharing in a bucket. Script events, chat and `TriggerClientEvent(-1)`
+still reach every player, and a player's bucket resets to 0 when they leave.
+`status` shows each player's bucket. The example resource
+`[examples]/sare_instances` adds `/instance` (a private instance),
+`/instance <number>` and `/instance 0`, and the exports `SetInstance`/`GetInstance`.
+
+Not supported yet: NUI pages (by design: use the script UI), OneSync entities, entity lockdown modes, replicated state bags,
 databases (oxmysql is a Node.js resource), `PerformHttpRequest`, and identifiers
 other than `license`, `sare` and `legacy`. `playerConnecting` runs after the player has
 joined, so a rejection drops them. FiveM resources that use GTA V natives must

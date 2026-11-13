@@ -53,7 +53,7 @@ NUI kjører ikke.
 | `PerformHttpRequest`, `AddConvarChangeListener` | ox_lib | Mangler |
 | `glm`-matematikk, `Citizen.InvokeNative` | ox_lib | Mangler |
 | Serverentiteter (OneSync): `CreateVehicle`, `GetGamePool`, nettverks-ID-er | ox_lib, qbx_core | Mangler |
-| Routing buckets | ox_lib, qbx_core | Mangler (`GetPlayerRoutingBucket` gir 0) |
+| Routing buckets: `Set/GetPlayerRoutingBucket`, `Set/GetEntityRoutingBucket`, `SetRoutingBucketPopulationEnabled` | ox_lib, qbx_core | **Delvis** (nytt): spillere ser, deler trafikk og passasjerseter bare med spillere i samme bucket; entiteter er bare spillere, `SetRoutingBucketEntityLockdownMode` mangler |
 | Klient-Lua (`client_script`) | alle Qbox-ressurser | **Delvis** (nytt): kjører i sandkasse; spiller- og posisjonsnatives, events, kommandoer, tastebindinger |
 | UI: varsler, kontekstmeny, input-dialog, fremdriftslinje, tekst-UI | ox_lib (`lib.notify`, `lib.registerContext`, `lib.inputDialog` ...) | **Delvis** (nytt): eget `UI`-API med samme felter; ox_libs NUI-versjon kjører ikke |
 | NUI (`ui_page`, `SendNUIMessage`) | ox_lib, ox_inventory, qbx_core | Støttes ikke (sikkerhet); bruk skript-UI-et |
@@ -74,8 +74,9 @@ NUI kjører ikke.
    for akkurat denne serveren, sjekket med signert challenge-response på hver
    tilkobling (se [SARE Box](sarebox.md#player-identity)). Gjenstår: kryptert
    transport, og deferrals før spilleren slippes inn.
-5. **Serverentiteter:** biler, peds og objekter som serveren eier, routing
-   buckets og replikerte state bags.
+5. **Serverentiteter:** biler, peds og objekter som serveren eier og
+   replikerte state bags. Routing buckets for spillere er ferdig; se
+   [plattformplanen](PLATFORM.md).
 6. **Klient-Lua og UI (delvis ferdig):** sandkasse, nedlasting med SHA-256,
    UI tegnet av spillet. Gjenstår: flere SA-varianter av GTA V-natives og en
    ox_lib-bro som oversetter `lib.notify`/`lib.registerContext` til `UI`.

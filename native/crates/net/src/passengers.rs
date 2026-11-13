@@ -107,6 +107,19 @@ impl SeatBook {
             keep
         });
     }
+    /// Routing buckets: a passenger and the car owner must share a bucket.
+    pub fn release_across(&mut self, bucket: impl Fn(u32) -> u32) {
+        let replies = &mut self.replies;
+        self.seats.retain(|id, reserved| {
+            let keep = bucket(*id) == bucket(reserved.seat.owner);
+            if !keep {
+                if let Some(reply) = replies.get_mut(id) {
+                    reply.result = RideResult::Lost;
+                }
+            }
+            keep
+        });
+    }
     fn reserve(&mut self, id: u32, pose: Pose, owner: u32, peers: &[Peer]) -> RideResult {
         if owner == id {
             return RideResult::OwnCar;
@@ -241,6 +254,18 @@ mod tests {
             request(&mut book, &peers, 4, 2, Some(0)).ride.unwrap().seat,
             2
         );
+    }
+    #[test]
+    fn a_routing_bucket_change_ends_a_ride() {
+        let peers = peers();
+        let mut book = SeatBook::default();
+        assert!(request(&mut book, &peers, 1, 1, Some(0)).ride.is_some());
+        book.release_across(|_| 0);
+        assert!(book.decorate(1, peers[1].pose, &peers).ride.is_some());
+        book.release_across(|id| u32::from(id == 1));
+        let pose = book.decorate(1, peers[1].pose, &peers);
+        assert!(pose.ride.is_none());
+        assert_eq!(pose.ride_reply.unwrap().result, RideResult::Lost);
     }
     #[test]
     fn boarding_validates_distance_speed_interior_driver_and_owner() {

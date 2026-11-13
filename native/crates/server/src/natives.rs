@@ -949,12 +949,49 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
     )| {
         Ok(peer(&shared, &ped).is_some_and(|p| p.pose.driving || p.pose.ride.is_some()))
     });
+    // Routing buckets (instances): players only see, share traffic and ride
+    // with players in the same bucket. Players are the only entities, so the
+    // entity variants take player IDs too.
+    for key in ["SetPlayerRoutingBucket", "SetEntityRoutingBucket"] {
+        func!(
+            g,
+            key,
+            shared,
+            name,
+            |_lua, (player, bucket): (Value, i64)| {
+                let bucket = u32::try_from(bucket)
+                    .map_err(|_| mlua::Error::runtime("routing bucket must be 0 or more"))?;
+                let session = shared.borrow().session.clone();
+                if let (Some(session), Some(id)) = (session, peer(&shared, &player).map(|p| p.id)) {
+                    session.set_routing_bucket(id, bucket);
+                }
+                Ok(())
+            }
+        );
+    }
+    for key in ["GetPlayerRoutingBucket", "GetEntityRoutingBucket"] {
+        func!(g, key, shared, name, |_lua, player: Value| {
+            let session = shared.borrow().session.clone();
+            Ok(match (session, player_id(&player)) {
+                (Some(session), Some(id)) => session.routing_bucket(id),
+                _ => 0,
+            })
+        });
+    }
     func!(
         g,
-        "GetPlayerRoutingBucket",
+        "SetRoutingBucketPopulationEnabled",
         shared,
         name,
-        |_lua, _player: Value| { Ok(0) }
+        |_lua, (bucket, enabled): (i64, bool)| {
+            let bucket = u32::try_from(bucket)
+                .map_err(|_| mlua::Error::runtime("routing bucket must be 0 or more"))?;
+            let session = shared.borrow().session.clone();
+            if let Some(session) = session {
+                session.set_bucket_population(bucket, enabled);
+            }
+            Ok(())
+        }
     );
     // Movement is client-authoritative: these ask the owning client to move.
     func!(g, "SetEntityCoords", shared, name, |_lua,
