@@ -370,6 +370,10 @@ struct State {
     ped: Option<(sa_scene::ped::Ped, Vec<GpuBatch>)>,
     third_person: bool,
     ped_visible: bool,
+    /// SARE Testbed: running on built-in content, without game files.
+    standalone: bool,
+    /// The blocky stand-in drawn for the player when no ped model exists.
+    placeholder_player: Vec<GpuBatch>,
     ped_animator: animation::Animator,
     ped_yaw: f32,
 }
@@ -1230,6 +1234,8 @@ impl State {
             ped: None,
             third_person: true,
             ped_visible: true,
+            standalone: false,
+            placeholder_player: Vec::new(),
             ped_animator: animation::Animator::default(),
             ped_yaw: 0.0,
         };
@@ -1499,6 +1505,16 @@ impl State {
                     }
                 }
             }
+        }
+        if self.standalone && self.destination.is_some_and(|target| target != ORIGIN) {
+            // The testbed is the whole world: map teleports and interiors
+            // bring the player back to its centre instead.
+            self.destination = Some(ORIGIN);
+            self.pending_interior_id = Some(0);
+            self.interior_destination = None;
+            self.room_entry = None;
+            self.menu.message =
+                "SARE Testbed has no other areas yet; back to the testbed centre".into();
         }
         if self.uploading.is_none() && self.retired.is_empty() {
             let center = [ORIGIN[0] + self.position.x, ORIGIN[1] - self.position.z];
@@ -1944,6 +1960,23 @@ impl State {
                         self.menu.message = format!("Player animation failed: {error}");
                     }
                 }
+            } else if let (Some(player), false) = (&self.player, self.placeholder_player.is_empty())
+            {
+                // No ped model (SARE Testbed): turn the stand-in to face
+                // where it walks and place it at the player's feet.
+                let delta = self.position - previous_position;
+                let horizontal = Vec3::new(delta.x, 0.0, delta.z);
+                if horizontal.length_squared() > 0.00001 {
+                    self.ped_yaw =
+                        locomotion::turn_toward(self.ped_yaw, horizontal.x.atan2(horizontal.z), dt);
+                }
+                let rotation = Quat::from_rotation_y(self.ped_yaw);
+                for batch in &self.placeholder_player {
+                    let raw =
+                        car_damage::pose_car(batch, &Default::default(), rotation, player.feet);
+                    self.queue
+                        .write_buffer(&batch.buffer, 0, bytemuck::cast_slice(&raw));
+                }
             }
         }
         self.update_map_doors(dt);
@@ -2104,25 +2137,28 @@ impl State {
         } else {
             target
         };
-        let (view_position, target) =
-            if self.third_person && self.walking && !self.driving && self.ped.is_some() {
-                let target = self.position - Vec3::Y * 0.5;
-                let desired = target - forward * 4.0 + Vec3::Y * 0.7;
-                let camera = self
-                    .collision
-                    .as_ref()
-                    .map_or(desired, |world| world.clip_camera(target, desired));
-                (
-                    camera,
-                    if camera.distance_squared(target) < 0.0001 {
-                        camera + forward
-                    } else {
-                        target
-                    },
-                )
-            } else {
-                (self.position, target)
-            };
+        let (view_position, target) = if self.third_person
+            && self.walking
+            && !self.driving
+            && (self.ped.is_some() || !self.placeholder_player.is_empty())
+        {
+            let target = self.position - Vec3::Y * 0.5;
+            let desired = target - forward * 4.0 + Vec3::Y * 0.7;
+            let camera = self
+                .collision
+                .as_ref()
+                .map_or(desired, |world| world.clip_camera(target, desired));
+            (
+                camera,
+                if camera.distance_squared(target) < 0.0001 {
+                    camera + forward
+                } else {
+                    target
+                },
+            )
+        } else {
+            (self.position, target)
+        };
         self.ped_visible =
             view_position.distance_squared(self.position - Vec3::Y * 0.5) >= 1.5f32.powi(2);
         let view = Mat4::look_at_rh(view_position, target, Vec3::Y);
@@ -2283,6 +2319,13 @@ impl State {
                     })
                     .flat_map(|(_, b)| b),
             )
+            .chain(self.placeholder_player.iter().filter(|_| {
+                self.ped.is_none()
+                    && self.third_person
+                    && self.walking
+                    && !self.driving
+                    && self.ped_visible
+            }))
             .chain(
                 self.gun_drawn
                     .and_then(|id| self.gun_meshes.get(&id))
@@ -2759,7 +2802,11 @@ impl State {
                     });
             }
             self.update_map_overlay(coordinates);
-            self.menu.zone = self.zones.name_at(coordinates).map(str::to_owned);
+            self.menu.zone = if self.standalone {
+                Some("SARE Testbed".into())
+            } else {
+                self.zones.name_at(coordinates).map(str::to_owned)
+            };
             self.menu.clock = match self.menu.settings.fixed_hour {
                 Some(hour) => (u32::from(hour), 0),
                 None => self.daycycle.clock(),
@@ -3067,6 +3114,8 @@ struct App {
     state: Option<State>,
     first_model: bool,
     streamer: Option<Streamer>,
+    /// `--content testbed`: no San Andreas installation is used.
+    standalone: bool,
     smoke: bool,
     smoke_region: usize,
     smoke_frames: usize,
@@ -3319,6 +3368,7 @@ impl ApplicationHandler for App {
             })
         };
         let radar_tiles = match sa_scene::load_radar_tiles(&self.game_dir) {
+            _ if self.standalone => None,
             Ok(tiles) => Some(tiles),
             Err(error) => {
                 eprintln!("Original radar unavailable: {error:#}");
@@ -3327,6 +3377,7 @@ impl ApplicationHandler for App {
         };
         let radar_tiles = radar_tiles.unwrap_or_default();
         let roads = match sa_scene::roads::RoadGraph::load(&self.game_dir) {
+            _ if self.standalone => None,
             Ok(roads) => Some(roads),
             Err(error) => {
                 eprintln!("Car paths unavailable, GPS draws straight lines: {error:#}");
@@ -3342,6 +3393,9 @@ impl ApplicationHandler for App {
         )) {
             Ok(mut state) => {
                 state.roads = roads;
+                state.standalone = self.standalone;
+                // The game folder does not exist in testbed mode, so these
+                // fall back to built-in day colours and no area names.
                 state.daycycle = daycycle::DayCycle::load(&self.game_dir);
                 state.zones = zones::Zones::load(&self.game_dir);
                 state.persist_settings = !self.smoke && self.trailer.is_none();
@@ -3377,6 +3431,19 @@ impl ApplicationHandler for App {
                             state.ped = Some((ped, batches));
                         }
                         Err(error) => eprintln!("Ped upload failed: {error:#}"),
+                    }
+                }
+                if state.ped.is_none() && self.standalone {
+                    match State::upload_scene(
+                        &state.device,
+                        &state.queue,
+                        &state.image_layout,
+                        &state.sampler,
+                        &state.mipmaps,
+                        sa_scene::testbed::placeholder_player(),
+                    ) {
+                        Ok(batches) => state.placeholder_player = batches,
+                        Err(error) => eprintln!("Placeholder player upload failed: {error:#}"),
                     }
                 }
                 if let Some(scene) = self.car_scene.take() {
@@ -3584,6 +3651,7 @@ impl ApplicationHandler for App {
                         state.apply_audio_settings();
                         eprintln!("Audio output initialized (F10 plays a test tone)");
                         match sa_audio::gameplay::GameplaySounds::load(&state.resource_game_dir) {
+                            _ if state.standalone => {}
                             Ok(sounds) => {
                                 state.gameplay_audio.sounds = Some(sounds);
                                 eprintln!("Original engine loops and footsteps loaded");
@@ -5286,6 +5354,24 @@ fn probe_curbs_and_ramps(
     })
 }
 
+/// `--game-dir`, GTA_SA_DIR or a detected San Andreas installation.
+fn find_game_dir(args: &[String]) -> Result<PathBuf> {
+    Ok(match args
+        .windows(2)
+        .find(|w| w[0] == "--game-dir")
+        .map(|w| PathBuf::from(&w[1]))
+    {
+        Some(path) => path,
+        None => sa_client::install::candidates()
+            .into_iter()
+            .find(|path| {
+                sa_assets::game_path::resolve(path, "models/gta3.img").is_ok_and(|p| p.is_file())
+            })
+            .context(
+                "No San Andreas installation found. Pass --game-dir <folder>, set GTA_SA_DIR, start through sa-launcher, or try --content testbed.",
+            )?,
+    })
+}
 fn main() -> Result<()> {
     let _session_intent =
         sa_client::launch::Session::from_args(&std::env::args().collect::<Vec<_>>())?;
@@ -5374,22 +5460,21 @@ fn main() -> Result<()> {
         );
         return Ok(());
     }
+    // SARE Testbed needs no San Andreas installation at all.
+    let testbed = matches!(
+        sa_scene::content::ContentSource::from_args(&args, None),
+        Ok(sa_scene::content::ContentSource::Testbed)
+    );
+    if testbed {
+        eprintln!("Starting SARE Testbed: built-in content, no game files are read");
+    }
     // Without an explicit folder, use GTA_SA_DIR or a detected installation
-    // instead of one developer's drive layout.
-    let game = match args
-        .windows(2)
-        .find(|w| w[0] == "--game-dir")
-        .map(|w| PathBuf::from(&w[1]))
-    {
-        Some(path) => path,
-        None => sa_client::install::candidates()
-            .into_iter()
-            .find(|path| {
-                sa_assets::game_path::resolve(path, "models/gta3.img").is_ok_and(|p| p.is_file())
-            })
-            .context(
-                "No San Andreas installation found. Pass --game-dir <folder>, set GTA_SA_DIR, or start through sa-launcher.",
-            )?,
+    // instead of one developer's drive layout. The testbed points at a folder
+    // that never exists, so optional original-data loaders fall back cleanly.
+    let game = if testbed {
+        std::env::temp_dir().join("sare-testbed-has-no-game-files")
+    } else {
+        find_game_dir(&args)?
     };
     if args.iter().any(|arg| arg == "--probe-audio") {
         let archive = sa_audio::archive::SfxArchive::open(&game)?;
@@ -5539,9 +5624,11 @@ fn main() -> Result<()> {
                     || (arg.starts_with("--smoke") && arg != "--smoke-save"))),
         "Save smoke must run in isolated offline free roam"
     );
+    // The testbed never reads or overwrites the free-roam checkpoint.
     let progress_path = if !first_model
         && !cuttest
         && !prologue
+        && !testbed
         && !args.iter().any(|arg| {
             arg == "--no-save" || arg.starts_with("--probe") || arg.starts_with("--inspect")
         })
@@ -5565,11 +5652,14 @@ fn main() -> Result<()> {
                     None
                 }
             });
-    let mut loader = if !first_model && !cuttest && !prologue {
+    let mut loader = if !first_model && !cuttest && !prologue && !testbed {
         Some(sa_scene::WorldLoader::open(&game)?)
     } else {
         None
     };
+    let mut testbed_world = testbed.then(|| {
+        Box::new(sa_scene::content::Testbed) as Box<dyn sa_scene::content::WorldSource + Send>
+    });
     if let Some(loader) = &mut loader {
         if !args.iter().any(|a| a == "--no-mods") {
             let directory = args
@@ -5586,6 +5676,8 @@ fn main() -> Result<()> {
         sa_scene::load_cuttest(&game)?
     } else if first_model {
         sa_scene::load_first_model(&game)?
+    } else if let Some(world) = testbed_world.as_mut() {
+        world.load(ORIGIN, ORIGIN, RADIUS)?
     } else {
         loader.as_mut().unwrap().load(
             if args.iter().any(|a| a == "--smoke-neon") {
@@ -5765,6 +5857,7 @@ fn main() -> Result<()> {
         smoke_save,
         smoke_audio: args.iter().any(|arg| arg == "--smoke-audio"),
         frontend_sounds: match sa_audio::FrontendSounds::load(&game) {
+            _ if testbed => None,
             Ok(sounds) => {
                 eprintln!("Original San Andreas frontend sounds loaded");
                 Some(sounds)
@@ -5802,10 +5895,16 @@ fn main() -> Result<()> {
                     None
                 }
             }
+        } else if testbed {
+            Some(sa_scene::testbed::placeholder_car())
         } else {
             None
         },
-        initial_models: loader.as_ref().map(|l| l.model_names()).unwrap_or_default(),
+        initial_models: if testbed {
+            ("SARE Kart".into(), "SARE Runner".into())
+        } else {
+            loader.as_ref().map(|l| l.model_names()).unwrap_or_default()
+        },
         offline_car_handling: None,
         car_catalog: {
             let mut catalog = loader
@@ -5841,7 +5940,10 @@ fn main() -> Result<()> {
         scene: Some(scene),
         state: None,
         first_model,
-        streamer: loader.map(Streamer::new),
+        streamer: loader
+            .map(|loader| Streamer::new(Box::new(loader)))
+            .or_else(|| testbed_world.map(Streamer::new)),
+        standalone: testbed,
         smoke: args.iter().any(|a| {
             a == "--smoke-save"
                 || a == "--smoke-tour"

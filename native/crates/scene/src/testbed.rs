@@ -13,6 +13,9 @@ pub const HALF_SIZE: f32 = 256.0;
 /// Ground height in world coordinates.
 pub const GROUND: f32 = 10.0;
 const TILE: f32 = 32.0;
+/// Where the testbed sits in world coordinates: the runtime's default origin,
+/// so runtime (0, height, 0) is the middle of the ground square.
+pub const CENTER: [f32; 2] = [2500.0, -1670.0];
 
 /// The testbed's spawn point in world coordinates (x, y, z = height).
 pub fn spawn(center: [f32; 2]) -> [f32; 3] {
@@ -179,18 +182,25 @@ pub fn build(center: [f32; 2], origin: [f32; 2]) -> Scene {
         [0.5, 0.5, 0.5],
     );
 
-    let batch = Batch {
+    let mut scene = flat_scene(b.vertices, false);
+    scene.collision = Some(CollisionWorld::from_batches(&scene.batches));
+    scene
+}
+
+/// One vertex-coloured batch on the white texture, without collision.
+/// `posed` batches keep their model-space vertices so the runtime can move
+/// them every frame, as it does for car and ped models.
+fn flat_scene(vertices: Vec<Vertex>, posed: bool) -> Scene {
+    let triangles = vertices.len() / 3;
+    let batches = vec![Batch {
         key: KEY.into(),
-        vertices: b.vertices,
+        vertices,
         alpha: false,
-        animated: false,
+        animated: posed,
         uv_animation: None,
         map_door: None,
         mlo_entity: None,
-    };
-    let triangles = batch.vertices.len() / 3;
-    let batches = vec![batch];
-    let collision = CollisionWorld::from_batches(&batches);
+    }];
     let textures = HashMap::from([(
         KEY.to_string(),
         Texture {
@@ -208,15 +218,88 @@ pub fn build(center: [f32; 2], origin: [f32; 2]) -> Scene {
         placements: 1,
         triangles,
         animation: None,
-        collision: Some(collision),
+        collision: None,
         vehicle_pieces: HashMap::new(),
     }
+}
+
+/// Boxes in model space: x right, y up, z forward.
+struct Model(Builder);
+impl Model {
+    fn new() -> Self {
+        Self(Builder {
+            vertices: Vec::new(),
+            center: [0.0, 0.0],
+            origin: [0.0, 0.0],
+        })
+    }
+    fn part(&mut self, x: [f32; 2], y: [f32; 2], z: [f32; 2], color: [f32; 3]) -> &mut Self {
+        // With a zero centre and origin, Builder::at(e, n, u) is (e, u, -n).
+        self.0
+            .cuboid([x[0], -z[1], y[0]], [x[1], -z[0], y[1]], color);
+        self
+    }
+}
+
+/// SARE Kart: a placeholder car made of boxes, for driving without game files.
+/// Model space matches the runtime's car models: the wheels' contact patch at
+/// y = -0.55 and the nose towards -z.
+pub fn placeholder_car() -> Scene {
+    let mut m = Model::new();
+    let body = [0.15, 0.45, 0.85];
+    m.part([-0.95, 0.95], [-0.25, 0.35], [-2.0, 2.0], body)
+        .part([-0.8, 0.8], [0.35, 0.95], [-0.3, 1.3], [0.2, 0.25, 0.3])
+        .part([-0.75, 0.75], [0.35, 0.55], [-1.9, -0.3], body)
+        // Headlights on the nose, red lights at the back.
+        .part([-0.8, -0.45], [0.0, 0.2], [-2.05, -2.0], [1.0, 0.95, 0.6])
+        .part([0.45, 0.8], [0.0, 0.2], [-2.05, -2.0], [1.0, 0.95, 0.6])
+        .part([-0.8, -0.45], [0.0, 0.2], [2.0, 2.05], [0.8, 0.1, 0.1])
+        .part([0.45, 0.8], [0.0, 0.2], [2.0, 2.05], [0.8, 0.1, 0.1]);
+    for x in [[-1.05, -0.8], [0.8, 1.05]] {
+        for z in [[-1.65, -0.95], [0.95, 1.65]] {
+            m.part(x, [-0.55, 0.15], z, [0.08, 0.08, 0.08]);
+        }
+    }
+    flat_scene(m.0.vertices, true)
+}
+
+/// The placeholder player: a blocky figure 1.8 m tall, feet at y = 0,
+/// facing +z (the visor shows which way).
+pub fn placeholder_player() -> Scene {
+    let mut m = Model::new();
+    m.part(
+        [-0.22, -0.03],
+        [0.0, 0.85],
+        [-0.12, 0.12],
+        [0.2, 0.25, 0.45],
+    )
+    .part([0.03, 0.22], [0.0, 0.85], [-0.12, 0.12], [0.2, 0.25, 0.45])
+    .part(
+        [-0.27, 0.27],
+        [0.85, 1.5],
+        [-0.15, 0.15],
+        [0.95, 0.55, 0.15],
+    )
+    .part(
+        [-0.37, -0.27],
+        [0.9, 1.45],
+        [-0.08, 0.08],
+        [0.85, 0.7, 0.55],
+    )
+    .part([0.27, 0.37], [0.9, 1.45], [-0.08, 0.08], [0.85, 0.7, 0.55])
+    .part(
+        [-0.14, 0.14],
+        [1.52, 1.82],
+        [-0.14, 0.14],
+        [0.85, 0.7, 0.55],
+    )
+    .part([-0.11, 0.11], [1.62, 1.72], [0.14, 0.17], [0.1, 0.8, 0.9]);
+    flat_scene(m.0.vertices, true)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    const CENTER: [f32; 2] = [0.0, 0.0];
     const ORIGIN: [f32; 2] = [2500.0, -1670.0];
     fn runtime(b: &Builder, east: f32, north: f32, up: f32) -> Vec3 {
         b.at(east, north, up)
@@ -278,5 +361,40 @@ mod tests {
                 player.feet
             );
         }
+    }
+    #[test]
+    fn placeholder_car_and_player_are_sized_like_the_real_thing() {
+        let points = |scene: &Scene| -> Vec<[f32; 3]> {
+            scene.batches[0]
+                .vertices
+                .iter()
+                .map(|v| v.position)
+                .collect()
+        };
+        let car = placeholder_car();
+        let size = vehicle::measure(points(&car));
+        assert!((size[0] - 1.05).abs() < 1e-4 && (size[1] - 2.05).abs() < 1e-4);
+        let lowest = points(&car).iter().map(|p| p[1]).fold(f32::MAX, f32::min);
+        assert!((lowest + 0.55).abs() < 1e-4);
+        // The headlights (the most forward points) are towards -z.
+        let nose = points(&car).iter().map(|p| p[2]).fold(f32::MAX, f32::min);
+        assert!((nose + 2.05).abs() < 1e-4);
+        let lights = |z: f32| {
+            car.batches[0]
+                .vertices
+                .iter()
+                .find(|v| (v.position[2] - z).abs() < 1e-4)
+                .map(|v| v.color)
+                .unwrap()
+        };
+        assert!(lights(-2.05)[1] > 0.9 && lights(2.05)[1] < 0.2);
+        let player = placeholder_player();
+        let height = points(&player)
+            .iter()
+            .map(|p| p[1])
+            .fold(f32::MIN, f32::max);
+        assert!((height - 1.82).abs() < 1e-4);
+        assert!(car.textures.contains_key(KEY) && player.collision.is_none());
+        assert!(car.batches[0].animated && player.batches[0].animated);
     }
 }

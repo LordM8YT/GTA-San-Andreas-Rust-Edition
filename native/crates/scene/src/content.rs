@@ -2,7 +2,7 @@
 //! into a `Scene`; the engine does not need to know whether the geometry came
 //! from the player's own San Andreas installation or from SARE's own content.
 //! This is the first seam of the standalone plan in docs/STANDALONE.md.
-use crate::{Scene, WorldLoader};
+use crate::{mlo::MloDefinition, InteriorPortal, Scene, WorldLoader};
 use anyhow::Result;
 use std::path::PathBuf;
 
@@ -29,7 +29,7 @@ impl ContentSource {
     pub fn needs_original_game(&self) -> bool {
         matches!(self, Self::Original(_))
     }
-    pub fn open(&self) -> Result<Box<dyn WorldSource>> {
+    pub fn open(&self) -> Result<Box<dyn WorldSource + Send>> {
         Ok(match self {
             Self::Original(game) => Box::new(WorldLoader::open(game)?),
             Self::Testbed => Box::new(Testbed),
@@ -44,6 +44,24 @@ pub trait WorldSource {
     fn load(&mut self, center: [f32; 2], origin: [f32; 2], radius: f32) -> Result<Scene>;
     /// A safe place to start, in world coordinates (x, y, height).
     fn spawn(&self) -> Option<[f32; 3]>;
+    /// One interior dimension. Sources without interiors refuse.
+    fn load_interior(
+        &mut self,
+        _center: [f32; 2],
+        _origin: [f32; 2],
+        _radius: f32,
+        interior: u8,
+    ) -> Result<Scene> {
+        anyhow::bail!("{} has no interior {interior}", self.name())
+    }
+    /// Doors into interiors.
+    fn interior_portals(&self) -> Vec<InteriorPortal> {
+        Vec::new()
+    }
+    /// MLO metadata from resource manifests.
+    fn mlo_definitions(&self) -> Vec<MloDefinition> {
+        Vec::new()
+    }
 }
 impl WorldSource for WorldLoader {
     fn name(&self) -> &str {
@@ -55,19 +73,36 @@ impl WorldSource for WorldLoader {
     fn spawn(&self) -> Option<[f32; 3]> {
         None
     }
+    fn load_interior(
+        &mut self,
+        center: [f32; 2],
+        origin: [f32; 2],
+        radius: f32,
+        interior: u8,
+    ) -> Result<Scene> {
+        WorldLoader::load_interior(self, center, origin, radius, interior)
+    }
+    fn interior_portals(&self) -> Vec<InteriorPortal> {
+        WorldLoader::interior_portals(self)
+    }
+    fn mlo_definitions(&self) -> Vec<MloDefinition> {
+        WorldLoader::mlo_definitions(self).to_vec()
+    }
 }
 
-/// The built-in testbed, centred on world (0, 0).
+/// The built-in testbed, centred on [`crate::testbed::CENTER`] so the default
+/// runtime origin sits in the middle of it.
 pub struct Testbed;
 impl WorldSource for Testbed {
     fn name(&self) -> &str {
         "SARE Testbed"
     }
     fn load(&mut self, _center: [f32; 2], origin: [f32; 2], _radius: f32) -> Result<Scene> {
-        Ok(crate::testbed::build([0.0, 0.0], origin))
+        // The testbed is small enough to always load whole.
+        Ok(crate::testbed::build(crate::testbed::CENTER, origin))
     }
     fn spawn(&self) -> Option<[f32; 3]> {
-        Some(crate::testbed::spawn([0.0, 0.0]))
+        Some(crate::testbed::spawn(crate::testbed::CENTER))
     }
 }
 
@@ -85,6 +120,10 @@ mod tests {
         assert_eq!(world.name(), "SARE Testbed");
         let scene = world.load([0.0, 0.0], [2500.0, -1670.0], 300.0).unwrap();
         assert!(scene.collision.is_some() && world.spawn().is_some());
+        assert!(world
+            .load_interior([0.0, 0.0], [0.0, 0.0], 50.0, 3)
+            .is_err());
+        assert!(world.interior_portals().is_empty() && world.mlo_definitions().is_empty());
         assert!(ContentSource::from_args(&[], None).is_err());
         assert!(ContentSource::from_args(&args(&["--content", "gta5"]), None).is_err());
         let original = ContentSource::from_args(&[], Some(PathBuf::from("/games/sa"))).unwrap();

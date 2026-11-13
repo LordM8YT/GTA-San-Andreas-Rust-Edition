@@ -30,6 +30,10 @@ SARE is growing into a free creator platform: see the [platform roadmap](docs/PL
 for the plan and what each step delivers, and the [standalone plan](docs/STANDALONE.md)
 for running SARE without San Andreas game files.
 
+**Try it without the game:** start the launcher and choose **Play SARE Testbed**, or run
+`sa-runtime --content testbed`. It opens a small built-in test world where you can walk,
+jump and drive a placeholder car. No San Andreas installation is needed.
+
 New to SARE development? Start with the practical [server guide](docs/server-guide.md)
 or learn how to [create resources and mods](docs/creating-resources.md).
 For the ongoing map streaming and MLO work, see the [contributor guide](docs/map-streaming-contributing.md).

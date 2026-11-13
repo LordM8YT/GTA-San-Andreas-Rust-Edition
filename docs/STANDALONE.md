@@ -45,7 +45,7 @@ SA world and still need the installation underneath.
 
 ## The plan
 
-### 1. Content abstraction (first step, in this PR)
+### 1. Content abstraction (done)
 
 - `sa_scene::content::ContentSource` names where the world comes from:
   `Original(game_dir)` or `Testbed`, chosen with `--content original|testbed`.
@@ -60,15 +60,33 @@ SA world and still need the installation underneath.
   CI on every platform (`cargo run -p sa-runtime -- --probe-standalone
   --content testbed`); that workflow step still has to be added.
 
-### 2. Boot the runtime into the testbed
+### 2. Boot the runtime into the testbed (done)
 
-Make `sa-runtime --content testbed` start a window: stream through
-`WorldSource`, and give every SA-only system a "not available" state instead
-of an error (radar, zones, day cycle, traffic, water, audio). The player is a
-simple original capsule character and the camera works as today. The
-launcher gets a "SARE Testbed (no game files)" entry next to the installation
-picker. This is mostly plumbing in `runtime/src/main.rs`, where startup today
-assumes `game_dir` everywhere.
+`sa-runtime --content testbed`, or **Play SARE Testbed** on the launcher's
+Home page, opens a real game window on the generated testbed without any San
+Andreas installation:
+
+- The world streams through `WorldSource` (`Streamer` takes any
+  `Box<dyn WorldSource + Send>`). The testbed sits on the runtime origin, so
+  runtime and world coordinates line up as they do for the original map.
+- The player is a blocky placeholder figure (`testbed::placeholder_player`) that
+  walks, runs and jumps with the normal player physics and collision, with
+  the normal third- and first-person cameras (V).
+- **SARE Kart** (`testbed::placeholder_car`) is a drivable box car using the
+  default handling. F9 spawns it, F enters and leaves it.
+- SA-only systems are switched off instead of failing: radar tiles, car
+  paths, frontend and gameplay sounds, area names (the HUD says
+  "SARE Testbed"), weapons, traffic and pedestrians. Day colours use the
+  built-in fallback. The game-folder setting points at a folder that never
+  exists, so any remaining optional loader falls back quietly.
+- Map teleports (1–9, map menu) and interiors bring the player back to the
+  testbed centre, because the testbed is the whole world.
+- The free-roam checkpoint is neither read nor written, so a testbed session
+  never overwrites a real save.
+
+Not yet: other players are not drawn in testbed sessions (remote players need
+ped models), there are no guns, NPCs or sounds besides menu audio, and
+lighting is the fallback day cycle.
 
 ### 3. Content packs
 
