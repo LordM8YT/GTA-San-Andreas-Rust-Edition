@@ -87,6 +87,33 @@ class ClientPackageTests(unittest.TestCase):
                     for name in ['sa-launcher', 'sa-runtime', 'sa-server', 'sa-relay']:
                         self.assertEqual((archive.getinfo(name).external_attr >> 16) & 0o777, 0o755)
 
+    def test_content_packs_ship_and_lfs_pointers_are_refused(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pack = root / 'content/town'
+            (pack / 'vehicles').mkdir(parents=True)
+            (pack / 'content.json').write_text('{}', encoding='utf-8')
+            (pack / 'world.glb').write_bytes(b'glTF' + bytes(8))
+            (pack / 'vehicles/car.glb').write_bytes(b'glTF' + bytes(8))
+            (pack / 'notes.blend').write_bytes(b'not shipped')
+            (root / 'content/not-a-pack').mkdir()
+            (root / 'content/not-a-pack/world.glb').write_bytes(b'glTF')
+            (root / 'content/README.md').write_text('packs', encoding='utf-8')
+            names = [name for _, name in package_client.content_files(root)]
+            self.assertEqual(names, ['content/README.md', 'content/town/content.json',
+                                     'content/town/vehicles/car.glb', 'content/town/world.glb'])
+            self.assertTrue(all(package_client.updater_accepts(name) for name in names))
+            (pack / 'world.glb').write_bytes(b'version https://git-lfs.github.com/spec/v1\noid sha256:00\n')
+            with self.assertRaisesRegex(ValueError, 'Git LFS pointer'):
+                package_client.content_files(root)
+
+    def test_the_repository_packs_are_real_and_shipped(self):
+        names = {name for _, name in package_client.content_files(package_client.REPO)}
+        for expected in ['content/sare-rp-town/content.json', 'content/sare-rp-town/world.glb',
+                         'content/sare-rp-town/characters.glb', 'content/sare-rp-town/vehicles/sedan.glb',
+                         'content/example-town/content.json', 'content/example-town/world.glb']:
+            self.assertIn(expected, names)
+
     def test_explicit_allowlist_excludes_assets_settings_cache_and_logs(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

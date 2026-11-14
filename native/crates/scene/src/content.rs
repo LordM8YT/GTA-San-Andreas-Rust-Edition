@@ -28,14 +28,35 @@ impl ContentSource {
                 )
             }),
             Some(other) => {
-                let packs = args
+                let explicit = args
                     .windows(2)
                     .find(|w| w[0] == "--content-dir")
-                    .map(|w| PathBuf::from(&w[1]))
-                    .unwrap_or_else(|| PathBuf::from(crate::content_pack::DEFAULT_DIR));
-                crate::content_pack::resolve(other, &packs).map(Self::Pack).map_err(|error| {
-                    anyhow::anyhow!("{error:#}. Use original, testbed or a content pack.")
-                })
+                    .map(|w| PathBuf::from(&w[1]));
+                // `content/` in the working folder, else beside the program:
+                // started from a shortcut or another folder, the pack that
+                // ships next to sa-runtime is still found.
+                let candidates = match explicit {
+                    Some(dir) => vec![dir],
+                    None => pack_dirs(),
+                };
+                let mut first_error = None;
+                for packs in &candidates {
+                    match crate::content_pack::resolve(other, packs) {
+                        Ok(folder) => return Ok(Self::Pack(folder)),
+                        Err(error) => {
+                            first_error.get_or_insert(error);
+                        }
+                    }
+                }
+                let error = first_error.unwrap_or_else(|| anyhow::anyhow!("no content folder"));
+                Err(anyhow::anyhow!(
+                    "{error:#} (also looked in {}). Use original, testbed or a content pack.",
+                    candidates
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
             }
         }
     }
@@ -49,6 +70,24 @@ impl ContentSource {
             Self::Pack(folder) => Box::new(crate::content_pack::PackWorld::open(folder)?),
         })
     }
+}
+
+/// Folders that may hold content packs, most specific first: `content/` in
+/// the working folder, beside the program, and the repository root for
+/// development builds (`native/target/<profile>/`).
+pub fn pack_dirs() -> Vec<PathBuf> {
+    let mut dirs = vec![PathBuf::from(crate::content_pack::DEFAULT_DIR)];
+    if let Some(exe_dir) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(PathBuf::from))
+    {
+        dirs.push(exe_dir.join(crate::content_pack::DEFAULT_DIR));
+        if let Some(repo) = exe_dir.ancestors().nth(3) {
+            dirs.push(repo.join(crate::content_pack::DEFAULT_DIR));
+        }
+    }
+    dirs.dedup();
+    dirs
 }
 
 /// Streams world geometry around a point. `center` is in world coordinates,

@@ -152,7 +152,20 @@ fn allowed(name: &str) -> bool {
                 "THIRD-PARTY-NOTICES.txt",
             ]
             .contains(&name)
-            || name.starts_with("licenses/"))
+            || name.starts_with("licenses/")
+            || content_file(name))
+}
+/// Content packs shipped with the client (`content/<pack>/...`): data files
+/// only, never programs. Keep in sync with CONTENT_SUFFIXES in
+/// tools/package-client.py.
+fn content_file(name: &str) -> bool {
+    const SUFFIXES: [&str; 7] = [".json", ".glb", ".gltf", ".bin", ".png", ".md", ".txt"];
+    name.strip_prefix("content/").is_some_and(|rest| {
+        !rest.is_empty() && {
+            let lower = rest.to_ascii_lowercase();
+            SUFFIXES.iter().any(|s| lower.ends_with(s))
+        }
+    })
 }
 fn plain(root: &Path, name: &str) -> Result<PathBuf> {
     ensure!(allowed(name), "Unexpected update path: {name}");
@@ -849,6 +862,7 @@ mod tests {
                     "Cargo.lock",
                     "THIRD-PARTY-NOTICES.txt",
                     "licenses/test+metadata/LICENSE",
+                    "content/town/vehicles/car.glb",
                 ]
                 .map(String::from),
             )
@@ -964,6 +978,9 @@ mod tests {
             "licenses/test+metadata/license",
             "licenses/test/../LICENSE",
             "licenses/test/CON",
+            "content/town/run.exe",
+            "content/../sa-runtime",
+            "content/",
         ]
         .iter()
         .enumerate()

@@ -128,3 +128,58 @@ mod tests {
         assert!(safe.contains("GPU upload 12 frames"));
     }
 }
+
+/// `2026-11-14 20:05:31 UTC`: a readable time for log lines, without a
+/// time zone database (logs are compared across machines in UTC).
+pub fn timestamp(time: std::time::SystemTime) -> String {
+    let seconds = time
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs()) as i64;
+    let (days, rest) = (seconds.div_euclid(86_400), seconds.rem_euclid(86_400));
+    // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02} {:02}:{:02}:{:02} UTC",
+        rest / 3600,
+        rest / 60 % 60,
+        rest % 60
+    )
+}
+
+/// Append one timestamped line to `path`, creating its folder. Logging must
+/// never stop the game, so errors are ignored.
+pub fn append_line(path: &Path, line: &str) {
+    use std::io::Write;
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "{}  {line}", timestamp(std::time::SystemTime::now()));
+    }
+}
+
+#[cfg(test)]
+mod timestamp_tests {
+    use super::timestamp;
+    use std::time::{Duration, UNIX_EPOCH};
+    #[test]
+    fn timestamps_are_readable_utc() {
+        assert_eq!(timestamp(UNIX_EPOCH), "1970-01-01 00:00:00 UTC");
+        assert_eq!(
+            timestamp(UNIX_EPOCH + Duration::from_secs(1_794_686_731)),
+            "2026-11-14 20:05:31 UTC"
+        );
+        assert_eq!(
+            timestamp(UNIX_EPOCH + Duration::from_secs(951_782_400)),
+            "2000-02-29 00:00:00 UTC"
+        );
+    }
+}

@@ -32,7 +32,7 @@ use std::{
 const USAGE: &str = "sa-server [+exec server.cfg] [+set name value] [+ensure resource] ...
 Run in a server-data folder containing server.cfg and resources/.
 Without +exec, server.cfg runs first. When server.cfg is missing, the server
-asks which template to create (or uses +set sv_template freeroam|sarebox).";
+asks which template to create (or uses +set sv_template freeroam|sarebox|sare-rp).";
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();

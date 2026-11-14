@@ -32,19 +32,43 @@ pub struct PackAssets {
 }
 impl PackAssets {
     pub fn load(folder: &Path) -> Self {
-        let Ok(manifest) = sa_scene::content_pack::Manifest::read(folder) else {
-            return Self::default();
+        use crate::runtime_log::line;
+        let manifest = match sa_scene::content_pack::Manifest::read(folder) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                line(format!("Content pack manifest unreadable: {error:#}"));
+                return Self::default();
+            }
         };
         let characters = match sa_scene::content_pack::load_characters(folder, &manifest) {
-            Ok(model) => model,
+            Ok(Some(model)) => {
+                line(format!(
+                    "Characters loaded: {} ({} vertices, clips {:?})",
+                    manifest.characters.as_deref().unwrap_or_default(),
+                    model.vertex_count(),
+                    model.clip_names()
+                ));
+                Some(model)
+            }
+            Ok(None) => None,
             Err(error) => {
-                eprintln!("Content pack characters unavailable: {error:#}");
+                line(format!("Characters FAILED, using the stand-in: {error:#}"));
                 None
             }
         };
+        let (vehicles, failed) = sa_scene::content_pack::load_vehicles_reporting(folder, &manifest);
+        for (spec, scene) in &vehicles {
+            line(format!(
+                "Vehicle loaded: {} ({}, {} triangles)",
+                spec.model, spec.scene, scene.triangles
+            ));
+        }
+        for (model, error) in failed {
+            line(format!("Vehicle FAILED: {model}: {error}"));
+        }
         Self {
             characters,
-            vehicles: sa_scene::content_pack::load_vehicles(folder, &manifest),
+            vehicles,
         }
     }
 }

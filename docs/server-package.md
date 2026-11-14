@@ -19,8 +19,13 @@ start-relay.*      optional relay for a server browser and join codes
    - **Freeroam**: free roam with chat and spawn points.
    - **SARE Box**: a roleplay framework with saved characters, money, jobs,
      paychecks and an admin menu.
+   - **SARE RP Town**: a ready roleplay server on its own map (no GTA files):
+     IDs, bank, shops, police, EMS, taxi, mechanic, car dealer and garages.
+     Players join with the client's SARE RP Town pack (*World: SARE RP
+     Town* on the launcher's Servers page). Scripts are in
+     `server-data/resources/[sare-rp]`.
    Without a console (hosting panels, systemd) pass
-   `+set sv_template sarebox` or `+set sv_template freeroam`; with neither,
+   `+set sv_template sare-rp`, `sarebox` or `freeroam`; with none of them,
    Freeroam is created.
 3. Edit `server-data/server.cfg` (name, slots, rcon password, admins) and
    restart. To pick another template later, rename `server.cfg` and start again.
