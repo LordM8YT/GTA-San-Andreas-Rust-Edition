@@ -119,6 +119,43 @@ pub fn send_client(shared: &Shared, target: Option<u32>, name: &str, args: &[Jso
         }
     }
 }
+/// Tell everyone about one player's look; `None` forgets it.
+pub fn broadcast_appearance(
+    shared: &Shared,
+    id: u32,
+    look: Option<sa_net::appearance::Appearance>,
+) {
+    let value = look.map_or(Json::Null, |l| l.to_json());
+    let map = serde_json::Map::from_iter([(id.to_string(), value)]);
+    send_client(
+        shared,
+        None,
+        sa_net::appearance::APPEARANCE_EVENT,
+        &[Json::Object(map)],
+    );
+}
+/// Send a joining player everyone's look, a few players per event.
+pub fn send_appearances(shared: &Shared, target: u32) {
+    let all: Vec<(u32, sa_net::appearance::Appearance)> = shared
+        .borrow()
+        .appearances
+        .iter()
+        .map(|(id, look)| (*id, *look))
+        .collect();
+    for chunk in all.chunks(8) {
+        let map = serde_json::Map::from_iter(
+            chunk
+                .iter()
+                .map(|(id, look)| (id.to_string(), look.to_json())),
+        );
+        send_client(
+            shared,
+            Some(target),
+            sa_net::appearance::APPEARANCE_EVENT,
+            &[Json::Object(map)],
+        );
+    }
+}
 fn resource_file(shared: &Shared, resource: &str, file: &str) -> Option<std::path::PathBuf> {
     let file = file.replace('\\', "/");
     if file.starts_with('/') || file.split('/').any(|p| p == ".." || p.contains(':')) {
@@ -1122,6 +1159,7 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
     }
     func!(g, "DeleteEntity", shared, name, |_lua, entity: Value| {
         if let Some(handle) = player_id(&entity) {
+            crate::vehicles::revoke(&shared, handle);
             let mut state = shared.borrow_mut();
             if state.entities.delete(handle) {
                 state.bags.remove(&format!("entity:{handle}"));
@@ -1129,6 +1167,139 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
         }
         Ok(())
     });
+    // Character looks (content packs with characters): the server owns them.
+    func!(
+        g,
+        "SetPlayerAppearance",
+        shared,
+        name,
+        |lua, (player, look): (Value, Value)| {
+            let Some(id) = player_id(&player) else {
+                return Ok(false);
+            };
+            if peer(&shared, &player).is_none() {
+                return Ok(false);
+            }
+            let json: Json = lua.from_value(look).unwrap_or(Json::Null);
+            let Some(look) = sa_net::appearance::Appearance::from_json(&json) else {
+                return Err(mlua::Error::runtime("SetPlayerAppearance needs a table"));
+            };
+            let changed = shared.borrow_mut().appearances.insert(id, look) != Some(look);
+            if changed {
+                broadcast_appearance(&shared, id, Some(look));
+            }
+            Ok(true)
+        }
+    );
+    func!(
+        g,
+        "GetPlayerAppearance",
+        shared,
+        name,
+        |lua, player: Value| {
+            let look =
+                player_id(&player).and_then(|id| shared.borrow().appearances.get(&id).copied());
+            match look {
+                Some(look) => lua.to_value_with(&look.to_json(), script::serialize()),
+                None => Ok(Value::Nil),
+            }
+        }
+    );
+    // Driving server vehicles; see vehicles.rs.
+    func!(g, "GetVehiclePedIsIn", shared, name, |_lua,
+                                                 (ped, _last): (
+        Value,
+        Option<bool>
+    )| {
+        Ok(player_id(&ped)
+            .and_then(|id| shared.borrow().drivers.get(&id).map(|d| d.0))
+            .unwrap_or(0))
+    });
+    func!(
+        g,
+        "GetPedInVehicleSeat",
+        shared,
+        name,
+        |_lua, (vehicle, seat): (Value, Option<i64>)| {
+            if seat.unwrap_or(-1) != -1 {
+                return Ok(0);
+            }
+            Ok(server_entity(&shared, &vehicle)
+                .and_then(|e| e.driver)
+                .unwrap_or(0))
+        }
+    );
+    func!(g, "TaskWarpPedIntoVehicle", shared, name, |_lua,
+                                                      (
+        ped,
+        vehicle,
+        _seat,
+    ): (
+        Value,
+        Value,
+        Option<i64>
+    )| {
+        let (Some(id), Some(handle)) = (player_id(&ped), player_id(&vehicle)) else {
+            return Ok(false);
+        };
+        Ok(crate::vehicles::enter(&shared, id, handle, false).is_ok())
+    });
+    func!(g, "TaskLeaveVehicle", shared, name, |_lua,
+                                                (
+        ped,
+        _vehicle,
+        _flags,
+    ): (
+        Value,
+        Option<Value>,
+        Option<i64>
+    )| {
+        let handle = player_id(&ped).and_then(|id| shared.borrow().drivers.get(&id).map(|d| d.0));
+        if let Some(handle) = handle {
+            crate::vehicles::revoke(&shared, handle);
+        }
+        Ok(())
+    });
+    func!(
+        g,
+        "SetVehicleCustomPrimaryColour",
+        shared,
+        name,
+        |_lua, (vehicle, r, g, b): (Value, f64, f64, f64)| {
+            if let Some(e) = server_entity(&shared, &vehicle) {
+                let c = |v: f64| v.clamp(0.0, 255.0) as u8;
+                shared
+                    .borrow_mut()
+                    .entities
+                    .set_color(e.state.handle, Some([c(r), c(g), c(b)]));
+            }
+            Ok(())
+        }
+    );
+    func!(
+        g,
+        "GetVehicleCustomPrimaryColour",
+        shared,
+        name,
+        |_lua, vehicle: Value| {
+            let [r, g, b] = server_entity(&shared, &vehicle)
+                .and_then(|e| e.state.color)
+                .unwrap_or([0, 0, 0]);
+            Ok((r, g, b))
+        }
+    );
+    func!(
+        g,
+        "ClearVehicleCustomPrimaryColour",
+        shared,
+        name,
+        |_lua, vehicle: Value| {
+            if let Some(e) = server_entity(&shared, &vehicle) {
+                shared.borrow_mut().entities.set_color(e.state.handle, None);
+            }
+            Ok(())
+        }
+    );
     // Network IDs are the entity handles.
     for key in [
         "NetworkGetNetworkIdFromEntity",

@@ -34,6 +34,7 @@ impl State {
                     }
                 }
                 name if self.server_entities.handle_event(name, &event.payload) => {}
+                name if self.handle_pack_event(name, &args, &event.payload) => {}
                 name => {
                     let chat = self.chat.handle_event(name, &args);
                     let scripts = self.scripts.handle_event(name, &event.payload);

@@ -86,6 +86,7 @@ pub(crate) fn entity_peer(entity: &EntityState, ped: usize, car: usize) -> Optio
         yaw,
         ped_model: u16::try_from(ped).ok()?,
         car_model: u16::try_from(car).ok()?,
+        paint: entity.color,
         ..Pose::default()
     };
     match entity.kind {

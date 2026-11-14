@@ -30,6 +30,15 @@ Config.Jobs = {
       [2] = { name = 'Boss', payment = 140, isboss = true },
     },
   },
+  ambulance = {
+    label = 'EMS',
+    defaultDuty = false,
+    grades = {
+      [0] = { name = 'Trainee', payment = 70 },
+      [1] = { name = 'Paramedic', payment = 110 },
+      [2] = { name = 'Chief', payment = 180, isboss = true },
+    },
+  },
   police = {
     label = 'LSPD',
     defaultDuty = false,

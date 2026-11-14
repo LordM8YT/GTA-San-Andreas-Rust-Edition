@@ -5,10 +5,11 @@ A **content pack** is a folder with your own world in it. SARE can run a pack
 3D tool that exports glTF), drop the folder into `content/`, and press its
 button in the launcher.
 
-This is the first version of the format. Right now a pack holds one world:
-geometry, textures and collision. Your own characters, vehicles, sounds and
-traffic come in later versions (see [the plan](STANDALONE.md)). The player is
-SARE's blocky stand-in, and F9 spawns SARE Kart.
+A pack holds one world (geometry, textures and collision) and, optionally,
+customisable [characters](#characters) and drivable [vehicles](#vehicles).
+Sounds and traffic come in later versions (see [the plan](STANDALONE.md)).
+Without characters the player is SARE's blocky stand-in; without vehicles
+F9 spawns SARE Kart.
 
 ## Quick start: play the example
 
@@ -73,6 +74,8 @@ for example `world.spawn: the spawn point is not a standing position`.
 | `world.scene` | yes | The drawn world: a `.glb` (or `.gltf`) path inside the pack. |
 | `world.collision` | no | A separate collision model. When set, **only** this file is solid and `scene` is drawn only. |
 | `world.spawn` | yes | Start point `[east, north, up]` in metres, in Blender coordinates. Put it on or just above solid ground. |
+| `characters` | no | A `.glb` with customisable player characters, see [Characters](#characters). |
+| `vehicles` | no | Up to 64 drivable vehicles, see [Vehicles](#vehicles). |
 
 Unknown fields are refused, so a typo like `"verison"` gives a clear error
 instead of being ignored. Paths must stay inside the pack folder.
@@ -100,8 +103,70 @@ The game's map and compass treat Blender +Y as north.
   world. You do not need to bake lighting yourself, but painted vertex
   colours (for dirt or shadow) are kept.
 
-Not read yet: armatures/skins, animations, shape keys, emission, normal maps
-and other material channels. They are ignored, not an error.
+Not read in the world: armatures/skins, animations, shape keys, emission,
+normal maps and other material channels. They are ignored, not an error.
+
+## Characters
+
+`"characters": "characters.glb"` gives every player in the pack a body they
+can dress. One file holds a male and a female rig and every style of hair
+and clothing; the player's look picks one style per slot and a colour for
+each. Servers store and share the look (`SetPlayerAppearance`, see
+[SARE Box](sarebox.md)), so everyone sees the same person.
+
+- **Rig:** bones are plain nodes (an armature exported with *Apply
+  Modifiers*, no skin weights). Each mesh hangs under the bone it follows,
+  so parts are rigid, like action figures.
+- **Mesh names:** `<body>.<slot>.<style>.<part>`, for example `F.hair.3.0`
+  or `M.top.2.sleeve_l`. Body is `M` or `F`; slot is `base` (always shown),
+  `hair`, `top`, `pants` or `shoes`; style is a number from 0. A look asking
+  for a style the file lacks gets style 0.
+- **Colours:** materials named `skin`, `hair`, `top`, `pants` and `shoes`
+  are tinted with the look's colours (make them white). Other materials
+  (eyes, buttons) keep their colour.
+- **Animations:** glTF animations named `idle`, `walk`, `run`, `sit`
+  (driving) and `fall` (in Blender, one NLA track each). A missing clip
+  shows the rest pose.
+- **Facing:** the character looks along glTF +Z (Blender -Y) with its feet
+  at height 0.
+
+[`tools/blender/make_rp_characters.py`](../tools/blender/make_rp_characters.py)
+builds the RP Town set from code and is a good starting point.
+
+## Vehicles
+
+Each entry of `vehicles` is one car:
+
+```json
+{ "model": "sedan", "name": "Sedan", "scene": "vehicles/sedan.glb",
+  "color": [60, 90, 150], "seat": [-0.4, -0.05, -0.53],
+  "handling": { "top_speed": 46.0, "acceleration": 6.0 } }
+```
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `model` | yes | Name scripts use, e.g. `CreateVehicle("sedan", ...)`: 1–32 of `a-z`, `0-9`, `-`, `_`, unique in the pack. |
+| `name` | yes | Shown in menus. |
+| `scene` | yes | The car's `.glb` inside the pack. |
+| `color` | no | Default paint, sRGB `[r, g, b]` 0–255. Servers can repaint with `SetVehicleCustomPrimaryColour`. |
+| `seat` | no | Where the driver's feet go, `[right, forward, up]` in metres from the car's origin. |
+| `handling` | no | Overrides of the car physics (`top_speed`, `acceleration`, `brake_deceleration`, `tire_grip`, `steering_lock`, …); omitted fields keep the defaults. |
+
+The first vehicle is the car F9 places; all of them are in the car menu and
+can be spawned by servers. In the `.glb`:
+
+- The nose points along Blender +Y; the origin is the axle centre, and the
+  lowest vertex sets the ground clearance. The collision box comes from the
+  model's size.
+- Meshes named `wheel_lf`, `wheel_rf`, `wheel_lb`, `wheel_rb` (left is
+  Blender -X) are the wheels, with the object origin at the hub. Front
+  wheels steer, all of them roll.
+- Parts using a material named `paint` take the car's colour (make it
+  white or the default colour). Glass with *Alpha Blend* is drawn
+  see-through.
+
+[`tools/blender/make_rp_vehicles.py`](../tools/blender/make_rp_vehicles.py)
+builds the nine RP Town cars and writes their `vehicles` entries.
 
 ## Collision: what is solid
 
@@ -150,9 +215,18 @@ buildings, a jump ramp, stairs, `NOCOL_Flowers` you can walk through and
 `COL_EdgeWalls` that stop you at the edge. Open `world.glb` in Blender
 (*File → Import → glTF 2.0*) to see how it is built, then change it.
 
+## The RP Town pack
+
+`content/sare-rp-town` is a bigger example made in Blender by
+[`tools/blender/make_rp_town.py`](../tools/blender/make_rp_town.py): a
+roleplay town with a police station, hospital, bank, shops and garages,
+plus customisable characters and nine cars. It is the map of the **SARE RP Town** server template; see
+[its README](../server-data/resources/[sare-rp]/README.md).
+
 ## Testing without a window
 
 `sa-runtime --probe-standalone --content my-world` loads the pack, checks
 that the spawn point stands on solid ground and lets the player stand for ten
-seconds, then prints the triangle and texture counts. It is quick and needs
+seconds, then prints the triangle and texture counts. With characters and vehicles
+it also poses each animation and drives every car for a few seconds. It is quick and needs
 no graphics card, so it also works in CI.

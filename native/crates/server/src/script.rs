@@ -65,6 +65,10 @@ pub struct State {
     pub kvp: crate::kvp::Store,
     /// Server-owned vehicles, peds and objects.
     pub entities: crate::entities::Registry,
+    /// Players driving server vehicles.
+    pub drivers: crate::vehicles::Drivers,
+    /// Character looks set with `SetPlayerAppearance`, by player id.
+    pub appearances: BTreeMap<u32, sa_net::appearance::Appearance>,
 }
 impl State {
     pub fn new(resources_dir: PathBuf) -> Self {
@@ -93,6 +97,8 @@ impl State {
             client_bundles: Vec::new(),
             kvp,
             entities: crate::entities::Registry::default(),
+            drivers: Default::default(),
+            appearances: BTreeMap::new(),
         }
     }
     pub fn convar(&self, name: &str) -> Option<&str> {
@@ -567,6 +573,17 @@ fn stop_one(shared: &Shared, name: &str) -> Result<()> {
     state
         .refs
         .retain(|key, _| key.rsplit_once(':').map(|(owner, _)| owner) != Some(name));
+    let owned: Vec<u32> = state
+        .entities
+        .all(sa_net::entities::EntityKind::Vehicle)
+        .into_iter()
+        .filter(|h| state.entities.get(*h).is_some_and(|e| e.resource == name))
+        .collect();
+    drop(state);
+    for handle in owned {
+        crate::vehicles::revoke(shared, handle);
+    }
+    let mut state = shared.borrow_mut();
     // Entities a resource created leave with it, as in FiveM.
     for handle in state.entities.delete_owned_by(name) {
         state.bags.remove(&format!("entity:{handle}"));

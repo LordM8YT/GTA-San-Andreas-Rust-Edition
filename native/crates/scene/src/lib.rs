@@ -1,4 +1,5 @@
 //! Manifest-ordered SA world placement and small bounded scene assembly.
+pub mod character;
 pub mod collision;
 pub mod content;
 pub mod content_pack;
@@ -8,6 +9,7 @@ pub mod lights;
 pub mod mlo;
 mod mods;
 mod mta_map;
+pub mod pack_vehicle;
 pub use mods::{share_resource_folders, share_resources};
 pub use mta_map::{MapPickup, PickupKind};
 pub mod ped;

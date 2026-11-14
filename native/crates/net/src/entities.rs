@@ -72,6 +72,9 @@ pub struct EntityState {
     pub position: [f32; 3],
     #[serde(rename = "r")]
     pub heading: f32,
+    /// Vehicle paint as sRGB, when a script set one.
+    #[serde(rename = "c", default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<[u8; 3]>,
 }
 impl EntityState {
     pub fn valid(&self) -> bool {
@@ -113,6 +116,7 @@ mod tests {
             model: ModelRef::Name("a".repeat(32)),
             position: [-99_999.5, 99_999.5, -99_999.5],
             heading: 359.99,
+            color: Some([255, 255, 255]),
         };
         let batch = vec![entity.clone(); ENTITIES_PER_EVENT];
         let payload = serde_json::to_string(&(batch,)).unwrap();

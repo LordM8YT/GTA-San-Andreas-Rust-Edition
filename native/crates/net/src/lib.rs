@@ -1,6 +1,7 @@
 //! Player-hosted prototype. Networking never runs on the render thread.
 //! Host assigns identities and relays poses; movement is client-authoritative.
 use serde::{Deserialize, Serialize};
+pub mod appearance;
 pub mod entities;
 pub mod identity;
 pub mod passengers;
@@ -68,6 +69,9 @@ pub struct Pose {
     /// Wanted stars, 0 to 6.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub wanted: u8,
+    /// Paint of `vehicle` as sRGB, when it is not the model's own colour.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paint: Option<[u8; 3]>,
 }
 fn is_zero(value: &u8) -> bool {
     *value == 0
