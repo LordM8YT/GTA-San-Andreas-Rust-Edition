@@ -582,6 +582,8 @@ fn serve_rcon(
 }
 
 #[cfg(test)]
+mod rp_tests;
+#[cfg(test)]
 mod sarebox_tests;
 #[cfg(test)]
 mod tests;

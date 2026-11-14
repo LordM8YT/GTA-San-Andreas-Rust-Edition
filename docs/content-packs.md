@@ -150,6 +150,14 @@ buildings, a jump ramp, stairs, `NOCOL_Flowers` you can walk through and
 `COL_EdgeWalls` that stop you at the edge. Open `world.glb` in Blender
 (*File → Import → glTF 2.0*) to see how it is built, then change it.
 
+## The RP Town pack
+
+`content/sare-rp-town` is a bigger example made in Blender by
+[`tools/blender/make_rp_town.py`](../tools/blender/make_rp_town.py): a
+roleplay town with a police station, hospital, bank, shops and garages. It
+is the map of the **SARE RP Town** server template; see
+[its README](../server-data/resources/[sare-rp]/README.md).
+
 ## Testing without a window
 
 `sa-runtime --probe-standalone --content my-world` loads the pack, checks

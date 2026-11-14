@@ -10,7 +10,10 @@ pub struct Player {
     pub client: sa_net::Session,
     pub host: Host,
     pub pose: sa_net::Pose,
+    /// Where client scripts or the server (SetEntityCoords) moved the player.
     pub teleports: Vec<[f32; 3]>,
+    /// Payloads of the `chat:addMessage` events this player received.
+    pub chat: Vec<String>,
 }
 impl Player {
     /// San Andreas world coordinates, as `GetEntityCoords` reports them.
@@ -48,22 +51,36 @@ pub struct Sarebox {
 impl Sarebox {
     /// A SARE Box server; `prepare` can add files before it starts.
     pub fn boot(extra: &[&str], prepare: impl FnOnce(&Path)) -> Self {
+        Self::boot_with(
+            "sarebox",
+            &[
+                "ensure mapmanager",
+                "ensure chat",
+                "ensure spawnmanager",
+                "ensure sare-map-grove",
+                "ensure [sarebox]",
+            ],
+            extra,
+            prepare,
+        )
+    }
+    /// A server from any template, starting `resources` (ensure lines).
+    pub fn boot_with(
+        template: &str,
+        resources: &[&str],
+        extra: &[&str],
+        prepare: impl FnOnce(&Path),
+    ) -> Self {
         sa_net::set_identity_secret(SECRET);
         static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let unique = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!("sare-box-{}-{unique}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        template::create(&root, "sarebox").unwrap();
+        template::create(&root, template).unwrap();
         prepare(&root);
-        let mut lines = vec![
-            "endpoint_add_tcp 127.0.0.1:0",
-            "ensure mapmanager",
-            "ensure chat",
-            "ensure spawnmanager",
-            "ensure sare-map-grove",
-            "ensure [sarebox]",
-            "add_ace group.admin command allow",
-        ];
+        let mut lines = vec!["endpoint_add_tcp 127.0.0.1:0"];
+        lines.extend(resources);
+        lines.push("add_ace group.admin command allow");
         lines.extend(extra);
         let commands = lines.iter().map(|l| cfg::parse_line(l).remove(0)).collect();
         let Server {
@@ -116,6 +133,16 @@ impl Sarebox {
         .unwrap();
         for player in players.iter_mut() {
             for event in player.client.events() {
+                if event.name == "chat:addMessage" {
+                    player.chat.push(event.payload.clone());
+                }
+                // Server SetEntityCoords on a player: the game moves itself.
+                if event.name == "__sare:setCoords" {
+                    if let Ok(Json::Array(v)) = serde_json::from_str::<Json>(&event.payload) {
+                        let at = |i: usize| v.get(i).and_then(Json::as_f64).unwrap_or(0.0) as f32;
+                        player.teleports.push([at(0), at(1), at(2)]);
+                    }
+                }
                 player.host.handle_event(&event.name, &event.payload);
             }
             for sha in player.host.take_requests() {
@@ -180,6 +207,7 @@ impl Sarebox {
             host: Host::new(),
             pose: sa_net::Pose::default(),
             teleports: Vec::new(),
+            chat: Vec::new(),
         };
         self.until(&mut [&mut player], "the character to load", |_, p| {
             p[0].host.ui().text.is_some()

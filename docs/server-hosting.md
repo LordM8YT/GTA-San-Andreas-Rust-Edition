@@ -11,8 +11,10 @@ Up to 20 players. Movement is still simulated by clients.
 **Download:** every tested main-branch build publishes `SARE-server-windows.zip`
 and `SARE-server-linux.zip` on the [latest release](https://github.com/LordM8YT/SARE/releases/latest).
 Extract it and run `start-server.cmd` (Linux: `./start-server.sh`). The first
-start asks for a template, **Freeroam** or **[SARE Box](sarebox.md)**, and
-creates `server-data/server.cfg` (without a console: `+set sv_template sarebox`). The package keeps binaries in `server/` and your data in
+start asks for a template, **Freeroam**, **[SARE Box](sarebox.md)** or
+**[SARE RP Town](../server-data/resources/[sare-rp]/README.md)** (roleplay on
+its own map), and creates `server-data/server.cfg` (without a console:
+`+set sv_template sarebox` or `sare-rp`). The package keeps binaries in `server/` and your data in
 `server-data/`. Started from those scripts, the server installs new releases by
 itself while no players are online; see [server package](server-package.md).
 

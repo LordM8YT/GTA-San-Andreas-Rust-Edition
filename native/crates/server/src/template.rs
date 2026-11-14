@@ -12,7 +12,7 @@ macro_rules! data {
     };
 }
 /// Server templates for the first start: name, title, description, server.cfg.
-pub const TEMPLATES: [(&str, &str, &str, &str); 2] = [
+pub const TEMPLATES: [(&str, &str, &str, &str); 3] = [
     (
         "freeroam",
         "Freeroam",
@@ -25,10 +25,16 @@ pub const TEMPLATES: [(&str, &str, &str, &str); 2] = [
         "roleplay framework: saved characters, money, jobs, paychecks and an admin menu",
         include_str!("../../../../server-data/templates/sarebox.cfg"),
     ),
+    (
+        "sare-rp",
+        "SARE RP Town",
+        "roleplay on its own map without GTA files: IDs, bank, shops, inventory, police, EMS, mechanic, taxi, cars",
+        include_str!("../../../../server-data/templates/sare-rp.cfg"),
+    ),
 ];
 
 /// Resources every template gets; server.cfg decides which ones start.
-pub const FILES: [(&str, &str); 37] = [
+pub const FILES: [(&str, &str); 61] = [
     data!("resources/[system]/chat/fxmanifest.lua"),
     data!("resources/[system]/chat/sv_chat.lua"),
     data!("resources/[managers]/mapmanager/fxmanifest.lua"),
@@ -65,6 +71,30 @@ pub const FILES: [(&str, &str); 37] = [
     data!("resources/[sarebox]/sarebox_taxi/config.lua"),
     data!("resources/[sarebox]/sarebox_taxi/server.lua"),
     data!("resources/[sarebox]/sarebox_taxi/client.lua"),
+    data!("resources/[sare-rp]/sare-rp-map/fxmanifest.lua"),
+    data!("resources/[sare-rp]/sare-rp-map/map.lua"),
+    data!("resources/[sare-rp]/sare_rp_admin/fxmanifest.lua"),
+    data!("resources/[sare-rp]/sare_rp_admin/server.lua"),
+    data!("resources/[sare-rp]/sare_rp_bank/fxmanifest.lua"),
+    data!("resources/[sare-rp]/sare_rp_bank/server.lua"),
+    data!("resources/[sare-rp]/sare_rp_chat/fxmanifest.lua"),
+    data!("resources/[sare-rp]/sare_rp_chat/server.lua"),
+    data!("resources/[sare-rp]/sare_rp_core/client/main.lua"),
+    data!("resources/[sare-rp]/sare_rp_core/fxmanifest.lua"),
+    data!("resources/[sare-rp]/sare_rp_core/server/main.lua"),
+    data!("resources/[sare-rp]/sare_rp_core/shared/config.lua"),
+    data!("resources/[sare-rp]/sare_rp_core/shared/locations.lua"),
+    data!("resources/[sare-rp]/sare_rp_identity/fxmanifest.lua"),
+    data!("resources/[sare-rp]/sare_rp_identity/server.lua"),
+    data!("resources/[sare-rp]/sare_rp_inventory/client.lua"),
+    data!("resources/[sare-rp]/sare_rp_inventory/fxmanifest.lua"),
+    data!("resources/[sare-rp]/sare_rp_inventory/server.lua"),
+    data!("resources/[sare-rp]/sare_rp_jobs/client.lua"),
+    data!("resources/[sare-rp]/sare_rp_jobs/fxmanifest.lua"),
+    data!("resources/[sare-rp]/sare_rp_jobs/server.lua"),
+    data!("resources/[sare-rp]/sare_rp_vehicles/fxmanifest.lua"),
+    data!("resources/[sare-rp]/sare_rp_vehicles/server.lua"),
+    data!("resources/[sare-rp]/README.md"),
     ("resources/[local]/.gitkeep", ""),
 ];
 
