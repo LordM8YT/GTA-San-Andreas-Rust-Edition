@@ -28,6 +28,7 @@ mod police;
 mod postprocess;
 mod progress;
 mod rain;
+mod runtime_log;
 mod script_ui;
 mod server_entities;
 mod server_events;
@@ -1021,7 +1022,7 @@ impl State {
         menu.settings = startup_settings;
         let gpu = adapter.get_info();
         menu.graphics_device = format!("{} / {:?}", gpu.name, gpu.backend);
-        println!("Renderer: {}", menu.graphics_device);
+        runtime_log::line(format!("Renderer: {}", menu.graphics_device));
         if !args
             .iter()
             .any(|a| a.starts_with("--smoke") || a.starts_with("--probe"))
@@ -1331,7 +1332,11 @@ impl State {
                 texture_key: batch.key.clone(),
                 buffer,
                 count: batch.vertices.len() as u32,
-                texture: images.remove(&batch.key).context("batch texture missing")?,
+                // Opaque and alpha batches may share one texture.
+                texture: images
+                    .get(&batch.key)
+                    .cloned()
+                    .with_context(|| format!("batch texture missing: {}", batch.key))?,
                 alpha: batch.alpha,
                 animated: batch.animated,
                 uv_animation: batch.uv_animation.clone(),
@@ -1506,14 +1511,29 @@ impl State {
                             self.pending_interior_id = None;
                             self.respawn();
                         }
-                        eprintln!(
-                            "Installed neighbourhood at {:.0}, {:.0}",
-                            region.center[0], region.center[1]
+                        self.menu.world_error = None;
+                        let text = format!(
+                            "Installed neighbourhood at {:.0}, {:.0}: {} GPU batches",
+                            region.center[0],
+                            region.center[1],
+                            self.batches.len()
                         );
+                        if self.standalone {
+                            runtime_log::line(text);
+                        } else {
+                            eprintln!("{text}");
+                        }
                     }
                     Err(error) => {
                         streamer.retry_later();
+                        runtime_log::line(format!("World GPU upload FAILED: {error:#}"));
                         self.menu.message = format!("GPU upload failed: {error}");
+                        if self.batches.is_empty() {
+                            self.menu.world_error = Some(format!(
+                                "The map could not be sent to the graphics card: {error}\nDetails: {}",
+                                runtime_log::path().display()
+                            ));
+                        }
                         self.retired
                             .extend(streamer.retire(streaming::Retired::Upload(Box::new(upload))));
                     }
@@ -5554,6 +5574,22 @@ fn probe_pack_actors(
 }
 
 fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    // Probes and smoke tests run in CI and from scripts; keep the log for play.
+    let logged = !args
+        .iter()
+        .any(|a| a.starts_with("--probe") || a.starts_with("--smoke") || a == "--help");
+    if logged {
+        runtime_log::start(&args);
+    }
+    let result = run();
+    if let (true, Err(error)) = (logged, &result) {
+        runtime_log::line(format!("Stopped with an error: {error:#}"));
+    }
+    result
+}
+
+fn run() -> Result<()> {
     let _session_intent =
         sa_client::launch::Session::from_args(&std::env::args().collect::<Vec<_>>())?;
     let args: Vec<_> = std::env::args().skip(1).collect();
@@ -5665,7 +5701,24 @@ fn main() -> Result<()> {
     } else {
         None
     };
-    let mut standalone_world = standalone_source.as_ref().map(|s| s.open()).transpose()?;
+    if let Some(sa_scene::content::ContentSource::Pack(folder)) = &standalone_source {
+        let absolute = std::fs::canonicalize(folder).unwrap_or_else(|_| folder.clone());
+        runtime_log::line(format!("Content pack folder: {}", absolute.display()));
+        match sa_scene::content_pack::Manifest::read(folder) {
+            Ok(m) => runtime_log::line(format!(
+                "Content pack: {} {} (id {}), world {}",
+                m.name, m.version, m.id, m.world.scene
+            )),
+            Err(error) => runtime_log::line(format!("Content pack manifest: {error:#}")),
+        }
+    }
+    let mut standalone_world = match standalone_source.as_ref().map(|s| s.open()).transpose() {
+        Ok(world) => world,
+        Err(error) => {
+            runtime_log::line(format!("World FAILED to load: {error:#}"));
+            return Err(error);
+        }
+    };
     let testbed = standalone_world.is_some();
     // A pack's characters and vehicles replace the stand-in runner and kart.
     let mut pack_assets = match &standalone_source {
@@ -5954,12 +6007,18 @@ fn main() -> Result<()> {
             .context("checkpoint world missing")?
             .load(ORIGIN, ORIGIN, RADIUS)?;
     }
-    println!(
-        "{} placements, {} triangles, {} texture batches",
+    let world_summary = format!(
+        "{} placements, {} triangles, {} texture batches, {} textures",
         scene.placements,
         scene.triangles,
-        scene.batches.len()
+        scene.batches.len(),
+        scene.textures.len()
     );
+    if testbed {
+        runtime_log::line(format!("World loaded: {world_summary}"));
+    } else {
+        println!("{world_summary}");
+    }
     if args.iter().any(|a| a == "--probe-water") {
         let coast = loader
             .as_mut()

@@ -321,10 +321,13 @@ impl Upload {
                         texture_key: batch.key.clone(),
                         buffer: buffer.buffer,
                         count: batch.vertices.len() as u32,
+                        // Batches may share a texture (an opaque and an
+                        // alpha batch of the same material), so clone.
                         texture: self
                             .images
-                            .remove(&batch.key)
-                            .context("batch texture missing")?,
+                            .get(&batch.key)
+                            .cloned()
+                            .with_context(|| format!("batch texture missing: {}", batch.key))?,
                         alpha: batch.alpha,
                         animated: batch.animated,
                         uv_animation: batch.uv_animation.clone(),
@@ -428,6 +431,77 @@ fn deduplicate_textures(textures: HashMap<String, Texture>) -> TextureSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// SARE RP Town's world has an opaque and an alpha (glass) batch on the
+    /// same untextured material. Both must upload; taking the image for the
+    /// first batch left the map blank ("batch texture missing").
+    #[test]
+    fn batches_sharing_one_texture_all_upload() {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
+            eprintln!("No GPU adapter: skipping the upload test");
+            return;
+        };
+        let (device, queue) =
+            pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: None,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let sampler = device.create_sampler(&Default::default());
+        let mipmaps = crate::mipmaps::Generator::new(&device);
+        let vertex = sa_scene::Vertex {
+            position: [0.0; 3],
+            uv: [0.0; 2],
+            color: [1.0; 4],
+        };
+        let batch = |alpha| sa_scene::Batch {
+            key: "pack:town:white".into(),
+            vertices: vec![vertex; 3],
+            alpha,
+            animated: false,
+            uv_animation: None,
+            map_door: None,
+            mlo_entity: None,
+        };
+        let scene = Scene {
+            vehicle_handling: Default::default(),
+            water: None,
+            triangles: 2,
+            batches: vec![batch(false), batch(true)],
+            textures: HashMap::from([("pack:town:white".into(), image(1, 1, false, &[255; 4]))]),
+            placements: 1,
+            animation: None,
+            collision: None,
+            vehicle_pieces: HashMap::new(),
+        };
+        let mut upload = Upload::new(scene);
+        while !upload
+            .advance(&device, &queue, &layout, &sampler, &mipmaps)
+            .expect("shared textures upload")
+        {}
+        assert_eq!(upload.finish().0.len(), 2);
+    }
 
     fn image(width: u32, height: u32, has_alpha: bool, rgba: &[u8]) -> Texture {
         Texture {

@@ -385,6 +385,8 @@ pub struct Menu {
     selected: usize,
     list_filter: String,
     pub message: String,
+    /// The world could not be loaded or drawn: shown on screen until it is.
+    pub world_error: Option<String>,
     settings_tab: SettingsTab,
     settings_scroll_to_selection: bool,
     #[cfg(test)]
@@ -778,6 +780,7 @@ impl Menu {
             selected: 0,
             list_filter: String::new(),
             message: String::new(),
+            world_error: None,
             settings_tab: SettingsTab::Display,
             settings_scroll_to_selection: true,
             #[cfg(test)]
@@ -1166,6 +1169,7 @@ impl Menu {
                 }
             }
             self.busted_banner(ctx, scale);
+            self.world_error_banner(ctx, scale);
             if let (true, Some((_, _, _, aiming, _))) = (self.settings.show_hud, &self.weapon_hud) {
                 if *aiming {
                     let center = screen.center();

@@ -75,6 +75,11 @@ struct Launcher {
     mods: Vec<local_mods::Entry>,
     /// Content packs found in `content/`: folder and display name.
     packs: Vec<(PathBuf, String)>,
+    /// World used to join servers: a content pack folder, or `None` for the
+    /// San Andreas installation.
+    join_pack: Option<PathBuf>,
+    /// The last relay directory error written to the log.
+    logged_browser_error: Option<String>,
     gilrs: Option<gilrs::Gilrs>,
     refresh: Instant,
     preview_frames: u32,
@@ -159,6 +164,8 @@ impl Launcher {
             cache: None,
             mods: Vec::new(),
             packs: Vec::new(),
+            join_pack: None,
+            logged_browser_error: None,
             gilrs: if detect {
                 gilrs::Gilrs::new().ok()
             } else {
@@ -244,12 +251,19 @@ impl Launcher {
                     if address == self.config.relay {
                         match result {
                             Ok(servers) => {
+                                self.logged_browser_error = None;
                                 self.servers = servers;
                                 self.browser_time = Some(elapsed);
                                 self.browser_error = None;
                             }
                             Err(error) => {
-                                log_error(&error);
+                                // Log a relay problem once, not on every retry.
+                                if self.logged_browser_error.as_deref() != Some(error.as_str())
+                                    && !error.starts_with("Enter a relay")
+                                {
+                                    log_error(&error);
+                                    self.logged_browser_error = Some(error.clone());
+                                }
                                 self.servers.clear();
                                 self.browser_time = None;
                                 self.browser_error = Some(error);
@@ -367,7 +381,24 @@ impl Launcher {
         );
     }
     fn start(&mut self, session: Session) {
-        self.start_with(session, None);
+        let content = self.join_content(&session);
+        self.start_with(session, content);
+    }
+    /// Servers are joined in the world picked on the Servers page; offline
+    /// free roam always uses the installation.
+    fn join_content(&self, session: &Session) -> Option<std::ffi::OsString> {
+        match session {
+            Session::Offline => None,
+            _ => self.join_pack.clone().map(PathBuf::into_os_string),
+        }
+    }
+    /// Joining needs the installation, unless a content pack is the world.
+    fn join_ready(&self) -> bool {
+        if self.join_pack.is_some() {
+            self.testbed_ready()
+        } else {
+            self.ready()
+        }
     }
     /// Offline SARE Testbed on built-in content, without game files.
     fn start_testbed(&mut self) {
@@ -383,6 +414,13 @@ impl Launcher {
             .into_iter()
             .map(|(folder, manifest)| (folder, manifest.name))
             .collect();
+        if self
+            .join_pack
+            .as_ref()
+            .is_some_and(|pack| !self.packs.iter().any(|(folder, _)| folder == pack))
+        {
+            self.join_pack = None;
+        }
     }
     fn start_with(&mut self, session: Session, content: Option<std::ffi::OsString>) {
         let testbed = content.is_some();
@@ -540,8 +578,7 @@ impl Launcher {
                 .parse()
                 .map_err(|_| "Enter a relay IP and port in Direct connect.".to_owned())
                 .and_then(|parsed| {
-                    sa_net::relay::browse(parsed)
-                        .map_err(|e| format!("Cannot reach the relay directory: {e}"))
+                    sa_net::relay::browse(parsed).map_err(|e| relay_error(&address, &e))
                 });
             let _ = tx.send((address, result, start.elapsed()));
         });
@@ -804,7 +841,7 @@ impl Launcher {
                             if let Some(recent) = recent {
                                 if ui
                                     .add_enabled(
-                                        self.ready(),
+                                        self.join_ready(),
                                         egui::Button::new("Reconnect")
                                             .min_size(egui::vec2(150., 38.)),
                                     )
@@ -1310,16 +1347,26 @@ fn log_error(error: &str) {
     if cfg!(test) {
         return;
     } // Unit tests must not append to the user profile.
-    use std::io::Write;
-    let directory = sa_client::config_dir().join("logs");
-    if std::fs::create_dir_all(&directory).is_ok() {
-        if let Ok(mut file) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(directory.join("launcher.log"))
-        {
-            let _ = writeln!(file, "{:?}: {error}", std::time::SystemTime::now());
+    sa_client::diagnostics::append_line(
+        &sa_client::config_dir().join("logs").join("launcher.log"),
+        error,
+    );
+}
+/// A relay directory failure in plain words. Refused and reset connections
+/// mean nothing is listening at that address, which is normal when the
+/// relay is not running; it does not affect direct connect or offline play.
+fn relay_error(address: &str, error: &std::io::Error) -> String {
+    use std::io::ErrorKind;
+    match error.kind() {
+        ErrorKind::ConnectionRefused
+        | ErrorKind::ConnectionReset
+        | ErrorKind::ConnectionAborted => {
+            format!("No relay is running at {address}, so there is no server list. Direct connect and offline play still work.")
         }
+        ErrorKind::TimedOut | ErrorKind::WouldBlock => {
+            format!("The relay at {address} did not answer in time (firewall or wrong address?).")
+        }
+        _ => format!("Cannot reach the relay directory at {address}: {error}"),
     }
 }
 fn open_folder(path: PathBuf, message: &mut String) {
@@ -1751,7 +1798,13 @@ mod tests {
         app.config.relay = address.to_string();
         app.browse();
         wait_browser(&mut app);
-        assert!(app.browser_error.as_ref().unwrap().contains("Cannot reach"));
+        let error = app.browser_error.clone().unwrap();
+        assert!(
+            error.contains(&format!("No relay is running at {address}"))
+                || error.contains("Cannot reach the relay directory"),
+            "{error}"
+        );
+        assert_eq!(app.logged_browser_error.as_deref(), Some(error.as_str()));
         let relay = sa_net::relay::Relay::start("127.0.0.1:0".parse().unwrap()).unwrap();
         app.config.relay = relay.address.to_string();
         app.browse();
@@ -1986,6 +2039,46 @@ mod tests {
         ]);
         assert_ne!(first, context.memory(|memory| memory.focused()));
         assert_eq!(clicked, 1);
+    }
+    #[test]
+    fn servers_can_be_joined_in_a_content_pack_without_an_installation() {
+        let context = egui::Context::default();
+        let mut app = Launcher::configured(
+            &context,
+            LauncherConfig::default(),
+            Settings::default(),
+            false,
+        );
+        let direct = Session::Direct("127.0.0.1:7777".into());
+        assert!(!app.join_ready(), "no installation, no pack");
+        assert_eq!(app.join_content(&direct), None);
+        let pack = PathBuf::from("content").join("sare-rp-town");
+        app.packs = vec![(pack.clone(), "SARE RP Town".into())];
+        app.join_pack = Some(pack.clone());
+        assert!(app.join_ready());
+        assert_eq!(
+            app.join_content(&direct),
+            Some(pack.clone().into_os_string())
+        );
+        assert_eq!(app.join_content(&Session::Offline), None);
+        let args = sa_client::launch::Launch {
+            game: PathBuf::new(),
+            mods: PathBuf::from("mods"),
+            cache: PathBuf::from("cache"),
+            player: "Player".into(),
+            session: direct.clone(),
+            content: app.join_content(&direct),
+        }
+        .args()
+        .unwrap();
+        let args: Vec<String> = args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        let at = |flag: &str| args.iter().position(|a| a == flag).unwrap();
+        assert_eq!(args[at("--content") + 1], pack.to_string_lossy());
+        assert_eq!(args[at("--join") + 1], "127.0.0.1:7777");
+        assert!(!args.iter().any(|a| a == "--game-dir"));
     }
     #[test]
     fn back_returns_to_home_and_disabled_launch_cannot_spawn() {

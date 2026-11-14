@@ -1,5 +1,14 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.47.1:
+- The client download now includes the content packs (content/sare-rp-town and content/example-town), so SARE RP Town runs straight from the ZIP. Start it from the launcher's home page, or join an RP server by picking World: SARE RP Town on the Servers page.
+- Fixed: SARE RP Town's map was not drawn (empty grey world). Two parts of the map shared one texture and the second one failed to upload. If the map ever fails to load now, a red message says so on screen.
+- sa-runtime writes sare-runtime.log beside itself: the content pack, every model it loaded or skipped (with the reason) and the triangle counts.
+- Launcher log times are readable (UTC), and an unreachable relay is logged once in plain words instead of on every retry.
+- Older launchers cannot install this update automatically (they do not know the new content folder). Download this ZIP once by hand; later updates work again.
+
+The world fix was checked on a software renderer (Linux); not yet on Windows GPUs.
+
 Version 0.47.0:
 - New server template: SARE RP Town (sv_template sare-rp), a roleplay server on its own map. No GTA files needed.
 - The map, content/sare-rp-town, is made in Blender by a script: police station with cells, hospital, bank and ATMs, 24/7 shop, gas station, City Hall, car dealer, mechanic, public garage, taxi depot, houses and apartments.

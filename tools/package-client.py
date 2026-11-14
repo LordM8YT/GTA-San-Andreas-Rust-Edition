@@ -72,6 +72,34 @@ def upstream_notices(dependency, cache):
     with ThreadPoolExecutor(max_workers=4) as workers:
         return [(path, base + path.name) for path in workers.map(fetch, names) if path is not None]
 
+# Content packs ship with the client so SARE RP Town and Example Town run
+# out of the box, without San Andreas. Only these file types are copied.
+CONTENT_SUFFIXES = ('.json', '.glb', '.gltf', '.bin', '.png', '.md', '.txt')
+LFS_POINTER = b'version https://git-lfs.github.com/spec/'
+
+def content_files(repo: Path):
+    """(source, zip name) for every pack folder in content/ with a content.json."""
+    root = repo / 'content'
+    if not root.is_dir():
+        return []
+    files = []
+    readme = root / 'README.md'
+    if readme.is_file() and not readme.is_symlink():
+        files.append((readme, 'content/README.md'))
+    for pack in sorted(p for p in root.iterdir() if p.is_dir() and not p.is_symlink()):
+        if not (pack / 'content.json').is_file():
+            continue
+        for file in sorted(pack.rglob('*')):
+            if not file.is_file() or file.is_symlink() or file.suffix.lower() not in CONTENT_SUFFIXES:
+                continue
+            data = file.read_bytes()
+            if data.startswith(LFS_POINTER):
+                raise ValueError(f'{file.relative_to(repo)} is a Git LFS pointer, not the real file')
+            if file.suffix.lower() == '.glb' and data[:4] != b'glTF':
+                raise ValueError(f'{file.relative_to(repo)} is not a binary glTF file')
+            files.append((file, file.relative_to(repo).as_posix()))
+    return files
+
 def package(target: Path, destination: Path, platform: str) -> Path:
     targets = {
         'windows': 'x86_64-pc-windows-msvc',
@@ -109,6 +137,8 @@ def package(target: Path, destination: Path, platform: str) -> Path:
             (REPO / 'native/crates/runtime/assets/ArchivoBlack-OFL.txt', 'licenses/ArchivoBlack-OFL.txt'),
             (REPO / 'native/crates/runtime/vendor/fsr1/license.txt', 'licenses/FSR1.txt'),
         ]:
+            archive.write(source, name)
+        for source, name in content_files(REPO):
             archive.write(source, name)
         for dependency in metadata['packages']:
             if dependency['source'] is None:

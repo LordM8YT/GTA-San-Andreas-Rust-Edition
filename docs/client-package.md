@@ -6,6 +6,13 @@ needed by developers building from source. Choose your original **PC San Andreas
 installation in Settings, validate it, then Play or Continue free roam. The original
 executable is never launched and original files are never modified.
 
+**No San Andreas? Play SARE RP Town:** the `content/` folder holds the free
+SARE RP Town and Example Town packs. Click **SARE RP Town** under *Content
+packs* on the launcher's home page to walk around, or to join an RP server
+pick *World: SARE RP Town* on the Servers page and connect (command line:
+`sa-runtime --content sare-rp-town --join IP:7777`). If the map stays
+empty, send `sare-runtime.log` from this folder.
+
 Questions, bug reports and people to play with: <https://discord.gg/F8KwXJqw6D>
 
 For multiplayer, choose Servers, enter a host IP:port or a relay IP:port

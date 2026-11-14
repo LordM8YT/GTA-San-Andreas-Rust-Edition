@@ -229,7 +229,24 @@ pub fn load_characters(folder: &Path, manifest: &Manifest) -> Result<Option<Char
 /// The pack's vehicles as car scenes, in manifest order. A broken vehicle is
 /// reported and left out, so one bad file does not stop the world.
 pub fn load_vehicles(folder: &Path, manifest: &Manifest) -> Vec<(VehicleSpec, Scene)> {
-    manifest
+    let (loaded, failed) = load_vehicles_reporting(folder, manifest);
+    for (model, error) in failed {
+        eprintln!("Content pack vehicle {model} skipped: {error}");
+    }
+    loaded
+}
+
+/// A vehicle left out of a pack: its model and why.
+pub type SkippedVehicle = (String, String);
+
+/// Like [`load_vehicles`], also returning each skipped vehicle's model and
+/// the reason, for the runtime log.
+pub fn load_vehicles_reporting(
+    folder: &Path,
+    manifest: &Manifest,
+) -> (Vec<(VehicleSpec, Scene)>, Vec<SkippedVehicle>) {
+    let mut failed = Vec::new();
+    let loaded = manifest
         .vehicles
         .iter()
         .filter_map(|spec| {
@@ -244,12 +261,13 @@ pub fn load_vehicles(folder: &Path, manifest: &Manifest) -> Vec<(VehicleSpec, Sc
             match loaded {
                 Ok(scene) => Some((spec.clone(), scene)),
                 Err(error) => {
-                    eprintln!("Content pack vehicle {} skipped: {error:#}", spec.model);
+                    failed.push((spec.model.clone(), format!("{error:#}")));
                     None
                 }
             }
         })
-        .collect()
+        .collect();
+    (loaded, failed)
 }
 
 /// A loaded pack world, kept in glTF space and moved into place per load.

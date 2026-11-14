@@ -111,6 +111,35 @@ impl Menu {
 
     /// "BUSTED" across the screen for a few seconds after an arrest, over a
     /// darkening, the way SA cuts away from the arrest.
+    /// A red box at the top while the world is missing, so an empty map
+    /// never looks like a silent hang. The details are in sare-runtime.log.
+    pub(super) fn world_error_banner(&self, ctx: &egui::Context, scale: f32) {
+        let Some(error) = &self.world_error else {
+            return;
+        };
+        let screen = ctx.content_rect();
+        let white = egui::Color32::WHITE;
+        egui::Area::new("world-error".into())
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 24.0 * scale))
+            .order(egui::Order::Foreground)
+            .interactable(false)
+            .show(ctx, |ui| {
+                egui::Frame::new()
+                    .fill(egui::Color32::from_rgba_unmultiplied(120, 20, 20, 230))
+                    .corner_radius(6)
+                    .inner_margin(12.0 * scale)
+                    .show(ui, |ui| {
+                        ui.set_max_width((screen.width() * 0.7).max(200.0));
+                        ui.label(
+                            egui::RichText::new("The map could not be loaded")
+                                .size(18.0 * scale)
+                                .strong()
+                                .color(white),
+                        );
+                        ui.label(egui::RichText::new(error).size(14.0 * scale).color(white));
+                    });
+            });
+    }
     pub(super) fn busted_banner(&mut self, ctx: &egui::Context, scale: f32) {
         let now = ctx.input(|input| input.time);
         if std::mem::take(&mut self.busted) {

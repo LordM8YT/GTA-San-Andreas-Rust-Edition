@@ -7,6 +7,9 @@ use super::{
 };
 use eframe::egui::{self, Color32, RichText};
 
+/// World picker entry for the player's own San Andreas installation.
+const INSTALLATION: &str = "San Andreas (your installation)";
+
 #[derive(Clone, Copy, PartialEq, Default)]
 pub enum ServerTab {
     #[default]
@@ -254,7 +257,7 @@ impl Launcher {
                         if response.clicked() {
                             self.selected_server = Some(row.key.clone());
                         }
-                        if response.double_clicked() && row.compatible && self.ready() {
+                        if response.double_clicked() && row.compatible && self.join_ready() {
                             self.start(row.session.clone());
                         }
                     }
@@ -397,17 +400,23 @@ impl Launcher {
                         ),
                     );
                 }
-                ui.add_space(14.);
+                ui.add_space(10.);
+                self.world_picker(ui);
+                ui.add_space(8.);
                 let full = row.players.is_some_and(|(n, max)| n >= max);
                 let connect = ui.add_enabled(
-                    row.compatible && !full && self.ready(),
+                    row.compatible && !full && self.join_ready(),
                     primary("CONNECT").min_size(egui::vec2(ui.available_width(), 48.)),
                 );
                 if connect.clicked() {
                     self.start(row.session.clone());
                 }
-                if !self.ready() {
-                    ui.small("Choose a valid installation in Settings to connect.");
+                if !self.join_ready() && self.join_pack.is_none() {
+                    ui.small(if self.packs.is_empty() {
+                        "Choose a valid installation in Settings to connect."
+                    } else {
+                        "Choose a valid installation in Settings, or pick a content pack under World."
+                    });
                 }
                 ui.horizontal_wrapped(|ui| match (row.saved, self.server_tab) {
                     (None, _) => {
@@ -469,6 +478,35 @@ impl Launcher {
         self.direct_open = true;
     }
 
+    /// Which world to join in: the San Andreas installation or a content
+    /// pack. Servers on their own map (like SARE RP Town) need their pack.
+    fn world_picker(&mut self, ui: &mut egui::Ui) {
+        if self.packs.is_empty() {
+            return;
+        }
+        let current = self
+            .join_pack
+            .as_ref()
+            .and_then(|pack| self.packs.iter().find(|(folder, _)| folder == pack))
+            .map_or(INSTALLATION, |(_, name)| name.as_str())
+            .to_owned();
+        ui.horizontal(|ui| {
+            ui.label("World");
+            egui::ComboBox::from_id_salt("join-world")
+                .selected_text(current)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.join_pack, None, INSTALLATION);
+                    for (folder, name) in &self.packs {
+                        ui.selectable_value(&mut self.join_pack, Some(folder.clone()), name.as_str());
+                    }
+                })
+                .response
+                .on_hover_text(
+                    "Use the content pack the server is made for (for example SARE RP Town). Content packs need no San Andreas installation.",
+                );
+        });
+    }
+
     fn direct_dialog(&mut self, ui: &mut egui::Ui) {
         if !self.direct_open {
             return;
@@ -504,11 +542,15 @@ impl Launcher {
                     ui.label("Server address (IP:port)");
                     input(ui, &mut self.direct, "127.0.0.1:7777");
                 }
+                self.world_picker(ui);
                 ui.add_space(6.);
                 let mut close = false;
                 ui.horizontal_wrapped(|ui| {
                     if ui
-                        .add_enabled(self.ready() && self.connection_valid(), primary("Connect"))
+                        .add_enabled(
+                            self.join_ready() && self.connection_valid(),
+                            primary("Connect"),
+                        )
                         .clicked()
                     {
                         close = true;
