@@ -180,6 +180,8 @@ prints both world and Blender coordinates, handy when moving places.
 
 ## Characters and cars
 
+![A street in SARE RP Town](../../../docs/images/sare-rp-street.png)
+
 **Your look.** After you make your character a creator opens: body (male or
 female), skin tone, hair style and colour, top, trousers and shoes, each in
 its own colour. Use the menu rows to step through the choices; the change
@@ -211,6 +213,9 @@ The characters and cars are made by
 [`make_rp_vehicles.py`](../../../tools/blender/make_rp_vehicles.py); see
 [content packs](../../../docs/content-packs.md) for the naming rules if you
 want to add your own clothes or cars.
+
+![Characters](../../../docs/images/sare-rp-characters.png)
+![Cars](../../../docs/images/sare-rp-cars.png)
 
 ## Editing the map in Blender
 
