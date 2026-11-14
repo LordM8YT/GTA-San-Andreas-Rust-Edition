@@ -1,7 +1,10 @@
 //! Content packs: a folder with `content.json` and a glTF world, so anyone can
 //! make a playable SARE world in Blender without any San Andreas files.
 //! The format is documented in docs/content-packs.md.
-use crate::{collision::CollisionWorld, content::WorldSource, gltf_model, vehicle, Scene};
+use crate::character::CharacterModel;
+use crate::{
+    collision::CollisionWorld, content::WorldSource, gltf_model, pack_vehicle, vehicle, Scene,
+};
 use anyhow::{ensure, Context, Result};
 use glam::Vec3;
 use serde::Deserialize;
@@ -30,6 +33,44 @@ pub struct Manifest {
     #[serde(default)]
     pub description: Option<String>,
     pub world: WorldSpec,
+    /// Optional customisable characters (see `character`), a `.glb` file.
+    #[serde(default)]
+    pub characters: Option<String>,
+    /// Optional drivable vehicles (see `pack_vehicle`).
+    #[serde(default)]
+    pub vehicles: Vec<VehicleSpec>,
+}
+
+/// Most vehicles one pack may list.
+pub const MAX_VEHICLES: usize = 64;
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VehicleSpec {
+    /// Model name scripts use, e.g. `CreateVehicle("sedan", ...)`: 1-32
+    /// lowercase letters, digits, `-` or `_`.
+    pub model: String,
+    /// Name shown in menus.
+    pub name: String,
+    /// The vehicle's `.glb` file inside the pack.
+    pub scene: String,
+    /// Default paint as sRGB, for primitives using the `paint` material.
+    #[serde(default)]
+    pub color: Option<[u8; 3]>,
+    /// Handling overrides; omitted fields keep the defaults.
+    #[serde(default)]
+    pub handling: Option<vehicle::Handling>,
+    /// Driver seat in Blender coordinates relative to the vehicle origin
+    /// ([right, forward, up], metres): where the seated driver's feet go.
+    #[serde(default)]
+    pub seat: Option<[f32; 3]>,
+}
+impl VehicleSpec {
+    /// The seat in model space (glTF axes: -Z front, -X left).
+    pub fn seat_model_space(&self) -> Vec3 {
+        let [right, forward, up] = self.seat.unwrap_or([-0.38, 0.0, -0.45]);
+        Vec3::new(right, up, -forward)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -75,6 +116,44 @@ impl Manifest {
             self.world.spawn.iter().all(|v| v.is_finite()),
             "world.spawn must be three numbers"
         );
+        ensure!(
+            self.vehicles.len() <= MAX_VEHICLES,
+            "a pack may list at most {MAX_VEHICLES} vehicles"
+        );
+        let mut seen = std::collections::HashSet::new();
+        for spec in &self.vehicles {
+            ensure!(
+                !spec.model.is_empty()
+                    && spec.model.len() <= 32
+                    && spec.model.bytes().all(|b| b.is_ascii_lowercase()
+                        || b.is_ascii_digit()
+                        || b == b'-'
+                        || b == b'_'),
+                "vehicle model {:?} must be 1-32 lowercase letters, digits, - or _",
+                spec.model
+            );
+            ensure!(
+                seen.insert(spec.model.as_str()),
+                "vehicle model {:?} is listed twice",
+                spec.model
+            );
+            ensure!(
+                !spec.name.trim().is_empty(),
+                "vehicle {} needs a name",
+                spec.model
+            );
+            ensure!(
+                spec.seat
+                    .is_none_or(|s| s.iter().all(|v| v.is_finite() && v.abs() < 10.0)),
+                "vehicle {} has an odd seat",
+                spec.model
+            );
+            if let Some(handling) = &spec.handling {
+                handling
+                    .validate()
+                    .with_context(|| format!("vehicle {} handling", spec.model))?;
+            }
+        }
         Ok(())
     }
 }
@@ -136,6 +215,41 @@ fn inside(folder: &Path, relative: &str) -> Result<PathBuf> {
         "{relative} must be a plain path inside the pack folder"
     );
     Ok(folder.join(path))
+}
+
+/// The pack's characters, if it has any.
+pub fn load_characters(folder: &Path, manifest: &Manifest) -> Result<Option<CharacterModel>> {
+    manifest
+        .characters
+        .as_ref()
+        .map(|file| CharacterModel::load(&inside(folder, file)?))
+        .transpose()
+}
+
+/// The pack's vehicles as car scenes, in manifest order. A broken vehicle is
+/// reported and left out, so one bad file does not stop the world.
+pub fn load_vehicles(folder: &Path, manifest: &Manifest) -> Vec<(VehicleSpec, Scene)> {
+    manifest
+        .vehicles
+        .iter()
+        .filter_map(|spec| {
+            let loaded = inside(folder, &spec.scene).and_then(|path| {
+                pack_vehicle::load(
+                    &path,
+                    &format!("pack:{}:{}", manifest.id, spec.model),
+                    spec.color.unwrap_or([200, 200, 200]),
+                    spec.handling.unwrap_or_default(),
+                )
+            });
+            match loaded {
+                Ok(scene) => Some((spec.clone(), scene)),
+                Err(error) => {
+                    eprintln!("Content pack vehicle {} skipped: {error:#}", spec.model);
+                    None
+                }
+            }
+        })
+        .collect()
 }
 
 /// A loaded pack world, kept in glTF space and moved into place per load.

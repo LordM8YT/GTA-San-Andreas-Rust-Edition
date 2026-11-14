@@ -1,5 +1,16 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.47.0:
+- New server template: SARE RP Town (sv_template sare-rp), a roleplay server on its own map. No GTA files needed.
+- The map, content/sare-rp-town, is made in Blender by a script: police station with cells, hospital, bank and ATMs, 24/7 shop, gas station, City Hall, car dealer, mechanic, public garage, taxi depot, houses and apartments.
+- RP scripts on top of SARE Box: character IDs, bank and ATMs, inventory and shops, police (duty, fines, cuffs, search, jail), EMS, taxi and mechanic jobs, /911 dispatch, bills, a car dealer and garage, /me /do /ooc and more, and admin tools.
+- Players join with: sa-runtime --content sare-rp-town --join <address>:7777. See server-data/resources/[sare-rp]/README.md.
+- Content packs can have customisable characters: male and female bodies, skin, hair style and colour, top, trousers and shoes. RP Town has a look creator on first join and a clothes shop. Everyone sees your look.
+- Content packs can have their own cars. RP Town has nine: compact, sedan, pickup, SUV, sports car, police, ambulance, taxi and tow truck, with paint colours.
+- Server cars can now be driven: press F next to one. The server decides who may drive it (owners, on-duty jobs), and everyone sees it move. The dealer asks for a colour.
+
+The RP scripts, characters and cars passed automated tests and a headless check. Not tried yet with real players on a VPS or on a real screen.
+
 Version 0.46.0:
 - Mods: props and buildings can now be .glb files straight from Blender, no RenderWare tools needed. Use "model": "bench.glb" in mod.json. Textures come inside the file, and COL_/NOCOL_ object names choose what is solid, just like content packs.
 - Servers can share .glb mod files with players.

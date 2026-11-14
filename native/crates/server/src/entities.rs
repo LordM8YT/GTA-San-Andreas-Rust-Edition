@@ -16,6 +16,9 @@ pub struct Entity {
     pub resource: String,
     /// Bumped on every change, so players get the new state once.
     pub revision: u64,
+    /// The player driving it. A driven vehicle is the driver's own synced
+    /// car meanwhile, so players do not get it as an entity.
+    pub driver: Option<u32>,
 }
 
 #[derive(Default)]
@@ -77,10 +80,12 @@ impl Registry {
                     model,
                     position,
                     heading: heading.rem_euclid(360.0),
+                    color: None,
                 },
                 bucket: 0,
                 resource: resource.to_string(),
                 revision: self.revision,
+                driver: None,
             },
         );
         Ok(handle)
@@ -108,6 +113,26 @@ impl Registry {
     }
     pub fn set_bucket(&mut self, handle: u32, bucket: u32) -> bool {
         self.change(handle, |e| e.bucket = bucket)
+    }
+    pub fn set_color(&mut self, handle: u32, color: Option<[u8; 3]>) -> bool {
+        self.change(handle, |e| e.state.color = color)
+    }
+    pub fn set_driver(&mut self, handle: u32, driver: Option<u32>) -> bool {
+        self.change(handle, |e| e.driver = driver)
+    }
+    /// Move a driven vehicle along with its driver. Players do not get
+    /// driven vehicles, so this does not count as a change for them.
+    pub fn follow(&mut self, handle: u32, position: [f32; 3], heading: f32) {
+        if let Some(e) = self.entities.get_mut(&handle) {
+            if position
+                .iter()
+                .all(|v| v.is_finite() && v.abs() < 100_000.0)
+                && heading.is_finite()
+            {
+                e.state.position = position;
+                e.state.heading = heading.rem_euclid(360.0);
+            }
+        }
     }
     pub fn delete(&mut self, handle: u32) -> bool {
         self.entities.remove(&handle).is_some()
@@ -141,12 +166,20 @@ impl Registry {
         let changed: Vec<EntityState> = self
             .entities
             .values()
-            .filter(|e| e.bucket == bucket && known.get(&e.state.handle) != Some(&e.revision))
+            .filter(|e| {
+                e.bucket == bucket
+                    && e.driver.is_none()
+                    && known.get(&e.state.handle) != Some(&e.revision)
+            })
             .map(|e| e.state.clone())
             .collect();
         let deletes = known
             .keys()
-            .filter(|h| self.entities.get(h).is_none_or(|e| e.bucket != bucket))
+            .filter(|h| {
+                self.entities
+                    .get(h)
+                    .is_none_or(|e| e.bucket != bucket || e.driver.is_some())
+            })
             .copied()
             .collect();
         Update {
@@ -194,6 +227,31 @@ mod tests {
     }
     fn handles(update: &Update) -> Vec<u32> {
         update.upserts.iter().flatten().map(|s| s.handle).collect()
+    }
+    #[test]
+    fn driven_vehicles_leave_every_player_and_come_back_where_they_were_left() {
+        let mut r = Registry::default();
+        let car = r
+            .create(
+                "a",
+                EntityKind::Vehicle,
+                ModelRef::Name("sedan".into()),
+                [1.0, 2.0, 3.0],
+                0.0,
+            )
+            .unwrap();
+        assert_eq!(handles(&sync(&mut r, 1, 0)), [car]);
+        assert!(r.set_driver(car, Some(1)));
+        assert_eq!(sync(&mut r, 1, 0).deletes, [car]);
+        assert!(sync(&mut r, 2, 0).is_empty());
+        r.follow(car, [40.0, 50.0, 3.0], 450.0);
+        assert!(sync(&mut r, 1, 0).is_empty());
+        assert!(r.set_driver(car, None));
+        let back = sync(&mut r, 2, 0);
+        assert_eq!(back.upserts[0][0].position, [40.0, 50.0, 3.0]);
+        assert_eq!(back.upserts[0][0].heading, 90.0);
+        assert!(r.set_color(car, Some([1, 2, 3])));
+        assert_eq!(sync(&mut r, 2, 0).upserts[0][0].color, Some([1, 2, 3]));
     }
     #[test]
     fn players_get_entities_of_their_bucket_once_and_lose_them_on_change() {

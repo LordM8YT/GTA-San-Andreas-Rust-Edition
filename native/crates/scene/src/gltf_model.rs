@@ -167,6 +167,13 @@ impl Model {
 /// Load a `.glb` or `.gltf` file. Texture keys start with `key_prefix`, so
 /// two models never share a texture by accident.
 pub fn load(path: &Path, key_prefix: &str) -> Result<Model> {
+    let bytes = read_file(path)?;
+    let folder = path.parent().unwrap_or(Path::new("."));
+    parse(&bytes, folder, key_prefix).with_context(|| format!("loading {}", path.display()))
+}
+
+/// Read a model file, refusing files over [`MAX_FILE_BYTES`].
+pub(crate) fn read_file(path: &Path) -> Result<Vec<u8>> {
     let size = fs::metadata(path)
         .with_context(|| format!("reading {}", path.display()))?
         .len();
@@ -175,9 +182,7 @@ pub fn load(path: &Path, key_prefix: &str) -> Result<Model> {
         "{} is larger than 256 MiB",
         path.display()
     );
-    let bytes = fs::read(path)?;
-    let folder = path.parent().unwrap_or(Path::new("."));
-    parse(&bytes, folder, key_prefix).with_context(|| format!("loading {}", path.display()))
+    Ok(fs::read(path)?)
 }
 
 /// Read a file next to the model, refusing paths that leave its folder.
@@ -204,7 +209,9 @@ fn sibling(folder: &Path, uri: &str) -> Result<Vec<u8>> {
     Ok(fs::read(path)?)
 }
 
-pub fn parse(bytes: &[u8], folder: &Path, key_prefix: &str) -> Result<Model> {
+/// Read a glTF file's document and buffers, with every accessor checked to
+/// stay inside its data.
+pub(crate) fn open_document(bytes: &[u8], folder: &Path) -> Result<(gltf::Gltf, Vec<Vec<u8>>)> {
     let gltf = gltf::Gltf::from_slice(bytes).context("not a valid glTF 2.0 file")?;
     let mut buffers = Vec::new();
     for buffer in gltf.document.buffers() {
@@ -224,6 +231,11 @@ pub fn parse(bytes: &[u8], folder: &Path, key_prefix: &str) -> Result<Model> {
     }
 
     check_ranges(&gltf.document, &buffers)?;
+    Ok((gltf, buffers))
+}
+
+pub fn parse(bytes: &[u8], folder: &Path, key_prefix: &str) -> Result<Model> {
+    let (gltf, buffers) = open_document(bytes, folder)?;
 
     let mut images: HashMap<usize, Option<String>> = HashMap::new();
     let mut model = Model::default();

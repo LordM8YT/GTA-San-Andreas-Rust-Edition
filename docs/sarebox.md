@@ -159,8 +159,13 @@ console with who did it (`[admin] Name (3, license:...): givemoney 4 cash 50`).
 ## Jobs
 
 Jobs live in `sarebox_core/shared/config.lua` with grades and pay, like
-QBCore's shared jobs: `unemployed`, `taxi`, `mechanic` and `police` to start
-with. Add your own there and restart the resource.
+QBCore's shared jobs: `unemployed`, `taxi`, `mechanic`, `police` and
+`ambulance` (EMS) to start with. Add your own there and restart the resource.
+
+For a complete roleplay server built on SARE Box (identity, bank, inventory,
+shops, police/EMS/taxi/mechanic, dealer and garage) on its own map, pick the
+**SARE RP Town** template (`+set sv_template sare-rp`); see
+[its README](../server-data/resources/[sare-rp]/README.md).
 
 ## Taxi job
 
@@ -271,6 +276,7 @@ event; close a task before paying for it; and end open tasks on
 - No database: KVP files hold up to 8 MB per resource, enough for thousands
   of characters, but there is no query language or multi-server sharing.
 - One character per license; no character selection screen.
-- No inventory, phone, garages, vehicles owned by the server, or NPC
-  passengers.
+- No inventory, phone, garages or NPC passengers in SARE Box itself; the
+  SARE RP Town scripts (`[sare-rp]`) add inventory, a phone item, a car
+  dealer, garages and drivable server cars.
 - Traffic is not encrypted (see [Player identity](#player-identity)).
