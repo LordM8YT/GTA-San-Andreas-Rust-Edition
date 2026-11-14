@@ -276,6 +276,7 @@ event; close a task before paying for it; and end open tasks on
 - No database: KVP files hold up to 8 MB per resource, enough for thousands
   of characters, but there is no query language or multi-server sharing.
 - One character per license; no character selection screen.
-- No inventory, phone, garages, vehicles owned by the server, or NPC
-  passengers.
+- No inventory, phone, garages or NPC passengers in SARE Box itself; the
+  SARE RP Town scripts (`[sare-rp]`) add inventory, a phone item, a car
+  dealer, garages and drivable server cars.
 - Traffic is not encrypted (see [Player identity](#player-identity)).

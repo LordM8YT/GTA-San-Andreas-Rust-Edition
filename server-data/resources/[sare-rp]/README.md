@@ -17,12 +17,13 @@ money on every action, and clients only show menus.
 | Place | What you do there |
 | --- | --- |
 | Legion Square (park, centre-west) | New characters spawn here |
+| Clothes shop (centre-west, teal marker) | Change your look ($120) |
 | Police station (north) | Go on duty, armoury, job cars, cells |
 | Hospital (north-west) | Check in for treatment, EMS duty, job cars, ATM |
 | Bank (centre) | Deposit, withdraw, transfer; ATMs around town |
 | 24/7 shop and gas station | Food, drinks, phone, tools |
 | City Hall (far north) | Job centre (taxi, mechanic, unemployed), new ID |
-| Premium Motors (east) | Buy a car (paid from the bank) |
+| Premium Motors (east) | Buy a car in the colour you pick (paid from the bank) |
 | Mechanic garage (east) | Mechanic duty |
 | Public garage (south) | Store and take out your cars |
 | Taxi depot (north-west) | Taxi duty and job car |
@@ -35,11 +36,11 @@ court and a parking lot fill the rest of the 340 × 340 m map.
 | Resource | Does |
 | --- | --- |
 | `sare_rp_core` | Places of the map, blips, the **H** interaction, menus, dialogs, progress bars, helpers (`exports.sare_rp_core:GetRP()`) |
-| `sare_rp_identity` | Character name, date of birth and gender on first join; `/identity`, `/showid`; new ID at City Hall |
+| `sare_rp_identity` | Character name, date of birth and gender on first join, then the look creator; clothes shop, `/look`; `/identity`, `/showid`; new ID at City Hall |
 | `sare_rp_chat` | Local chat and `/me`, `/do`, `/shout`, `/looc`, `/try`; global `/ooc`, `/twt`, `/ad` |
 | `sare_rp_bank` | Bank counter and ATMs: deposit, withdraw, transfer by citizen ID or server ID |
 | `sare_rp_inventory` | Weight-limited inventory (30 kg), use/give/drop, phone, shops |
-| `sare_rp_vehicles` | Car dealer, owned cars with plates, public garage, job vehicles |
+| `sare_rp_vehicles` | Car dealer with colours, owned cars with plates, public garage, job vehicles; who may drive which car |
 | `sare_rp_jobs` | Police, EMS, taxi, mechanic: duty, gear, dispatch (`/911`, `/call`), bills, fines, cuffs, search, jail, treatment |
 | `sare_rp_admin` | `/tp`, `/giveitem`, `/clearinventory`, `/dvall`, `/coords` |
 | `sare-rp-map` | Spawn points in Legion Square |
@@ -148,7 +149,7 @@ files.
 | **F2** | Job menu: duty, fines, cuffs, search, jail, treat, bills |
 | **F1** | Player menu (SARE Box) |
 | **F11** | Admin menu (admins) |
-| **F9** | Spawn your own SARE Kart to drive (content packs) |
+| **F** | Get in or out of the car next to you (driver's seat) |
 | **T** | Chat |
 
 Chat and roleplay commands:
@@ -176,6 +177,40 @@ Admin commands (`group.admin`): SARE Box's `setjob`, `givemoney`, `goto`,
 `/giveitem <id> <item> [count]`, `/clearinventory <id>`, `/dvall` (remove
 all server cars) and `/adminunjail <id>`. `/coords` is open to everyone and
 prints both world and Blender coordinates, handy when moving places.
+
+## Characters and cars
+
+**Your look.** After you make your character a creator opens: body (male or
+female), skin tone, hair style and colour, top, trousers and shoes, each in
+its own colour. Use the menu rows to step through the choices; the change
+shows at once to you and to everyone around you. *Done* saves it with the
+character (`metadata.appearance`), so it comes back after a rejoin. Later,
+press **H** at the clothes shop to change it for `RPConfig.Prices.clothes`
+($120, cash first, then bank); walking out ends the fitting. If you closed
+the creator before *Done*, `/look` opens it again. Other
+scripts can read it with `exports.sare_rp_identity:GetAppearance(source)`.
+
+**Cars.** The pack has nine cars: compact, sedan, pickup, SUV, sports car,
+police cruiser, ambulance, taxi and tow truck. Walk up to one and press
+**F**: the server decides whether you may drive it.
+
+- Cars you bought: only the owner.
+- Job cars (police, ambulance, taxi, tow truck): only that job, on duty.
+- Other server cars: anyone. One driver at a time, from within 7 m.
+
+While you drive, everyone sees the car move with you; when you get out the
+car stays where you left it (with its colour). If you disconnect, the car is
+freed after 3 seconds. Premium Motors sells the compact, sedan, pickup, SUV
+and sports car (`RPConfig.Dealer`), and asks for a colour from
+`RPConfig.CarColours`. Taking a job car from the locker puts you in the
+driver's seat. Prices, colours and job models are in
+`sare_rp_core/shared/config.lua`.
+
+The characters and cars are made by
+[`make_rp_characters.py`](../../../tools/blender/make_rp_characters.py) and
+[`make_rp_vehicles.py`](../../../tools/blender/make_rp_vehicles.py); see
+[content packs](../../../docs/content-packs.md) for the naming rules if you
+want to add your own clothes or cars.
 
 ## Editing the map in Blender
 
@@ -220,12 +255,11 @@ reads.
 
 - Players must install the content pack themselves and join from the
   command line; servers cannot send or require packs yet.
-- In a content pack, other players are not drawn yet (their game has no
-  ped model to show); chat, money, jobs and menus work. Running with your
-  own San Andreas copy instead of the pack shows players but not this town.
-- Cars from the dealer, garage and job lockers are server cars: everyone
-  sees them parked, but nobody can drive server cars yet. Drive your own
-  F9 SARE Kart.
+- Only the driver's seat of server cars is used; passengers ride only in
+  personal cars. There are no door or get-in animations: you appear in the
+  seat.
+- Characters are low-poly with rigid parts (no skin bending), and clothes
+  are a fixed set of styles. Faces and tattoos are not customisable yet.
 - There is no API to repair or damage cars yet, so the mechanic job is
   dispatch and billing only.
 - Characters are tied to the license of the player's SARE install; one

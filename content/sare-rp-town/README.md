@@ -26,3 +26,18 @@ blender -b --factory-startup --python tools/blender/make_rp_town.py
 
 rebuilds `world.glb` and the server's `locations.lua` and spawn points.
 Signs are `NOCOL_` (not solid); glass is see-through and not solid.
+
+The pack also has (version 1.1.0):
+
+- `characters.glb`: male and female bodies with hair, tops, trousers and
+  shoes in several styles, plus `idle`, `walk`, `run`, `sit` and `fall`
+  animations. Players pick a style and colour for each part; see
+  [content packs](../../docs/content-packs.md#characters). Rebuild with
+  `tools/blender/make_rp_characters.py`.
+- `vehicles/*.glb`: nine cars (compact, sedan, pickup, SUV, sports, police,
+  ambulance, taxi, tow truck) with separate wheels and a paintable body,
+  listed under `vehicles` in `content.json` with name, default colour,
+  driver's seat and handling. Rebuild with `tools/blender/make_rp_vehicles.py`
+  (it also updates `content.json`).
+
+`tools/blender/render_rp_showcase.py` renders a street scene with all three.

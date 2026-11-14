@@ -29,6 +29,7 @@ RPConfig.Places = {
   mechanic = { label = 'Mechanic workshop', blip = 'Mechanic', colour = 5 },
   mechanic_duty = { label = 'Mechanic lockers', job = 'mechanic' },
   taxi_depot = { label = 'Taxi depot', blip = 'Taxi', colour = 5 },
+  clothes = { label = 'Clothes shop', blip = 'Clothes', colour = 8 },
 }
 
 -- Items for the inventory and the shops. `weight` in grams.
@@ -72,18 +73,64 @@ RPConfig.JobGear = {
 -- admin: /setjob <id> police 0
 RPConfig.OpenJobs = { 'unemployed', 'taxi', 'mechanic' }
 
--- Vehicles. SARE content packs have one car model so far, SARE Kart; with
--- your own San Andreas copy, players can use SA model names (`infernus`).
+-- Vehicles. Models are the SARE RP Town content pack's vehicles (see
+-- content/sare-rp-town/content.json); with your own San Andreas copy you
+-- can also use SA model names (`infernus`).
 RPConfig.Dealer = {
-  { model = 'SARE Kart', label = 'SARE Kart', price = 6500 },
-  -- { model = 'infernus', label = 'Infernus', price = 95000 },  -- needs the player's own SA copy
+  { model = 'compact', label = 'Compact', price = 4500 },
+  { model = 'sedan', label = 'Sedan', price = 9000 },
+  { model = 'pickup', label = 'Pickup', price = 14000 },
+  { model = 'suv', label = 'SUV', price = 16500 },
+  { model = 'sports', label = 'Sports car', price = 42000 },
 }
-RPConfig.JobVehicle = { police = 'SARE Kart', ambulance = 'SARE Kart', mechanic = 'SARE Kart', taxi = 'SARE Kart' }
+-- Paint the dealer offers (sRGB).
+RPConfig.CarColours = {
+  { label = 'Midnight black', rgb = { 25, 25, 30 } }, { label = 'Arctic white', rgb = { 235, 235, 235 } },
+  { label = 'Silver', rgb = { 170, 172, 178 } }, { label = 'Ocean blue', rgb = { 50, 90, 170 } },
+  { label = 'Racing red', rgb = { 190, 35, 35 } }, { label = 'Forest green', rgb = { 40, 105, 60 } },
+  { label = 'Sunset orange', rgb = { 230, 120, 30 } }, { label = 'Canary yellow', rgb = { 240, 200, 40 } },
+  { label = 'Plum', rgb = { 105, 50, 120 } }, { label = 'Sand', rgb = { 200, 180, 140 } },
+}
+-- The vehicle each job takes from its garage, already in work colours.
+RPConfig.JobVehicle = { police = 'police', ambulance = 'ambulance', mechanic = 'towtruck', taxi = 'taxi' }
+
+-- Characters (content packs with characters, like SARE RP Town). Style
+-- numbers match the pack's characters.glb; see tools/blender/make_rp_characters.py.
+RPConfig.Looks = {
+  bodies = { 'Male', 'Female' },
+  hair = { 'Buzz cut', 'Short', 'Quiff', 'Long', 'Ponytail', 'Afro', 'Bun' },
+  top = { 'T-shirt', 'Long sleeve', 'Hoodie', 'Tank top', 'Jacket', 'Suit' },
+  pants = { 'Jeans', 'Shorts', 'Cargo', 'Skirt' },
+  shoes = { 'Sneakers', 'Boots', 'Dress shoes' },
+  skin = {
+    { label = 'Porcelain', rgb = { 245, 215, 190 } }, { label = 'Light', rgb = { 232, 190, 155 } },
+    { label = 'Tan', rgb = { 214, 160, 120 } }, { label = 'Olive', rgb = { 190, 140, 95 } },
+    { label = 'Brown', rgb = { 150, 100, 65 } }, { label = 'Dark', rgb = { 105, 70, 45 } },
+    { label = 'Deep', rgb = { 70, 45, 30 } },
+  },
+  hairColours = {
+    { label = 'Black', rgb = { 22, 20, 18 } }, { label = 'Dark brown', rgb = { 58, 40, 28 } },
+    { label = 'Brown', rgb = { 100, 65, 40 } }, { label = 'Auburn', rgb = { 130, 55, 30 } },
+    { label = 'Blonde', rgb = { 215, 180, 110 } }, { label = 'Grey', rgb = { 150, 150, 150 } },
+    { label = 'Red', rgb = { 170, 50, 30 } }, { label = 'Blue', rgb = { 60, 90, 200 } },
+    { label = 'Pink', rgb = { 220, 110, 170 } },
+  },
+  colours = {
+    { label = 'Black', rgb = { 28, 28, 32 } }, { label = 'White', rgb = { 235, 235, 235 } },
+    { label = 'Grey', rgb = { 130, 130, 135 } }, { label = 'Navy', rgb = { 35, 50, 90 } },
+    { label = 'Blue', rgb = { 60, 110, 190 } }, { label = 'Denim', rgb = { 52, 62, 84 } },
+    { label = 'Red', rgb = { 180, 40, 40 } }, { label = 'Green', rgb = { 50, 120, 60 } },
+    { label = 'Yellow', rgb = { 230, 190, 50 } }, { label = 'Brown', rgb = { 110, 75, 45 } },
+    { label = 'Khaki', rgb = { 170, 155, 110 } }, { label = 'Pink', rgb = { 220, 120, 160 } },
+    { label = 'Purple', rgb = { 110, 60, 150 } }, { label = 'Orange', rgb = { 220, 120, 40 } },
+  },
+}
 
 RPConfig.Prices = {
   identityChange = 250,
   hospitalTreatment = 150,
   advert = 50,
+  clothes = 120,
 }
 
 -- Chat ranges in metres.

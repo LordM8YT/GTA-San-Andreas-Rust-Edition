@@ -67,6 +67,7 @@ LOCATIONS = {
     'garage': (22, -124, 0.2, 90),
     'garage_spawn': (50, -140, 0.2, 90),
     'taxi_depot': (-30, 125, 0.2, 180),
+    'clothes': (-57.5, -121.5, 0.2, 180),
 }
 
 # --- Small helpers ----------------------------------------------------------
@@ -670,6 +671,7 @@ def build_south():
     sign('DINER', (-87.5, -124.88, Z + 4.6), 'north', 1.6, 'white')
     solid_building(-70, -165, -45, -125, 9, hexcol('8fb1c9'))
     door_panel(-57.5, -125, 'north', 2.4)
+    marker(-57.5, -121.5, C['teal'])
     sign('CLOTHES', (-57.5, -124.88, Z + 5.6), 'north', 1.3, 'white')
     solid_building(-40, -165, -12, -130, 14, hexcol('c4c0b0'))
     door_panel(-26, -130, 'north', 2.4)

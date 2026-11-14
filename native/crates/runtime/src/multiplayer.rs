@@ -139,6 +139,13 @@ pub(super) struct RemoteActor {
     /// Clips for the remote ped, driven by how fast it moves on screen.
     animator: crate::animation::Animator,
     animated: Option<(Instant, Vec3)>,
+    /// Content-pack character instead of a ped model, and its driver seat
+    /// in the current car.
+    character: Option<sa_scene::character::Animator>,
+    seat: Option<Vec3>,
+    /// Sitting at the wheel of its car, drawn with the car.
+    pub seated_visible: bool,
+    paint_rendered: Option<[u8; 3]>,
 }
 pub(super) fn duplicate(device: &wgpu::Device, batches: &[GpuBatch]) -> Vec<GpuBatch> {
     batches
@@ -402,6 +409,7 @@ impl State {
                     vehicle,
                     ride_request: self.ride_request,
                     wanted: self.police.wanted.level(),
+                    paint: self.pack.paint,
                     ..Pose::default()
                 };
             }
@@ -430,16 +438,21 @@ impl State {
             vehicle,
             ride_request: self.ride_request,
             wanted: self.police.wanted.level(),
+            paint: self.pack.paint,
             ..Pose::default()
         }
     }
     fn make_remote(&self, peer: &Peer) -> Option<RemoteActor> {
         let (ped_index, car_index) = self.appearance_indices(peer.pose)?;
-        let (_, ped) = if ped_index == self.active_ped {
-            self.ped.as_ref()
+        // Content packs with characters draw everyone with them.
+        let character = self.pack.characters.is_some() && !self.pack.batches.is_empty();
+        let ped: &[GpuBatch] = if character {
+            &self.pack.batches
+        } else if ped_index == self.active_ped {
+            &self.ped.as_ref()?.1
         } else {
-            self.ped_catalog.get(ped_index)?.as_ref()
-        }?;
+            &self.ped_catalog.get(ped_index)?.as_ref()?.1
+        };
         let (car, car_batches) = if car_index == self.active_car {
             self.car.as_ref()
         } else {
@@ -463,6 +476,10 @@ impl State {
             car_render_pose: None,
             animator: crate::animation::Animator::default(),
             animated: None,
+            character: character.then(sa_scene::character::Animator::default),
+            seat: self.seat_of(car_index),
+            seated_visible: false,
+            paint_rendered: None,
         })
     }
     /// Remote-actor poses of the server's vehicles and peds, rebuilt when the
@@ -514,6 +531,11 @@ impl State {
     fn appearance_indices(&self, pose: Pose) -> Option<(usize, usize)> {
         let ped = usize::from(pose.ped_model);
         let car = usize::from(pose.car_model);
+        if self.pack.characters.is_some() {
+            // The look comes from the server; any car index the catalog has.
+            let car = if car < self.car_catalog.len() { car } else { 0 };
+            return Some((0, car));
+        }
         Some((
             if ped < self.ped_catalog.len() {
                 ped
@@ -738,6 +760,11 @@ impl State {
                 car.interior == self.interior
                     && Vec3::from_array(car.position).distance(self.position) < 300.0
             });
+            actor.seated_visible = actor.character.is_some()
+                && actor.entity.is_none()
+                && actor.current.driving
+                && actor.car_visible
+                && actor.seat.is_some();
             actor.visible = actor.ped_visible || actor.car_visible;
             visibility_changed |= previous_visibility != (actor.ped_visible, actor.car_visible);
         }
@@ -769,23 +796,79 @@ impl State {
             let pose = actor.current;
             let feet = Vec3::from_array(pose.position);
             let rotation = Quat::from_rotation_y(pose.yaw + std::f32::consts::PI);
-            if let Some(car) = pose
-                .vehicle
-                .filter(|car| actor.car_visible && car_changed(actor.car_render_pose, *car))
-            {
+            if let Some(car) = pose.vehicle.filter(|car| {
+                actor.car_visible
+                    && (car_changed(actor.car_render_pose, *car)
+                        || actor.paint_rendered != pose.paint)
+            }) {
                 let feet = Vec3::from_array(car.position);
                 let rotation = sa_scene::vehicle::model_rotation(car.yaw, car.pitch, car.roll);
                 for batch in &actor.car {
-                    let raw = crate::car_damage::pose_car(
+                    let mut raw = crate::car_damage::pose_car(
                         batch,
                         &Default::default(),
                         rotation,
                         feet + Vec3::Y * actor.clearance,
                     );
+                    crate::pack_actors::repaint(batch, &mut raw, pose.paint);
                     self.queue
                         .write_buffer(&batch.buffer, 0, bytemuck::cast_slice(&raw));
                 }
                 actor.car_render_pose = Some(car);
+                actor.paint_rendered = pose.paint;
+            }
+            if let (Some(animator), Some(model)) =
+                (actor.character.as_mut(), self.pack.characters.as_ref())
+            {
+                let look = self.pack.looks.get(&actor.id).copied().unwrap_or_default();
+                let (dt, velocity) = match actor.animated {
+                    Some((at, last)) => {
+                        let dt = now.duration_since(at).as_secs_f32().max(1e-3);
+                        (dt, (feet - last) / dt)
+                    }
+                    None => (0.0, Vec3::ZERO),
+                };
+                actor.animated = Some((now, feet));
+                let placed = if actor.ped_visible {
+                    animator.update(
+                        sa_scene::character::Motion {
+                            speed: Vec3::new(velocity.x, 0.0, velocity.z).length(),
+                            airborne: !(-4.0..2.0).contains(&velocity.y),
+                            seated: false,
+                        },
+                        dt,
+                    );
+                    Some((Quat::from_rotation_y(pose.yaw), feet))
+                } else if let (true, Some(car), Some(seat)) =
+                    (actor.seated_visible, pose.vehicle, actor.seat)
+                {
+                    animator.update(
+                        sa_scene::character::Motion {
+                            seated: true,
+                            ..Default::default()
+                        },
+                        dt,
+                    );
+                    let rotation = sa_scene::vehicle::model_rotation(car.yaw, car.pitch, car.roll);
+                    let origin = Vec3::from_array(car.position) + Vec3::Y * actor.clearance;
+                    Some((
+                        rotation * Quat::from_rotation_y(std::f32::consts::PI),
+                        origin + rotation * seat,
+                    ))
+                } else {
+                    None
+                };
+                if let (Some((rotation, offset)), Some(batch)) = (placed, actor.ped.first()) {
+                    let mut raw = Vec::new();
+                    crate::pack_actors::pose_character(
+                        model, animator, &look, rotation, offset, &mut raw,
+                    );
+                    if raw.len() == batch.base.len() {
+                        self.queue
+                            .write_buffer(&batch.buffer, 0, bytemuck::cast_slice(&raw));
+                    }
+                }
+                continue;
             }
             if let Some((ped, _)) = if !actor.ped_visible {
                 None

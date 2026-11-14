@@ -14,6 +14,8 @@ pub struct Player {
     pub teleports: Vec<[f32; 3]>,
     /// Payloads of the `chat:addMessage` events this player received.
     pub chat: Vec<String>,
+    /// Every event the server sent this player: (name, payload).
+    pub events: Vec<(String, String)>,
 }
 impl Player {
     /// San Andreas world coordinates, as `GetEntityCoords` reports them.
@@ -133,6 +135,9 @@ impl Sarebox {
         .unwrap();
         for player in players.iter_mut() {
             for event in player.client.events() {
+                player
+                    .events
+                    .push((event.name.clone(), event.payload.clone()));
                 if event.name == "chat:addMessage" {
                     player.chat.push(event.payload.clone());
                 }
@@ -208,6 +213,7 @@ impl Sarebox {
             pose: sa_net::Pose::default(),
             teleports: Vec::new(),
             chat: Vec::new(),
+            events: Vec::new(),
         };
         self.until(&mut [&mut player], "the character to load", |_, p| {
             p[0].host.ui().text.is_some()

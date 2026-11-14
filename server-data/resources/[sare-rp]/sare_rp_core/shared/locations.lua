@@ -35,4 +35,5 @@ RPLocations = {
   garage = { x = 2522.00, y = -1794.00, z = 0.20, heading = 90.0 },
   garage_spawn = { x = 2550.00, y = -1810.00, z = 0.20, heading = 90.0 },
   taxi_depot = { x = 2470.00, y = -1545.00, z = 0.20, heading = 180.0 },
+  clothes = { x = 2442.50, y = -1791.50, z = 0.20, heading = 180.0 },
 }

@@ -22,6 +22,7 @@ mod menu;
 mod metrics;
 mod mipmaps;
 mod multiplayer;
+mod pack_actors;
 mod pickups;
 mod police;
 mod postprocess;
@@ -378,6 +379,8 @@ struct State {
     placeholder_player: Vec<GpuBatch>,
     ped_animator: animation::Animator,
     ped_yaw: f32,
+    /// Content-pack characters and server vehicles.
+    pack: pack_actors::PackActors,
 }
 impl State {
     fn play_menu_sound(&mut self, kind: sa_audio::MenuSound) {
@@ -509,6 +512,7 @@ impl State {
             {
                 *car = placed.with_handling(car.handling).with_size(car.size);
                 self.car_render_pose = None;
+                self.pack.car_stowed = false;
                 self.driving = true;
                 self.network_car_spawned = true;
                 self.keys.clear();
@@ -528,6 +532,9 @@ impl State {
             return;
         }
         if self.entering_car.is_some() {
+            return;
+        }
+        if !self.driving && self.request_server_vehicle() {
             return;
         }
         let mut steal = false;
@@ -602,6 +609,9 @@ impl State {
                 steal = true;
             }
             self.keys.clear();
+        }
+        if !self.driving && self.pack.server_vehicle.is_some() {
+            self.release_server_vehicle();
         }
         if steal {
             self.steal_traffic_car();
@@ -1241,6 +1251,7 @@ impl State {
             placeholder_player: Vec::new(),
             ped_animator: animation::Animator::default(),
             ped_yaw: 0.0,
+            pack: Default::default(),
         };
         if !first_model && state.animation.is_none() {
             if let Some(world) = &state.collision {
@@ -1965,6 +1976,21 @@ impl State {
                         self.menu.message = format!("Player animation failed: {error}");
                     }
                 }
+            } else if let (Some(player), true) = (&self.player, self.pack.characters.is_some()) {
+                // A content pack's own character, dressed as the server says.
+                let delta = self.position - previous_position;
+                let horizontal = Vec3::new(delta.x, 0.0, delta.z);
+                if horizontal.length_squared() > 0.00001 {
+                    self.ped_yaw =
+                        locomotion::turn_toward(self.ped_yaw, horizontal.x.atan2(horizontal.z), dt);
+                }
+                let speed = if dt > 0.0 {
+                    horizontal.length() / dt
+                } else {
+                    0.0
+                };
+                let (feet, airborne) = (player.feet, !player.grounded);
+                self.pose_local_character(feet, speed, airborne, dt);
             } else if let (Some(player), false) = (&self.player, self.placeholder_player.is_empty())
             {
                 // No ped model (SARE Testbed): turn the stand-in to face
@@ -2025,11 +2051,14 @@ impl State {
             if multiplayer::car_changed(self.car_render_pose, pose)
                 || look != self.car_render_look
                 || rotation != self.car_render_rotation
+                || self.pack.paint != self.pack.rendered_paint
             {
                 self.car_uploads += 1;
                 self.car_render_rotation = rotation;
+                self.pack.rendered_paint = self.pack.paint;
                 for batch in batches {
-                    let raw = car_damage::pose_car(batch, &look, rotation, car.position);
+                    let mut raw = car_damage::pose_car(batch, &look, rotation, car.position);
+                    pack_actors::repaint(batch, &mut raw, self.pack.paint);
                     self.queue
                         .write_buffer(&batch.buffer, 0, bytemuck::cast_slice(&raw));
                     self.car_uploaded_bytes += (raw.len() * std::mem::size_of::<f32>()) as u64;
@@ -2037,6 +2066,9 @@ impl State {
                 self.car_render_pose = Some(pose);
                 self.car_render_look = look;
             }
+        }
+        if self.driving && self.third_person && self.pack.characters.is_some() {
+            self.pose_seated_character(dt);
         }
         if self.streamer.is_some() {
             let center = [ORIGIN[0] + self.position.x, ORIGIN[1] - self.position.z];
@@ -2300,7 +2332,12 @@ impl State {
             .filter(|batch| !is_glow(batch))
             .filter(|batch| self.mlo_batch_visible(batch))
             .filter(move |batch| !self.culling_enabled || frustum.visible(batch.bounds))
-            .chain(self.car.iter().flat_map(|(_, b)| b))
+            .chain(
+                self.car
+                    .iter()
+                    .filter(|_| !self.pack.car_stowed)
+                    .flat_map(|(_, b)| b),
+            )
             .chain(self.spawned_peds.iter().flat_map(|p| &p.batches))
             .chain(self.traffic_meshes.iter().flat_map(|m| &m.batches))
             .chain(self.remote_traffic.iter().flat_map(|c| &c.batches))
@@ -2313,7 +2350,7 @@ impl State {
                         a.car
                             .iter()
                             .filter(|_| a.car_visible)
-                            .chain(a.ped.iter().filter(|_| a.ped_visible))
+                            .chain(a.ped.iter().filter(|_| a.ped_visible || a.seated_visible))
                     }),
             )
             .chain(
@@ -2324,8 +2361,10 @@ impl State {
                     })
                     .flat_map(|(_, b)| b),
             )
+            .chain(self.pack.batches.iter().filter(|_| self.character_drawn()))
             .chain(self.placeholder_player.iter().filter(|_| {
                 self.ped.is_none()
+                    && self.pack.characters.is_none()
                     && self.third_person
                     && self.walking
                     && !self.driving
@@ -3113,6 +3152,10 @@ struct App {
     initial_models: (String, String),
     offline_car_handling: Option<sa_scene::vehicle::Handling>,
     car_catalog: Vec<(String, Scene)>,
+    /// Content-pack characters, seats and model names of pack vehicles.
+    pack_characters: Option<sa_scene::character::CharacterModel>,
+    pack_seats: std::collections::HashMap<String, Vec3>,
+    pack_car_models: std::collections::HashMap<String, String>,
     ped_catalog: Vec<(String, sa_scene::ped::Ped)>,
     ped: Option<sa_scene::ped::Ped>,
     scene: Option<Scene>,
@@ -3487,6 +3530,27 @@ impl ApplicationHandler for App {
                     &mut state.menu.cars,
                     &state.original_car_models,
                 );
+                // Pack vehicles resolve by model name for server scripts.
+                state
+                    .original_car_models
+                    .extend(std::mem::take(&mut self.pack_car_models));
+                state.pack.seats = std::mem::take(&mut self.pack_seats);
+                if let Some(model) = self.pack_characters.take() {
+                    match State::upload_scene(
+                        &state.device,
+                        &state.queue,
+                        &state.image_layout,
+                        &state.sampler,
+                        &state.mipmaps,
+                        model.scene(&Default::default()),
+                    ) {
+                        Ok(batches) => {
+                            state.pack.batches = batches;
+                            state.pack.characters = Some(Arc::new(model));
+                        }
+                        Err(error) => eprintln!("Character upload failed: {error:#}"),
+                    }
+                }
                 for (name, ped) in std::mem::take(&mut self.ped_catalog) {
                     match ped.scene().and_then(|scene| {
                         State::upload_scene(
@@ -5387,6 +5451,108 @@ fn find_game_dir(args: &[String]) -> Result<PathBuf> {
             )?,
     })
 }
+
+/// `--probe-standalone` for a pack's characters and vehicles: every clip
+/// poses every body, and every vehicle drives off on the pack's ground.
+fn probe_pack_actors(
+    folder: &std::path::Path,
+    collision: &sa_scene::collision::CollisionWorld,
+    feet: Vec3,
+) -> Result<()> {
+    let assets = pack_actors::PackAssets::load(folder);
+    let manifest = sa_scene::content_pack::Manifest::read(folder)?;
+    anyhow::ensure!(
+        assets.vehicles.len() == manifest.vehicles.len(),
+        "{} of {} pack vehicles loaded",
+        assets.vehicles.len(),
+        manifest.vehicles.len()
+    );
+    if let Some(model) = &assets.characters {
+        let mut raw = Vec::new();
+        for body in 0..2 {
+            for clip in sa_scene::character::CLIPS {
+                let look = sa_net::appearance::Appearance {
+                    body,
+                    ..Default::default()
+                };
+                let plays = [sa_scene::character::Play {
+                    clip,
+                    time: 0.3,
+                    weight: 1.0,
+                }];
+                model.pose_into(&plays, &look, &mut raw);
+                anyhow::ensure!(
+                    raw.len() == model.vertex_count() * 9 && raw.iter().all(|v| v.is_finite()),
+                    "character pose {clip} is broken"
+                );
+            }
+        }
+        println!(
+            "Characters: {} vertices, clips {:?}",
+            model.vertex_count(),
+            model.clip_names()
+        );
+    } else if manifest.characters.is_some() {
+        anyhow::bail!("the pack's characters did not load");
+    }
+    for (spec, scene) in &assets.vehicles {
+        let clearance = -scene
+            .batches
+            .iter()
+            .flat_map(|b| &b.vertices)
+            .map(|v| v.position[1])
+            .fold(f32::INFINITY, f32::min);
+        let size = sa_scene::vehicle::measure(
+            scene
+                .batches
+                .iter()
+                .flat_map(|b| &b.vertices)
+                .map(|v| v.position),
+        );
+        // Try the four directions: the spawn may face a wall.
+        let mut best: Option<(f32, sa_scene::vehicle::Car, Vec3, f32)> = None;
+        for quarter in 0..4 {
+            let yaw = quarter as f32 * std::f32::consts::FRAC_PI_2;
+            let Some(placed) =
+                sa_scene::vehicle::Car::spawn_near(collision, feet + Vec3::Y * 1.6, yaw, clearance)
+            else {
+                continue;
+            };
+            let mut car = placed.with_handling(scene.vehicle_handling).with_size(size);
+            car.yaw = yaw;
+            let start = car.position;
+            let mut top = 0.0f32;
+            for _ in 0..180 {
+                car.step(collision, 1.0, 0.0, false, 1.0, 1.0 / 60.0);
+                top = top.max(car.speed);
+            }
+            let moved = (car.position - start).length();
+            if best.as_ref().is_none_or(|b| moved > b.0) {
+                best = Some((moved, car, start, top));
+            }
+        }
+        // Town props stop a car eventually; the run that went furthest counts.
+        let (moved, car, start, top) =
+            best.with_context(|| format!("no room to place the {}", spec.model))?;
+        anyhow::ensure!(
+            car.position.is_finite() && car.position.y > start.y - 5.0,
+            "the {} fell through the ground",
+            spec.model
+        );
+        println!(
+            "Vehicle {}: {} wheels, drove {moved:.1} m in 3 s, top {top:.1} m/s",
+            spec.model,
+            scene.vehicle_pieces.len()
+        );
+        anyhow::ensure!(
+            scene.vehicle_pieces.len() == 4 && moved > 3.0,
+            "the {} did not drive",
+            spec.model
+        );
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let _session_intent =
         sa_client::launch::Session::from_args(&std::env::args().collect::<Vec<_>>())?;
@@ -5485,6 +5651,9 @@ fn main() -> Result<()> {
             player.feet.y,
             started.elapsed().as_secs_f32()
         );
+        if let sa_scene::content::ContentSource::Pack(folder) = &source {
+            probe_pack_actors(folder, collision, player.feet)?;
+        }
         return Ok(());
     }
     // SARE Testbed and content packs need no San Andreas installation at all.
@@ -5498,6 +5667,39 @@ fn main() -> Result<()> {
     };
     let mut standalone_world = standalone_source.as_ref().map(|s| s.open()).transpose()?;
     let testbed = standalone_world.is_some();
+    // A pack's characters and vehicles replace the stand-in runner and kart.
+    let mut pack_assets = match &standalone_source {
+        Some(sa_scene::content::ContentSource::Pack(folder)) => {
+            pack_actors::PackAssets::load(folder)
+        }
+        _ => pack_actors::PackAssets::default(),
+    };
+    let mut pack_vehicles = std::mem::take(&mut pack_assets.vehicles);
+    let pack_seats: std::collections::HashMap<String, Vec3> = pack_vehicles
+        .iter()
+        .map(|(spec, _)| (spec.name.clone(), spec.seat_model_space()))
+        .collect();
+    let pack_car_models: std::collections::HashMap<String, String> = pack_vehicles
+        .iter()
+        .map(|(spec, _)| (spec.name.clone(), spec.model.clone()))
+        .collect();
+    let (first_pack_name, first_pack_scene) = if pack_vehicles.is_empty() {
+        (None, None)
+    } else {
+        let (spec, scene) = pack_vehicles.remove(0);
+        (Some(spec.name), Some(scene))
+    };
+    if testbed {
+        println!(
+            "Content pack: {} vehicles, characters {}",
+            pack_car_models.len(),
+            if pack_assets.characters.is_some() {
+                "loaded"
+            } else {
+                "none"
+            }
+        );
+    }
     if let Some(world) = &standalone_world {
         eprintln!(
             "Starting {}: SARE content, no game files are read",
@@ -5941,12 +6143,17 @@ fn main() -> Result<()> {
                 }
             }
         } else if testbed {
-            Some(sa_scene::testbed::placeholder_car())
+            Some(first_pack_scene.unwrap_or_else(sa_scene::testbed::placeholder_car))
         } else {
             None
         },
         initial_models: if testbed {
-            ("SARE Kart".into(), "SARE Runner".into())
+            (
+                first_pack_name
+                    .clone()
+                    .unwrap_or_else(|| "SARE Kart".into()),
+                "SARE Runner".into(),
+            )
         } else {
             loader.as_ref().map(|l| l.model_names()).unwrap_or_default()
         },
@@ -5964,8 +6171,19 @@ fn main() -> Result<()> {
                     }
                 }
             }
+            catalog.extend(
+                pack_vehicles
+                    .into_iter()
+                    .map(|(spec, scene)| (spec.name, scene)),
+            );
+            if first_pack_name.is_some() {
+                catalog.push(("SARE Kart".into(), sa_scene::testbed::placeholder_car()));
+            }
             catalog
         },
+        pack_characters: pack_assets.characters.take(),
+        pack_seats,
+        pack_car_models,
         ped_catalog: {
             let mut catalog = loader
                 .as_mut()

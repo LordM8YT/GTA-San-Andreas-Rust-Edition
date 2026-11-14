@@ -1,12 +1,198 @@
 {
   "id": "sare-rp-town",
   "name": "SARE RP Town",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "license": "CC0-1.0",
   "author": "SARE contributors",
   "description": "A small original roleplay town: police, hospital, bank, shops, garage, car dealer, houses. Made in Blender by tools/blender/make_rp_town.py.",
   "world": {
     "scene": "world.glb",
-    "spawn": [-55, -42, 0.2]
-  }
+    "spawn": [
+      -55,
+      -42,
+      0.2
+    ]
+  },
+  "characters": "characters.glb",
+  "vehicles": [
+    {
+      "model": "sedan",
+      "name": "Sedan",
+      "scene": "vehicles/sedan.glb",
+      "color": [
+        60,
+        90,
+        150
+      ],
+      "seat": [
+        -0.4,
+        -0.05,
+        -0.53
+      ],
+      "handling": {
+        "top_speed": 46.0,
+        "acceleration": 6.0
+      }
+    },
+    {
+      "model": "compact",
+      "name": "Compact",
+      "scene": "vehicles/compact.glb",
+      "color": [
+        200,
+        60,
+        50
+      ],
+      "seat": [
+        -0.374,
+        -0.1,
+        -0.45
+      ],
+      "handling": {
+        "top_speed": 40.0,
+        "acceleration": 5.4,
+        "tire_grip": 4.8
+      }
+    },
+    {
+      "model": "suv",
+      "name": "SUV",
+      "scene": "vehicles/suv.glb",
+      "color": [
+        40,
+        44,
+        48
+      ],
+      "seat": [
+        -0.431,
+        0.0,
+        -0.31
+      ],
+      "handling": {
+        "top_speed": 44.0,
+        "acceleration": 5.8,
+        "cg_offset": 0.15
+      }
+    },
+    {
+      "model": "pickup",
+      "name": "Pickup",
+      "scene": "vehicles/pickup.glb",
+      "color": [
+        170,
+        160,
+        140
+      ],
+      "seat": [
+        -0.431,
+        0.35,
+        -0.26
+      ],
+      "handling": {
+        "top_speed": 43.0,
+        "acceleration": 5.6,
+        "drive": 1.0
+      }
+    },
+    {
+      "model": "sports",
+      "name": "Sports car",
+      "scene": "vehicles/sports.glb",
+      "color": [
+        240,
+        200,
+        30
+      ],
+      "seat": [
+        -0.422,
+        -0.35,
+        -0.56
+      ],
+      "handling": {
+        "top_speed": 62.0,
+        "acceleration": 9.0,
+        "tire_grip": 5.6,
+        "drive": 1.0
+      }
+    },
+    {
+      "model": "police",
+      "name": "Police cruiser",
+      "scene": "vehicles/police.glb",
+      "color": [
+        25,
+        25,
+        30
+      ],
+      "seat": [
+        -0.405,
+        -0.05,
+        -0.54
+      ],
+      "handling": {
+        "top_speed": 54.0,
+        "acceleration": 7.4,
+        "tire_grip": 5.0
+      }
+    },
+    {
+      "model": "taxi",
+      "name": "Taxi",
+      "scene": "vehicles/taxi.glb",
+      "color": [
+        250,
+        200,
+        30
+      ],
+      "seat": [
+        -0.4,
+        -0.05,
+        -0.53
+      ],
+      "handling": {
+        "top_speed": 46.0,
+        "acceleration": 6.0
+      }
+    },
+    {
+      "model": "ambulance",
+      "name": "Ambulance",
+      "scene": "vehicles/ambulance.glb",
+      "color": [
+        240,
+        240,
+        240
+      ],
+      "seat": [
+        -0.462,
+        1.35,
+        -0.2
+      ],
+      "handling": {
+        "top_speed": 42.0,
+        "acceleration": 5.2,
+        "cg_offset": 0.3
+      }
+    },
+    {
+      "model": "towtruck",
+      "name": "Tow truck",
+      "scene": "vehicles/towtruck.glb",
+      "color": [
+        230,
+        120,
+        30
+      ],
+      "seat": [
+        -0.44,
+        0.6,
+        -0.28
+      ],
+      "handling": {
+        "top_speed": 40.0,
+        "acceleration": 5.0,
+        "drive": 1.0
+      }
+    }
+  ]
 }

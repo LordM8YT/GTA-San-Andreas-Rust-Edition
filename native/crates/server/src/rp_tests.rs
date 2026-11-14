@@ -13,6 +13,9 @@ const JAIL_CELL: [f32; 3] = [2565.0, -1578.5, 0.2];
 const JAIL_RELEASE: [f32; 3] = [2545.0, -1616.0, 0.2];
 const DEALER: [f32; 3] = [2632.0, -1610.0, 0.2];
 const GARAGE: [f32; 3] = [2522.0, -1794.0, 0.2];
+const DELIVERY: [f32; 3] = [2642.0, -1648.0, 0.2];
+const CLOTHES: [f32; 3] = [2442.5, -1791.5, 0.2];
+const POLICE_GARAGE: [f32; 3] = [2530.0, -1640.0, 0.2];
 
 fn rp_server() -> Sarebox {
     Sarebox::boot_with(
@@ -105,6 +108,18 @@ fn make_character(server: &mut Sarebox, player: &mut Player) {
     );
     server.until(&mut [player], "the identity", |_, p| {
         notified(p[0], "You are Anna Berg.")
+    });
+    // Then the look: the creator opens on its own after the ID.
+    server.until(&mut [player], "the character creator", |_, p| {
+        p[0].host
+            .ui()
+            .context
+            .as_ref()
+            .is_some_and(|c| c.title == "Create your look")
+    });
+    pick(server, player, "Done");
+    server.until(&mut [player], "the saved look", |_, p| {
+        notified(p[0], "Welcome to town.")
     });
 }
 
@@ -321,18 +336,20 @@ fn rp_town_police_duty_jail_and_dealer() {
     });
     server.leave(suspect);
 
-    // Dealer: SARE Kart costs $6500 from the bank; then the garage keeps it.
+    // Dealer: a sedan costs $9000 from the bank, in the colour picked.
     go(&mut server, &mut officer, DEALER);
     interact(&mut server, &mut officer, "Premium Motors");
-    pick(&mut server, &mut officer, "SARE Kart");
+    pick(&mut server, &mut officer, "Sedan");
+    answer(&mut server, &mut officer, "Sedan", vec![json!("4")]);
     server.until(&mut [&mut officer], "the price check", |_, p| {
-        notified(p[0], "You need $6500")
+        notified(p[0], "You need $9000")
     });
-    server.run(&format!("givemoney {id} bank 2000"));
+    server.run(&format!("givemoney {id} bank 4500"));
     interact(&mut server, &mut officer, "Premium Motors");
-    pick(&mut server, &mut officer, "SARE Kart");
+    pick(&mut server, &mut officer, "Sedan");
+    answer(&mut server, &mut officer, "Sedan", vec![json!("4")]);
     server.until(&mut [&mut officer], "the purchase", |_, p| {
-        notified(p[0], "Bought a SARE Kart") && hud(p[0]).contains("Bank $500")
+        notified(p[0], "You bought the ocean blue Sedan") && hud(p[0]).contains("Bank $500")
     });
     let vehicles = |server: &Sarebox| {
         let shared = server.shared.borrow();
@@ -345,33 +362,338 @@ fn rp_town_police_duty_jail_and_dealer() {
     };
     assert_eq!(
         vehicles(&server),
-        vec![sa_net::entities::ModelRef::Hash(i64::from(
-            sa_lua::cfxlua::joaat("SARE Kart")
-        ))]
+        vec![sa_net::entities::ModelRef::Name("sedan".into())]
     );
     // The delivered car carries the plate: the garage takes it in...
     go(&mut server, &mut officer, GARAGE);
     interact(&mut server, &mut officer, "Public garage");
-    pick(&mut server, &mut officer, "SARE Kart [");
+    pick(&mut server, &mut officer, "Sedan [");
     server.until(&mut [&mut officer], "stored", |_, p| {
         notified(p[0], "is back in the garage")
     });
     assert!(vehicles(&server).is_empty());
     // ...and brings it out again; one car per player.
     interact(&mut server, &mut officer, "Public garage");
-    pick(&mut server, &mut officer, "SARE Kart [");
+    pick(&mut server, &mut officer, "Sedan [");
     server.until(&mut [&mut officer], "taken out", |_, p| {
         notified(p[0], "is parked outside")
     });
     assert_eq!(vehicles(&server).len(), 1);
     interact(&mut server, &mut officer, "Public garage");
-    pick(&mut server, &mut officer, "SARE Kart [");
+    pick(&mut server, &mut officer, "Sedan [");
     server.until(&mut [&mut officer], "stored again", |s, _| {
         vehicles(s).is_empty()
     });
     assert!(vehicles(&server).is_empty());
     let saved = server.kvp().to_string();
-    assert!(saved.contains("SARE Kart"), "{saved}");
+    assert!(saved.contains("sedan"), "{saved}");
+    let output = server.output();
+    assert!(!output.contains("SCRIPT ERROR"), "{output}");
+}
+
+fn wait_menu(server: &mut Sarebox, player: &mut Player, title: &str) {
+    server.until(&mut [player], title, |_, p| {
+        p[0].host
+            .ui()
+            .context
+            .as_ref()
+            .is_some_and(|c| c.title == title)
+    });
+}
+fn got(player: &Player, name: &str, check: impl Fn(&str) -> bool) -> bool {
+    player
+        .events
+        .iter()
+        .any(|(n, payload)| n == name && check(payload))
+}
+fn look_of(server: &Sarebox, id: u32) -> Option<sa_net::appearance::Appearance> {
+    server.shared.borrow().appearances.get(&id).copied()
+}
+fn sent_look(player: &Player, id: u32, look: sa_net::appearance::Appearance) -> bool {
+    got(player, sa_net::appearance::APPEARANCE_EVENT, |payload| {
+        sa_net::appearance::parse_event(payload).contains(&(id, Some(look)))
+    })
+}
+fn enter(player: &mut Player, handle: u32) {
+    player
+        .client
+        .trigger(None, "__sare:enterVehicle", &json!([handle]).to_string())
+        .unwrap();
+}
+fn exit(player: &mut Player, handle: u32) {
+    player
+        .client
+        .trigger(None, "__sare:exitVehicle", &json!([handle]).to_string())
+        .unwrap();
+}
+fn granted(player: &Player, handle: u32, model: &str) -> bool {
+    got(player, "__sare:vehicleGranted", |payload| {
+        serde_json::from_str::<Json>(payload)
+            .is_ok_and(|v| v[0] == json!(handle) && v[1] == json!(model))
+    })
+}
+fn refused(player: &Player, handle: u32, reason: &str) -> bool {
+    got(player, "__sare:vehicleRefused", |payload| {
+        payload.contains(&handle.to_string()) && payload.contains(reason)
+    })
+}
+
+#[test]
+fn rp_town_looks_persist_and_sync_and_server_vehicles_drive() {
+    use sa_net::entities::{parse_entities, EntityKind, ENTITIES_EVENT, ENTITY_DELETE_EVENT};
+    let mut server = rp_server();
+    let mut anna = server.join();
+    let anna_id = server.id(&anna);
+
+    // The creator starts from the ID (female body) and changes live.
+    answer(
+        &mut server,
+        &mut anna,
+        "Create your character",
+        vec![
+            json!("anna"),
+            json!("berg"),
+            json!("1990-02-03"),
+            json!("f"),
+        ],
+    );
+    server.until(&mut [&mut anna], "the creator", |_, p| {
+        p[0].host
+            .ui()
+            .context
+            .as_ref()
+            .is_some_and(|c| c.title == "Create your look")
+    });
+    let start = look_of(&server, anna_id).expect("a starting look");
+    assert_eq!(start.body, 1);
+    pick(&mut server, &mut anna, "Hair:");
+    server.until(&mut [&mut anna], "the hair change", |s, _| {
+        look_of(s, anna_id).is_some_and(|l| l.hair == (start.hair + 1) % 7)
+    });
+    server.until(&mut [&mut anna], "the reopened creator", |_, p| {
+        p[0].host
+            .ui()
+            .context
+            .as_ref()
+            .is_some_and(|c| c.options.iter().any(|o| o.title == "Hair: Ponytail"))
+    });
+    pick(&mut server, &mut anna, "Top colour:");
+    wait_menu(&mut server, &mut anna, "Create your look");
+    pick(&mut server, &mut anna, "Done");
+    server.until(&mut [&mut anna], "the saved look", |_, p| {
+        notified(p[0], "Welcome to town.")
+    });
+    let chosen = look_of(&server, anna_id).unwrap();
+    assert_eq!(chosen.hair, 4);
+    assert_ne!(chosen.top_color, start.top_color);
+
+    // Another player gets the look from the server when they join.
+    let mut bob = server.join();
+    server.until(&mut [&mut anna, &mut bob], "anna's look at bob", |_, p| {
+        sent_look(p[1], anna_id, chosen)
+    });
+
+    // Saved with the character: a rejoin wears it, without the creator.
+    server.leave(anna);
+    server.until(&mut [&mut bob], "anna forgotten", |_, p| {
+        got(p[0], sa_net::appearance::APPEARANCE_EVENT, |payload| {
+            sa_net::appearance::parse_event(payload).contains(&(anna_id, None))
+        })
+    });
+    let mut anna = server.join();
+    let anna_id = server.id(&anna);
+    server.until(&mut [&mut anna, &mut bob], "the saved look", |s, _| {
+        look_of(s, anna_id) == Some(chosen)
+    });
+    server.idle(&mut [&mut anna, &mut bob], 60);
+    assert!(
+        anna.host
+            .ui()
+            .context
+            .as_ref()
+            .is_none_or(|c| c.title != "Create your look"),
+        "no second creator"
+    );
+
+    // The clothes shop sells a new top; everyone sees it.
+    go(&mut server, &mut anna, CLOTHES);
+    interact(&mut server, &mut anna, "Clothes shop");
+    pick(&mut server, &mut anna, "Top:");
+    wait_menu(&mut server, &mut anna, "Clothes shop");
+    pick(&mut server, &mut anna, "Buy this outfit");
+    server.until(&mut [&mut anna], "the purchase", |_, p| {
+        notified(p[0], "Looking sharp!") && hud(p[0]).starts_with("$380")
+    });
+    let dressed = look_of(&server, anna_id).unwrap();
+    assert_eq!(dressed.top, (chosen.top + 1) % 6);
+    server.until(&mut [&mut anna, &mut bob], "the new top at bob", |_, p| {
+        sent_look(p[1], anna_id, dressed)
+    });
+    let saved = server.kvp().to_string();
+    assert!(
+        saved.contains("appearance") && saved.contains("topColor"),
+        "{saved}"
+    );
+
+    // Walking out of a fitting puts the paid-for clothes back on.
+    interact(&mut server, &mut anna, "Clothes shop");
+    pick(&mut server, &mut anna, "Top:");
+    server.until(&mut [&mut anna], "the preview", |s, _| {
+        look_of(s, anna_id).is_some_and(|l| l.top != dressed.top)
+    });
+    go(&mut server, &mut anna, DEALER);
+    server.until(&mut [&mut anna], "the fitting to end", |s, p| {
+        notified(p[0], "You left the clothes shop.") && look_of(s, anna_id) == Some(dressed)
+    });
+    assert!(hud(&anna).starts_with("$380"), "{}", hud(&anna));
+
+    // A car from the dealer, in white.
+    go(&mut server, &mut anna, DEALER);
+    interact(&mut server, &mut anna, "Premium Motors");
+    pick(&mut server, &mut anna, "Compact");
+    answer(&mut server, &mut anna, "Compact", vec![json!("2")]);
+    server.until(&mut [&mut anna], "the purchase", |_, p| {
+        notified(p[0], "You bought the arctic white Compact")
+    });
+    let car = server.shared.borrow().entities.all(EntityKind::Vehicle)[0];
+    assert_eq!(
+        server
+            .shared
+            .borrow()
+            .entities
+            .get(car)
+            .unwrap()
+            .state
+            .color,
+        Some([235, 235, 235])
+    );
+
+    // Someone else cannot take it, and nobody drives it from afar.
+    go(&mut server, &mut bob, [DELIVERY[0] + 2.0, DELIVERY[1], 0.2]);
+    enter(&mut bob, car);
+    server.until(&mut [&mut anna, &mut bob], "bob refused", |_, p| {
+        refused(p[1], car, "cannot use") && notified(p[1], "belongs to someone else")
+    });
+    go(&mut server, &mut anna, SPAWN);
+    enter(&mut anna, car);
+    server.until(&mut [&mut anna, &mut bob], "too far", |_, p| {
+        refused(p[0], car, "Too far")
+    });
+
+    // Anna gets in: her game gets the car, everyone else loses the entity.
+    go(
+        &mut server,
+        &mut anna,
+        [DELIVERY[0] - 2.0, DELIVERY[1], 0.2],
+    );
+    enter(&mut anna, car);
+    server.until(&mut [&mut anna, &mut bob], "the grant", |_, p| {
+        granted(p[0], car, "compact")
+            && got(p[1], ENTITY_DELETE_EVENT, |d| d.contains(&car.to_string()))
+    });
+    assert!(got(&anna, "__sare:vehicleGranted", |p| p
+        .contains("[235,235,235]")));
+    assert_eq!(
+        server.shared.borrow().entities.get(car).unwrap().driver,
+        Some(anna_id)
+    );
+    enter(&mut bob, car);
+    server.until(&mut [&mut anna, &mut bob], "taken", |_, p| {
+        refused(p[1], car, "Someone is driving it")
+    });
+
+    // She drives 40 m east; the server entity follows her car.
+    let parked = [DELIVERY[0] + 40.0, DELIVERY[1], 0.2];
+    anna.place(parked, true);
+    server.settle(&mut anna);
+    server.until(
+        &mut [&mut anna, &mut bob],
+        "the entity to follow",
+        |s, _| {
+            s.shared
+                .borrow()
+                .entities
+                .get(car)
+                .is_some_and(|e| (e.state.position[0] - parked[0]).abs() < 0.1)
+        },
+    );
+    // Out again: everyone gets the car back where she left it.
+    bob.events.clear();
+    anna.place([parked[0] - 2.0, parked[1], 0.2], false);
+    exit(&mut anna, car);
+    server.until(&mut [&mut anna, &mut bob], "the car back at bob", |_, p| {
+        got(p[1], ENTITIES_EVENT, |payload| {
+            parse_entities(payload)
+                .iter()
+                .any(|e| e.handle == car && (e.position[0] - parked[0]).abs() < 0.1)
+        })
+    });
+    assert_eq!(
+        server.shared.borrow().entities.get(car).unwrap().driver,
+        None
+    );
+
+    // Job vehicles: the police cruiser puts the officer at the wheel, and
+    // only on-duty police may drive it.
+    server.run(&format!("setjob {anna_id} police 0"));
+    go(&mut server, &mut anna, POLICE_DESK);
+    interact(&mut server, &mut anna, "LSPD");
+    pick(&mut server, &mut anna, "Go on duty");
+    server.until(&mut [&mut anna], "on duty", |_, p| {
+        hud(p[0]).contains("LSPD") && !hud(p[0]).contains("off duty")
+    });
+    go(&mut server, &mut anna, POLICE_GARAGE);
+    interact(&mut server, &mut anna, "LSPD vehicles");
+    pick(&mut server, &mut anna, "Take / return");
+    let cruiser = |server: &Sarebox| {
+        let shared = server.shared.borrow();
+        shared
+            .entities
+            .all(EntityKind::Vehicle)
+            .into_iter()
+            .find(|h| {
+                shared.entities.get(*h).unwrap().state.model
+                    == sa_net::entities::ModelRef::Name("police".into())
+            })
+    };
+    server.until(&mut [&mut anna], "the cruiser", |s, _| cruiser(s).is_some());
+    let police = cruiser(&server);
+    let police = police.expect("a police cruiser");
+    server.until(&mut [&mut anna], "the warp", |_, p| {
+        granted(p[0], police, "police")
+    });
+    exit(&mut anna, police);
+    server.until(&mut [&mut anna], "out of the cruiser", |s, _| {
+        s.shared
+            .borrow()
+            .entities
+            .get(police)
+            .unwrap()
+            .driver
+            .is_none()
+    });
+    go(
+        &mut server,
+        &mut bob,
+        [POLICE_GARAGE[0] + 2.0, POLICE_GARAGE[1], 0.2],
+    );
+    enter(&mut bob, police);
+    server.until(&mut [&mut anna, &mut bob], "bob refused", |_, p| {
+        notified(p[1], "Only on-duty staff")
+    });
+    // Leaving the game gives the car back.
+    enter(&mut anna, police);
+    server.until(&mut [&mut anna], "back in", |s, _| {
+        s.shared
+            .borrow()
+            .entities
+            .get(police)
+            .is_some_and(|e| e.driver == Some(anna_id))
+    });
+    server.leave(anna);
+    server.until(&mut [&mut bob], "released", |s, _| {
+        s.shared.borrow().drivers.is_empty()
+    });
     let output = server.output();
     assert!(!output.contains("SCRIPT ERROR"), "{output}");
 }

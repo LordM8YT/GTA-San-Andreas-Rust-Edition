@@ -161,10 +161,32 @@ bucket 0; players only receive the entities of their own bucket. An entity
 belongs to the resource that created it and is deleted when that resource
 stops. At most 2048 entities exist at a time; creation then returns 0.
 Players see server vehicles and peds whose models their game has (others are
-skipped); they cannot drive them yet, and objects are not drawn yet. The
-example `[examples]/sare_vehicles` adds `/car [model]` and `/dv`.
+skipped); objects are not drawn yet. The example `[examples]/sare_vehicles`
+adds `/car [model]` and `/dv`.
 
-Not supported yet: NUI pages (by design: use the script UI), driving server vehicles, OneSync population, entity lockdown modes, replicated state bags,
+Players drive server vehicles with **F** (driver's seat only). The server
+decides: the car must be within 7 m and free, and the cancellable event
+`sare:enteringVehicle` (`source`, vehicle) runs first, so a script can
+call `CancelEvent()` to keep a car for its owner or a job. Then
+`sare:vehicleEntered` and, on exit, `sare:vehicleExited` fire. While a car
+is driven it follows its driver for everyone; it is freed 3 seconds after
+the driver leaves or disconnects. Natives: `GetVehiclePedIsIn(ped)`,
+`GetPedInVehicleSeat(vehicle, -1)`, `TaskWarpPedIntoVehicle(ped, vehicle)`
+(skips the range check and event), `TaskLeaveVehicle(ped)`, and
+`SetVehicleCustomPrimaryColour(vehicle, r, g, b)` /
+`GetVehicleCustomPrimaryColour` / `ClearVehicleCustomPrimaryColour` (the
+paint of content-pack cars). Deleting a driven car takes the driver out
+first.
+
+In content packs with [characters](content-packs.md#characters),
+`SetPlayerAppearance(source, look)` sets a player's look for everyone and
+`GetPlayerAppearance(source)` reads it. `look` is a table: `body` (0 male,
+1 female); the styles `hair`, `top`, `pants`, `shoes` (numbers from 0); and
+the colours `skin`, `hairColor`, `topColor`, `pantsColor`, `shoesColor`
+(`{r, g, b}`, 0–255). The server keeps it until the player leaves; save it
+yourself (`sare_rp_identity` keeps it in character metadata).
+
+Not supported yet: NUI pages (by design: use the script UI), passenger seats in server vehicles, OneSync population, entity lockdown modes, replicated state bags,
 databases (oxmysql is a Node.js resource), `PerformHttpRequest`, and identifiers
 other than `license`, `sare` and `legacy`. `playerConnecting` runs after the player has
 joined, so a rejection drops them. FiveM resources that use GTA V natives must

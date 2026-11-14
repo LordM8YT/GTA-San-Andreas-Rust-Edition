@@ -11,6 +11,7 @@ mod natives;
 mod script;
 mod template;
 mod update;
+mod vehicles;
 
 use anyhow::{Context, Result};
 use console::Console;
@@ -377,6 +378,11 @@ fn pump(
                     &[Json::from("Exiting")],
                     false,
                 );
+                crate::vehicles::release(shared, *id);
+                let forgot = shared.borrow_mut().appearances.remove(id).is_some();
+                if forgot {
+                    natives::broadcast_appearance(shared, *id, None);
+                }
                 let mut state = shared.borrow_mut();
                 state.peers.retain(|p| p.id != *id);
                 state.bags.remove(&format!("player:{id}"));
@@ -390,6 +396,7 @@ fn pump(
                     .map_or("no license".into(), |l| format!("license:{l}"));
                 out(shared, format!("Player {name} ({id}) joined, {license}."));
                 script::announce_client_bundles(shared, *id);
+                natives::send_appearances(shared, *id);
                 // Already connected: a rejecting handler drops the player.
                 let rejected = script::dispatch(
                     shared,
@@ -415,9 +422,13 @@ fn pump(
             }
             continue;
         }
+        if vehicles::handle_event(shared, event.source, &event.name, &args) {
+            continue;
+        }
         script::dispatch(shared, &event.name, event.source, &args, true);
     }
     script::tick(shared);
+    vehicles::track(shared);
     script::replicate_entities(shared);
     for _ in 0..64 {
         let pending = std::mem::take(&mut shared.borrow_mut().pending);
