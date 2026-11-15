@@ -7,6 +7,7 @@
 //! - [`ops`]: editing operations (place, delete, duplicate, group, ...).
 //! - [`catalog`]: the asset catalog and its providers.
 //! - [`viewport`]: picking, gizmo maths, snapping and the editor camera.
+//! - [`thumbnail`]: Asset Browser pictures, drawn on the CPU.
 //!
 //! The runtime (`sa-runtime`, `build_mode` module) draws the editor with
 //! egui and the existing wgpu renderer. See docs/build-mode.md.
@@ -14,6 +15,7 @@ pub mod catalog;
 pub mod history;
 pub mod ops;
 pub mod project;
+pub mod thumbnail;
 pub mod viewport;
 
 #[cfg(test)]
@@ -314,6 +316,22 @@ mod tests {
             .import_model(&other.folder.join("assets/signs/stop.glb"), "Street Signs")
             .unwrap();
         assert_eq!(imported.to_string(), "self:assets/street-signs/stop.glb");
+        // The same model again is the same asset; another model with the
+        // same file name gets a numbered name.
+        let again = mine
+            .import_model(&other.folder.join("assets/signs/stop.glb"), "Street Signs")
+            .unwrap();
+        assert_eq!(again, imported);
+        let taxi = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../content/sare-rp-town/vehicles/taxi.glb"
+        );
+        std::fs::create_dir_all(root.join("elsewhere")).unwrap();
+        std::fs::copy(taxi, root.join("elsewhere/stop.glb")).unwrap();
+        let second = mine
+            .import_model(&root.join("elsewhere/stop.glb"), "Street Signs")
+            .unwrap();
+        assert_eq!(second.to_string(), "self:assets/street-signs/stop-2.glb");
         let mut resolver = AssetResolver::with_dirs(&mine.folder, vec![root.clone()]);
         assert!(resolver.model(&imported).is_ok());
         let pack_ref = AssetRef::parse("pack:other:assets/signs/stop.glb").unwrap();
@@ -335,5 +353,51 @@ mod tests {
             .search("", Some("Nature"))
             .all(|e| e.category == "Nature"));
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn thumbnails_show_the_model_on_a_clear_background() {
+        use crate::thumbnail::render;
+        let alpha =
+            |t: &crate::thumbnail::Thumbnail, x: usize, y: usize| t.rgba[(y * t.size + x) * 4 + 3];
+        // Set SARE_THUMBNAIL_DIR to look at the pictures.
+        let dump = std::env::var_os("SARE_THUMBNAIL_DIR").map(PathBuf::from);
+        let mut models: Vec<(String, sa_scene::gltf_model::Model)> = sa_scene::builtin_assets::ALL
+            .iter()
+            .map(|b| {
+                (
+                    b.name.to_owned(),
+                    sa_scene::builtin_assets::model(b.name).unwrap(),
+                )
+            })
+            .collect();
+        let glb = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../content/example-town/world.glb"
+        );
+        models.push((
+            "example-town".into(),
+            sa_scene::gltf_model::load(std::path::Path::new(glb), "town").unwrap(),
+        ));
+        for (name, model) in &models {
+            let thumb = render(model, 64);
+            assert_eq!(thumb.rgba.len(), 64 * 64 * 4);
+            let opaque = thumb.rgba.chunks(4).filter(|p| p[3] == 255).count();
+            assert!(opaque > 64 * 64 / 50, "{name}: only {opaque} opaque pixels");
+            assert_eq!(alpha(&thumb, 0, 0), 0, "{name}: corner should be clear");
+            if let Some(dir) = &dump {
+                std::fs::create_dir_all(dir).unwrap();
+                let file = std::fs::File::create(dir.join(format!("{name}.png"))).unwrap();
+                let mut encoder = png::Encoder::new(file, 64, 64);
+                encoder.set_color(png::ColorType::Rgba);
+                encoder
+                    .write_header()
+                    .unwrap()
+                    .write_image_data(&thumb.rgba)
+                    .unwrap();
+            }
+        }
+        let empty = render(&sa_scene::gltf_model::Model::default(), 8);
+        assert!(empty.rgba.iter().all(|v| *v == 0));
     }
 }

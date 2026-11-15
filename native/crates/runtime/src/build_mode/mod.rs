@@ -81,6 +81,8 @@ pub struct Placing {
     pub label: String,
     /// Turn (degrees about up) given with [ and ].
     pub turn: f32,
+    /// Dragged out of the Asset Browser: releasing the mouse places it once.
+    pub dragged: bool,
 }
 
 /// Something only the game state can do, asked for by the UI.
@@ -565,6 +567,11 @@ impl State {
         let Some(mut build) = self.build.take() else {
             return;
         };
+        // The editor needs the mouse: nothing may keep it locked and hidden
+        // while editing (only playtesting captures it).
+        if !build.playtesting && self.captured {
+            self.capture(false);
+        }
         let mut problems = Vec::new();
         build
             .gpu

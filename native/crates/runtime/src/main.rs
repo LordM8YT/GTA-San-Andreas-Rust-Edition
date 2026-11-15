@@ -3725,7 +3725,10 @@ impl ApplicationHandler for App {
                     state.menu.open(menu::Page::Network);
                     state.network_action(false);
                 }
+                // The launcher always asks to enter play (--play); Build Mode
+                // opens in the editor instead, with the mouse free.
                 if state.auto_enter
+                    && state.build.is_none()
                     && !launch_args.iter().any(|a| {
                         matches!(
                             a.as_str(),

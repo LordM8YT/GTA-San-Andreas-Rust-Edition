@@ -221,14 +221,27 @@ impl Sarebox {
         player
     }
     pub fn leave(&mut self, player: Player) {
-        let id = player.client.update(player.pose).map_or(0, |r| r.local_id);
+        let id = self.id(&player);
         drop(player);
         self.until(&mut [], "the player to leave", |s, _| {
             !s.shared.borrow().peers.iter().any(|p| p.id == id)
         });
     }
+    /// The player's id as the server gave it. `Session::update` only
+    /// try-locks the report (it never blocks the game loop), so it is None
+    /// while the network thread is writing it: ask again.
     pub fn id(&self, player: &Player) -> u32 {
-        player.client.update(player.pose).unwrap().local_id
+        let start = Instant::now();
+        loop {
+            if let Some(report) = player.client.update(player.pose) {
+                return report.local_id;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(8),
+                "the network report stayed locked"
+            );
+            std::thread::yield_now();
+        }
     }
     pub fn kvp(&self) -> Json {
         script::flush_kvp(&self.shared, true);
