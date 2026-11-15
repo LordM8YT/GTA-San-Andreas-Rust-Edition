@@ -128,6 +128,12 @@ pipeline or project format.
 | Hooks in `main.rs` | `--build`, `State.build` | Editor camera drives the view, editor objects join `drawn_batches`, editor UI replaces the HUD while editing, F6 toggles playtest, keyboard/mouse go to egui while editing |
 | Launcher | Home page | *Create world* and *Edit <pack>* start `sa-runtime --build` |
 
+Frame pacing (`build_mode/pacing.rs`): while editing, Build Mode draws only
+when something changes. Input, egui animations, flying the camera, dragging
+and loading draw at up to 60 FPS (lower if the frame rate limit is lower);
+with nothing going on it draws 2 frames a second, and 1 in the background or
+minimised. Playtest is paced like the game.
+
 Undo/redo: every change is an `sa_editor::history::Command` (insert, remove,
 modify nodes, world info, settings, or a batch). A gizmo drag or an
 Inspector drag changes the document live and records one command when it
