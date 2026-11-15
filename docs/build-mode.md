@@ -28,14 +28,15 @@ A new world starts with a 32 m ground plate and a spawn point on it.
 | Area | What it does |
 | --- | --- |
 | Toolbar | Select (Q), Move (W), Rotate (E), Scale (R), World/Local axes (L), Duplicate, Undo, Redo, Snap (G) with grid size and angle step, Surface placement, Playtest (F6), Save (Ctrl+S), World settings |
-| Asset Browser (left) | Search and category filters. Built-in shapes, models from every installed content pack and this world's own models. Missing or broken models are marked ⚠ |
+| Asset Browser (left) | Picture tiles with search and category filters. Built-in shapes, models from every installed content pack and this world's own models. Missing or broken models are marked ⚠ |
 | World Outliner (left) | The scene tree: show/hide 👁, lock 🔒, double-click to rename, right-click for focus, duplicate, group, ungroup, move to group and delete. Search filters by name |
 | Inspector (right) | Selected object: name, position/rotation/scale (drag or type), Visible, Locked, Collision, asset and its load status, Advanced (size, triangles, materials, id, extra data). Nothing selected: world name, description, spawn point and time of day |
 | Bottom | Console, Errors and warnings, Asset status, Playtest tabs; the status bar shows selection, grid and save state |
 
-Placing: click an asset, move the mouse over the world (a preview follows),
-click to place. Shift-click keeps placing, `[` and `]` turn the preview,
-right-click or Esc stops. With *Surface* on, objects land on what is under
+Placing: drag an asset from the Asset Browser into the world and let go.
+Or click it, move the mouse over the world (a preview follows) and click to
+place; every click places another one until you right-click or press Esc.
+`[` and `]` turn the preview. With *Surface* on, objects land on what is under
 the mouse; otherwise on the ground plane. With Snap on, positions snap to
 the grid (hold Ctrl while dragging to invert snapping).
 
@@ -139,8 +140,7 @@ Extending it:
 
 Milestone 1 and part of milestone 2 are in. Still to come, roughly in order:
 
-- Asset thumbnails (the placement preview is the preview for now) and a
-  native file picker for import.
+- A native file picker for import.
 - Drag and drop in the outliner; group transforms (groups are folders now).
 - Collision and wireframe views; marking objects without collision.
 - Lights (point, spot, sun), sky and fog settings. The renderer has no

@@ -81,6 +81,8 @@ pub struct Placing {
     pub label: String,
     /// Turn (degrees about up) given with [ and ].
     pub turn: f32,
+    /// Dragged out of the Asset Browser: releasing the mouse places it once.
+    pub dragged: bool,
 }
 
 /// Something only the game state can do, asked for by the UI.

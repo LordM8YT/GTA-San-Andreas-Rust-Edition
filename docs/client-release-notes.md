@@ -1,5 +1,10 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.49.0:
+- Build Mode: the Asset Browser shows a picture of every model, so you can see what you are placing. Pictures are made on your PC, also for your own .glb files.
+- Build Mode: drag a model from the Asset Browser straight into the world.
+- Build Mode: placing keeps going, so a row of trees or walls is one click each. Right-click or Esc stops.
+
 Version 0.48.0:
 - New: Build Mode, a world editor inside SARE. Make a world with no game files: on the launcher's Home page type a name and press Create world, or press Edit next to any content pack.
 - Place built-in shapes (ground, roads, walls, stairs, ramps, houses, trees, crates and more), models from any content pack, or your own .glb files (File, Import model).

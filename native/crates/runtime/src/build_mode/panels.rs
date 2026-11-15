@@ -8,7 +8,8 @@ use sa_editor::catalog::AssetStatus;
 use sa_editor::history::{Command, WorldInfo};
 use sa_editor::ops;
 use sa_scene::world_layout::{AssetRef, Node, NodeId, Transform, WorldSettings};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 
 const WARNING: Color32 = Color32::from_rgb(232, 170, 70);
 const ERROR: Color32 = Color32::from_rgb(232, 96, 86);
@@ -52,6 +53,8 @@ pub struct UiState {
     pub flying: bool,
     /// Group new objects are placed into.
     pub place_into: Option<NodeId>,
+    /// Asset Browser pictures; None when one could not be made.
+    pub thumbnails: HashMap<AssetRef, Option<egui::TextureHandle>>,
 }
 
 fn compact(ui: &mut Ui) {
@@ -130,9 +133,11 @@ pub fn draw(build: &mut BuildMode, root: &mut Ui, frame: &viewport::Frame) {
         });
     egui::CentralPanel::no_frame().show(root, |ui| {
         viewport::show(build, ui, frame);
-        if let Some(placing) = &build.placing {
+        if let Some(placing) = build.placing.as_ref().filter(|p| p.dragged) {
+            hint(ui, &format!("Drop {} in the world", placing.label));
+        } else if let Some(placing) = &build.placing {
             let text = format!(
-                "Placing {}: click to place (Shift keeps placing), [ ] turn, right-click or Esc to stop",
+                "Placing {}: click to place, keep clicking for more, [ ] turn, right-click or Esc to stop",
                 placing.label
             );
             hint(ui, &text);
@@ -248,6 +253,7 @@ fn menu_bar(build: &mut BuildMode, ui: &mut Ui) {
             if ui.button("Reload assets").clicked() {
                 build.gpu.clear();
                 build.resolver.clear();
+                build.ui.thumbnails.clear();
                 build.refresh_catalog();
             }
             ui.separator();
@@ -633,11 +639,13 @@ fn assets(build: &mut BuildMode, ui: &mut Ui) {
         }
     });
     ui.separator();
-    let mut chosen: Option<(AssetRef, String)> = None;
+    let mut chosen: Option<(AssetRef, String, bool)> = None;
+    // Thumbnails are drawn on the CPU when a tile first shows, a few per
+    // frame, so a big pack does not stall the editor.
+    let budget = Instant::now() + Duration::from_millis(12);
     egui::ScrollArea::vertical()
         .auto_shrink(false)
         .show(ui, |ui| {
-            let mut source = String::new();
             let entries: Vec<_> = build
                 .catalog
                 .search(&build.ui.asset_search, build.ui.category.as_deref())
@@ -646,53 +654,43 @@ fn assets(build: &mut BuildMode, ui: &mut Ui) {
             if entries.is_empty() {
                 ui.label(RichText::new("No assets match.").color(MUTED));
             }
-            for entry in entries {
-                if entry.source != source {
-                    source = entry.source.clone();
-                    ui.label(RichText::new(&source).small().color(MUTED));
-                }
-                let (icon, color) = match entry.status {
-                    AssetStatus::Ready => ("■", TEXT),
-                    AssetStatus::Missing(_) => ("⚠", ERROR),
-                    AssetStatus::Invalid(_) => ("⚠", WARNING),
-                };
-                let placing = build
-                    .placing
-                    .as_ref()
-                    .is_some_and(|p| p.asset == entry.reference);
-                let text = RichText::new(format!("{icon} {}", entry.label)).color(if placing {
-                    BACKGROUND
-                } else {
-                    color
+            let gap = ui.spacing().item_spacing.x;
+            let columns = ((ui.available_width() + gap) / (TILE_MIN + gap))
+                .floor()
+                .max(1.0);
+            let tile = egui::vec2(((ui.available_width() + gap) / columns - gap).floor(), 0.0);
+            let tile = egui::vec2(tile.x, tile.x + 30.0);
+            // Entries come sorted by source; one heading per source.
+            for group in entries.chunk_by(|a, b| a.source == b.source) {
+                ui.label(RichText::new(&group[0].source).small().color(MUTED));
+                ui.horizontal_wrapped(|ui| {
+                    for entry in group {
+                        let placing = build
+                            .placing
+                            .as_ref()
+                            .is_some_and(|p| p.asset == entry.reference);
+                        let (rect, response) =
+                            ui.allocate_exact_size(tile, egui::Sense::click_and_drag());
+                        if ui.is_rect_visible(rect) {
+                            let image = thumbnail(build, ui.ctx(), entry, budget);
+                            asset_tile(ui, rect, &response, entry, image, placing);
+                        }
+                        let response = response.on_hover_ui(|ui| asset_tooltip(ui, entry));
+                        if entry.status == AssetStatus::Ready {
+                            let drag = response.drag_started_by(egui::PointerButton::Primary);
+                            if response.clicked() || drag {
+                                chosen = Some((entry.reference.clone(), entry.label.clone(), drag));
+                            }
+                        }
+                        if response.dragged() || response.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+                        }
+                    }
                 });
-                let response = ui
-                    .add_sized(
-                        [ui.available_width(), 22.0],
-                        egui::Button::new(text).fill(if placing { ACCENT } else { SURFACE_HIGH }),
-                    )
-                    .on_hover_ui(|ui| {
-                        ui.label(RichText::new(&entry.label).strong());
-                        ui.label(format!("{} · {}", entry.category, entry.source));
-                        ui.label(
-                            RichText::new(entry.reference.to_string())
-                                .monospace()
-                                .small(),
-                        );
-                        match &entry.status {
-                            AssetStatus::Ready => {
-                                ui.label("Click, then click in the world to place it.")
-                            }
-                            AssetStatus::Missing(why) | AssetStatus::Invalid(why) => {
-                                ui.label(RichText::new(why).color(ERROR))
-                            }
-                        };
-                    });
-                if response.clicked() && entry.status == AssetStatus::Ready {
-                    chosen = Some((entry.reference.clone(), entry.label.clone()));
-                }
+                ui.add_space(4.0);
             }
         });
-    if let Some((asset, label)) = chosen {
+    if let Some((asset, label, dragged)) = chosen {
         let label = label
             .split_whitespace()
             .take(3)
@@ -702,9 +700,128 @@ fn assets(build: &mut BuildMode, ui: &mut Ui) {
             asset,
             label,
             turn: 0.0,
+            dragged,
         });
         build.selection.clear();
     }
+}
+
+/// Narrowest an Asset Browser tile gets before a column is dropped.
+const TILE_MIN: f32 = 76.0;
+/// Thumbnail pixels per side (drawn at twice the size of a narrow tile).
+const THUMBNAIL_SIZE: usize = 128;
+
+/// The asset's picture: made once and kept. None while it is not made yet
+/// (or could not be made: the tile then shows an icon).
+fn thumbnail(
+    build: &mut BuildMode,
+    ctx: &egui::Context,
+    entry: &sa_editor::catalog::AssetEntry,
+    budget: Instant,
+) -> Option<egui::TextureHandle> {
+    if let Some(made) = build.ui.thumbnails.get(&entry.reference) {
+        return made.clone();
+    }
+    if entry.status != AssetStatus::Ready {
+        return None;
+    }
+    if Instant::now() > budget {
+        ctx.request_repaint();
+        return None;
+    }
+    let made = build.resolver.model(&entry.reference).ok().map(|model| {
+        let picture = sa_editor::thumbnail::render(&model, THUMBNAIL_SIZE);
+        let image =
+            egui::ColorImage::from_rgba_unmultiplied([picture.size, picture.size], &picture.rgba);
+        ctx.load_texture(
+            format!("build thumbnail {}", entry.reference),
+            image,
+            egui::TextureOptions::LINEAR,
+        )
+    });
+    build
+        .ui
+        .thumbnails
+        .insert(entry.reference.clone(), made.clone());
+    made
+}
+
+fn asset_tile(
+    ui: &Ui,
+    rect: egui::Rect,
+    response: &egui::Response,
+    entry: &sa_editor::catalog::AssetEntry,
+    image: Option<egui::TextureHandle>,
+    placing: bool,
+) {
+    let painter = ui.painter();
+    let fill = if placing {
+        ACCENT
+    } else if response.hovered() {
+        SURFACE_HIGH.gamma_multiply(1.4)
+    } else {
+        SURFACE_HIGH
+    };
+    painter.rect_filled(rect, 6.0, fill);
+    let picture =
+        egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), rect.width())).shrink(6.0);
+    match (&image, &entry.status) {
+        (Some(image), _) => {
+            painter.image(
+                image.id(),
+                picture,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        }
+        (None, status) => {
+            let (icon, color) = match status {
+                AssetStatus::Ready => ("■", MUTED),
+                AssetStatus::Missing(_) => ("⚠", ERROR),
+                AssetStatus::Invalid(_) => ("⚠", WARNING),
+            };
+            painter.text(
+                picture.center(),
+                egui::Align2::CENTER_CENTER,
+                icon,
+                egui::FontId::proportional(24.0),
+                color,
+            );
+        }
+    }
+    let text_color = if placing { BACKGROUND } else { TEXT };
+    let label = ui.fonts_mut(|fonts| {
+        fonts.layout(
+            entry.label.clone(),
+            egui::FontId::proportional(11.0),
+            text_color,
+            rect.width() - 6.0,
+        )
+    });
+    let top = egui::pos2(rect.center().x, picture.bottom() + 3.0);
+    painter.with_clip_rect(rect).galley(
+        top - egui::vec2(label.size().x / 2.0, 0.0),
+        label,
+        text_color,
+    );
+}
+
+fn asset_tooltip(ui: &mut Ui, entry: &sa_editor::catalog::AssetEntry) {
+    ui.label(RichText::new(&entry.label).strong());
+    ui.label(format!("{} · {}", entry.category, entry.source));
+    ui.label(
+        RichText::new(entry.reference.to_string())
+            .monospace()
+            .small(),
+    );
+    match &entry.status {
+        AssetStatus::Ready => {
+            ui.label("Click, then click in the world. Or drag it into the world.")
+        }
+        AssetStatus::Missing(why) | AssetStatus::Invalid(why) => {
+            ui.label(RichText::new(why).color(ERROR))
+        }
+    };
 }
 
 fn outliner(build: &mut BuildMode, ui: &mut Ui) {
@@ -1493,6 +1610,7 @@ fn dialogs(build: &mut BuildMode, root: &mut Ui) {
                             asset,
                             label,
                             turn: 0.0,
+                            dragged: false,
                         });
                     }
                     Err(error) => build.error(format!("Import failed: {error:#}")),

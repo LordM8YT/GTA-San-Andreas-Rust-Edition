@@ -141,12 +141,31 @@ pub fn show(build: &mut BuildMode, ui: &mut Ui, frame: &Frame) {
 
     // Placement preview follows the mouse until a click places it.
     build.ui.ghost_transform = None;
+    if build.placing.as_ref().is_some_and(|p| p.dragged) {
+        // Dragged in from the Asset Browser: the drag belongs to the browser
+        // tile, so follow the raw pointer and place where it is let go.
+        let pointer = ui
+            .input(|i| i.pointer.latest_pos())
+            .filter(|p| rect.contains(*p));
+        let transform = pointer.map(|p| placement_at(build, &view, p));
+        build.ui.ghost_transform = transform;
+        if !ui.input(|i| i.pointer.primary_down()) {
+            match transform {
+                Some(transform) => place(build, transform, false),
+                None => build.placing = None,
+            }
+        }
+        draw_selection(build, &view, &painter);
+        return;
+    }
     if build.placing.is_some() {
         if let Some(pointer) = pointer {
             let transform = placement_at(build, &view, pointer);
             build.ui.ghost_transform = Some(transform);
+            // Placing goes on until right-click or Esc, so rows of walls or
+            // trees are one click each.
             if response.clicked_by(egui::PointerButton::Primary) {
-                place(build, transform, modifiers.shift);
+                place(build, transform, true);
             }
         }
         if response.clicked_by(egui::PointerButton::Secondary) {
