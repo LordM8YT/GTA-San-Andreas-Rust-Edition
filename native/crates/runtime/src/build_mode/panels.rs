@@ -143,7 +143,63 @@ pub fn draw(build: &mut BuildMode, root: &mut Ui, frame: &viewport::Frame) {
             hint(ui, &text);
         }
     });
+    dropped_files(build, root);
     dialogs(build, root);
+}
+
+/// Models dragged onto the window from the file explorer are imported into
+/// this world, and the last one is ready to place.
+fn dropped_files(build: &mut BuildMode, root: &mut Ui) {
+    let (hovering, dropped) = root.input(|i| {
+        (
+            !i.raw.hovered_files.is_empty(),
+            i.raw
+                .dropped_files
+                .iter()
+                .map(|f| f.path().to_path_buf())
+                .collect::<Vec<_>>(),
+        )
+    });
+    if hovering {
+        let rect = root.ctx().content_rect();
+        let painter = root.ctx().layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("build drop"),
+        ));
+        painter.rect_filled(rect, 0.0, Color32::from_black_alpha(150));
+        painter.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "Drop .glb models to add them to this world",
+            egui::FontId::proportional(22.0),
+            TEXT,
+        );
+    }
+    let mut last = None;
+    for path in dropped {
+        match build.project.import_model(&path, "imported") {
+            Ok(asset) => {
+                build.info(format!("Imported {asset}"));
+                let label = path
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                last = Some((asset, label));
+            }
+            Err(error) => build.error(format!("Could not import {}: {error:#}", path.display())),
+        }
+    }
+    if let Some((asset, label)) = last {
+        build.refresh_catalog();
+        build.ui.left = LeftTab::Assets;
+        build.selection.clear();
+        build.placing = Some(Placing {
+            asset,
+            label,
+            turn: 0.0,
+            dragged: false,
+        });
+    }
 }
 
 fn hint(ui: &mut Ui, text: &str) {
@@ -1578,7 +1634,7 @@ fn dialogs(build: &mut BuildMode, root: &mut Ui) {
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(&ctx, |ui| {
                 compact(ui);
-                ui.label("Path to a .glb file on this computer. It is copied into this world's assets folder, so the world stays portable.");
+                ui.label("Path to a .glb file on this computer. It is copied into this world's assets folder, so the world stays portable. Tip: you can also drag .glb files from your file explorer onto this window.");
                 ui.add(egui::TextEdit::singleline(path).hint_text("C:/Users/me/Desktop/bench.glb").desired_width(380.0));
                 ui.horizontal(|ui| {
                     ui.label("Category");

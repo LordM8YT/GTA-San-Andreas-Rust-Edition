@@ -316,6 +316,22 @@ mod tests {
             .import_model(&other.folder.join("assets/signs/stop.glb"), "Street Signs")
             .unwrap();
         assert_eq!(imported.to_string(), "self:assets/street-signs/stop.glb");
+        // The same model again is the same asset; another model with the
+        // same file name gets a numbered name.
+        let again = mine
+            .import_model(&other.folder.join("assets/signs/stop.glb"), "Street Signs")
+            .unwrap();
+        assert_eq!(again, imported);
+        let taxi = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../content/sare-rp-town/vehicles/taxi.glb"
+        );
+        std::fs::create_dir_all(root.join("elsewhere")).unwrap();
+        std::fs::copy(taxi, root.join("elsewhere/stop.glb")).unwrap();
+        let second = mine
+            .import_model(&root.join("elsewhere/stop.glb"), "Street Signs")
+            .unwrap();
+        assert_eq!(second.to_string(), "self:assets/street-signs/stop-2.glb");
         let mut resolver = AssetResolver::with_dirs(&mine.folder, vec![root.clone()]);
         assert!(resolver.model(&imported).is_ok());
         let pack_ref = AssetRef::parse("pack:other:assets/signs/stop.glb").unwrap();

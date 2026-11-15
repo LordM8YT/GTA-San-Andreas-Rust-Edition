@@ -36,7 +36,12 @@ A new world starts with a 32 m ground plate and a spawn point on it.
 Placing: drag an asset from the Asset Browser into the world and let go.
 Or click it, move the mouse over the world (a preview follows) and click to
 place; every click places another one until you right-click or press Esc.
-`[` and `]` turn the preview. With *Surface* on, objects land on what is under
+`[` and `]` turn the preview.
+
+Your own models: drag `.glb` files from your file explorer onto the SARE
+window, or use *File → Import model*. They are copied into the world's
+`assets/` folder (dropped files go to `assets/imported/`) and are ready to
+place. With *Surface* on, objects land on what is under
 the mouse; otherwise on the ground plane. With Snap on, positions snap to
 the grid (hold Ctrl while dragging to invert snapping).
 

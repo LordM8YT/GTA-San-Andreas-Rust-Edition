@@ -259,14 +259,31 @@ impl Project {
         } else {
             category
         };
-        let relative = format!("{ASSETS_DIR}/{category}/{}", sanitize_file(name));
-        let target = self.folder.join(&relative);
-        ensure!(!target.exists(), "{relative} already exists in this world");
-        std::fs::create_dir_all(target.parent().unwrap())?;
         if name.to_ascii_lowercase().ends_with(".gltf") {
             bail!("import .glb files (a .gltf needs its .bin and textures copied too)");
         }
-        std::fs::copy(source, &target)
+        let bytes =
+            std::fs::read(source).with_context(|| format!("reading {}", source.display()))?;
+        let file = sanitize_file(name);
+        let (stem, extension) = file.rsplit_once('.').unwrap_or((&file, "glb"));
+        // The same model imported twice is the same asset; a different model
+        // with the same name gets a numbered name.
+        let mut number = 1;
+        let (relative, target) = loop {
+            let file = match number {
+                1 => file.clone(),
+                n => format!("{stem}-{n}.{extension}"),
+            };
+            let relative = format!("{ASSETS_DIR}/{category}/{file}");
+            let target = self.folder.join(&relative);
+            match std::fs::read(&target) {
+                Ok(existing) if existing == bytes => return Ok(AssetRef::Own(relative)),
+                Ok(_) => number += 1,
+                Err(_) => break (relative, target),
+            }
+        };
+        std::fs::create_dir_all(target.parent().unwrap())?;
+        std::fs::write(&target, &bytes)
             .with_context(|| format!("copying {} into the world", source.display()))?;
         Ok(AssetRef::Own(relative))
     }

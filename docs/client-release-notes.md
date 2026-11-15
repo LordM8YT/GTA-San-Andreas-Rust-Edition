@@ -4,6 +4,8 @@ Version 0.49.0:
 - Build Mode: the Asset Browser shows a picture of every model, so you can see what you are placing. Pictures are made on your PC, also for your own .glb files.
 - Build Mode: drag a model from the Asset Browser straight into the world.
 - Build Mode: placing keeps going, so a row of trees or walls is one click each. Right-click or Esc stops.
+- Build Mode: drag .glb models from your file explorer onto the SARE window to add them to your world. Importing the same model twice no longer fails, and a different model with the same file name gets a numbered name.
+- The creator handbook (docs/MODDING.md) now starts worlds with Build Mode, no Blender needed.
 
 Version 0.48.0:
 - New: Build Mode, a world editor inside SARE. Make a world with no game files: on the launcher's Home page type a name and press Create world, or press Edit next to any content pack.

@@ -33,7 +33,8 @@ files at all.
 | You want to make | Make a… | Needs GTA SA installed to play? | Guide |
 | --- | --- | --- | --- |
 | A prop, sign, building or ramp on the San Andreas map | **Mod** with a `.glb` (or DFF) model | Yes | [Tutorial 4](#4-tutorial-your-first-prop-in-5-minutes), [native mods](native-mods.md) |
-| A whole new map or level | **Content pack** with a `.glb` world | **No** | [Tutorial 5](#5-tutorial-your-own-world-no-gta-needed), [content packs](content-packs.md) |
+| A whole new map or level, built inside SARE | **Content pack** made in **Build Mode** | **No** | [Tutorial 5](#5-tutorial-your-own-world-no-gta-needed), [Build Mode](build-mode.md) |
+| A whole new map or level, modelled in Blender | **Content pack** with a `.glb` world | **No** | [Tutorial 5](#5-tutorial-your-own-world-no-gta-needed), [content packs](content-packs.md) |
 | A custom car | **Mod** with a DFF/TXD vehicle and handling | Yes | [creating resources](creating-resources.md) |
 | A player character or clothes | **Mod** with skinned DFF + IFP animations | Yes | [native mods](native-mods.md) |
 | Different car handling | **Mod** with `original_vehicle_handling` | Yes | [vehicle dynamics](vehicle-dynamics.md) |
@@ -50,8 +51,11 @@ plugins or CLEO scripts.
 
 - **SARE** itself: the launcher from the
   [latest release](https://github.com/LordM8YT/GTA-San-Andreas-Rust-Edition/releases/latest).
-- **Blender** (free, [blender.org](https://www.blender.org/)) for models and
-  worlds. Any tool that exports **glTF 2.0 binary (`.glb`)** works too.
+- **Nothing else to build a world**: SARE's own **Build Mode** editor places
+  ready-made pieces (ground, roads, walls, stairs, houses, trees and more)
+  and your own models.
+- **Blender** (free, [blender.org](https://www.blender.org/)) for your own
+  models, and for worlds you would rather model by hand. Any tool that exports **glTF 2.0 binary (`.glb`)** works too.
 - **A text editor** for JSON and Lua, for example VS Code or Notepad++.
 - **Python 3** (optional) to run the helper tools in `tools/`, such as
   `new-resource.py`, which creates a working starting point for you.
@@ -140,7 +144,54 @@ Tips:
 
 ## 5. Tutorial: your own world, no GTA needed
 
-You will make a world that anyone can play without owning San Andreas.
+You will make a world that anyone can play without owning San Andreas. There
+are two ways, and you can mix them: build it inside SARE with **Build Mode**
+(fastest, no other tools), or model it in **Blender**.
+
+### 5a. The fast way: Build Mode
+
+**Step 1. Create the world.** Open the launcher. On **Home**, type a name
+under **Build Mode** and press **Create world**. Build Mode opens with a
+ground plate and a spawn point.
+
+**Step 2. Place things.** The **Asset Browser** on the left shows a picture of
+every piece: ground and grass plates, roads, floors, walls, stairs, ramps,
+houses, trees, crates, benches, lamp posts, plus the models of every content
+pack you have installed. To place one:
+
+- drag its picture into the world and let go, **or**
+- click it, then click in the world. Every click places another one, so a
+  row of trees is one click per tree. Right-click or Esc stops.
+
+`[` and `]` turn the piece before you place it. With **Surface** on (the
+default), pieces land on whatever is under the mouse, so a house can stand on
+a platform. With **Snap** on, they line up on a 1 m grid (change the size in
+the toolbar).
+
+**Step 3. Arrange.** Click an object to select it. Move (W), Rotate (E) and
+Scale (R) give you handles to drag, or type exact numbers in the
+**Inspector** on the right. Ctrl+D duplicates, Delete removes, Ctrl+Z undoes
+anything. The **World Outliner** tab lists every object: rename, group, hide
+and lock them there.
+
+**Step 4. Your own models.** Drag a `.glb` file from your file explorer onto
+the SARE window, or use **File → Import model**. It is copied into your world,
+so the world stays one folder you can share. Make the model in Blender as in
+[Tutorial 4](#4-tutorial-your-first-prop-in-5-minutes).
+
+**Step 5. Play it.** Press **F6** to walk around your world right away, and
+F6 again to go back to editing. Move the green spawn marker with **Set spawn
+at camera focus** in the Inspector (click empty space first to see the world
+settings).
+
+**Step 6. Save.** Ctrl+S. Your work is also autosaved, and offered back if
+SARE closes unexpectedly. The world is now a normal content pack in
+`content/<your-world>/`: it shows up under **Content packs** on Home to play,
+with an **Edit** button to open it in Build Mode again.
+
+Every control and the file format are in the [Build Mode guide](build-mode.md).
+
+### 5b. The Blender way
 
 **Step 1. Create the pack.**
 
@@ -172,6 +223,10 @@ button in the launcher again.
 **Step 5. Fill in `content.json`.** Set `name`, `author`, `description` and,
 most important, `license`, and move `world.spawn` (`[east, north, up]`, in
 metres) to where players should start.
+
+**Mixing both:** press **Edit** next to your pack to open it in Build Mode.
+Your Blender `world.glb` stays as the base, and the pieces you place are
+saved beside it in `layout.json`.
 
 The full format, limits and tips are in [content packs](content-packs.md).
 Right now a pack holds a world; your own characters, vehicles and sounds in
@@ -244,7 +299,8 @@ channels. JPEG textures are skipped: save your images as PNG.
   `[x, y, z]`: x east, y north, z up, in metres. Grove Street is around
   `[2495, -1665, 13.3]`. The pause menu map shows where you are.
 - **In a content pack**: positions are Blender coordinates around your
-  world's origin, `[east, north, up]`.
+  world's origin, `[east, north, up]`. Build Mode's Inspector shows the same
+  numbers (X east, Y north, Z up).
 - **Inside a model**: the object's origin is the point that is placed.
 
 ## 9. Collision: what is solid
@@ -302,12 +358,15 @@ the launcher.
 | I fall through my world | The ground must be a closed, opaque mesh not named `NOCOL_`; check `world.spawn` is above it. Test with `sa-runtime --probe-standalone --content my-world`. |
 | An invisible wall blocks me | An object named `COL_…`, or a big transparent-looking mesh that is still opaque. |
 | My pack is not in the launcher | `content.json` must be directly inside `content/<folder>/`, and `id`, `name`, `version` and `license` must be set. Press **Refresh**. |
+| Build Mode shows a magenta cube | That object's model is missing or broken. The **Errors and warnings** tab at the bottom says why; the model's file may have been moved or renamed. |
+| A dropped or imported model is not accepted | Only `.glb` (glTF Binary) works for import; the Console tab says what is wrong with the file. |
 | It runs slowly | Fewer materials (join objects), fewer triangles, smaller textures (2048 px is plenty). |
 
 Still stuck? Ask on the SARE Discord with your log and your manifest.
 
 ## 13. Reference documents
 
+- [Build Mode](build-mode.md): the world editor, its controls and `layout.json`
 - [Content packs](content-packs.md): standalone worlds, full `content.json` reference
 - [Native mods](native-mods.md): `mod.json`/`resource.json`, models, vehicles, players, clothing, MLO interiors, MTA maps
 - [Creating resources](creating-resources.md): folder layout and the resource generator
