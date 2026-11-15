@@ -326,6 +326,7 @@ impl State {
     pub(super) fn network_action(&mut self, host: bool) {
         if let Err(error) = self.prepare_network(host) {
             self.menu.message = format!("Could not prepare multiplayer: {error:#}");
+            crate::runtime_log::line(&self.menu.message);
         }
     }
     pub(super) fn disconnect_network(&mut self) {
@@ -650,6 +651,7 @@ impl State {
                 let status = report.status.clone();
                 self.disconnect_network();
                 self.menu.message = status;
+                crate::runtime_log::line(&self.menu.message);
                 self.menu.open(crate::menu::Page::Network);
                 return;
             }

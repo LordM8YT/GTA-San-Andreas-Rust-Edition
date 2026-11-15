@@ -1,5 +1,12 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.50.1:
+- Fixed: SARE stopped while loading San Andreas with "ENEX record: interior portal has invalid heading". The original map files store some door headings as several full turns (LAn.ipl, SFe.ipl and more); they now load, and one odd entrance can no longer stop the whole map. This broke free roam, joining and hosting with the San Andreas installation.
+- Fixed: joining or hosting while playing a content pack (for example SARE RP Town) failed, because multiplayer still tried to load San Andreas files. The session now runs in the content pack you are in.
+- Fixed: Direct connect to 0.0.0.0:7777 (the address a server listens on) never connected. It now means this computer, like 127.0.0.1.
+- Interior names shown when entering a door are the real names from the map file.
+- Multiplayer errors (could not prepare, could not start, disconnected) are now written to sare-runtime.log too.
+
 Version 0.50.0:
 - Build Mode: File → New world (Ctrl+N) and File → Open world (Ctrl+O) right inside the editor, no trip back to the launcher. SARE restarts on the other world in a few seconds, and asks first if you have unsaved changes.
 
