@@ -3,7 +3,8 @@
 
 prop and world create working files at once (a starter .glb made by code);
 vehicle, map, player and clothing create a disabled resource that waits for
-your DFF/TXD files.
+your DFF/TXD files. rp-job copies the example courier job of SARE RP Town
+into a new server resource with your job's name.
 """
 import argparse
 import importlib.util
@@ -45,6 +46,53 @@ def starter_world(path: Path):
     pack.write_glb([ground, block, ramp, edge], pack.ground_texture(), path)
 
 
+COURIER = Path(__file__).resolve().parent.parent / "server-data/resources/[sare-rp]/sare_job_courier"
+
+
+def create_rp_job(parser, args):
+    """A server resource with its own job, places and Config.Locations."""
+    job = args.name.lower().replace("-", "_")
+    if not re.fullmatch(r"[a-z0-9_]{1,32}", job):
+        parser.error("Job names are 1-32 letters, numbers or underscores.")
+    label = args.name.replace("_", " ").replace("-", " ").title()
+    folder = args.resources_dir / "[jobs]" / args.name
+    if folder.exists():
+        parser.error(f"Resource already exists: {folder}; existing files will not be overwritten.")
+    config = (COURIER / "config.lua").read_text(encoding="utf-8")
+    replaced = {
+        "-- Courier job settings.": f"-- {label} job settings (made from the courier example).",
+        "name = 'courier'": f"name = '{job}'",
+        "label = 'Courier',": f"label = '{label}',",
+        "label = 'Courier depot'": f"label = '{label}'",
+    }
+    for old, new in replaced.items():
+        if old not in config:
+            raise SystemExit(f"The courier example changed; update new-resource.py ({old!r}).")
+        config = config.replace(old, new)
+    manifest = (COURIER / "fxmanifest.lua").read_text(encoding="utf-8")
+    manifest = re.sub(r"^description '.*'$", f"description '{label}: a SARE RP job.'", manifest, flags=re.M)
+    folder.mkdir(parents=True)
+    (folder / "fxmanifest.lua").write_text(manifest, encoding="utf-8")
+    (folder / "config.lua").write_text(config, encoding="utf-8")
+    (folder / "server.lua").write_text((COURIER / "server.lua").read_text(encoding="utf-8"), encoding="utf-8")
+    (folder / "README.md").write_text(
+        f"# {label}\n\n"
+        "A SARE RP job in its own resource, made from the courier example. It works at once:\n"
+        "go on duty, load a package, deliver it, get paid. Change it into your own job:\n\n"
+        "1. **Positions:** in game stand where a point should be and type `/coords`, or in\n"
+        "   Build Mode select an object and press **Copy position**. Paste the `vector4(...)`\n"
+        "   into `Config.Locations` in `config.lua`.\n"
+        "2. **Job and pay:** grades, paycheck and pay per delivery are in `config.lua`.\n"
+        "3. **What happens:** each place's `onUse` in `server.lua` runs when a player presses H there.\n"
+        f"4. Add `ensure {args.name}` to `server.cfg` after `ensure [sare-rp]` and restart the server\n"
+        f"   (or type `ensure {args.name}` in the console).\n\n"
+        "No core files to edit: `exports.sarebox:AddJob` adds the job, `exports.sare_rp_core:AddPlace`\n"
+        "the places. Guide: docs/MODDING.md (Make your own RP job) in the SARE repository.\n",
+        encoding="utf-8",
+    )
+    print(f"Created RP job resource: {folder}  (add `ensure {args.name}` to server.cfg)")
+
+
 def create_world(parser, args):
     folder = args.content_dir / args.name
     if folder.exists():
@@ -78,15 +126,20 @@ def create_world(parser, args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("name", help="Resource folder name, e.g. my_car")
-    parser.add_argument("--type", choices=["prop", "world", "vehicle", "map", "player", "clothing"], required=True)
+    parser.add_argument("--type", choices=["prop", "world", "vehicle", "map", "player", "clothing", "rp-job"], required=True)
     parser.add_argument("--mods-dir", type=Path, default=Path("mods"))
     parser.add_argument("--content-dir", type=Path, default=Path("content"))
+    parser.add_argument("--resources-dir", type=Path, default=Path("server-data/resources"),
+                        help="The server's resources folder (for --type rp-job)")
     args = parser.parse_args()
     reserved = {"con", "prn", "aux", "nul"} | {f"{prefix}{i}" for prefix in ("com", "lpt") for i in range(1, 10)}
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", args.name) or args.name.lower() in reserved:
         parser.error("Use 1-64 letters, numbers, underscores or hyphens; no reserved device names.")
     if args.type == "world":
         create_world(parser, args)
+        return
+    if args.type == "rp-job":
+        create_rp_job(parser, args)
         return
     group = {"prop": "props", "vehicle": "vehicles", "map": "maps", "player": "peds", "clothing": "clothing"}[args.type]
     folder = args.mods_dir / f"[{group}]" / args.name

@@ -159,6 +159,61 @@ function Core.Functions.GetPlayers()
   return list
 end
 function Core.Functions.GetJob(name) return Config.Jobs[name] end
+
+-- Jobs from other resources, like QBCore's exports['qb-core']:AddJob: a
+-- custom job lives in its own resource and adds itself when it starts.
+--   exports.sarebox:AddJob('fisher', { label = 'Fisher', defaultDuty = true,
+--     grades = { [0] = { name = 'Deckhand', payment = 40 } } })
+-- Returns true, or false and the reason. Adding a job again replaces it.
+local function cleanJob(name, job)
+  if type(name) ~= 'string' or #name > 32 or not name:match('^[%w_%-]+$') then
+    return nil, 'job names are 1-32 letters, numbers, _ or -'
+  end
+  if type(job) ~= 'table' or type(job.label) ~= 'string' or job.label == '' then return nil, 'the job needs a label' end
+  if type(job.grades) ~= 'table' then return nil, 'the job needs grades' end
+  local grades = {}
+  for level, grade in pairs(job.grades) do
+    -- Exports and JSON may hand grade numbers over as strings.
+    local n = tonumber(level)
+    if not n or n < 0 or n > 100 or n ~= math.floor(n) then return nil, ('grade %s is not a whole number'):format(tostring(level)) end
+    if type(grade) ~= 'table' or type(grade.name) ~= 'string' then return nil, ('grade %d needs a name'):format(n) end
+    local payment = tonumber(grade.payment) or 0
+    if payment < 0 or payment > Config.MaxMoney or payment ~= math.floor(payment) then
+      return nil, ('grade %d has an invalid payment'):format(n)
+    end
+    grades[math.tointeger(n)] = { name = grade.name, payment = math.tointeger(payment), isboss = grade.isboss == true }
+  end
+  if not grades[0] then return nil, 'the job needs grade 0, where new hires start' end
+  return { label = job.label, defaultDuty = job.defaultDuty == true, grades = grades }
+end
+function Core.Functions.AddJob(name, job)
+  local clean, err = cleanJob(name, job)
+  if not clean then
+    print(('^3[sarebox] AddJob(%s) refused: %s^7'):format(tostring(name), err))
+    return false, err
+  end
+  Config.Jobs[name] = clean
+  -- Players who logged in before the job existed get it back now.
+  for _, player in pairs(Players) do
+    local waiting = player.PlayerData.metadata.waitingJob
+    if type(waiting) == 'table' and waiting.name == name then
+      player.PlayerData.metadata.waitingJob = nil
+      if not player.Functions.SetJob(name, waiting.grade) then player.Functions.SetJob(name, 0) end
+    end
+  end
+  TriggerEvent('sarebox:server:jobAdded', name, clean)
+  return true
+end
+function Core.Functions.AddJobs(jobs)
+  if type(jobs) ~= 'table' then return false, 'AddJobs takes a table of jobs' end
+  local failed = {}
+  for name, job in pairs(jobs) do
+    local ok, err = Core.Functions.AddJob(name, job)
+    if not ok then failed[#failed + 1] = ('%s: %s'):format(tostring(name), err) end
+  end
+  if #failed > 0 then return false, table.concat(failed, '; ') end
+  return true
+end
 function Core.Functions.Notify(src, text, kind, title)
   TriggerClientEvent('sare:ui:notify', src, { title = title or 'SARE Box', description = text, type = kind or 'inform' })
 end
@@ -170,9 +225,20 @@ local function loadSaved(src, citizenid)
   local ok, data = pcall(json.decode, saved or 'null')
   if not ok or type(data) ~= 'table' then return nil end
   data.name = GetPlayerName(src)
-  data.job = jobData(data.job and data.job.name, data.job and data.job.grade and data.job.grade.level)
-    or jobData('unemployed', 0)
   data.metadata = type(data.metadata) == 'table' and data.metadata or {}
+  local savedJob = type(data.job) == 'table' and data.job or {}
+  local savedGrade = type(savedJob.grade) == 'table' and savedJob.grade.level or 0
+  data.job = jobData(savedJob.name, savedGrade)
+  if data.job then
+    data.metadata.waitingJob = nil
+  else
+    -- A job from a resource that has not started (yet): work as unemployed
+    -- and get the job back when its resource calls AddJob.
+    if type(savedJob.name) == 'string' and savedJob.name ~= 'unemployed' then
+      data.metadata.waitingJob = { name = savedJob.name, grade = tonumber(savedGrade) or 0 }
+    end
+    data.job = jobData('unemployed', 0)
+  end
   data.money = type(data.money) == 'table' and data.money or {}
   for name, start in pairs(Config.StartMoney) do
     if type(data.money[name]) ~= 'number' then data.money[name] = start end

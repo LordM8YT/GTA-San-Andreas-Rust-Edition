@@ -1,5 +1,11 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.51.0:
+- RP servers: a custom job is now one resource folder, the FiveM way. `exports.sarebox:AddJob` adds the job (like QBCore), `exports.sare_rp_core:AddPlace` puts its points on the map with an `onUse` function for the H key, and `AddOpenJob` lists it at City Hall. No core files to edit.
+- SARE RP Town has a new example job, Courier: go on duty at the warehouse, load a package, deliver it to a house and get paid. `python tools/new-resource.py <name> --type rp-job` copies it as the start of your own job.
+- Build Mode: Copy position in the Inspector copies the selected object's spot as `vector4(x, y, z, heading)` in world coordinates, ready to paste into a job's `Config.Locations`. `/coords` on RP servers prints the same.
+- Players keep a custom job when its resource starts after they joined, or after `restart sarebox_core`.
+
 Version 0.50.1:
 - Fixed: SARE stopped while loading San Andreas with "ENEX record: interior portal has invalid heading". The original map files store some door headings as several full turns (LAn.ipl, SFe.ipl and more); they now load, and one odd entrance can no longer stop the whole map. This broke free roam, joining and hosting with the San Andreas installation.
 - Fixed: joining or hosting while playing a content pack (for example SARE RP Town) failed, because multiplayer still tried to load San Andreas files. The session now runs in the content pack you are in.

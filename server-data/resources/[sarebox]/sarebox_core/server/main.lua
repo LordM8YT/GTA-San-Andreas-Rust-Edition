@@ -4,6 +4,9 @@ exports('GetCoreObject', function() return Core end)
 exports('GetPlayer', Core.Functions.GetPlayer)
 exports('GetPlayerByCitizenId', Core.Functions.GetPlayerByCitizenId)
 exports('GetPlayers', Core.Functions.GetPlayers)
+exports('GetJob', Core.Functions.GetJob)
+exports('AddJob', Core.Functions.AddJob)
+exports('AddJobs', Core.Functions.AddJobs)
 
 -- Spawning: saved characters return to where they left, new ones use the
 -- map's spawn points.

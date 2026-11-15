@@ -697,3 +697,107 @@ fn rp_town_looks_persist_and_sync_and_server_vehicles_drive() {
     let output = server.output();
     assert!(!output.contains("SCRIPT ERROR"), "{output}");
 }
+
+// Places of the example courier job, resources/[sare-rp]/sare_job_courier/config.lua.
+const CITY_HALL: [f32; 3] = [2555.0, -1532.0, 0.2];
+const COURIER_DUTY: [f32; 3] = [2352.5, -1806.0, 0.2];
+const COURIER_PICKUP: [f32; 3] = [2375.0, -1815.0, 0.2];
+const COURIER_DROPOFFS: [[f32; 3]; 3] = [
+    [2379.0, -1650.0, 0.2],
+    [2379.0, -1720.0, 0.2],
+    [2379.0, -1590.0, 0.2],
+];
+
+/// Press the interaction key without waiting for a menu.
+fn press(server: &mut Sarebox, player: &mut Player) {
+    player.command("/rp_interact");
+    server.step(&mut [player]);
+}
+
+/// A custom job in its own resource: AddJob, AddOpenJob and AddPlace with
+/// onUse, the job coming back after its resource restarts, and its places
+/// leaving with it.
+#[test]
+fn rp_town_custom_job_resource() {
+    let mut server = rp_server();
+    let mut anna = server.join();
+    make_character(&mut server, &mut anna);
+
+    // Not a courier yet: the depot says where to get the job.
+    go(&mut server, &mut anna, COURIER_DUTY);
+    press(&mut server, &mut anna);
+    server.until(&mut [&mut anna], "the depot hint", |_, p| {
+        notified(p[0], "Take the job at City Hall first.")
+    });
+    // AddOpenJob put it in City Hall's job centre.
+    go(&mut server, &mut anna, CITY_HALL);
+    interact(&mut server, &mut anna, "City Hall");
+    pick(&mut server, &mut anna, "Work as Courier");
+    server.until(&mut [&mut anna], "the courier job", |_, p| {
+        hud(p[0]).contains("Courier - Rookie (off duty)")
+    });
+    // Duty is the job's own onUse.
+    go(&mut server, &mut anna, COURIER_DUTY);
+    press(&mut server, &mut anna);
+    server.until(&mut [&mut anna], "courier duty", |_, p| {
+        hud(p[0]).contains("Courier - Rookie") && !hud(p[0]).contains("off duty")
+    });
+    // Load a package; the job marks the address on the map.
+    go(&mut server, &mut anna, COURIER_PICKUP);
+    press(&mut server, &mut anna);
+    let target = |p: &Player| {
+        p.events
+            .iter()
+            .filter(|(name, _)| name == "sare_rp:client:dispatchBlip")
+            .find_map(|(_, payload)| {
+                let v: Json = serde_json::from_str(payload).ok()?;
+                let data = v.get(0)?;
+                let (x, y) = (data["x"].as_f64()? as f32, data["y"].as_f64()? as f32);
+                COURIER_DROPOFFS
+                    .iter()
+                    .position(|d| (d[0] - x).abs() < 0.1 && (d[1] - y).abs() < 0.1)
+            })
+    };
+    server.until(&mut [&mut anna], "the package", |_, p| {
+        target(p[0]).is_some() && notified(p[0], "Package loaded")
+    });
+    let index = target(&anna).unwrap();
+    // The wrong address is refused, the right one pays.
+    go(&mut server, &mut anna, COURIER_DROPOFFS[(index + 1) % 3]);
+    press(&mut server, &mut anna);
+    server.until(&mut [&mut anna], "the address check", |_, p| {
+        notified(p[0], "This package goes to another address.")
+    });
+    let before = hud(&anna);
+    go(&mut server, &mut anna, COURIER_DROPOFFS[index]);
+    press(&mut server, &mut anna);
+    server.until(&mut [&mut anna], "the delivery pay", |_, p| {
+        notified(p[0], "Delivered. You earned $75.")
+    });
+    assert_ne!(hud(&anna), before);
+
+    // Stopping the resource takes its places with it.
+    server.run("stop sare_job_courier");
+    go(&mut server, &mut anna, COURIER_DUTY);
+    press(&mut server, &mut anna);
+    server.until(&mut [&mut anna], "the place to go", |_, p| {
+        notified(p[0], "There is nothing to use here.")
+    });
+    // Restarting SARE Box logs everyone in again before the job's resource
+    // is back: the job waits and returns when AddJob runs again.
+    server.run("start sare_job_courier");
+    server.run("restart sarebox_core");
+    server.until(&mut [&mut anna], "the job after the restart", |s, p| {
+        hud(p[0]).contains("Courier - Rookie")
+            && s.shared
+                .borrow()
+                .resources
+                .get("sare_job_courier")
+                .is_some_and(|r| r.started)
+    });
+    let saved = server.kvp().to_string();
+    assert!(
+        saved.contains("courier") && !saved.contains("waitingJob"),
+        "{saved}"
+    );
+}
