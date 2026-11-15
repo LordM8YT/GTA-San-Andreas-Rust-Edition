@@ -347,18 +347,24 @@ impl WorldArchive {
         }
     }
 }
+/// Text IPL ENEX layout: entrance x, y, z, entrance heading, trigger size
+/// x, y, z, exit x, y, z, exit heading, target interior, flags, "name",
+/// sky, ped count, hour on, hour off.
 fn parse_enex(line: &str) -> Result<InteriorPortal> {
     let fields: Vec<_> = line.split(',').map(str::trim).collect();
     ensure!(fields.len() == 18, "unsupported text IPL ENEX record");
+    // The original files store some headings as several full turns (for
+    // example -2520.26 in LAn.ipl). Keep the direction, drop the turns.
+    let heading = |field: &str| -> Result<f32> { Ok(field.parse::<f32>()? % 360.0) };
     let portal = InteriorPortal {
         source: [fields[0].parse()?, fields[1].parse()?, fields[2].parse()?],
-        enter_angle: fields[3].parse()?,
+        enter_angle: heading(fields[3])?,
         radius: [fields[4].parse()?, fields[5].parse()?, fields[6].parse()?],
         destination: [fields[7].parse()?, fields[8].parse()?, fields[9].parse()?],
-        exit_angle: fields[10].parse()?,
+        exit_angle: heading(fields[10])?,
         target_interior: fields[11].parse()?,
         flags: fields[12].parse()?,
-        name: fields[17].trim_matches('"').trim_matches('\'').to_owned(),
+        name: fields[13].trim_matches('"').trim_matches('\'').to_owned(),
         source_interior: 0,
     };
     portal.validate()?;
@@ -385,8 +391,17 @@ fn placements(
                 continue;
             }
             if section == "enex" {
-                let portal =
-                    parse_enex(&line).with_context(|| format!("{} ENEX record", path.display()))?;
+                // One odd entrance must not stop the whole map from loading.
+                let portal = match parse_enex(&line) {
+                    Ok(portal) => portal,
+                    Err(error) => {
+                        eprintln!(
+                            "Skipping ENEX record in {}: {error:#} ({line})",
+                            path.display()
+                        );
+                        continue;
+                    }
+                };
                 if let Some(reverse) = portal.reverse() {
                     portals.push(reverse);
                 }
@@ -1620,9 +1635,9 @@ mod streaming_tests {
         (folder, loader)
     }
     #[test]
-    fn enex_name_comes_from_the_final_ipl_field_and_reverse_targets_exterior() {
+    fn enex_name_comes_from_the_quoted_ipl_field_and_reverse_targets_exterior() {
         let portal = parse_enex(
-            "100, 200, 10, 90, 1.5, 1.5, 3, 250, 300, 1000, 180, 5, 0, 0, 0, 24, 0, \"ppalace\"",
+            "100, 200, 10, 90, 1.5, 1.5, 3, 250, 300, 1000, 180, 5, 4, \"ppalace\", 0, 2, 0, 24",
         )
         .unwrap();
         assert_eq!(portal.name, "ppalace");
@@ -1631,6 +1646,28 @@ mod streaming_tests {
         assert_eq!(reverse.source, portal.destination);
         assert_eq!(reverse.source_interior, 5);
         assert_eq!(reverse.target_interior, 0);
+    }
+    #[test]
+    fn enex_headings_with_several_full_turns_still_load() {
+        let portal = parse_enex(
+            "100, 200, 10, 0, 2, 2, 8, 100, 203, 10, -2610.5, 0, 4, \"shop\", 0, 2, 0, 24",
+        )
+        .unwrap();
+        assert!(
+            (portal.exit_angle - -90.5).abs() < 0.01,
+            "{}",
+            portal.exit_angle
+        );
+        assert_eq!(portal.name, "shop");
+        let portal =
+            parse_enex("100, 200, 10, 0, 2, 2, 8, 100, 203, 10, 4500, 0, 4, \"shop\", 0, 2, 0, 24")
+                .unwrap();
+        assert!((portal.exit_angle - 180.0).abs() < 0.01);
+        // A trigger with no size cannot be entered; it is rejected, and the
+        // IPL loader skips it instead of stopping the map.
+        assert!(
+            parse_enex("100, 200, 0, 0, 0, 0, 8, 100, 203, 0, 0, 0, 0, \"\", 0, 2, 0, 24").is_err()
+        );
     }
     #[test]
     fn building_door_and_gate_frame_aliases_are_recognized_without_vehicle_names() {

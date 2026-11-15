@@ -61,8 +61,10 @@ struct Prepared {
     endpoint: Endpoint,
     share: Share,
     fingerprint: String,
-    loader: sa_scene::WorldLoader,
-    scene: Scene,
+    /// The San Andreas world for the session. `None` in a standalone world
+    /// (content pack or testbed): the player stays in the world already open.
+    loader: Option<sa_scene::WorldLoader>,
+    scene: Option<Scene>,
     cars: Vec<(String, Scene)>,
     peds: Vec<(String, sa_scene::ped::Ped)>,
     names: Vec<String>,
@@ -74,8 +76,9 @@ fn cancelled(cancel: &AtomicBool) -> Result<()> {
     anyhow::ensure!(!cancel.load(Ordering::Relaxed), "Join cancelled");
     Ok(())
 }
+/// `game` is `None` in a standalone world (content pack or testbed).
 fn prepare(
-    game: &Path,
+    game: Option<&Path>,
     mods: Option<&Path>,
     endpoint: Endpoint,
     allow_download: bool,
@@ -131,9 +134,6 @@ fn prepare(
         cached.downloaded_bytes, cached.reused_files, cached.fingerprint
     );
     cancelled(cancel)?;
-    *progress.lock().unwrap() = "Loading the server's world and models...".into();
-    let mut loader = sa_scene::WorldLoader::open(game)?;
-    loader.enable_mods(&cached.mods)?;
     let names = cached
         .manifest
         .resources
@@ -147,6 +147,24 @@ fn prepare(
             )
         })
         .collect();
+    let Some(game) = game else {
+        // Content packs and the testbed have no San Andreas files to load;
+        // the session runs in the world that is already open.
+        return Ok(Prepared {
+            cache_lease: cached.lease,
+            endpoint,
+            share,
+            fingerprint: cached.fingerprint,
+            loader: None,
+            scene: None,
+            cars: Vec::new(),
+            peds: Vec::new(),
+            names,
+        });
+    };
+    *progress.lock().unwrap() = "Loading the server's world and models...".into();
+    let mut loader = sa_scene::WorldLoader::open(game)?;
+    loader.enable_mods(&cached.mods)?;
     let models = loader.model_names();
     let scene = loader.load(ORIGIN, ORIGIN, RADIUS)?;
     let mut cars = vec![(
@@ -179,8 +197,8 @@ fn prepare(
         endpoint,
         share,
         fingerprint: cached.fingerprint,
-        loader,
-        scene,
+        loader: Some(loader),
+        scene: Some(scene),
         cars,
         peds,
         names,
@@ -215,9 +233,9 @@ impl Installing {
             endpoint: prepared.endpoint,
             share: prepared.share,
             fingerprint: prepared.fingerprint,
-            loader: Some(prepared.loader),
+            loader: prepared.loader,
             names: prepared.names,
-            world_upload: Some(upload::Upload::new(prepared.scene)),
+            world_upload: prepared.scene.map(upload::Upload::new),
             world_ready: None,
             cars: prepared.cars.into(),
             peds: prepared.peds.into(),
@@ -294,6 +312,13 @@ impl Installing {
             }
         }
         Ok(false)
+    }
+    /// Standalone sessions keep the open world: only the connection starts.
+    fn has_world(&self) -> bool {
+        self.loader.is_some()
+    }
+    fn connection(self) -> (Endpoint, Share, String) {
+        (self.endpoint, self.share, self.fingerprint)
     }
     fn world(mut self) -> (World, Endpoint, Share, String) {
         let (batches, mut scene) = self.world_ready.take().unwrap();
@@ -497,7 +522,8 @@ impl State {
                     .context("Use the host's IP or address and port")?,
             )
         };
-        let game = self.resource_game_dir.clone();
+        // Content packs and the testbed have no San Andreas files.
+        let game = (!self.standalone).then(|| self.resource_game_dir.clone());
         let mods = self.resource_local_mods.clone();
         let cache = self.resource_cache_dir.clone();
         let allow = self.menu.settings.auto_mod_downloads;
@@ -509,7 +535,7 @@ impl State {
             .name("session-resources".into())
             .spawn(move || {
                 let prepared = prepare(
-                    &game,
+                    game.as_deref(),
                     mods.as_deref(),
                     endpoint,
                     allow,
@@ -542,6 +568,7 @@ impl State {
                     self.menu.message = sa_client::diagnostics::explain(&format!(
                         "Could not prepare server resources: {error:#}"
                     ));
+                    crate::runtime_log::line(&self.menu.message);
                     self.menu.network_status = "Offline".into();
                     self.menu.network_active = false;
                 }
@@ -549,6 +576,7 @@ impl State {
                     self.resource_job = None;
                     self.menu.network_active = false;
                     self.menu.message = "Resource worker stopped.".into();
+                    crate::runtime_log::line(&self.menu.message);
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
             }
@@ -558,25 +586,30 @@ impl State {
             match installing.advance(self) {
                 Ok(false) => self.resource_installing = Some(installing),
                 Ok(true) => {
-                    let (world, endpoint, share, fingerprint) = installing.world();
+                    let (endpoint, share, fingerprint) = if installing.has_world() {
+                        let (world, endpoint, share, fingerprint) = installing.world();
+                        self.offline_world = Some(self.swap_session_world(world));
+                        // Use the known street spawn, rather than the streaming
+                        // center whose highest surface can be a garage/roof.
+                        if let Some(collision) = &self.collision {
+                            let player = Player::spawn(collision, self.position);
+                            self.position = player.eye();
+                            self.player = Some(player);
+                        }
+                        self.place_car();
+                        self.driving = false;
+                        (endpoint, share, fingerprint)
+                    } else {
+                        installing.connection()
+                    };
                     let joining = !endpoint.is_host();
-                    self.offline_world = Some(self.swap_session_world(world));
-                    // Use the known street spawn, rather than the streaming
-                    // center whose highest surface can be a garage/roof.
-                    if let Some(collision) = &self.collision {
-                        let player = Player::spawn(collision, self.position);
-                        self.position = player.eye();
-                        self.player = Some(player);
-                    }
-                    self.place_car();
-                    self.driving = false;
                     match endpoint.start(&self.menu.player_name, fingerprint, share) {
                         Ok((session, publication)) => {
-                            eprintln!(
+                            crate::runtime_log::line(format!(
                                 "Multiplayer {}: {}",
                                 if joining { "joining" } else { "host listening" },
                                 session.address
-                            );
+                            ));
                             self.network_session = Some(session);
                             self.network_host = !joining;
                             self.chat.reset_server_state();
@@ -589,6 +622,7 @@ impl State {
                             self.menu.message = sa_client::diagnostics::explain(&format!(
                                 "Could not start session: {error}"
                             ));
+                            crate::runtime_log::line(&self.menu.message);
                         }
                     }
                 }
@@ -596,6 +630,7 @@ impl State {
                     self.menu.network_active = false;
                     self.menu.network_status = "Offline".into();
                     self.menu.message = format!("Could not display server resources: {error:#}");
+                    crate::runtime_log::line(&self.menu.message);
                 }
             }
         }
@@ -604,14 +639,23 @@ impl State {
 
 /// A host as `ip:port` or `name:port`, so tunnel addresses such as
 /// playit.gg's `something.joinmc.link:12345` work as well as plain IPs.
+/// `0.0.0.0` is where a server listens, not an address to connect to
+/// (Windows refuses it), so it means this computer.
 pub(crate) fn resolve_address(text: &str) -> Option<std::net::SocketAddr> {
     use std::net::ToSocketAddrs;
     let text = text.trim();
-    text.parse().ok().or_else(|| {
+    let mut address: std::net::SocketAddr = text.parse().ok().or_else(|| {
         let mut found: Vec<_> = text.to_socket_addrs().ok()?.collect();
         found.sort_by_key(|a| !a.is_ipv4());
         found.into_iter().next()
-    })
+    })?;
+    if address.ip().is_unspecified() {
+        address.set_ip(match address {
+            std::net::SocketAddr::V4(_) => std::net::Ipv4Addr::LOCALHOST.into(),
+            std::net::SocketAddr::V6(_) => std::net::Ipv6Addr::LOCALHOST.into(),
+        });
+    }
+    Some(address)
 }
 
 #[cfg(test)]
@@ -627,5 +671,36 @@ mod address_tests {
             7777
         );
         assert!(super::resolve_address("no port").is_none());
+        assert_eq!(
+            super::resolve_address("0.0.0.0:7777").unwrap(),
+            "127.0.0.1:7777".parse().unwrap()
+        );
+    }
+}
+
+#[cfg(test)]
+mod standalone_tests {
+    use super::*;
+    #[test]
+    fn content_packs_host_without_game_files() {
+        let cache =
+            std::env::temp_dir().join(format!("sare-standalone-session-{}", std::process::id()));
+        let prepared = prepare(
+            None,
+            None,
+            Endpoint::Host("127.0.0.1:0".parse().unwrap()),
+            false,
+            &cache,
+            &AtomicBool::new(false),
+            &Mutex::new(String::new()),
+        )
+        .unwrap();
+        assert!(prepared.loader.is_none() && prepared.scene.is_none());
+        assert!(prepared.cars.is_empty() && prepared.peds.is_empty());
+        let installing = Installing::new(prepared);
+        assert!(!installing.has_world());
+        let (endpoint, _, _) = installing.connection();
+        assert!(endpoint.is_host());
+        let _ = std::fs::remove_dir_all(cache);
     }
 }
