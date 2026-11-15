@@ -6,6 +6,7 @@ use sa_scene::{
 };
 use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Instant};
 mod animation;
+mod build_mode;
 mod capture;
 mod car_contacts;
 mod car_damage;
@@ -382,6 +383,8 @@ struct State {
     ped_yaw: f32,
     /// Content-pack characters and server vehicles.
     pack: pack_actors::PackActors,
+    /// Build Mode, when SARE was started with `--build`.
+    build: Option<build_mode::BuildMode>,
 }
 impl State {
     fn play_menu_sound(&mut self, kind: sa_audio::MenuSound) {
@@ -1253,6 +1256,7 @@ impl State {
             ped_animator: animation::Animator::default(),
             ped_yaw: 0.0,
             pack: Default::default(),
+            build: None,
         };
         if !first_model && state.animation.is_none() {
             if let Some(world) = &state.collision {
@@ -1561,6 +1565,8 @@ impl State {
                 });
             } else if self.interior == 0
                 && self.trailer_camera.is_none()
+                // Build Mode worlds are loaded whole and edited in place.
+                && self.build.is_none()
                 && streaming::distance(center, self.region) > 140.0
             {
                 // Centre the next region ahead of a moving car. Loading takes a
@@ -1696,6 +1702,7 @@ impl State {
         }
     }
     fn update(&mut self) {
+        self.build_mode_begin_frame();
         let now = Instant::now();
         let dt = if self.menu.page.is_some() {
             0.0
@@ -2355,7 +2362,7 @@ impl State {
             .chain(
                 self.car
                     .iter()
-                    .filter(|_| !self.pack.car_stowed)
+                    .filter(|_| !self.pack.car_stowed && !self.build_mode_editing())
                     .flat_map(|(_, b)| b),
             )
             .chain(self.spawned_peds.iter().flat_map(|p| &p.batches))
@@ -2397,6 +2404,18 @@ impl State {
                     .flatten()
                     .flatten(),
             )
+            .chain(self.build.iter().flat_map(|build| {
+                build
+                    .gpu
+                    .objects
+                    .iter()
+                    .filter(|(id, object)| {
+                        build.doc.layout.effective_visible(**id)
+                            && !(build.playtesting && object.placeholder)
+                    })
+                    .flat_map(|(_, object)| &object.batches)
+                    .chain(build.gpu.ghost.iter().flat_map(|ghost| &ghost.batches))
+            }))
     }
     fn shadows_active(&self) -> bool {
         self.interior == 0 && self.menu.settings.sun_shadows
@@ -2855,6 +2874,10 @@ impl State {
         });
         let mut script_actions = Vec::new();
         let mut output = context.run_ui(raw_input, |ui| {
+            if self.build_mode_ui(ui) {
+                // Build Mode draws the whole interface itself.
+                return;
+            }
             if let Some(text) = &debug {
                 egui::Area::new("performance".into())
                     .anchor(egui::Align2::RIGHT_TOP, [-12., 12.])
@@ -2898,6 +2921,7 @@ impl State {
             }
         });
         script_ui::apply(&mut self.scripts, script_actions);
+        self.build_mode_end_frame();
         if self.captured && self.menu.page.is_none() {
             output.platform_output.cursor_icon = egui::CursorIcon::None;
         }
@@ -3187,6 +3211,8 @@ struct App {
     world_name: String,
     /// Where a content pack asks the player to start, in runtime space.
     spawn_eye: Option<Vec3>,
+    /// `--build`: the world folder Build Mode edits.
+    build_folder: Option<PathBuf>,
     smoke: bool,
     smoke_region: usize,
     smoke_frames: usize,
@@ -3356,6 +3382,7 @@ impl ApplicationHandler for App {
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
         if let Some(state) = &mut self.state {
             state.checkpoint_progress();
+            state.build_mode_exiting();
         }
     }
 
@@ -3471,6 +3498,22 @@ impl ApplicationHandler for App {
                     state.position = player.eye();
                     state.player = Some(player);
                     state.walking = true;
+                }
+                if let Some(folder) = &self.build_folder {
+                    match build_mode::BuildMode::open(folder) {
+                        Ok(build) => {
+                            state.build = Some(build);
+                            // Straight into the editor, not the front menu.
+                            state.menu.page = None;
+                            state.capture(false);
+                            runtime_log::line(format!("Build Mode: editing {}", folder.display()));
+                        }
+                        Err(error) => {
+                            runtime_log::line(format!("Build Mode FAILED to open: {error:#}"));
+                            state.menu.world_error =
+                                Some(format!("Build Mode could not open the world: {error:#}"));
+                        }
+                    }
                 }
                 // The game folder does not exist in testbed mode, so these
                 // fall back to built-in day colours and no area names.
@@ -3797,6 +3840,31 @@ impl ApplicationHandler for App {
             return;
         };
         let _ = state.gui_input.on_window_event(&state.window, &event);
+        if let Some(build) = &state.build {
+            // F6 switches between Build Mode and playtesting the world.
+            if let WindowEvent::KeyboardInput { event, .. } = &event {
+                if event.state == ElementState::Pressed
+                    && !event.repeat
+                    && event.physical_key == PhysicalKey::Code(KeyCode::F6)
+                    && state.menu.page.is_none()
+                {
+                    state.toggle_playtest();
+                    return;
+                }
+            }
+            // While editing, the editor (egui) owns keyboard and mouse.
+            if !build.playtesting
+                && matches!(
+                    event,
+                    WindowEvent::KeyboardInput { .. }
+                        | WindowEvent::MouseInput { .. }
+                        | WindowEvent::MouseWheel { .. }
+                        | WindowEvent::Focused(false)
+                )
+            {
+                return;
+            }
+        }
         if let WindowEvent::KeyboardInput { event, .. } = &event {
             if event.state == ElementState::Pressed && !event.repeat {
                 // F8 console and T chat, as in FiveM. While either is open,
@@ -5692,11 +5760,31 @@ fn run() -> Result<()> {
         }
         return Ok(());
     }
+    // Build Mode: `--build <pack id | folder | new:Name>` (no value: a new world).
+    let build_folder = match args.iter().position(|a| a == "--build") {
+        Some(at) => {
+            let value = args
+                .get(at + 1)
+                .filter(|v| !v.starts_with("--"))
+                .cloned()
+                .unwrap_or_else(|| "new:My World".into());
+            match build_mode::resolve_project(&value) {
+                Ok(folder) => Some(folder),
+                Err(error) => {
+                    runtime_log::line(format!("Build Mode: {error:#}"));
+                    return Err(error);
+                }
+            }
+        }
+        None => None,
+    };
     // SARE Testbed and content packs need no San Andreas installation at all.
     let wants_pack = args
         .windows(2)
         .any(|w| w[0] == "--content" && w[1] != "original");
-    let standalone_source = if wants_pack {
+    let standalone_source = if let Some(folder) = &build_folder {
+        Some(sa_scene::content::ContentSource::Pack(folder.clone()))
+    } else if wants_pack {
         Some(sa_scene::content::ContentSource::from_args(&args, None)?)
     } else {
         None
@@ -5707,12 +5795,24 @@ fn run() -> Result<()> {
         match sa_scene::content_pack::Manifest::read(folder) {
             Ok(m) => runtime_log::line(format!(
                 "Content pack: {} {} (id {}), world {}",
-                m.name, m.version, m.id, m.world.scene.as_deref().unwrap_or("none, Build Mode layout only")
+                m.name,
+                m.version,
+                m.id,
+                m.world
+                    .scene
+                    .as_deref()
+                    .unwrap_or("none, Build Mode layout only")
             )),
             Err(error) => runtime_log::line(format!("Content pack manifest: {error:#}")),
         }
     }
-    let mut standalone_world = match standalone_source.as_ref().map(|s| s.open()).transpose() {
+    // Build Mode loads only the pack's own scene; it draws placed objects itself.
+    let opened = match (&build_folder, &standalone_source) {
+        (Some(folder), _) => sa_scene::content_pack::PackWorld::open_base(folder)
+            .map(|w| Some(Box::new(w) as Box<dyn sa_scene::content::WorldSource + Send>)),
+        (None, source) => source.as_ref().map(|s| s.open()).transpose(),
+    };
+    let mut standalone_world = match opened {
         Ok(world) => world,
         Err(error) => {
             runtime_log::line(format!("World FAILED to load: {error:#}"));
@@ -6267,7 +6367,8 @@ fn run() -> Result<()> {
             .or_else(|| testbed_world.map(Streamer::new)),
         standalone: testbed,
         world_name,
-        spawn_eye,
+        spawn_eye: spawn_eye.filter(|_| build_folder.is_none()),
+        build_folder,
         smoke: args.iter().any(|a| {
             a == "--smoke-save"
                 || a == "--smoke-tour"

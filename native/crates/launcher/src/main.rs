@@ -75,6 +75,10 @@ struct Launcher {
     mods: Vec<local_mods::Entry>,
     /// Content packs found in `content/`: folder and display name.
     packs: Vec<(PathBuf, String)>,
+    /// Build Mode: the name typed for a new world, and the world the next
+    /// launch opens in the editor.
+    new_world_name: String,
+    build_target: Option<PathBuf>,
     /// World used to join servers: a content pack folder, or `None` for the
     /// San Andreas installation.
     join_pack: Option<PathBuf>,
@@ -164,6 +168,8 @@ impl Launcher {
             cache: None,
             mods: Vec::new(),
             packs: Vec::new(),
+            new_world_name: String::new(),
+            build_target: None,
             join_pack: None,
             logged_browser_error: None,
             gilrs: if detect {
@@ -405,6 +411,61 @@ impl Launcher {
         self.start_with(Session::Offline, Some("testbed".into()));
     }
     /// Offline play in a content pack, without game files.
+    /// Build Mode: make a new world or edit a pack. No game files needed.
+    fn build_mode_row(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("Build Mode:").color(MUTED));
+            ui.add(
+                egui::TextEdit::singleline(&mut self.new_world_name)
+                    .hint_text("New world name")
+                    .desired_width(160.0),
+            );
+            let new = ui
+                .add_enabled(self.testbed_ready(), egui::Button::new("Create world"))
+                .on_hover_text("Make a new world in content/ and open it in Build Mode")
+                .on_disabled_hover_text("Close the running game first");
+            if new.clicked() {
+                let name = match self.new_world_name.trim() {
+                    "" => "My World".to_owned(),
+                    name => name.to_owned(),
+                };
+                let root = local_mods::content_root();
+                let id = sa_editor::project::new_id(&name, &root);
+                match sa_editor::project::Project::create(&root.join(&id), &id, &name) {
+                    Ok((project, _)) => {
+                        self.new_world_name.clear();
+                        self.scan_packs();
+                        self.edit_world(project.folder);
+                    }
+                    Err(error) => self.message = format!("Could not create the world: {error:#}"),
+                }
+            }
+            let mut chosen = None;
+            for (folder, name) in &self.packs {
+                if ui
+                    .add_enabled(
+                        self.testbed_ready(),
+                        egui::Button::new(format!("Edit {name}")),
+                    )
+                    .on_hover_text(format!("Open {} in Build Mode", folder.display()))
+                    .clicked()
+                {
+                    chosen = Some(folder.clone());
+                }
+            }
+            if let Some(folder) = chosen {
+                self.edit_world(folder);
+            }
+        });
+    }
+    fn edit_world(&mut self, folder: PathBuf) {
+        self.build_target = Some(folder.clone());
+        self.message = "Build Mode is starting.".into();
+        self.start_with(Session::Offline, Some(folder.into_os_string()));
+        if self.child.is_none() {
+            self.build_target = None;
+        }
+    }
     fn start_pack(&mut self, folder: PathBuf) {
         self.start_with(Session::Offline, Some(folder.into_os_string()));
     }
@@ -484,6 +545,9 @@ impl Launcher {
                 content,
             };
             let mut command = launch.command(&exe)?;
+            if let Some(world) = self.build_target.take() {
+                command.arg("--build").arg(world);
+            }
             let logs = sa_client::config_dir().join("logs");
             std::fs::create_dir_all(&logs)?;
             let stamp = std::time::SystemTime::now()
@@ -510,7 +574,9 @@ impl Launcher {
                         eprintln!("Could not save recent session: {error}");
                     }
                 }
-                self.message = if testbed {
+                self.message = if self.message.starts_with("Build Mode") {
+                    self.message.clone()
+                } else if testbed {
                     "Starting SARE content: no game files needed.".into()
                 } else {
                     "Starting the native game. Map loading continues in the game window.".into()
@@ -767,6 +833,8 @@ impl Launcher {
                 }
             });
         }
+        ui.add_space(6.0);
+        self.build_mode_row(ui);
         ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
             ui_theme::key_hint(ui, "Enter", "Select");

@@ -305,15 +305,19 @@ pub fn migrate(mut doc: Value) -> Result<Value> {
         "this layout was saved by a newer SARE (format version {version}, this SARE reads up to {VERSION}); update SARE to open it"
     );
     ensure!(version >= 1, "layout version {version} does not exist");
-    #[allow(clippy::match_single_binding)]
-    for from in version..u64::from(VERSION) {
-        match from {
-            // 1 => { ...turn a version 1 document into version 2... }
-            _ => bail!("no migration from layout version {from}"),
-        }
+    let mut at = version;
+    while at < u64::from(VERSION) {
+        at = migrate_step(object, at)?;
     }
     object.insert("version".into(), Value::from(VERSION));
     Ok(doc)
+}
+
+/// Turn a version `from` document into version `from + 1`.
+fn migrate_step(_doc: &mut Map<String, Value>, from: u64) -> Result<u64> {
+    // Add one arm per format change, e.g.:
+    // 1 => { rename or convert fields in `_doc`; Ok(2) }
+    bail!("no migration from layout version {from}")
 }
 
 impl Layout {

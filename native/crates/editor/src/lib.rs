@@ -283,7 +283,7 @@ mod tests {
             sa_scene::content_pack::place_layout(&mut model, &reopened.layout, &mut resolver);
         assert_eq!(report.placed, 1);
         assert_eq!(report.problems.len(), 3);
-        let providers = Catalog::providers_for(&folder, "w", &[root.clone()]);
+        let providers = Catalog::providers_for(&folder, "w", std::slice::from_ref(&root));
         let mut catalog = Catalog::scan(&providers);
         catalog.add_missing(&reopened.layout);
         let missing: Vec<_> = catalog
@@ -323,7 +323,7 @@ mod tests {
         );
         assert!(resolver.model(&pack_ref).is_ok());
         assert!(resolver.model(&crate_asset()).is_ok());
-        let providers = Catalog::providers_for(&mine.folder, "mine", &[root.clone()]);
+        let providers = Catalog::providers_for(&mine.folder, "mine", std::slice::from_ref(&root));
         let catalog = Catalog::scan(&providers);
         let signs = catalog
             .find(&pack_ref)

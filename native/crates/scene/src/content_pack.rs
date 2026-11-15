@@ -310,11 +310,12 @@ impl PackWorld {
             }
         }
         let scene_name = manifest.world.scene.as_deref().unwrap_or("the layout");
+        // Build Mode may start from an empty world and add everything itself.
         ensure!(
-            !model.drawn.is_empty(),
+            !with_layout || !model.drawn.is_empty(),
             "{scene_name} has no visible meshes"
         );
-        if model.collision.is_empty() {
+        if with_layout && model.collision.is_empty() {
             eprintln!(
                 "Content pack {}: nothing is solid, the player will fall",
                 manifest.id

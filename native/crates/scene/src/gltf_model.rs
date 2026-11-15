@@ -104,7 +104,7 @@ impl Model {
                         .collect();
                     if flip {
                         // A mirrored object keeps its faces pointing outwards.
-                        for triangle in vertices.chunks_exact_mut(3) {
+                        for triangle in vertices.as_chunks_mut::<3>().0 {
                             triangle.swap(1, 2);
                         }
                     }
