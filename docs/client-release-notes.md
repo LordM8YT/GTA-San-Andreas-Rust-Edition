@@ -1,5 +1,9 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.50.2:
+- Servers on a content pack now take players there. A server with `sets content_pack <id>` in server.cfg (the SARE RP Town template has it) tells joining players its world, and SARE restarts itself in that pack and joins, even if you started on San Andreas. If the pack is missing, SARE says which one to copy into content/.
+- A player hosting from the game while in a content pack tells joiners the same way.
+
 Version 0.50.1:
 - Fixed: SARE stopped while loading San Andreas with "ENEX record: interior portal has invalid heading". The original map files store some door headings as several full turns (LAn.ipl, SFe.ipl and more); they now load, and one odd entrance can no longer stop the whole map. This broke free roam, joining and hosting with the San Andreas installation.
 - Fixed: joining or hosting while playing a content pack (for example SARE RP Town) failed, because multiplayer still tried to load San Andreas files. The session now runs in the content pack you are in.
