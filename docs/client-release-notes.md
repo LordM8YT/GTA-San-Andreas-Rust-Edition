@@ -1,5 +1,8 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.50.0:
+- Build Mode: File → New world (Ctrl+N) and File → Open world (Ctrl+O) right inside the editor, no trip back to the launcher. SARE restarts on the other world in a few seconds, and asks first if you have unsaved changes.
+
 Version 0.49.0:
 - Build Mode: the Asset Browser shows a picture of every model, so you can see what you are placing. Pictures are made on your PC, also for your own .glb files.
 - Build Mode: drag a model from the Asset Browser straight into the world.

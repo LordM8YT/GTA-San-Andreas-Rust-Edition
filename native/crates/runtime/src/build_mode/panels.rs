@@ -53,6 +53,12 @@ pub struct UiState {
     pub flying: bool,
     /// Group new objects are placed into.
     pub place_into: Option<NodeId>,
+    /// New world dialog: the name typed so far.
+    new_world: Option<String>,
+    /// Open world dialog: the worlds found, by folder.
+    open_world: Option<Vec<(std::path::PathBuf, String)>>,
+    /// Another world to open once unsaved changes are dealt with.
+    confirm_switch: Option<std::path::PathBuf>,
     /// Asset Browser pictures; None when one could not be made.
     pub thumbnails: HashMap<AssetRef, Option<egui::TextureHandle>>,
 }
@@ -235,6 +241,12 @@ fn shortcuts(build: &mut BuildMode, ui: &mut Ui) {
     if consume(ctrl(Key::D)) {
         duplicate(build);
     }
+    if consume(ctrl(Key::N)) {
+        build.ui.new_world = Some(String::new());
+    }
+    if consume(ctrl(Key::O)) {
+        build.ui.open_world = Some(worlds(build));
+    }
     if consume(ctrl_shift(Key::G)) {
         ungroup(build);
     } else if consume(ctrl(Key::G)) {
@@ -293,6 +305,19 @@ fn menu_bar(build: &mut BuildMode, ui: &mut Ui) {
         ui.label(RichText::new("Build Mode").color(ACCENT));
         ui.separator();
         ui.menu_button("File", |ui| {
+            if ui
+                .add(egui::Button::new("New world…").shortcut_text("Ctrl+N"))
+                .clicked()
+            {
+                build.ui.new_world = Some(String::new());
+            }
+            if ui
+                .add(egui::Button::new("Open world…").shortcut_text("Ctrl+O"))
+                .clicked()
+            {
+                build.ui.open_world = Some(worlds(build));
+            }
+            ui.separator();
             if ui
                 .add(egui::Button::new("Save").shortcut_text("Ctrl+S"))
                 .clicked()
@@ -1572,8 +1597,172 @@ impl BuildMode {
     }
 }
 
+/// Where new worlds go: beside the one being edited.
+fn worlds_folder(build: &BuildMode) -> std::path::PathBuf {
+    build
+        .project
+        .folder
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| sa_scene::content_pack::DEFAULT_DIR.into())
+}
+
+/// Every world (content pack) that can be opened, by name.
+fn worlds(build: &BuildMode) -> Vec<(std::path::PathBuf, String)> {
+    let mut dirs = vec![worlds_folder(build)];
+    dirs.extend(sa_scene::content::pack_dirs());
+    let mut found: Vec<(std::path::PathBuf, String)> = Vec::new();
+    for dir in dirs {
+        for (folder, manifest) in sa_scene::content_pack::list(&dir) {
+            let same = |a: &std::path::Path| {
+                std::fs::canonicalize(a).ok() == std::fs::canonicalize(&folder).ok()
+            };
+            if same(&build.project.folder) || found.iter().any(|(f, _)| same(f)) {
+                continue;
+            }
+            found.push((folder, manifest.name));
+        }
+    }
+    found
+}
+
+/// Open another world, asking first about unsaved changes.
+fn switch_world(build: &mut BuildMode, folder: std::path::PathBuf) {
+    if build.history.dirty() {
+        build.ui.confirm_switch = Some(folder);
+    } else {
+        build.switch_to = Some(folder);
+    }
+}
+
+fn world_dialogs(build: &mut BuildMode, ctx: &egui::Context) {
+    if let Some(name) = &mut build.ui.new_world {
+        let mut action = None;
+        egui::Window::new("New world")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                compact(ui);
+                ui.label("A new, empty world with a ground plate. It opens right away.");
+                let field = ui.add(
+                    egui::TextEdit::singleline(name)
+                        .hint_text("My World")
+                        .desired_width(260.0),
+                );
+                let enter = (field.has_focus() || field.lost_focus())
+                    && ui.input(|i| i.key_pressed(Key::Enter));
+                if !field.lost_focus() {
+                    field.request_focus();
+                }
+                ui.horizontal(|ui| {
+                    if ui.button("Create").clicked() || enter {
+                        action = Some(true);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        action = Some(false);
+                    }
+                });
+            });
+        match action {
+            Some(true) => {
+                let name = match name.trim() {
+                    "" => "My World".to_owned(),
+                    name => name.to_owned(),
+                };
+                let root = worlds_folder(build);
+                let id = sa_editor::project::new_id(&name, &root);
+                match sa_editor::project::Project::create(&root.join(&id), &id, &name) {
+                    Ok((project, _)) => {
+                        build.info(format!("Created {}", project.folder.display()));
+                        build.ui.new_world = None;
+                        switch_world(build, project.folder);
+                    }
+                    Err(error) => build.error(format!("Could not create the world: {error:#}")),
+                }
+            }
+            Some(false) => build.ui.new_world = None,
+            None => {}
+        }
+    }
+    if let Some(found) = &build.ui.open_world {
+        let mut chosen = None;
+        let mut open = true;
+        egui::Window::new("Open world")
+            .collapsible(false)
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                compact(ui);
+                if found.is_empty() {
+                    ui.label(
+                        RichText::new("No other worlds found. Make one with File → New world.")
+                            .color(MUTED),
+                    );
+                }
+                egui::ScrollArea::vertical()
+                    .max_height(360.0)
+                    .show(ui, |ui| {
+                        for (folder, name) in found {
+                            let label = format!(
+                                "{name}   {}",
+                                folder
+                                    .file_name()
+                                    .map(|f| f.to_string_lossy())
+                                    .unwrap_or_default()
+                            );
+                            if ui
+                                .add_sized([320.0, 24.0], egui::Button::new(label))
+                                .on_hover_text(folder.display().to_string())
+                                .clicked()
+                            {
+                                chosen = Some(folder.clone());
+                            }
+                        }
+                    });
+            });
+        if let Some(folder) = chosen {
+            build.ui.open_world = None;
+            switch_world(build, folder);
+        } else if !open {
+            build.ui.open_world = None;
+        }
+    }
+    if let Some(folder) = build.ui.confirm_switch.clone() {
+        egui::Window::new("Save changes first?")
+            .collapsible(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                compact(ui);
+                ui.label("This world has unsaved changes.");
+                ui.horizontal(|ui| {
+                    if ui.button("Save and open").clicked() {
+                        build.save();
+                        if !build.history.dirty() {
+                            build.switch_to = Some(folder.clone());
+                        }
+                        build.ui.confirm_switch = None;
+                    }
+                    if ui
+                        .button("Open without saving")
+                        .on_hover_text("The autosave keeps your work for recovery")
+                        .clicked()
+                    {
+                        build.autosave();
+                        build.switch_to = Some(folder.clone());
+                        build.ui.confirm_switch = None;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        build.ui.confirm_switch = None;
+                    }
+                });
+            });
+    }
+}
+
 fn dialogs(build: &mut BuildMode, root: &mut Ui) {
     let ctx = root.ctx().clone();
+    world_dialogs(build, &ctx);
     if let Some(recovery) = &build.recovery {
         let saved = recovery.document.layout.nodes.len();
         let mut choice = None;
@@ -1727,6 +1916,7 @@ fn dialogs(build: &mut BuildMode, root: &mut Ui) {
                     ("G", "Snap on or off (Ctrl while dragging inverts it)"),
                     ("Ctrl+click", "Add to or remove from selection"),
                     ("Ctrl+D / Del", "Duplicate / delete"),
+                    ("Ctrl+N / Ctrl+O", "New world / open another world"),
                     ("Ctrl+G / Ctrl+Shift+G", "Group / ungroup"),
                     ("Ctrl+Z / Ctrl+Y", "Undo / redo"),
                     ("Ctrl+S", "Save"),
