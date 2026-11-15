@@ -567,6 +567,11 @@ impl State {
         let Some(mut build) = self.build.take() else {
             return;
         };
+        // The editor needs the mouse: nothing may keep it locked and hidden
+        // while editing (only playtesting captures it).
+        if !build.playtesting && self.captured {
+            self.capture(false);
+        }
         let mut problems = Vec::new();
         build
             .gpu
