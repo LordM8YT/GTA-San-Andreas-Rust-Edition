@@ -19,6 +19,19 @@ enum Endpoint {
     RelayJoin(std::net::SocketAddr, String),
 }
 impl Endpoint {
+    /// sa-runtime arguments that join this endpoint again after a restart.
+    fn join_args(&self) -> Option<Vec<String>> {
+        match self {
+            Self::Join(address) => Some(vec!["--join".into(), address.to_string()]),
+            Self::RelayJoin(address, code) => Some(vec![
+                "--relay-address".into(),
+                address.to_string(),
+                "--join-code".into(),
+                code.clone(),
+            ]),
+            Self::Host(_) | Self::RelayHost(..) => None,
+        }
+    }
     fn is_host(&self) -> bool {
         matches!(self, Self::Host(_) | Self::RelayHost(..))
     }
@@ -68,6 +81,8 @@ struct Prepared {
     cars: Vec<(String, Scene)>,
     peds: Vec<(String, sa_scene::ped::Ped)>,
     names: Vec<String>,
+    /// The server runs on this content pack, which is not the open world.
+    switch_to: Option<String>,
 }
 pub(super) fn cache_directory() -> PathBuf {
     sa_client::cache_dir()
@@ -76,9 +91,25 @@ fn cancelled(cancel: &AtomicBool) -> Result<()> {
     anyhow::ensure!(!cancel.load(Ordering::Relaxed), "Join cancelled");
     Ok(())
 }
-/// `game` is `None` in a standalone world (content pack or testbed).
+/// The world this SARE has open, which decides what a session loads.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum OpenWorld {
+    /// The San Andreas installation in this folder.
+    Original(PathBuf),
+    /// A content pack (with its id) or the testbed (`None`): no game files.
+    Standalone(Option<String>),
+}
+/// What a joining player must do when the server's world is not the open
+/// one: `Some(pack)` restarts SARE in that content pack.
+fn needs_pack(open: &OpenWorld, server_pack: Option<&str>) -> Option<String> {
+    let server_pack = server_pack?;
+    match open {
+        OpenWorld::Standalone(Some(mine)) if mine == server_pack => None,
+        _ => Some(server_pack.to_owned()),
+    }
+}
 fn prepare(
-    game: Option<&Path>,
+    open: &OpenWorld,
     mods: Option<&Path>,
     endpoint: Endpoint,
     allow_download: bool,
@@ -87,7 +118,7 @@ fn prepare(
     progress: &Mutex<String>,
 ) -> Result<Prepared> {
     cancelled(cancel)?;
-    let share = if endpoint.is_host() {
+    let mut share = if endpoint.is_host() {
         *progress.lock().unwrap() = "Preparing enabled server resources...".into();
         mods.map(sa_scene::share_resources)
             .transpose()?
@@ -95,6 +126,10 @@ fn prepare(
     } else {
         Share::default()
     };
+    if let OpenWorld::Standalone(Some(pack)) = open {
+        // A player hosting in a content pack tells joiners which world to use.
+        share.manifest.content_pack = Some(pack.clone());
+    }
     let show_progress = |done: usize, total: usize| {
         *progress.lock().unwrap() = format!(
             "Preparing server mods: {:.1} / {:.1} MiB",
@@ -147,20 +182,30 @@ fn prepare(
             )
         })
         .collect();
-    let Some(game) = game else {
+    let switch_to = if endpoint.is_host() {
+        None
+    } else {
+        needs_pack(open, cached.manifest.content_pack.as_deref())
+    };
+    let game = match open {
+        OpenWorld::Original(game) if switch_to.is_none() => game,
         // Content packs and the testbed have no San Andreas files to load;
-        // the session runs in the world that is already open.
-        return Ok(Prepared {
-            cache_lease: cached.lease,
-            endpoint,
-            share,
-            fingerprint: cached.fingerprint,
-            loader: None,
-            scene: None,
-            cars: Vec::new(),
-            peds: Vec::new(),
-            names,
-        });
+        // the session runs in the world that is already open. A server on
+        // another content pack restarts SARE in that pack instead.
+        _ => {
+            return Ok(Prepared {
+                cache_lease: cached.lease,
+                endpoint,
+                share,
+                fingerprint: cached.fingerprint,
+                loader: None,
+                scene: None,
+                cars: Vec::new(),
+                peds: Vec::new(),
+                names,
+                switch_to,
+            })
+        }
     };
     *progress.lock().unwrap() = "Loading the server's world and models...".into();
     let mut loader = sa_scene::WorldLoader::open(game)?;
@@ -199,6 +244,7 @@ fn prepare(
         fingerprint: cached.fingerprint,
         loader: Some(loader),
         scene: Some(scene),
+        switch_to: None,
         cars,
         peds,
         names,
@@ -523,7 +569,11 @@ impl State {
             )
         };
         // Content packs and the testbed have no San Andreas files.
-        let game = (!self.standalone).then(|| self.resource_game_dir.clone());
+        let open = if self.standalone {
+            OpenWorld::Standalone(self.pack_id.clone())
+        } else {
+            OpenWorld::Original(self.resource_game_dir.clone())
+        };
         let mods = self.resource_local_mods.clone();
         let cache = self.resource_cache_dir.clone();
         let allow = self.menu.settings.auto_mod_downloads;
@@ -535,7 +585,7 @@ impl State {
             .name("session-resources".into())
             .spawn(move || {
                 let prepared = prepare(
-                    game.as_deref(),
+                    &open,
                     mods.as_deref(),
                     endpoint,
                     allow,
@@ -555,10 +605,38 @@ impl State {
         self.menu.message.clear();
         Ok(())
     }
+    /// The server plays on a content pack that is not open here: start SARE
+    /// again in that pack and join from there, or say how to get the pack.
+    fn switch_to_pack(&mut self, pack: String, endpoint: &Endpoint) {
+        self.menu.network_status = "Offline".into();
+        self.menu.network_active = false;
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        let lookup = pack_lookup_args(&args, &pack);
+        if sa_scene::content::ContentSource::from_args(&lookup, None).is_err() {
+            self.menu.message = format!(
+                "This server plays on the content pack \"{pack}\", which is not installed. Copy its folder into SARE's content folder and join again."
+            );
+            crate::runtime_log::line(&self.menu.message);
+            return;
+        }
+        let Some(join) = endpoint.join_args() else {
+            return;
+        };
+        self.menu.message =
+            format!("This server plays on \"{pack}\". Restarting SARE in that world...");
+        crate::runtime_log::line(&self.menu.message);
+        self.pack_restart = Some(restart_args(&args, &pack, &join));
+        self.quit_requested = true;
+    }
     pub(super) fn update_session_resources(&mut self) {
         if let Some(job) = &self.resource_job {
             self.menu.network_status = job.progress.lock().unwrap().clone();
             match job.result.try_recv() {
+                Ok(Ok(prepared)) if prepared.switch_to.is_some() => {
+                    self.resource_job = None;
+                    let pack = prepared.switch_to.clone().unwrap_or_default();
+                    self.switch_to_pack(pack, &prepared.endpoint);
+                }
                 Ok(Ok(prepared)) => {
                     self.resource_installing = Some(Installing::new(prepared));
                     self.resource_job = None;
@@ -637,6 +715,33 @@ impl State {
     }
 }
 
+/// Arguments that find `pack` the way this SARE finds content packs.
+fn pack_lookup_args(args: &[String], pack: &str) -> Vec<String> {
+    let mut lookup = vec!["--content".to_owned(), pack.to_owned()];
+    if let Some(pair) = args.windows(2).find(|w| w[0] == "--content-dir") {
+        lookup.extend(pair.iter().cloned());
+    }
+    lookup
+}
+/// This SARE's arguments with the world swapped for `pack` and the session
+/// to join: the game folder, world, Build Mode and old join are dropped.
+pub(crate) fn restart_args(args: &[String], pack: &str, join: &[String]) -> Vec<String> {
+    let mut next = Vec::new();
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        match arg.as_str() {
+            "--game-dir" | "--content" | "--build" | "--join" | "--join-code" | "--host"
+            | "--relay-address" => {
+                rest.next();
+            }
+            "--relay-host" | "--public-session" => {}
+            _ => next.push(arg.clone()),
+        }
+    }
+    next.extend(["--content".to_owned(), pack.to_owned()]);
+    next.extend(join.iter().cloned());
+    next
+}
 /// A host as `ip:port` or `name:port`, so tunnel addresses such as
 /// playit.gg's `something.joinmc.link:12345` work as well as plain IPs.
 /// `0.0.0.0` is where a server listens, not an address to connect to
@@ -686,7 +791,7 @@ mod standalone_tests {
         let cache =
             std::env::temp_dir().join(format!("sare-standalone-session-{}", std::process::id()));
         let prepared = prepare(
-            None,
+            &OpenWorld::Standalone(Some("rp-town".into())),
             None,
             Endpoint::Host("127.0.0.1:0".parse().unwrap()),
             false,
@@ -697,10 +802,67 @@ mod standalone_tests {
         .unwrap();
         assert!(prepared.loader.is_none() && prepared.scene.is_none());
         assert!(prepared.cars.is_empty() && prepared.peds.is_empty());
+        assert_eq!(prepared.switch_to, None);
         let installing = Installing::new(prepared);
         assert!(!installing.has_world());
-        let (endpoint, _, _) = installing.connection();
+        let (endpoint, share, _) = installing.connection();
         assert!(endpoint.is_host());
+        assert_eq!(share.manifest.content_pack.as_deref(), Some("rp-town"));
         let _ = std::fs::remove_dir_all(cache);
+    }
+    #[test]
+    fn joining_follows_the_server_content_pack() {
+        let original = OpenWorld::Original(PathBuf::from("gta"));
+        let town = OpenWorld::Standalone(Some("sare-rp-town".into()));
+        assert_eq!(needs_pack(&original, None), None);
+        assert_eq!(
+            needs_pack(&original, Some("sare-rp-town")).as_deref(),
+            Some("sare-rp-town")
+        );
+        assert_eq!(needs_pack(&town, Some("sare-rp-town")), None);
+        assert_eq!(needs_pack(&town, Some("other")).as_deref(), Some("other"));
+        assert_eq!(
+            needs_pack(&OpenWorld::Standalone(None), Some("x")).as_deref(),
+            Some("x")
+        );
+        // A server without a pack keeps whatever world is open.
+        assert_eq!(needs_pack(&town, None), None);
+    }
+    #[test]
+    fn restart_swaps_the_world_and_keeps_the_rest() {
+        let args: Vec<String> = [
+            "--game-dir",
+            "E:/GTA",
+            "--mods-dir",
+            "mods",
+            "--name",
+            "Anna",
+            "--play",
+            "--join",
+            "0.0.0.0:7777",
+        ]
+        .map(String::from)
+        .to_vec();
+        let join = Endpoint::Join("127.0.0.1:7777".parse().unwrap())
+            .join_args()
+            .unwrap();
+        assert_eq!(
+            restart_args(&args, "sare-rp-town", &join),
+            [
+                "--mods-dir",
+                "mods",
+                "--name",
+                "Anna",
+                "--play",
+                "--content",
+                "sare-rp-town",
+                "--join",
+                "127.0.0.1:7777",
+            ]
+            .map(String::from)
+        );
+        assert!(Endpoint::Host("127.0.0.1:7777".parse().unwrap())
+            .join_args()
+            .is_none());
     }
 }

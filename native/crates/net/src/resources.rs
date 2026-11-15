@@ -83,17 +83,37 @@ pub struct Resource {
 pub struct Manifest {
     pub version: u32,
     pub resources: Vec<Resource>,
+    /// The content pack id the server's world is (`sets content_pack` in
+    /// server.cfg). `None`: the San Andreas map. Older clients ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_pack: Option<String>,
 }
 impl Default for Manifest {
     fn default() -> Self {
         Self {
             version: 1,
             resources: Vec::new(),
+            content_pack: None,
         }
     }
 }
+/// A content pack id: short, lowercase letters, digits, `-` and `_`.
+pub fn valid_pack_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+}
 impl Manifest {
     pub fn validate(&self) -> io::Result<()> {
+        if self
+            .content_pack
+            .as_deref()
+            .is_some_and(|id| !valid_pack_id(id))
+        {
+            return Err(error("Invalid content pack id in server manifest"));
+        }
         if self.version != 1 || self.resources.len() > 16 {
             return Err(error(
                 "Unsupported resource inventory version or resource count",
@@ -848,6 +868,41 @@ mod tests {
             );
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
+    }
+    #[test]
+    fn joiners_learn_the_server_content_pack() {
+        use super::super::Session;
+        use std::sync::atomic::AtomicBool;
+        let temp = Temp::new();
+        let mut source = Share::default();
+        let plain = source.manifest.fingerprint().unwrap();
+        source.manifest.content_pack = Some("sare-rp-town".into());
+        // Without a pack the field is not written, so the fingerprint of a
+        // server on the San Andreas map is what older clients computed.
+        assert_ne!(source.manifest.fingerprint().unwrap(), plain);
+        assert!(!serde_json::to_string(&Manifest::default())
+            .unwrap()
+            .contains("content_pack"));
+        let host =
+            Session::dedicated_resources("127.0.0.1:0".parse().unwrap(), "Town", source).unwrap();
+        let cached = download(
+            host.address,
+            None,
+            &temp.0,
+            true,
+            &AtomicBool::new(false),
+            |_, _| {},
+        )
+        .unwrap();
+        assert_eq!(
+            cached.manifest.content_pack.as_deref(),
+            Some("sare-rp-town")
+        );
+        let bad = Manifest {
+            content_pack: Some("../x".into()),
+            ..Manifest::default()
+        };
+        assert!(bad.validate().is_err());
     }
     #[test]
     fn actual_host_transfers_chunks_reuses_cache_and_pins_join_versions() {
