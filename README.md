@@ -37,6 +37,8 @@ jump and drive a placeholder car. No San Andreas installation is needed.
 **Make your own world:** build it in Blender, export a `.glb`, and drop it into `content/`
 as a [content pack](docs/content-packs.md). It runs without San Andreas game files too;
 [`content/example-town`](content/example-town) is a ready example to copy.
+Or build it inside SARE with **[Build Mode](docs/build-mode.md)**: Home → Create world in the
+launcher, place objects, save and playtest, all without game files.
 
 **Want to make something?** The [creator handbook](docs/MODDING.md) walks you through your
 first prop, your own world and your first server script, step by step.

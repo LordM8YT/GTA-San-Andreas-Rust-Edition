@@ -1,5 +1,16 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.48.0:
+- New: Build Mode, a world editor inside SARE. Make a world with no game files: on the launcher's Home page type a name and press Create world, or press Edit next to any content pack.
+- Place built-in shapes (ground, roads, walls, stairs, ramps, houses, trees, crates and more), models from any content pack, or your own .glb files (File, Import model).
+- Move, rotate and scale with gizmos or exact numbers, with grid and angle snapping. Undo and redo everything.
+- World Outliner: rename, group, hide, lock and search objects. Inspector: transform, visibility, collision, spawn point and time of day.
+- Save writes a normal content pack (content.json + layout.json), so the world plays from the launcher and can be shared as a folder. Unsaved work is autosaved and offered back after a crash.
+- Playtest (F6) walks the world right away and F6 brings you back to the editor, with nothing lost.
+- Command line: sa-runtime --build <pack id or folder> or --build new:<Name>. Guide: docs/build-mode.md.
+
+Build Mode was tested with automated tests and on a software renderer (Linux, virtual screen); not yet on Windows GPUs.
+
 Version 0.47.1:
 - The client download now includes the content packs (content/sare-rp-town and content/example-town), so SARE RP Town runs straight from the ZIP. Start it from the launcher's home page, or join an RP server by picking World: SARE RP Town on the Servers page.
 - Fixed: SARE RP Town's map was not drawn (empty grey world). Two parts of the map shared one texture and the second one failed to upload. If the map ever fails to load now, a red message says so on screen.
