@@ -85,6 +85,43 @@ impl Model {
         };
         (shift(&self.drawn), shift(&self.collision))
     }
+    /// Every vertex through `matrix` (glTF space in, glTF space out).
+    pub fn transformed(&self, matrix: Mat4) -> (Vec<Batch>, Vec<Batch>) {
+        let flip = matrix.determinant() < 0.0;
+        let apply = |batches: &[Batch]| {
+            batches
+                .iter()
+                .map(|b| {
+                    let mut vertices: Vec<Vertex> = b
+                        .vertices
+                        .iter()
+                        .map(|v| Vertex {
+                            position: matrix
+                                .transform_point3(Vec3::from_array(v.position))
+                                .to_array(),
+                            ..*v
+                        })
+                        .collect();
+                    if flip {
+                        // A mirrored object keeps its faces pointing outwards.
+                        for triangle in vertices.chunks_exact_mut(3) {
+                            triangle.swap(1, 2);
+                        }
+                    }
+                    Batch {
+                        key: b.key.clone(),
+                        vertices,
+                        alpha: b.alpha,
+                        animated: false,
+                        uv_animation: None,
+                        map_door: None,
+                        mlo_entity: None,
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+        (apply(&self.drawn), apply(&self.collision))
+    }
 }
 
 /// Is this path a glTF model (by extension)?

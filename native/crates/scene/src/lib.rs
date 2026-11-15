@@ -1,4 +1,5 @@
 //! Manifest-ordered SA world placement and small bounded scene assembly.
+pub mod builtin_assets;
 pub mod character;
 pub mod collision;
 pub mod content;
@@ -22,6 +23,7 @@ pub mod vehicle;
 pub mod vehicle_list;
 pub mod water;
 pub mod weapon_list;
+pub mod world_layout;
 use anyhow::{ensure, Context, Result};
 use sa_assets::{decode_dff, decode_txd, Geometry, Img, Texture};
 use std::{

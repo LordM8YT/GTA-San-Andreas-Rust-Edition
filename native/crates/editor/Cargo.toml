@@ -1,0 +1,13 @@
+[package]
+name = "sa-editor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "SARE Build Mode: world projects, undo/redo, asset catalog and viewport maths, without any GPU or UI code"
+
+[dependencies]
+anyhow.workspace = true
+glam.workspace = true
+sa-scene = { path = "../scene" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"

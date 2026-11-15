@@ -5707,7 +5707,7 @@ fn run() -> Result<()> {
         match sa_scene::content_pack::Manifest::read(folder) {
             Ok(m) => runtime_log::line(format!(
                 "Content pack: {} {} (id {}), world {}",
-                m.name, m.version, m.id, m.world.scene
+                m.name, m.version, m.id, m.world.scene.as_deref().unwrap_or("none, Build Mode layout only")
             )),
             Err(error) => runtime_log::line(format!("Content pack manifest: {error:#}")),
         }

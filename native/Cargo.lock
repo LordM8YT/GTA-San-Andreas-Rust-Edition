@@ -3349,6 +3349,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sa-editor"
+version = "0.47.1"
+dependencies = [
+ "anyhow",
+ "glam 0.30.10",
+ "sa-scene",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "sa-launcher"
 version = "0.47.1"
 dependencies = [
