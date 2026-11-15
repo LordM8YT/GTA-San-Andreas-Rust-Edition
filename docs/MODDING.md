@@ -187,7 +187,8 @@ settings).
 **Step 6. Save.** Ctrl+S. Your work is also autosaved, and offered back if
 SARE closes unexpectedly. The world is now a normal content pack in
 `content/<your-world>/`: it shows up under **Content packs** on Home to play,
-with an **Edit** button to open it in Build Mode again.
+with an **Edit** button to open it in Build Mode again. Inside Build Mode, *File → New world* and *File → Open world* switch
+worlds without going back to the launcher.
 
 Every control and the file format are in the [Build Mode guide](build-mode.md).
 

@@ -263,6 +263,8 @@ struct State {
     last_progress: Option<progress::Save>,
     progress_retry: Option<Instant>,
     quit_requested: bool,
+    /// Build Mode asked to open another world: start SARE again on it.
+    build_restart: Option<PathBuf>,
     car: Option<(sa_scene::vehicle::Car, Vec<GpuBatch>)>,
     car_uploads: u64,
     car_uploaded_bytes: u64,
@@ -1167,6 +1169,7 @@ impl State {
             last_progress: None,
             progress_retry: None,
             quit_requested: false,
+            build_restart: None,
             car: None,
             car_uploads: 0,
             car_uploaded_bytes: 0,
@@ -6470,6 +6473,13 @@ fn run() -> Result<()> {
     event_loop.run_app(&mut app)?;
     if let Some(error) = app.failure {
         anyhow::bail!(error);
+    }
+    let restart = app.state.as_mut().and_then(|s| s.build_restart.take());
+    if let Some(folder) = restart {
+        drop(app);
+        // Let the new SARE take the one-game lock.
+        drop(_runtime_guard);
+        build_mode::restart_on(&args, &folder)?;
     }
     Ok(())
 }

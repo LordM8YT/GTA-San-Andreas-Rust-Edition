@@ -110,6 +110,8 @@ pub struct BuildMode {
     pub log: Vec<LogLine>,
     pub recovery: Option<Recovery>,
     pub requests: Vec<Request>,
+    /// Another world to open: SARE restarts in Build Mode on it.
+    pub switch_to: Option<PathBuf>,
     /// Nodes as they were before an unfinished live edit (gizmo drag,
     /// inspector drag), recorded as one undo step when it ends.
     preview_before: Vec<Node>,
@@ -194,6 +196,7 @@ impl BuildMode {
             log: Vec::new(),
             recovery,
             requests: Vec::new(),
+            switch_to: None,
             preview_before: Vec::new(),
             preview_label: String::new(),
             drag: None,
@@ -598,6 +601,13 @@ impl State {
             build.error(format!("Model failed to load: {problem}"));
         }
         let requests = std::mem::take(&mut build.requests);
+        if let Some(folder) = build.switch_to.take() {
+            // Each world has its own base scene and collision, loaded at
+            // start-up: open the other world in a fresh SARE.
+            crate::runtime_log::line(format!("Build Mode: switching to {}", folder.display()));
+            self.build_restart = Some(folder);
+            self.quit_requested = true;
+        }
         self.build = Some(build);
         for request in requests {
             match request {
@@ -665,4 +675,29 @@ impl State {
             build.autosave();
         }
     }
+}
+
+/// Start SARE again with the same options, editing `folder` instead.
+pub fn restart_on(args: &[String], folder: &Path) -> Result<()> {
+    let mut next = Vec::new();
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        match arg.as_str() {
+            // The world being edited, and entering play (Build Mode opens
+            // in the editor anyway).
+            "--build" => {
+                rest.next();
+            }
+            "--play" => {}
+            _ => next.push(arg.clone()),
+        }
+    }
+    next.push("--build".into());
+    next.push(folder.display().to_string());
+    let exe = std::env::current_exe().context("finding SARE to restart it")?;
+    std::process::Command::new(exe)
+        .args(&next)
+        .spawn()
+        .context("starting SARE on the other world")?;
+    Ok(())
 }

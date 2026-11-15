@@ -45,6 +45,11 @@ place. With *Surface* on, objects land on what is under
 the mouse; otherwise on the ground plane. With Snap on, positions snap to
 the grid (hold Ctrl while dragging to invert snapping).
 
+Other worlds: *File → New world* (Ctrl+N) makes a new world beside this one
+and *File → Open world* (Ctrl+O) lists every installed world. SARE restarts on
+the chosen world (each world loads its own base scene at start-up), and asks
+first if there are unsaved changes.
+
 Camera: right mouse + WASD/QE flies (Shift faster, wheel changes speed),
 middle mouse pans, Alt + left mouse orbits, the wheel zooms, F or a
 double-click focuses the selection, Home resets. *Help → Controls* lists
@@ -151,6 +156,5 @@ Milestone 1 and part of milestone 2 are in. Still to come, roughly in order:
 - Lights (point, spot, sun), sky and fog settings. The renderer has no
   per-object lights or per-object shadow switches yet, so the Inspector does
   not offer them.
-- New world / open another world from inside the editor (use the launcher).
 - Terrain, roads and paths, trigger volumes, interactive objects, visual
   scripting, publishing worlds to servers.
