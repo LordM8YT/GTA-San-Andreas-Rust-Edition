@@ -1,0 +1,18 @@
+[package]
+name = "sa-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "SARE creator bridge: a Model Context Protocol server that lets AI assistants build Build Mode worlds and Lua resources"
+
+[[bin]]
+name = "sa-mcp"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+sa-scene = { path = "../scene" }
+sa-editor = { path = "../editor" }
+sa-lua = { path = "../lua" }
+mlua = { version = "0.12.2", features = ["lua54", "vendored"] }
+serde_json = "1.0.151"

@@ -1,9 +1,13 @@
 SARE free-roam test client, built and tested from the linked commit.
 
-Version 0.52.0:
+Version 0.53.0:
 - RP servers: police, EMS, mechanic and taxi are now each their own resource (sare_job_police, sare_job_ems, sare_job_mechanic, sare_job_taxi) with their own config.lua: the job and grades, `Config.Locations` as `vector4(...)`, gear, work vehicle and rules like fines and jail time. Change one job without touching the others.
 - sare_rp_jobs is now the shared job tools: City Hall job centre, `/911` and `/call`, bills, duty menus, locker gear and the F2 menu. Any job, also your own, adds its calls, bills and F2 actions with exports (`AddService`, `AllowBills`, `AddJobAction`, `DutyMenu`, `Gear`).
 - `/call` lists the services the running jobs offer.
+
+Version 0.52.0:
+- New for creators: sa-mcp, a bridge for AI assistants. Add it to Claude Desktop, Claude Code, Cursor or any app that supports MCP, and the assistant can build Build Mode worlds (place, move and delete objects, set the spawn) and write Lua resources for your server. It only touches your content and resources folders, checks Lua for syntax errors before saving, and gives the assistant SARE's guides and the exact list of Lua functions SARE has. For now, build it with `cargo build --release -p sa-mcp`; see docs/ai-creators.md.
+- The launcher's updater accepts sa-mcp in future client packages.
 
 Version 0.51.0:
 - RP servers: a custom job is now one resource folder, the FiveM way. `exports.sarebox:AddJob` adds the job (like QBCore), `exports.sare_rp_core:AddPlace` puts its points on the map with an `onUse` function for the H key, and `AddOpenJob` lists it at City Hall. No core files to edit.
