@@ -139,11 +139,15 @@ fn safe_path(name: &str) -> bool {
                     .all(|b| b.is_ascii_alphanumeric() || b"._-+ ".contains(&b))
         })
 }
+/// Programs a package may also hold. Accepted now so that a later release
+/// can ship them without old launchers refusing the update.
+const OPTIONAL_BINARIES: &[&str] = &["sa-mcp"];
 fn allowed(name: &str) -> bool {
     safe_path(name)
         && (name == BUILD
             || ["sa-launcher", "sa-runtime", "sa-server", "sa-relay"]
                 .iter()
+                .chain(OPTIONAL_BINARIES)
                 .any(|n| name == binary(n))
             || [
                 "LICENSE",
@@ -598,6 +602,12 @@ fn extract(package: &Path, destination: &Path, commit: &str) -> Result<()> {
                 fs::Permissions::from_mode(0o755),
             )?;
         }
+        for name in OPTIONAL_BINARIES {
+            let path = destination.join(binary(name));
+            if path.is_file() {
+                fs::set_permissions(path, fs::Permissions::from_mode(0o755))?;
+            }
+        }
     }
     Ok(())
 }
@@ -901,6 +911,13 @@ mod tests {
             zip.write_all(b"unexpected").unwrap();
         }
         zip.finish().unwrap();
+    }
+    #[test]
+    fn packages_may_add_the_creator_bridge_but_not_other_programs() {
+        assert!(allowed(&binary("sa-mcp")));
+        assert!(allowed(&binary("sa-runtime")));
+        assert!(!allowed(&binary("sa-other")));
+        assert!(!allowed("content/x/run.exe"));
     }
     #[test]
     fn downloads_require_exact_length_and_digest_before_installation() {

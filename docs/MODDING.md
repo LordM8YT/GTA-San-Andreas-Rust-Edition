@@ -60,6 +60,9 @@ plugins or CLEO scripts.
 - **A text editor** for JSON and Lua, for example VS Code or Notepad++.
 - **Python 3** (optional) to run the helper tools in `tools/`, such as
   `new-resource.py`, which creates a working starting point for you.
+- **An AI assistant** (optional): SARE's creator bridge `sa-mcp` lets Claude
+  and other MCP apps build Build Mode worlds and write Lua resources for you.
+  See [Make worlds and scripts with an AI assistant](ai-creators.md).
 
 You do **not** need RenderWare tools, a modding SDK, or a compiler.
 
@@ -448,5 +451,6 @@ Still stuck? Ask on the SARE Discord with your log and your manifest.
 - [Vehicle dynamics](vehicle-dynamics.md): handling values
 - [Server guide](server-guide.md) and [server API](server-hosting.md)
 - [Client scripts](client-scripts.md)
+- [AI assistants (sa-mcp)](ai-creators.md): let an AI build worlds and scripts through MCP
 - [GTA SA importer](gta-sa-conversion.md) and [GTA V converter](gta5-conversion.md)
 - [Standalone plan](STANDALONE.md) and [platform roadmap](PLATFORM.md): what comes next

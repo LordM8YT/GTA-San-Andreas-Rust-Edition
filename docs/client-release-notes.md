@@ -1,5 +1,9 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.52.0:
+- New for creators: sa-mcp, a bridge for AI assistants. Add it to Claude Desktop, Claude Code, Cursor or any app that supports MCP, and the assistant can build Build Mode worlds (place, move and delete objects, set the spawn) and write Lua resources for your server. It only touches your content and resources folders, checks Lua for syntax errors before saving, and gives the assistant SARE's guides and the exact list of Lua functions SARE has. For now, build it with `cargo build --release -p sa-mcp`; see docs/ai-creators.md.
+- The launcher's updater accepts sa-mcp in future client packages.
+
 Version 0.51.0:
 - RP servers: a custom job is now one resource folder, the FiveM way. `exports.sarebox:AddJob` adds the job (like QBCore), `exports.sare_rp_core:AddPlace` puts its points on the map with an `onUse` function for the H key, and `AddOpenJob` lists it at City Hall. No core files to edit.
 - SARE RP Town has a new example job, Courier: go on duty at the warehouse, load a package, deliver it to a house and get paid. `python tools/new-resource.py <name> --type rp-job` copies it as the start of your own job.
