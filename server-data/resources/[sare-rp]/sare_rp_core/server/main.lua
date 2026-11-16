@@ -2,6 +2,7 @@
 -- dialogs, and small helpers the other RP resources use through exports.
 local Core = exports.sarebox:GetCoreObject()
 local RP = {}
+local Added
 
 local function flat(a, b)
   local dx, dy = a.x - b.x, a.y - b.y
@@ -23,7 +24,7 @@ function RP.PlaceAt(src)
     if RPConfig.Places[key] then
       for _, point in ipairs(points) do
         local d = flat(here, point)
-        if d <= RPConfig.InteractRadius + 0.5 and math.abs(here.z - point.z) < 3.0 and (not bestDistance or d < bestDistance) then
+        if d <= (RPConfig.Places[key].radius or RPConfig.InteractRadius) + 0.5 and math.abs(here.z - point.z) < 3.0 and (not bestDistance or d < bestDistance) then
           best, bestKey, bestDistance = point, key, d
         end
       end
@@ -152,6 +153,94 @@ function RP.Me(src, action)
   end
 end
 
+-- Places from other resources, so a custom job is one folder:
+--   exports.sare_rp_core:AddPlace('fisher_duty', {
+--     label = 'Fishing co-op', coords = vector4(2610.0, -1760.0, 0.2, 90.0),
+--     blip = 'Fishing', colour = 3, job = 'fisher', duty = false,
+--     onUse = function(src, key, point) ... end })
+-- `coords` is one vector3/vector4 or a list of them (several ATMs, say).
+-- Without `onUse` the place still fires the 'sare_rp:interact' event.
+-- `radius` (metres) is optional. Places go away when the resource that
+-- added them stops. Returns true, or false and the reason.
+local Builtin = { places = {}, locations = {} }
+for key, place in pairs(RPConfig.Places) do Builtin.places[key] = place end
+for key, value in pairs(RPLocations) do Builtin.locations[key] = value end
+Added = {}
+
+local function shareAdded(target)
+  local list = {}
+  for key, added in pairs(Added) do
+    list[#list + 1] = { key = key, place = RPPlaces.public(RPConfig.Places[key]), points = added.points }
+  end
+  TriggerClientEvent('sare_rp:client:places', target, list)
+end
+
+function RP.AddPlace(key, place)
+  if type(key) ~= 'string' or #key > 48 or not key:match('^[%w_%-]+$') then
+    return false, 'place keys are 1-48 letters, numbers, _ or -'
+  end
+  if type(place) ~= 'table' or type(place.label) ~= 'string' or place.label == '' then return false, 'the place needs a label' end
+  local points = RPPlaces.points(place.coords)
+  if not points then return false, 'coords must be a vector3, a vector4 or a list of them' end
+  -- A function from another resource arrives as a callable reference.
+  local onUse = place.onUse
+  if onUse ~= nil and type(onUse) ~= 'function' and not (type(onUse) == 'table' and rawget(onUse, '__cfx_functionReference')) then
+    return false, 'onUse must be a function'
+  end
+  local radius = tonumber(place.radius)
+  if radius and (radius < 0.5 or radius > 50) then return false, 'radius must be 0.5 to 50 metres' end
+  RPConfig.Places[key] = {
+    label = place.label,
+    blip = type(place.blip) == 'string' and place.blip or nil,
+    colour = tonumber(place.colour),
+    job = type(place.job) == 'string' and place.job or nil,
+    duty = place.duty == true,
+    radius = radius,
+  }
+  RPLocations[key] = #points == 1 and points[1] or points
+  Added[key] = { owner = GetInvokingResource() or GetCurrentResourceName(), onUse = place.onUse, points = points }
+  shareAdded(-1)
+  return true
+end
+
+function RP.RemovePlace(key)
+  if not Added[key] then return false end
+  Added[key] = nil
+  RPConfig.Places[key] = Builtin.places[key]
+  RPLocations[key] = Builtin.locations[key]
+  shareAdded(-1)
+  return true
+end
+
+-- A job anyone can take at City Hall's job centre (RPConfig.OpenJobs).
+local OpenAdded = {}
+-- Jobs anyone can take: config.lua's OpenJobs plus the ones added here.
+function RP.OpenJobs() return RPConfig.OpenJobs end
+function RP.AddOpenJob(name)
+  if type(name) ~= 'string' or not Core.Functions.GetJob(name) then return false, 'add the job with exports.sarebox:AddJob first' end
+  for _, open in ipairs(RPConfig.OpenJobs) do
+    if open == name then return true end
+  end
+  RPConfig.OpenJobs[#RPConfig.OpenJobs + 1] = name
+  OpenAdded[name] = GetInvokingResource() or GetCurrentResourceName()
+  return true
+end
+
+AddEventHandler('onResourceStop', function(resource)
+  for key, added in pairs(Added) do
+    if added.owner == resource then RP.RemovePlace(key) end
+  end
+  for name, owner in pairs(OpenAdded) do
+    if owner == resource then
+      OpenAdded[name] = nil
+      for i = #RPConfig.OpenJobs, 1, -1 do
+        if RPConfig.OpenJobs[i] == name then table.remove(RPConfig.OpenJobs, i) end
+      end
+    end
+  end
+end)
+RegisterNetEvent('sare_rp:server:places', function() shareAdded(source) end)
+
 -- The game presses the interaction key: find what the player stands at and
 -- let the resource that owns that kind of place answer.
 RegisterNetEvent('sare_rp:server:interact', function()
@@ -168,6 +257,11 @@ RegisterNetEvent('sare_rp:server:interact', function()
     if place.duty and not current.onduty then return RP.Notify(src, 'Go on duty first.', 'error') end
   end
   if Player(src).state.cuffed then return RP.Notify(src, 'You are in handcuffs.', 'error') end
+  local added = Added[key]
+  if added and added.onUse then
+    local ok, err = pcall(added.onUse, src, key, point)
+    if not ok then print(('^1[sare_rp_core] %s: onUse for %s failed: %s^7'):format(added.owner, key, err)) end
+  end
   TriggerEvent('sare_rp:interact', src, key, point)
 end)
 

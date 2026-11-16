@@ -433,7 +433,7 @@ RegisterNetEvent('sare_rp_jobs:server:hire', function(name)
   local src = source
   if not RP.Near(src, 'city_hall') then return end
   local open = false
-  for _, n in ipairs(RPConfig.OpenJobs) do open = open or n == name end
+  for _, n in ipairs(RP.OpenJobs()) do open = open or n == name end
   if not open then return notify(src, 'That job is hired by the boss (an admin).', 'error', 'City Hall') end
   local player = Core.Functions.GetPlayer(src)
   if player.PlayerData.job.name == name then return notify(src, 'You already have that job.', 'inform', 'City Hall') end
@@ -464,7 +464,7 @@ end)
 AddEventHandler('sare_rp:interact', function(src, key)
   if key == 'city_hall' then
     local options = { { title = 'Job centre', disabled = true } }
-    for _, name in ipairs(RPConfig.OpenJobs) do
+    for _, name in ipairs(RP.OpenJobs()) do
       options[#options + 1] = { title = 'Work as ' .. label(name), serverEvent = 'sare_rp_jobs:server:hire', args = name }
     end
     options[#options + 1] = { title = 'Police and EMS', description = 'Hired by an admin: /setjob <id> police 0', disabled = true }

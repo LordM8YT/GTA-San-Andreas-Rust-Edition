@@ -10,6 +10,7 @@ dependency 'sarebox'
 shared_scripts {
   'shared/locations.lua',
   'shared/config.lua',
+  'shared/places.lua',
 }
 server_script 'server/main.lua'
 client_script 'client/main.lua'

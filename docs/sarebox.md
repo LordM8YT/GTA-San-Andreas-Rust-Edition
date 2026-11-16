@@ -160,7 +160,23 @@ console with who did it (`[admin] Name (3, license:...): givemoney 4 cash 50`).
 
 Jobs live in `sarebox_core/shared/config.lua` with grades and pay, like
 QBCore's shared jobs: `unemployed`, `taxi`, `mechanic`, `police` and
-`ambulance` (EMS) to start with. Add your own there and restart the resource.
+`ambulance` (EMS) to start with. Add your own there and restart the resource,
+or keep a job in its own resource and add it when that resource starts, like
+QBCore's `AddJob`:
+
+```lua
+exports.sarebox:AddJob('fisher', {
+  label = 'Fisher', defaultDuty = false,
+  grades = { [0] = { name = 'Deckhand', payment = 40 }, [1] = { name = 'Captain', payment = 90, isboss = true } },
+})
+```
+
+`AddJob` returns `true`, or `false` and the reason; `AddJobs({ name = job, ... })`
+adds several. A player whose saved job is not known yet (its resource starts
+later, or after `restart sarebox_core`) plays as unemployed and gets the job
+back as soon as it is added. A ready-made example is `[sare-rp]/sare_job_courier`;
+`tools/new-resource.py <name> --type rp-job` copies it
+([guide](MODDING.md#6b-your-own-rp-job)).
 
 For a complete roleplay server built on SARE Box (identity, bank, inventory,
 shops, police/EMS/taxi/mechanic, dealer and garage) on its own map, pick the
@@ -245,7 +261,8 @@ end)
 ```
 
 Server: `Core.Functions.GetPlayer(src)`, `GetPlayerByCitizenId`, `GetPlayers`,
-`GetJob`, `Notify(src, text, type, title)`. Player:
+`GetJob`, `AddJob(name, job)`, `AddJobs(jobs)`, `Notify(src, text, type, title)`
+(also as exports: `exports.sarebox:AddJob(...)`). Player:
 `player.PlayerData` (`citizenid`, `license`, `name`, `money`, `job`,
 `metadata`), `player.Functions.AddMoney/RemoveMoney/SetMoney/GetMoney`,
 `SetJob(name, grade)`, `SetJobDuty`, `SetMetaData/GetMetaData`, `Save`.
@@ -254,7 +271,8 @@ go below zero. State bags on `Player(src).state`: `cash`, `bank`, `job`,
 `citizenid`.
 
 Events: `sarebox:server:playerLoaded`, `sarebox:server:moneyChanged`
-(`src, account, amount, reason`), `sarebox:server:onJobUpdate`; on the client
+(`src, account, amount, reason`), `sarebox:server:onJobUpdate`,
+`sarebox:server:jobAdded` (`name, job`); on the client
 `sarebox:client:playerLoaded`, `sarebox:client:setPlayerData`,
 `sarebox:client:onJobUpdate`. Client export:
 `exports.sarebox_core:GetPlayerData()`.

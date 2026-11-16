@@ -27,6 +27,7 @@ money on every action, and clients only show menus.
 | Mechanic garage (east) | Mechanic duty |
 | Public garage (south) | Store and take out your cars |
 | Taxi depot (north-west) | Taxi duty and job car |
+| Courier depot (warehouse, south-west) | Courier duty, loading bay; deliver packages to houses on the west side |
 
 Houses, apartments, a warehouse yard, a diner, a clothes shop, a basketball
 court and a parking lot fill the rest of the 340 × 340 m map.
@@ -44,10 +45,18 @@ court and a parking lot fill the rest of the 340 × 340 m map.
 | `sare_rp_jobs` | Police, EMS, taxi, mechanic: duty, gear, dispatch (`/911`, `/call`), bills, fines, cuffs, search, jail, treatment |
 | `sare_rp_admin` | `/tp`, `/giveitem`, `/clearinventory`, `/dvall`, `/coords` |
 | `sare-rp-map` | Spawn points in Legion Square |
+| `sare_job_courier` | Example custom job in its own resource: courier depot, loading bay, deliveries |
 
 Settings (prices, items, shops, job gear, keys, chat ranges, jail time) are in
 `sare_rp_core/shared/config.lua`. Map positions are in
 `sare_rp_core/shared/locations.lua`, which the Blender script writes.
+
+**Your own job** is one resource folder, as in FiveM: `exports.sarebox:AddJob`
+adds the job, `exports.sare_rp_core:AddPlace` its places (with an `onUse`
+function for the **H** key) and `AddOpenJob` lists it at City Hall. Copy
+`sare_job_courier` or run `python tools/new-resource.py <name> --type rp-job`;
+get positions with `/coords` in game or **Copy position** in Build Mode. Guide:
+[MODDING.md, Your own RP job](../../../docs/MODDING.md#6b-your-own-rp-job).
 
 ## Run it on your PC
 
