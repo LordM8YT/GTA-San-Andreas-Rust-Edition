@@ -34,7 +34,7 @@ pub const TEMPLATES: [(&str, &str, &str, &str); 3] = [
 ];
 
 /// Resources every template gets; server.cfg decides which ones start.
-pub const FILES: [(&str, &str); 62] = [
+pub const FILES: [(&str, &str); 66] = [
     data!("resources/[system]/chat/fxmanifest.lua"),
     data!("resources/[system]/chat/sv_chat.lua"),
     data!("resources/[managers]/mapmanager/fxmanifest.lua"),
@@ -84,6 +84,10 @@ pub const FILES: [(&str, &str); 62] = [
     data!("resources/[sare-rp]/sare_rp_core/server/main.lua"),
     data!("resources/[sare-rp]/sare_rp_core/shared/config.lua"),
     data!("resources/[sare-rp]/sare_rp_core/shared/locations.lua"),
+    data!("resources/[sare-rp]/sare_rp_core/shared/places.lua"),
+    data!("resources/[sare-rp]/sare_job_courier/fxmanifest.lua"),
+    data!("resources/[sare-rp]/sare_job_courier/config.lua"),
+    data!("resources/[sare-rp]/sare_job_courier/server.lua"),
     data!("resources/[sare-rp]/sare_rp_identity/fxmanifest.lua"),
     data!("resources/[sare-rp]/sare_rp_identity/server.lua"),
     data!("resources/[sare-rp]/sare_rp_identity/appearance.lua"),

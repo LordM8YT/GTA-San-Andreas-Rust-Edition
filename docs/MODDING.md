@@ -20,6 +20,7 @@ files at all.
 4. [Tutorial: your first prop in 5 minutes](#4-tutorial-your-first-prop-in-5-minutes)
 5. [Tutorial: your own world, no GTA needed](#5-tutorial-your-own-world-no-gta-needed)
 6. [Tutorial: a server command in Lua](#6-tutorial-a-server-command-in-lua)
+   - [6b. Your own RP job](#6b-your-own-rp-job)
 7. [Blender export cheat sheet](#7-blender-export-cheat-sheet)
 8. [Coordinates and placing things](#8-coordinates-and-placing-things)
 9. [Collision: what is solid](#9-collision-what-is-solid)
@@ -277,6 +278,75 @@ Read the [server guide](server-guide.md) for setup and the
 or GTA V native exists; [framework compatibility](framework-compatibility.md)
 lists what does.
 
+### 6b. Your own RP job
+
+On a SARE RP server (the **SARE RP Town** template) a job is one resource
+folder, the way FiveM jobs are: the job, its places on the map and what
+happens there all live in that folder. You never edit the core files.
+
+**Step 1.** Make the job from the example courier job:
+
+```text
+python tools/new-resource.py fisher --type rp-job --resources-dir "<your server>/resources"
+```
+
+This creates `resources/[jobs]/fisher/` with `fxmanifest.lua`, `config.lua`,
+`server.lua` and a README. It works at once: add `ensure fisher` to
+`server.cfg` after `ensure [sare-rp]` and restart, take the job at City Hall,
+go on duty at its depot, load a package and deliver it.
+
+**Step 2.** Put the places on your map. `config.lua` has the positions:
+
+```lua
+Config.Locations = {
+  duty = vector4(2352.50, -1806.00, 0.20, 0.0),   -- x, y, z, heading
+  pickup = vector4(2375.00, -1815.00, 0.20, 0.0),
+  dropoffs = { vector4(...), vector4(...) },       -- a list works too
+}
+```
+
+These are world coordinates, like in FiveM scripts. Two ways to get them:
+
+- **In game:** stand on the spot and type `/coords`. Chat shows
+  `vector4(...)` with your heading; the server console prints it too, to copy.
+- **In Build Mode:** select an object where the spot should be (a small cube,
+  a sign, a door) and press **Copy position** in the Inspector. The
+  `vector4(...)` is now on your clipboard; paste it into `config.lua`. The
+  heading is the object's Z rotation.
+
+**Step 3.** Make it your job. `config.lua` holds the job's name, grades,
+paycheck and pay. `server.lua` holds what happens: each place has an `onUse`
+function that runs when a player presses **H** on it.
+
+```lua
+-- The job, with grades like QBCore's shared jobs.
+exports.sarebox:AddJob('fisher', {
+  label = 'Fisher', defaultDuty = false,
+  grades = { [0] = { name = 'Deckhand', payment = 40 } },
+})
+-- Anyone may take it at City Hall's job centre.
+exports.sare_rp_core:AddOpenJob('fisher')
+-- A point on the map: [H] hint, blip, job and duty checks, and what it does.
+exports.sare_rp_core:AddPlace('fisher_pier', {
+  label = 'Fishing spot',
+  coords = Config.Locations.pier,         -- vector3, vector4 or a list
+  blip = 'Fishing', colour = 3,           -- optional map blip
+  job = 'fisher', duty = true,            -- optional: only on-duty fishers
+  radius = 3.0,                           -- optional, metres
+  onUse = function(src, key, point)
+    -- give fish, start a progress bar, pay... (see the courier's server.lua)
+  end,
+})
+```
+
+Helpers from `exports.sare_rp_core:GetRP()`: `Notify`, `Menu`, `Dialog`,
+`Progress`, `Near`, `OnDuty`, `Coords`, `Distance`. Money and jobs come from
+SARE Box: `exports.sarebox:GetCoreObject()` (see [SARE Box](sarebox.md)).
+
+The server checks everything: a player can only use a place they stand at,
+with the right job and duty. Places go away when their resource stops, and
+players keep a custom job even if its resource starts after they joined.
+
 ## 7. Blender export cheat sheet
 
 *File → Export → glTF 2.0 (.glb/.gltf)*:
@@ -305,6 +375,10 @@ channels. JPEG textures are skipped: save your images as PNG.
 - **In a content pack**: positions are Blender coordinates around your
   world's origin, `[east, north, up]`. Build Mode's Inspector shows the same
   numbers (X east, Y north, Z up).
+- **In server scripts** (RP jobs, spawn points): world coordinates. A
+  content pack's origin is world `(2500, -1670, 0)`, so Build Mode's
+  `X, Y, Z` is world `2500 + X, -1670 + Y, Z`. Build Mode's **Copy position**
+  does this for you and copies a ready `vector4(...)`.
 - **Inside a model**: the object's origin is the point that is placed.
 
 ## 9. Collision: what is solid

@@ -77,12 +77,14 @@ RegisterCommand('dvall', function(src)
   reply(src, ('Deleted %d vehicle(s).'):format(count))
 end, true)
 
--- /coords: where you stand, in world and Blender coordinates (for map edits
--- and new places in tools/blender/make_rp_town.py). Anyone may use it.
+-- /coords: where you stand, as a vector4 to paste into a job's
+-- Config.Locations, and in Blender coordinates (for map edits). The server
+-- console prints it too, for copying. Anyone may use it.
 RegisterCommand('coords', function(src)
   if src == 0 then return end
   local c = RP.Coords(src)
-  local text = ('World %.2f, %.2f, %.2f  |  heading %.0f  |  Blender %.2f, %.2f, %.2f'):format(
-    c.x, c.y, c.z, GetEntityHeading(GetPlayerPed(src)), c.x - 2500.0, c.y + 1670.0, c.z)
+  local vector = ('vector4(%.2f, %.2f, %.2f, %.1f)'):format(c.x, c.y, c.z, GetEntityHeading(GetPlayerPed(src)))
+  local text = ('%s  |  Blender %.2f, %.2f, %.2f'):format(vector, c.x - 2500.0, c.y + 1670.0, c.z)
   TriggerClientEvent('chat:addMessage', src, { color = { 120, 200, 255 }, args = { 'Coords', text } })
+  print(('[coords] %s: %s'):format(GetPlayerName(src), vector))
 end, false)

@@ -8,6 +8,7 @@
 //! - [`catalog`]: the asset catalog and its providers.
 //! - [`viewport`]: picking, gizmo maths, snapping and the editor camera.
 //! - [`thumbnail`]: Asset Browser pictures, drawn on the CPU.
+//! - [`world_position`]: positions as server scripts write them.
 //!
 //! The runtime (`sa-runtime`, `build_mode` module) draws the editor with
 //! egui and the existing wgpu renderer. See docs/build-mode.md.
@@ -17,6 +18,7 @@ pub mod ops;
 pub mod project;
 pub mod thumbnail;
 pub mod viewport;
+pub mod world_position;
 
 #[cfg(test)]
 mod tests {

@@ -1405,6 +1405,22 @@ fn object(build: &mut BuildMode, ui: &mut Ui, id: NodeId) {
                     );
                 }
             });
+            // Server scripts (an RP job's Config.Locations) use world
+            // coordinates; copy this spot ready to paste.
+            let vector = sa_editor::world_position::vector4(&node.transform);
+            ui.horizontal(|ui| {
+                if ui
+                    .small_button("📋 Copy position")
+                    .on_hover_text(format!(
+                        "Copies {vector}\nWorld coordinates and heading, ready to paste into a server resource's Config.Locations (for example an RP job)."
+                    ))
+                    .clicked()
+                {
+                    ui.ctx().copy_text(vector.clone());
+                    build.info(format!("Copied {vector}"));
+                }
+                ui.label(RichText::new(&vector).monospace().small().color(MUTED));
+            });
         });
     }
     section(ui, "Object");

@@ -71,6 +71,24 @@ class StarterTemplateTests(unittest.TestCase):
             again = self.run_tool('my-world', '--type', 'world', '--content-dir', str(root / 'content'))
             self.assertNotEqual(again.returncode, 0)
 
+    def test_rp_job_template_renames_the_courier(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            resources = Path(temporary) / 'resources'
+            done = self.run_tool('fisher', '--type', 'rp-job', '--resources-dir', str(resources))
+            self.assertEqual(done.returncode, 0, done.stderr)
+            job = resources / '[jobs]/fisher'
+            config = (job / 'config.lua').read_text()
+            self.assertIn("name = 'fisher'", config)
+            self.assertIn("label = 'Fisher',", config)
+            self.assertIn('Config.Locations', config)
+            self.assertIn("description 'Fisher: a SARE RP job.'", (job / 'fxmanifest.lua').read_text())
+            self.assertIn('exports.sarebox:AddJob', (job / 'server.lua').read_text())
+            self.assertIn('ensure fisher', (job / 'README.md').read_text())
+            bad = self.run_tool('bad job!', '--type', 'rp-job', '--resources-dir', str(resources))
+            self.assertNotEqual(bad.returncode, 0)
+            again = self.run_tool('fisher', '--type', 'rp-job', '--resources-dir', str(resources))
+            self.assertNotEqual(again.returncode, 0)
+
 
 if __name__ == '__main__':
     unittest.main()
