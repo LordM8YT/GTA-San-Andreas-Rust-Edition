@@ -69,8 +69,10 @@ get positions with `/coords` in game or **Copy position** in Build Mode. Guide:
    this repository into the `content/` folder of each player's SARE (next to
    `mods/`; in a source checkout the repository's own `content/` already has
    it). Servers cannot send content packs yet.
-3. **Join.** The launcher only opens content packs offline for now, so join
-   from a terminal:
+3. **Join.** Use Direct connect in the launcher (or the server list). The
+   server tells SARE it plays on `sare-rp-town` (`sets content_pack` in
+   server.cfg), so SARE opens that pack by itself, also when you started on
+   San Andreas. From a terminal:
 
    ```text
    sa-runtime --content sare-rp-town --join 127.0.0.1:7777 --name Anna

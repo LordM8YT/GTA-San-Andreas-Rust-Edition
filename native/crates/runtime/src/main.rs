@@ -265,6 +265,11 @@ struct State {
     quit_requested: bool,
     /// Build Mode asked to open another world: start SARE again on it.
     build_restart: Option<PathBuf>,
+    /// A server plays on another content pack: start SARE again with these
+    /// arguments (that pack, then join).
+    pack_restart: Option<Vec<String>>,
+    /// The open content pack's id; `None` for San Andreas and the testbed.
+    pack_id: Option<String>,
     car: Option<(sa_scene::vehicle::Car, Vec<GpuBatch>)>,
     car_uploads: u64,
     car_uploaded_bytes: u64,
@@ -1170,6 +1175,8 @@ impl State {
             progress_retry: None,
             quit_requested: false,
             build_restart: None,
+            pack_restart: None,
+            pack_id: None,
             car: None,
             car_uploads: 0,
             car_uploaded_bytes: 0,
@@ -2924,6 +2931,9 @@ impl State {
             }
         });
         script_ui::apply(&mut self.scripts, script_actions);
+        if let Some(viewport) = output.viewport_output.get(&egui::ViewportId::ROOT) {
+            self.build_mode_repaint_after(viewport.repaint_delay);
+        }
         self.build_mode_end_frame();
         if self.captured && self.menu.page.is_none() {
             output.platform_output.cursor_icon = egui::CursorIcon::None;
@@ -3211,6 +3221,8 @@ struct App {
     streamer: Option<Streamer>,
     /// `--content testbed` or a content pack: no San Andreas installation is used.
     standalone: bool,
+    /// The open content pack's id, when the world is a content pack.
+    pack_id: Option<String>,
     world_name: String,
     /// Where a content pack asks the player to start, in runtime space.
     spawn_eye: Option<Vec3>,
@@ -3495,6 +3507,7 @@ impl ApplicationHandler for App {
             Ok(mut state) => {
                 state.roads = roads;
                 state.standalone = self.standalone;
+                state.pack_id = self.pack_id.clone();
                 state.world_name = self.world_name.clone();
                 if let (Some(eye), Some(world)) = (self.spawn_eye, &state.collision) {
                     let player = Player::spawn(world, eye);
@@ -3846,6 +3859,12 @@ impl ApplicationHandler for App {
             return;
         };
         let _ = state.gui_input.on_window_event(&state.window, &event);
+        // Build Mode draws only when something changes: input wakes it.
+        if !self.smoke {
+            if let Some(wake) = state.build_mode_event(&event) {
+                state.next_frame = state.next_frame.min(wake);
+            }
+        }
         if let Some(build) = &state.build {
             // F6 switches between Build Mode and playtesting the world.
             if let WindowEvent::KeyboardInput { event, .. } = &event {
@@ -3959,7 +3978,13 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => state.resize(size),
             WindowEvent::RedrawRequested => {
-                if !self.smoke && state.menu.settings.fps_limit > 0 {
+                if !self.smoke && state.build_mode_editing() {
+                    // Build Mode paces itself after each frame (see below).
+                    if Instant::now() < state.next_frame {
+                        event_loop.set_control_flow(ControlFlow::WaitUntil(state.next_frame));
+                        return;
+                    }
+                } else if !self.smoke && state.menu.settings.fps_limit > 0 {
                     let now = Instant::now();
                     if now < state.next_frame {
                         event_loop.set_control_flow(ControlFlow::WaitUntil(state.next_frame));
@@ -4236,6 +4261,12 @@ impl ApplicationHandler for App {
                 }
                 let previous_position = state.position;
                 let rendered = state.render();
+                if !self.smoke {
+                    if let Some(next) = state.build_mode_frame_drawn() {
+                        state.next_frame = next;
+                        event_loop.set_control_flow(ControlFlow::WaitUntil(next));
+                    }
+                }
                 if let Some(director) = self.trailer.as_mut().filter(|_| rendered) {
                     match state.after_trailer_frame(director) {
                         Ok(true) => {}
@@ -5088,6 +5119,9 @@ impl ApplicationHandler for App {
             if let Some(state) = &self.state {
                 if Instant::now() >= state.next_frame {
                     state.window.request_redraw();
+                } else if state.build_mode_editing() {
+                    // Input may have moved the next editor frame earlier.
+                    event_loop.set_control_flow(ControlFlow::WaitUntil(state.next_frame));
                 }
             }
         }
@@ -5795,20 +5829,24 @@ fn run() -> Result<()> {
     } else {
         None
     };
+    let mut pack_id = None;
     if let Some(sa_scene::content::ContentSource::Pack(folder)) = &standalone_source {
         let absolute = std::fs::canonicalize(folder).unwrap_or_else(|_| folder.clone());
         runtime_log::line(format!("Content pack folder: {}", absolute.display()));
         match sa_scene::content_pack::Manifest::read(folder) {
-            Ok(m) => runtime_log::line(format!(
-                "Content pack: {} {} (id {}), world {}",
-                m.name,
-                m.version,
-                m.id,
-                m.world
-                    .scene
-                    .as_deref()
-                    .unwrap_or("none, Build Mode layout only")
-            )),
+            Ok(m) => {
+                runtime_log::line(format!(
+                    "Content pack: {} {} (id {}), world {}",
+                    m.name,
+                    m.version,
+                    m.id,
+                    m.world
+                        .scene
+                        .as_deref()
+                        .unwrap_or("none, Build Mode layout only")
+                ));
+                pack_id = Some(m.id);
+            }
             Err(error) => runtime_log::line(format!("Content pack manifest: {error:#}")),
         }
     }
@@ -6372,6 +6410,7 @@ fn run() -> Result<()> {
             .map(|loader| Streamer::new(Box::new(loader)))
             .or_else(|| testbed_world.map(Streamer::new)),
         standalone: testbed,
+        pack_id,
         world_name,
         spawn_eye: spawn_eye.filter(|_| build_folder.is_none()),
         build_folder,
@@ -6475,7 +6514,16 @@ fn run() -> Result<()> {
         anyhow::bail!(error);
     }
     let restart = app.state.as_mut().and_then(|s| s.build_restart.take());
-    if let Some(folder) = restart {
+    let pack_restart = app.state.as_mut().and_then(|s| s.pack_restart.take());
+    if let Some(next) = pack_restart {
+        drop(app);
+        drop(_runtime_guard);
+        let exe = std::env::current_exe().context("finding SARE to restart it")?;
+        std::process::Command::new(exe)
+            .args(&next)
+            .spawn()
+            .context("starting SARE in the server's content pack")?;
+    } else if let Some(folder) = restart {
         drop(app);
         // Let the new SARE take the one-game lock.
         drop(_runtime_guard);

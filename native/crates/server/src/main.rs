@@ -252,8 +252,13 @@ fn boot(commands: Vec<Vec<String>>, resources_dir: PathBuf) -> Result<Server> {
             None => out(&shared, format!("Couldn't find resource {name}.")),
         }
     }
-    let share = sa_scene::share_resource_folders(asset_folders, true)
+    let mut share = sa_scene::share_resource_folders(asset_folders, true)
         .context("Cannot export native resource assets")?;
+    // `sets content_pack <id>`: players join in that content pack's world.
+    share.manifest.content_pack = content_pack(&shared.borrow().convars);
+    if let Some(pack) = &share.manifest.content_pack {
+        out(&shared, format!("World: content pack {pack}"));
+    }
     out(
         &shared,
         format!(
@@ -494,6 +499,20 @@ fn legacy_salt(shared: &Shared, resources_dir: &Path) -> String {
         .unwrap_or_default()
 }
 /// `ensure` order, with dependencies first, without duplicates.
+/// The content pack named by the `content_pack` convar, if it is a valid id.
+fn content_pack(convars: &BTreeMap<String, String>) -> Option<String> {
+    let id = convars.get("content_pack")?.trim();
+    if id.is_empty() {
+        return None;
+    }
+    if !sa_net::resources::valid_pack_id(id) {
+        eprintln!(
+            "Ignoring content_pack {id:?}: use the pack's id (lowercase letters, digits, - and _)"
+        );
+        return None;
+    }
+    Some(id.to_owned())
+}
 fn boot_order(shared: &Shared, requested: &[String]) -> Vec<String> {
     let requested: Vec<String> = requested
         .iter()
@@ -598,3 +617,18 @@ mod rp_tests;
 mod sarebox_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod content_pack_tests {
+    #[test]
+    fn content_pack_convar_names_the_world() {
+        let mut convars = std::collections::BTreeMap::new();
+        assert_eq!(super::content_pack(&convars), None);
+        convars.insert("content_pack".to_owned(), " sare-rp-town ".to_owned());
+        assert_eq!(
+            super::content_pack(&convars).as_deref(),
+            Some("sare-rp-town")
+        );
+        convars.insert("content_pack".to_owned(), "C:/packs/town".to_owned());
+        assert_eq!(super::content_pack(&convars), None);
+    }
+}

@@ -10,6 +10,7 @@
 //! Start it with `sa-runtime --build <pack id | folder | new:Name>`.
 //! See docs/build-mode.md.
 pub mod gpu;
+mod pacing;
 mod panels;
 mod viewport;
 
@@ -125,6 +126,8 @@ pub struct BuildMode {
     last_autosave: Instant,
     autosaved_revision: u64,
     ui: panels::UiState,
+    /// Draw only when something changes while editing (see `pacing`).
+    pacing: pacing::Pacing,
 }
 
 /// Find or create the project named by `--build`: a pack id, a pack
@@ -206,6 +209,7 @@ impl BuildMode {
             last_autosave: Instant::now(),
             autosaved_revision: 0,
             ui: panels::UiState::default(),
+            pacing: pacing::Pacing::default(),
             history: History::default(),
             project,
             doc,
@@ -524,6 +528,45 @@ impl State {
     pub(crate) fn build_mode_editing(&self) -> bool {
         self.build.as_ref().is_some_and(|b| !b.playtesting)
     }
+    /// While editing: a window event arrived. Returns when the next frame
+    /// may be drawn (None: not editing, the game paces itself).
+    pub(crate) fn build_mode_event(
+        &mut self,
+        event: &winit::event::WindowEvent,
+    ) -> Option<Instant> {
+        use winit::event::WindowEvent;
+        let fps_limit = self.menu.settings.fps_limit;
+        let build = self.build.as_mut().filter(|b| !b.playtesting)?;
+        let pacing = &mut build.pacing;
+        match event {
+            WindowEvent::Focused(focused) => pacing.focused = *focused,
+            WindowEvent::Occluded(hidden) => pacing.hidden = *hidden,
+            WindowEvent::Resized(size) => pacing.hidden = size.width == 0 || size.height == 0,
+            WindowEvent::RedrawRequested => return None,
+            _ => {}
+        }
+        Some(pacing.input(Instant::now(), fps_limit))
+    }
+    /// While editing: egui finished a pass and wants its next frame after
+    /// `delay`.
+    pub(crate) fn build_mode_repaint_after(&mut self, delay: std::time::Duration) {
+        if let Some(build) = self.build.as_mut() {
+            build.pacing.repaint = pacing::repaint_at(Instant::now(), delay);
+        }
+    }
+    /// While editing: a frame was drawn; when the next one is due (None:
+    /// not editing).
+    pub(crate) fn build_mode_frame_drawn(&mut self) -> Option<Instant> {
+        let fps_limit = self.menu.settings.fps_limit;
+        let loading = self.loading();
+        let build = self.build.as_mut().filter(|b| !b.playtesting)?;
+        let busy = loading
+            || build.ui.flying
+            || build.drag.is_some()
+            || build.placing.as_ref().is_some_and(|p| p.dragged);
+        Some(build.pacing.frame_drawn(Instant::now(), fps_limit, busy))
+    }
+
     /// Before the game update: the editor camera drives the view.
     pub(crate) fn build_mode_begin_frame(&mut self) {
         let Some(build) = &mut self.build else { return };

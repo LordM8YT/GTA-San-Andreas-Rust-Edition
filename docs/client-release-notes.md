@@ -6,6 +6,13 @@ Version 0.51.0:
 - Build Mode: Copy position in the Inspector copies the selected object's spot as `vector4(x, y, z, heading)` in world coordinates, ready to paste into a job's `Config.Locations`. `/coords` on RP servers prints the same.
 - Players keep a custom job when its resource starts after they joined, or after `restart sarebox_core`.
 
+Version 0.50.3:
+- Build Mode uses far less of your PC. The editor used to redraw the whole world as fast as the screen allowed, even when nothing moved. It now draws at most 60 frames a second while you work, slows to 2 frames a second when you stop, and to 1 when SARE is in the background or minimised. Clicks and keys still answer at once. Playtest (F6) runs like the game, with your normal frame rate settings. In our test with nothing happening on screen, Build Mode used about 14 times less CPU.
+
+Version 0.50.2:
+- Servers on a content pack now take players there. A server with `sets content_pack <id>` in server.cfg (the SARE RP Town template has it) tells joining players its world, and SARE restarts itself in that pack and joins, even if you started on San Andreas. If the pack is missing, SARE says which one to copy into content/.
+- A player hosting from the game while in a content pack tells joiners the same way.
+
 Version 0.50.1:
 - Fixed: SARE stopped while loading San Andreas with "ENEX record: interior portal has invalid heading". The original map files store some door headings as several full turns (LAn.ipl, SFe.ipl and more); they now load, and one odd entrance can no longer stop the whole map. This broke free roam, joining and hosting with the San Andreas installation.
 - Fixed: joining or hosting while playing a content pack (for example SARE RP Town) failed, because multiplayer still tried to load San Andreas files. The session now runs in the content pack you are in.
