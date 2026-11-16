@@ -154,8 +154,10 @@ end)
 
 -- Job vehicles: one per on-duty player, from their job's garage point.
 -- The player is put at the wheel straight away.
-local function SpawnJobVehicle(src, job, point)
-  local model = RPConfig.JobVehicle[job]
+-- A job's work vehicle at `point`, or back into the garage if one is out.
+-- Job resources pass their own model (Config.Vehicle).
+local function SpawnJobVehicle(src, job, point, model)
+  model = type(model) == 'string' and model or (RPConfig.JobVehicle or {})[job]
   if not model or not RP.OnDuty(src, job) then return false end
   if Out[src] and Out[src].plate:sub(1, 3) == 'JOB' then
     despawn(src)

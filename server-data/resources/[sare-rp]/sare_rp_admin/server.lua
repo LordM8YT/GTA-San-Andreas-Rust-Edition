@@ -14,7 +14,7 @@ end
 
 local function placeNames()
   local names = {}
-  for key, value in pairs(RPLocations) do
+  for key, value in pairs(RP.Locations()) do
     if value.x then names[#names + 1] = key end
   end
   table.sort(names)
@@ -28,8 +28,8 @@ RegisterCommand('tp', function(src, args)
   local point
   if x and y then
     point = { x = x, y = y, z = z or 1.0 }
-  elseif args[1] and RPLocations[args[1]] and RPLocations[args[1]].x then
-    point = RPLocations[args[1]]
+  elseif args[1] and RP.Locations()[args[1]] and RP.Locations()[args[1]].x then
+    point = RP.Locations()[args[1]]
   else
     return reply(src, 'Usage: /tp <x> <y> [z] or /tp <place>: ' .. table.concat(placeNames(), ', '))
   end
