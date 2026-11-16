@@ -1,5 +1,8 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.50.3:
+- Build Mode uses far less of your PC. The editor used to redraw the whole world as fast as the screen allowed, even when nothing moved. It now draws at most 60 frames a second while you work, slows to 2 frames a second when you stop, and to 1 when SARE is in the background or minimised. Clicks and keys still answer at once. Playtest (F6) runs like the game, with your normal frame rate settings. In our test with nothing happening on screen, Build Mode used about 14 times less CPU.
+
 Version 0.50.2:
 - Servers on a content pack now take players there. A server with `sets content_pack <id>` in server.cfg (the SARE RP Town template has it) tells joining players its world, and SARE restarts itself in that pack and joins, even if you started on San Andreas. If the pack is missing, SARE says which one to copy into content/.
 - A player hosting from the game while in a content pack tells joiners the same way.

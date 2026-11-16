@@ -2931,6 +2931,9 @@ impl State {
             }
         });
         script_ui::apply(&mut self.scripts, script_actions);
+        if let Some(viewport) = output.viewport_output.get(&egui::ViewportId::ROOT) {
+            self.build_mode_repaint_after(viewport.repaint_delay);
+        }
         self.build_mode_end_frame();
         if self.captured && self.menu.page.is_none() {
             output.platform_output.cursor_icon = egui::CursorIcon::None;
@@ -3856,6 +3859,12 @@ impl ApplicationHandler for App {
             return;
         };
         let _ = state.gui_input.on_window_event(&state.window, &event);
+        // Build Mode draws only when something changes: input wakes it.
+        if !self.smoke {
+            if let Some(wake) = state.build_mode_event(&event) {
+                state.next_frame = state.next_frame.min(wake);
+            }
+        }
         if let Some(build) = &state.build {
             // F6 switches between Build Mode and playtesting the world.
             if let WindowEvent::KeyboardInput { event, .. } = &event {
@@ -3969,7 +3978,13 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => state.resize(size),
             WindowEvent::RedrawRequested => {
-                if !self.smoke && state.menu.settings.fps_limit > 0 {
+                if !self.smoke && state.build_mode_editing() {
+                    // Build Mode paces itself after each frame (see below).
+                    if Instant::now() < state.next_frame {
+                        event_loop.set_control_flow(ControlFlow::WaitUntil(state.next_frame));
+                        return;
+                    }
+                } else if !self.smoke && state.menu.settings.fps_limit > 0 {
                     let now = Instant::now();
                     if now < state.next_frame {
                         event_loop.set_control_flow(ControlFlow::WaitUntil(state.next_frame));
@@ -4246,6 +4261,12 @@ impl ApplicationHandler for App {
                 }
                 let previous_position = state.position;
                 let rendered = state.render();
+                if !self.smoke {
+                    if let Some(next) = state.build_mode_frame_drawn() {
+                        state.next_frame = next;
+                        event_loop.set_control_flow(ControlFlow::WaitUntil(next));
+                    }
+                }
                 if let Some(director) = self.trailer.as_mut().filter(|_| rendered) {
                     match state.after_trailer_frame(director) {
                         Ok(true) => {}
@@ -5098,6 +5119,9 @@ impl ApplicationHandler for App {
             if let Some(state) = &self.state {
                 if Instant::now() >= state.next_frame {
                     state.window.request_redraw();
+                } else if state.build_mode_editing() {
+                    // Input may have moved the next editor frame earlier.
+                    event_loop.set_control_flow(ControlFlow::WaitUntil(state.next_frame));
                 }
             }
         }
