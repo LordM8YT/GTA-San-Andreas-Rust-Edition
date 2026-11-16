@@ -1,5 +1,9 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.51.0:
+- New for creators: sa-mcp, a bridge for AI assistants. Add it to Claude Desktop, Claude Code, Cursor or any app that supports MCP, and the assistant can build Build Mode worlds (place, move and delete objects, set the spawn) and write Lua resources for your server. It only touches your content and resources folders, checks Lua for syntax errors before saving, and gives the assistant SARE's guides and the exact list of Lua functions SARE has. For now, build it with `cargo build --release -p sa-mcp`; see docs/ai-creators.md.
+- The launcher's updater accepts sa-mcp in future client packages.
+
 Version 0.50.3:
 - Build Mode uses far less of your PC. The editor used to redraw the whole world as fast as the screen allowed, even when nothing moved. It now draws at most 60 frames a second while you work, slows to 2 frames a second when you stop, and to 1 when SARE is in the background or minimised. Clicks and keys still answer at once. Playtest (F6) runs like the game, with your normal frame rate settings. In our test with nothing happening on screen, Build Mode used about 14 times less CPU.
 
