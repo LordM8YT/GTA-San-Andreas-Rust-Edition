@@ -42,13 +42,21 @@ court and a parking lot fill the rest of the 340 × 340 m map.
 | `sare_rp_bank` | Bank counter and ATMs: deposit, withdraw, transfer by citizen ID or server ID |
 | `sare_rp_inventory` | Weight-limited inventory (30 kg), use/give/drop, phone, shops |
 | `sare_rp_vehicles` | Car dealer with colours, owned cars with plates, public garage, job vehicles; who may drive which car |
-| `sare_rp_jobs` | Police, EMS, taxi, mechanic: duty, gear, dispatch (`/911`, `/call`), bills, fines, cuffs, search, jail, treatment |
+| `sare_rp_jobs` | Job tools every job uses: City Hall job centre, dispatch (`/911`, `/call`), bills (`/bill`), duty menus, locker gear, the **F2** job menu |
 | `sare_rp_admin` | `/tp`, `/giveitem`, `/clearinventory`, `/dvall`, `/coords` |
 | `sare-rp-map` | Spawn points in Legion Square |
-| `sare_job_courier` | Example custom job in its own resource: courier depot, loading bay, deliveries |
+| `sare_job_police` | LSPD: front desk, lockers, patrol cars, cuffs, search, fines, jail |
+| `sare_job_ems` | EMS: hospital reception, lockers, ambulances, treatment, 911 calls |
+| `sare_job_mechanic` | Mechanic: workshop, lockers, tow car, service calls |
+| `sare_job_taxi` | Taxi: depot, duty, taxis, `/call taxi` |
+| `sare_job_courier` | Example custom job: courier depot, loading bay, deliveries |
 
-Settings (prices, items, shops, job gear, keys, chat ranges, jail time) are in
-`sare_rp_core/shared/config.lua`. Map positions are in
+Each job keeps its own settings in its folder's `config.lua`: the job and
+its grades, `Config.Locations` (where its places are, as `vector4(...)`), gear,
+work vehicle, and job rules such as fines and jail time. Change a job there
+and `restart sare_job_police` (or whichever job). Shared settings (prices,
+items, shops, keys, chat ranges) are in `sare_rp_core/shared/config.lua`; the
+bank, shops, dealer, garage, clothes shop and City Hall positions are in
 `sare_rp_core/shared/locations.lua`, which the Blender script writes.
 
 **Your own job** is one resource folder, as in FiveM: `exports.sarebox:AddJob`

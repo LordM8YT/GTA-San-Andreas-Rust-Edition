@@ -343,6 +343,22 @@ Helpers from `exports.sare_rp_core:GetRP()`: `Notify`, `Menu`, `Dialog`,
 `Progress`, `Near`, `OnDuty`, `Coords`, `Distance`. Money and jobs come from
 SARE Box: `exports.sarebox:GetCoreObject()` (see [SARE Box](sarebox.md)).
 
+The job tools in `exports.sare_rp_jobs` do the parts most jobs share:
+
+| Export | Does |
+| --- | --- |
+| `AddService(name, { label, colour, jobs })` | `/call <name>` (and `/911` for `police`) reaches on-duty players of those jobs |
+| `AllowBills(job)` | The job's F2 menu gets **Bill nearest person**, and `/bill` works |
+| `AddJobAction(job, { id, title, target, run })` | An entry in the job's **F2** menu; `run(src, target)` gets the nearest player when `target = true` |
+| `DutyMenu(src, job, placeKey, extraOptions)` | The on/off duty menu for a duty point |
+| `Gear(src, { item = count })` | Locker gear, once every ten minutes |
+| `Call(src, service, text)`, `Nearest(src, radius)`, `Close(src, target, radius)` | Dispatch and distance checks |
+
+The built-in jobs use exactly these, so they are full examples to copy:
+`sare_job_police` (cuffs, search, fines, jail), `sare_job_ems` (treatment,
+hospital), `sare_job_mechanic` and `sare_job_taxi`, each in
+`server-data/resources/[sare-rp]/`.
+
 The server checks everything: a player can only use a place they stand at,
 with the right job and duty. Places go away when their resource stops, and
 players keep a custom job even if its resource starts after they joined.

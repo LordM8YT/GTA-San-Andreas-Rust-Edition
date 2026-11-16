@@ -801,3 +801,73 @@ fn rp_town_custom_job_resource() {
         "{saved}"
     );
 }
+
+// Job places from resources/[sare-rp]/sare_job_*/config.lua.
+const EMS_LOCKERS: [f32; 3] = [2416.0, -1586.0, 0.2];
+const TAXI_DEPOT: [f32; 3] = [2470.0, -1545.0, 0.2];
+
+/// Police, EMS, mechanic and taxi are their own resources: their places,
+/// duty, lockers, F2 actions, dispatch services and bills plug into the
+/// shared job tools.
+#[test]
+fn rp_town_job_resources_plug_into_the_job_tools() {
+    let mut server = rp_server();
+    let mut medic = server.join();
+    make_character(&mut server, &mut medic);
+    let mut driver = server.join();
+    let medic_id = server.id(&medic);
+    server.run(&format!("setjob {medic_id} ambulance 1"));
+    server.until(&mut [&mut medic], "the EMS job", |_, p| {
+        hud(p[0]).contains("EMS - Paramedic (off duty)")
+    });
+    // Duty and gear at the EMS lockers (sare_job_ems).
+    go(&mut server, &mut medic, EMS_LOCKERS);
+    interact(&mut server, &mut medic, "EMS");
+    pick(&mut server, &mut medic, "Go on duty");
+    server.until(&mut [&mut medic], "EMS duty", |_, p| {
+        hud(p[0]).contains("EMS - Paramedic") && !hud(p[0]).contains("off duty")
+    });
+    interact(&mut server, &mut medic, "EMS");
+    pick(&mut server, &mut medic, "Take EMS gear");
+    server.until(&mut [&mut medic], "the gear", |_, p| {
+        notified(p[0], "Took") && notified(p[0], "Medkit")
+    });
+    // F2 shows the job's own actions and bills.
+    medic.host.close_context();
+    medic.command("/jobmenu");
+    server.until(&mut [&mut medic], "the job menu", |_, p| {
+        p[0].host.ui().context.as_ref().is_some_and(|c| {
+            c.title == "Job"
+                && c.options.iter().any(|o| o.title == "Treat nearest person")
+                && c.options.iter().any(|o| o.title == "Bill nearest person")
+        })
+    });
+    // 911 reaches EMS too (added from sare_job_ems to the police service).
+    driver.command("/911 car crash");
+    server.until(&mut [&mut medic, &mut driver], "the 911 call", |_, p| {
+        heard(p[0], "car crash") && notified(p[1], "reached 1 unit")
+    });
+
+    // Taxi is an open job: City Hall lists it, the depot is its own place.
+    go(&mut server, &mut driver, CITY_HALL);
+    interact(&mut server, &mut driver, "City Hall");
+    pick(&mut server, &mut driver, "Work as Taxi");
+    server.until(&mut [&mut driver], "the taxi job", |_, p| {
+        notified(p[0], "You work as Taxi now.")
+    });
+    go(&mut server, &mut driver, TAXI_DEPOT);
+    interact(&mut server, &mut driver, "Taxi");
+    pick(&mut server, &mut driver, "Take / return a taxi");
+    server.until(&mut [&mut driver], "the taxi", |_, p| {
+        notified(p[0], "Your job vehicle is ready")
+    });
+    // /call lists the services the job resources added.
+    medic.command("/call");
+    server.until(&mut [&mut medic], "the services", |_, p| {
+        notified(p[0], "/call <ems|mechanic|taxi>")
+    });
+    medic.command("/call taxi to the hospital please");
+    server.until(&mut [&mut medic, &mut driver], "the taxi call", |_, p| {
+        heard(p[1], "to the hospital please") && notified(p[0], "reached 1 unit")
+    });
+}

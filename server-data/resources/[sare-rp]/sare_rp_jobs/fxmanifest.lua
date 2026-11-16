@@ -2,10 +2,10 @@ fx_version 'cerulean'
 game 'common'
 lua54 'yes'
 
-description 'SARE RP jobs: City Hall job centre, police (cuffs, fines, jail, search), EMS, mechanic, taxi, duty points, 911 and service calls, bills.'
-version '1.0.0'
+description 'SARE RP job tools: City Hall job centre, phone dispatch (/911, /call), bills, duty and gear lockers, and the F2 job menu. Each job is its own resource (sare_job_*).'
+version '2.0.0'
 
-dependencies { 'sarebox', 'sare_rp_core', 'sare_rp_inventory', 'sare_rp_vehicles', 'sare_rp_identity' }
-shared_scripts { '@sare_rp_core/shared/locations.lua', '@sare_rp_core/shared/config.lua' }
+dependencies { 'sarebox', 'sare_rp_core', 'sare_rp_inventory', 'sare_rp_identity' }
+shared_script '@sare_rp_core/shared/config.lua'
 server_script 'server.lua'
 client_script 'client.lua'

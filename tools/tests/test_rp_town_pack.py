@@ -92,7 +92,7 @@ class RpTownPackTests(unittest.TestCase):
         config = (RP / 'sare_rp_core/shared/config.lua').read_text(encoding='utf-8')
         block = config.split('RPConfig.Places = {', 1)[1].split('\n}', 1)[0]
         places = re.findall(r'^\s{2}(\w+) = \{', block, re.M)
-        self.assertGreater(len(places), 10)
+        self.assertGreater(len(places), 5)
         self.assertLessEqual(set(places), set(generator_constant('LOCATIONS')))
 
 
@@ -133,8 +133,11 @@ class RpTownPackTests(unittest.TestCase):
             self.assertEqual(len(vehicle['seat']), 3)
         config = (RP / 'sare_rp_core/shared/config.lua').read_text(encoding='utf-8')
         dealer = re.findall(r"\{ model = '(\w+)', label", config.split('RPConfig.Dealer = {', 1)[1].split('\n}', 1)[0])
-        jobs = re.findall(r"= '(\w+)'", config.split('RPConfig.JobVehicle = {', 1)[1].split('}', 1)[0])
-        self.assertTrue(dealer and jobs)
+        # Each job resource names its own work vehicle.
+        jobs = [re.search(r"^Config.Vehicle = '(\w+)'", (folder / 'config.lua').read_text(encoding='utf-8'), re.M).group(1)
+                for folder in sorted(RP.glob('sare_job_*')) if 'Config.Vehicle' in (folder / 'config.lua').read_text(encoding='utf-8')]
+        self.assertEqual(len(jobs), 4)
+        self.assertTrue(dealer)
         self.assertLessEqual(set(dealer) | set(jobs), set(models))
 
 

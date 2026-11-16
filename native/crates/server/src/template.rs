@@ -34,7 +34,7 @@ pub const TEMPLATES: [(&str, &str, &str, &str); 3] = [
 ];
 
 /// Resources every template gets; server.cfg decides which ones start.
-pub const FILES: [(&str, &str); 66] = [
+pub const FILES: [(&str, &str); 78] = [
     data!("resources/[system]/chat/fxmanifest.lua"),
     data!("resources/[system]/chat/sv_chat.lua"),
     data!("resources/[managers]/mapmanager/fxmanifest.lua"),
@@ -88,6 +88,18 @@ pub const FILES: [(&str, &str); 66] = [
     data!("resources/[sare-rp]/sare_job_courier/fxmanifest.lua"),
     data!("resources/[sare-rp]/sare_job_courier/config.lua"),
     data!("resources/[sare-rp]/sare_job_courier/server.lua"),
+    data!("resources/[sare-rp]/sare_job_police/fxmanifest.lua"),
+    data!("resources/[sare-rp]/sare_job_police/config.lua"),
+    data!("resources/[sare-rp]/sare_job_police/server.lua"),
+    data!("resources/[sare-rp]/sare_job_ems/fxmanifest.lua"),
+    data!("resources/[sare-rp]/sare_job_ems/config.lua"),
+    data!("resources/[sare-rp]/sare_job_ems/server.lua"),
+    data!("resources/[sare-rp]/sare_job_mechanic/fxmanifest.lua"),
+    data!("resources/[sare-rp]/sare_job_mechanic/config.lua"),
+    data!("resources/[sare-rp]/sare_job_mechanic/server.lua"),
+    data!("resources/[sare-rp]/sare_job_taxi/fxmanifest.lua"),
+    data!("resources/[sare-rp]/sare_job_taxi/config.lua"),
+    data!("resources/[sare-rp]/sare_job_taxi/server.lua"),
     data!("resources/[sare-rp]/sare_rp_identity/fxmanifest.lua"),
     data!("resources/[sare-rp]/sare_rp_identity/server.lua"),
     data!("resources/[sare-rp]/sare_rp_identity/appearance.lua"),

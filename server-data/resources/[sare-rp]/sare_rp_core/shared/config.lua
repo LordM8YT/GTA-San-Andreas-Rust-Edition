@@ -10,25 +10,18 @@ RPConfig.InteractKey = 'H'
 RPConfig.InventoryKey = 'K'
 RPConfig.JobMenuKey = 'F2'
 
--- What each location on the map is. `job` limits it to that job, `duty`
--- also to players on duty.
+-- What each location in locations.lua is. `job` limits it to that job,
+-- `duty` also to players on duty. Job places (police station, hospital,
+-- workshop, taxi depot) are in each job's own resource (sare_job_*), which
+-- adds them with exports.sare_rp_core:AddPlace.
 RPConfig.Places = {
   bank = { label = 'Bank', blip = 'Bank', colour = 2 },
   atms = { label = 'ATM' },
   shop_247 = { label = '24/7 shop', blip = '24/7', colour = 47 },
   shop_gas = { label = 'Gas station shop', blip = 'Gas station', colour = 47 },
   city_hall = { label = 'City Hall', blip = 'City Hall', colour = 0 },
-  police_duty = { label = 'Police front desk', blip = 'Police', colour = 3 },
-  police_armory = { label = 'Police lockers', job = 'police', duty = true },
-  police_garage = { label = 'Police vehicles', job = 'police', duty = true },
-  hospital_checkin = { label = 'Hospital reception', blip = 'Hospital', colour = 1 },
-  hospital_duty = { label = 'EMS lockers', job = 'ambulance' },
-  hospital_garage = { label = 'Ambulance bay', job = 'ambulance', duty = true },
   dealer = { label = 'Premium Motors', blip = 'Car dealer', colour = 27 },
   garage = { label = 'Public garage', blip = 'Garage', colour = 27 },
-  mechanic = { label = 'Mechanic workshop', blip = 'Mechanic', colour = 5 },
-  mechanic_duty = { label = 'Mechanic lockers', job = 'mechanic' },
-  taxi_depot = { label = 'Taxi depot', blip = 'Taxi', colour = 5 },
   clothes = { label = 'Clothes shop', blip = 'Clothes', colour = 8 },
 }
 
@@ -62,16 +55,10 @@ RPConfig.Shops = {
   },
 }
 
--- Gear a job takes from its lockers, once per visit.
-RPConfig.JobGear = {
-  police = { radio = 1, handcuffs = 1, bandage = 2 },
-  ambulance = { radio = 1, medkit = 2, bandage = 10 },
-  mechanic = { repairkit = 2 },
-}
-
--- Jobs anyone can take at City Hall. police and ambulance are hired by an
--- admin: /setjob <id> police 0
-RPConfig.OpenJobs = { 'unemployed', 'taxi', 'mechanic' }
+-- Jobs anyone can take at City Hall. Job resources add theirs with
+-- exports.sare_rp_core:AddOpenJob (Config.OpenToAll in their config.lua).
+-- Police and EMS are hired by an admin: /setjob <id> police 0
+RPConfig.OpenJobs = { 'unemployed' }
 
 -- Vehicles. Models are the SARE RP Town content pack's vehicles (see
 -- content/sare-rp-town/content.json); with your own San Andreas copy you
@@ -91,9 +78,6 @@ RPConfig.CarColours = {
   { label = 'Sunset orange', rgb = { 230, 120, 30 } }, { label = 'Canary yellow', rgb = { 240, 200, 40 } },
   { label = 'Plum', rgb = { 105, 50, 120 } }, { label = 'Sand', rgb = { 200, 180, 140 } },
 }
--- The vehicle each job takes from its garage, already in work colours.
-RPConfig.JobVehicle = { police = 'police', ambulance = 'ambulance', mechanic = 'towtruck', taxi = 'taxi' }
-
 -- Characters (content packs with characters, like SARE RP Town). Style
 -- numbers match the pack's characters.glb; see tools/blender/make_rp_characters.py.
 RPConfig.Looks = {
@@ -128,7 +112,6 @@ RPConfig.Looks = {
 
 RPConfig.Prices = {
   identityChange = 250,
-  hospitalTreatment = 150,
   advert = 50,
   clothes = 120,
 }
@@ -136,5 +119,3 @@ RPConfig.Prices = {
 -- Chat ranges in metres.
 RPConfig.Chat = { say = 15.0, me = 20.0, shout = 35.0 }
 
--- Longest jail sentence in minutes, and how far a prisoner may walk.
-RPConfig.Jail = { maxMinutes = 60, radius = 6.0 }

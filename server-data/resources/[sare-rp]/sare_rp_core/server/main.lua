@@ -216,6 +216,8 @@ end
 local OpenAdded = {}
 -- Jobs anyone can take: config.lua's OpenJobs plus the ones added here.
 function RP.OpenJobs() return RPConfig.OpenJobs end
+-- Every place with its point(s), including the ones resources added.
+function RP.Locations() return RPLocations end
 function RP.AddOpenJob(name)
   if type(name) ~= 'string' or not Core.Functions.GetJob(name) then return false, 'add the job with exports.sarebox:AddJob first' end
   for _, open in ipairs(RPConfig.OpenJobs) do
