@@ -134,6 +134,10 @@ pub fn show(build: &mut BuildMode, ui: &mut Ui, frame: &Frame) {
     let (modifiers, dt) = ui.input(|i| (i.modifiers, i.stable_dt.min(0.1)));
 
     camera_controls(build, ui, &response, dt);
+    if build.tool == Tool::Sculpt {
+        sculpt(build, ui, &view, &painter, pointer, dt);
+        return;
+    }
 
     if build.snap.show_grid {
         draw_grid(build, &view, &painter);
@@ -330,6 +334,97 @@ fn pick_object(build: &BuildMode, ray: &Ray) -> Option<NodeId> {
     Some(id)
 }
 
+/// The Sculpt tool: the brush follows the mouse over terrain objects, and
+/// holding the left button shapes the terrain under it. A stroke changes the
+/// layout live and becomes one undo step when the button is let go.
+fn sculpt(
+    build: &mut BuildMode,
+    ui: &Ui,
+    view: &View,
+    painter: &egui::Painter,
+    pointer: Option<Pos2>,
+    dt: f32,
+) {
+    use super::Brush;
+    use sa_scene::terrain;
+    let held = ui.input(|i| i.pointer.primary_down() && !i.modifiers.alt) && !build.ui.flying;
+    let hit = pointer.and_then(|pointer| {
+        let ray = view.ray(pointer);
+        let layout = &build.doc.layout;
+        let items = build.gpu.objects.iter().filter_map(|(id, o)| {
+            let node = layout.node(*id)?;
+            (node.terrain.is_some()
+                && layout.effective_visible(*id)
+                && !layout.effective_locked(*id))
+            .then_some(Pickable {
+                id: *id,
+                triangles: &o.triangles,
+                bounds: o.bounds,
+            })
+        });
+        pick(&ray, items).map(|(id, t)| (id, ray.at(t)))
+    });
+    let Some((id, point)) = hit else {
+        if !held && build.ui.sculpt_stroke.take().is_some() {
+            build.commit_preview();
+        }
+        return;
+    };
+    let Some(node) = build.doc.layout.node(id).cloned() else {
+        return;
+    };
+    // The brush in the terrain's own metres.
+    let at = Vec3::from_array(crate::play_logic::render_to_blender(point));
+    let t = node.transform;
+    let local = t.rotation_quat().inverse() * (at - Vec3::from_array(t.position));
+    let scale = ((t.scale[0].abs() + t.scale[1].abs()) * 0.5).max(0.001);
+    let center = Vec2::new(local.x / t.scale[0], local.y / t.scale[1]);
+    let radius = build.sculpt.radius / scale;
+    // The brush circle on the ground.
+    let ring: Vec<Vec3> = (0..=40)
+        .map(|k| {
+            let a = k as f32 / 40.0 * std::f32::consts::TAU;
+            crate::play_logic::blender_to_render(
+                (at + Vec3::new(a.cos(), a.sin(), 0.0) * build.sculpt.radius + Vec3::Z * 0.1)
+                    .to_array(),
+            )
+        })
+        .collect();
+    for pair in ring.windows(2) {
+        if let Some(segment) = view.segment(pair[0], pair[1]) {
+            painter.line_segment(segment, Stroke::new(2.0, ui_theme::ACCENT));
+        }
+    }
+    if !held {
+        if build.ui.sculpt_stroke.take().is_some() {
+            build.commit_preview();
+        }
+        return;
+    }
+    let Some(terrain_now) = &node.terrain else {
+        return;
+    };
+    // Flatten keeps the height where the stroke began.
+    let level = *build
+        .ui
+        .sculpt_stroke
+        .get_or_insert_with(|| terrain_now.height_at(center.x, center.y).unwrap_or(0.0));
+    let sculpt = build.sculpt;
+    let rate = sculpt.strength * dt;
+    build.preview("Sculpt terrain", &[id], |n| {
+        if let Some(terrain) = &mut n.terrain {
+            match sculpt.brush {
+                Brush::Raise => terrain::raise(terrain, center, radius, rate * 6.0),
+                Brush::Lower => terrain::raise(terrain, center, radius, -rate * 6.0),
+                Brush::Smooth => terrain::smooth(terrain, center, radius, (rate * 8.0).min(1.0)),
+                Brush::Flatten => {
+                    terrain::flatten(terrain, center, radius, level, (rate * 8.0).min(1.0))
+                }
+            };
+        }
+    });
+}
+
 fn place(build: &mut BuildMode, transform: Transform, keep_placing: bool) {
     let Some(placing) = &build.placing else {
         return;
@@ -396,6 +491,7 @@ fn gizmo(build: &BuildMode, view: &View, pointer: Pos2) -> Option<Handle> {
     let axes = gizmo_axes(&transform, build.local || build.tool == Tool::Scale);
     let center = view.project(origin)?;
     match build.tool {
+        Tool::Sculpt => None,
         Tool::Move | Tool::Scale => {
             if pointer.distance(center) < GRAB + 2.0 {
                 return Some(if build.tool == Tool::Move {
@@ -473,6 +569,7 @@ fn draw_gizmo(build: &BuildMode, view: &View, painter: &egui::Painter, active: O
         return;
     };
     match build.tool {
+        Tool::Sculpt => {}
         Tool::Move | Tool::Scale => {
             for (i, axis) in axes.iter().enumerate() {
                 let handle = if build.tool == Tool::Move {

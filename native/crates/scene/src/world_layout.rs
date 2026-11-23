@@ -205,6 +205,10 @@ pub struct Node {
     /// A light glowing on the object from dusk to dawn (see [`PointLight`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub light: Option<PointLight>,
+    /// Sculpted ground (see [`Terrain`]); the object shows it instead of
+    /// its asset's model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terrain: Option<Terrain>,
     /// Fields from a newer SARE or a hand edit, written back unchanged.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -227,6 +231,7 @@ impl Node {
             collision: true,
             gameplay: None,
             light: None,
+            terrain: None,
             extra: Map::new(),
         }
     }
@@ -242,6 +247,7 @@ impl Node {
             collision: true,
             gameplay: None,
             light: None,
+            terrain: None,
             extra: Map::new(),
         }
     }
@@ -304,6 +310,56 @@ impl PointLight {
                 .offset
                 .iter()
                 .all(|v| v.is_finite() && v.abs() <= 100.0)
+    }
+}
+
+/// Ground sculpted in Build Mode: a square height grid (see
+/// [`crate::terrain`] for the layout of `heights` and the brushes).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Terrain {
+    /// Side length in metres.
+    pub size: f32,
+    /// Squares per side.
+    pub cells: u16,
+    /// One height per corner, (cells + 1)², rows south to north.
+    pub heights: Vec<f32>,
+    /// Ground colour, linear RGB 0-1.
+    #[serde(default = "ground_color")]
+    pub color: [f32; 3],
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+fn ground_color() -> [f32; 3] {
+    [0.36, 0.5, 0.27]
+}
+impl Terrain {
+    /// Highest hill or deepest pit, metres.
+    pub const MAX_HEIGHT: f32 = 200.0;
+    pub const MAX_CELLS: u16 = 128;
+    /// Flat ground `size` metres across in `cells` × `cells` squares.
+    pub fn flat(size: f32, cells: u16) -> Self {
+        let side = usize::from(cells) + 1;
+        Self {
+            size,
+            cells,
+            heights: vec![0.0; side * side],
+            color: ground_color(),
+            extra: Map::new(),
+        }
+    }
+    pub fn is_valid(&self) -> bool {
+        (1..=Self::MAX_CELLS).contains(&self.cells)
+            && self.size.is_finite()
+            && (4.0..=2048.0).contains(&self.size)
+            && self.heights.len() == (usize::from(self.cells) + 1).pow(2)
+            && self
+                .heights
+                .iter()
+                .all(|h| h.is_finite() && h.abs() <= Self::MAX_HEIGHT)
+            && self
+                .color
+                .iter()
+                .all(|c| c.is_finite() && (0.0..=1.0).contains(c))
     }
 }
 
@@ -477,6 +533,12 @@ impl Layout {
             ensure!(
                 node.transform.is_valid(),
                 "object {} ({}) has an invalid position, rotation or scale",
+                node.id,
+                node.name
+            );
+            ensure!(
+                node.terrain.as_ref().is_none_or(Terrain::is_valid),
+                "object {} ({}) has terrain with a bad size, grid or heights",
                 node.id,
                 node.name
             );

@@ -32,6 +32,11 @@ pub const ALL: &[Builtin] = &[
         category: "Ground",
     },
     Builtin {
+        name: "terrain",
+        label: "Terrain 64 m (sculpt)",
+        category: "Ground",
+    },
+    Builtin {
         name: "road",
         label: "Road 8 x 32 m",
         category: "Roads",
@@ -147,6 +152,11 @@ pub const ALL: &[Builtin] = &[
 
 /// Catalog category of gameplay assets.
 pub const GAMEPLAY: &str = "Gameplay";
+
+/// The ground a placed Terrain starts with: flat, 64 m, 2 m squares.
+pub fn preset_terrain() -> crate::world_layout::Terrain {
+    crate::world_layout::Terrain::flat(64.0, 32)
+}
 
 /// The light a built-in comes with when placed (a lamp post glows).
 pub fn light_preset(name: &str) -> Option<crate::world_layout::PointLight> {
@@ -273,6 +283,11 @@ const DARK: [f32; 3] = [0.22, 0.22, 0.24];
 
 /// Build a built-in model, or None for an unknown name.
 pub fn model(name: &str) -> Option<Model> {
+    if name == "terrain" {
+        // A placed terrain shows its own heights (`Node::terrain`); this is
+        // the picture and the stand-in.
+        return Some(crate::terrain::model(&preset_terrain()));
+    }
     let mut s = Shape::default();
     match name {
         "ground" => s.cuboid([-16.0, -16.0, -0.3], [16.0, 16.0, 0.0], [0.5, 0.5, 0.48]),

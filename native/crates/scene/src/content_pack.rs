@@ -375,7 +375,7 @@ pub fn place_layout(
         if !visible && !solid {
             continue;
         }
-        let source = match assets.model(asset) {
+        let source = match node_model(node, assets) {
             Ok(source) => source,
             Err(error) => {
                 report.problems.push(format!(
@@ -411,6 +411,18 @@ pub fn place_layout(
         report.placed += 1;
     }
     report
+}
+
+/// The model a layout object shows: its sculpted terrain, or its asset.
+pub fn node_model(
+    node: &world_layout::Node,
+    assets: &mut AssetResolver,
+) -> Result<std::sync::Arc<gltf_model::Model>> {
+    if let Some(terrain) = &node.terrain {
+        return Ok(std::sync::Arc::new(crate::terrain::model(terrain)));
+    }
+    let asset = node.asset.as_ref().context("a group has no model")?;
+    assets.model(asset)
 }
 
 /// Finds and caches the models layout objects refer to.

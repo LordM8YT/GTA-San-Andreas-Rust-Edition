@@ -36,6 +36,46 @@ pub enum Tool {
     Move,
     Rotate,
     Scale,
+    /// Shape terrain objects with a brush.
+    Sculpt,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Brush {
+    Raise,
+    Lower,
+    Smooth,
+    Flatten,
+}
+impl Brush {
+    pub const ALL: [Brush; 4] = [Self::Raise, Self::Lower, Self::Smooth, Self::Flatten];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Raise => "Raise",
+            Self::Lower => "Lower",
+            Self::Smooth => "Smooth",
+            Self::Flatten => "Flatten",
+        }
+    }
+}
+
+/// The Sculpt tool's brush.
+#[derive(Clone, Copy, Debug)]
+pub struct Sculpt {
+    pub brush: Brush,
+    /// Metres.
+    pub radius: f32,
+    /// 0-1: how fast the brush works.
+    pub strength: f32,
+}
+impl Default for Sculpt {
+    fn default() -> Self {
+        Self {
+            brush: Brush::Raise,
+            radius: 6.0,
+            strength: 0.5,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -106,6 +146,7 @@ pub struct BuildMode {
     /// Gizmo in object (local) axes instead of world axes.
     pub local: bool,
     pub snap: Snap,
+    pub sculpt: Sculpt,
     pub camera: EditorCamera,
     pub placing: Option<Placing>,
     pub playtesting: bool,
@@ -194,6 +235,7 @@ impl BuildMode {
             tool: Tool::Move,
             local: false,
             snap: Snap::default(),
+            sculpt: Sculpt::default(),
             camera: EditorCamera::default(),
             placing: None,
             playtesting: false,
@@ -509,11 +551,13 @@ impl BuildMode {
             .collect();
         let mut problems = Vec::new();
         for node in &self.doc.layout.nodes {
-            let Some(asset) = &node.asset else { continue };
+            if node.asset.is_none() {
+                continue;
+            }
             if !self.doc.layout.effective_collision(node.id) {
                 continue;
             }
-            match self.resolver.model(asset) {
+            match sa_scene::content_pack::node_model(node, &mut self.resolver) {
                 Ok(model) => {
                     let (_, solid) = model.transformed(gpu::render_matrix(&node.transform));
                     if switchable.contains(&node.id) {
@@ -784,6 +828,8 @@ impl State {
                 state.capture_next = Some(dir.join(name));
             }
         };
+        // A menu shown on a first start would take the E key: keep it shut.
+        self.menu.page = None;
         let build = self
             .build
             .as_ref()
@@ -846,7 +892,59 @@ impl State {
                     "playtest changed the document"
                 );
             }
-            90 => return true,
+            // Terrain: a sculpt stroke rebuilds the mesh; one undo takes it back.
+            84 => {
+                let build = self.build.as_mut().unwrap();
+                let hill = build
+                    .doc
+                    .layout
+                    .nodes
+                    .iter()
+                    .find(|n| n.terrain.is_some())
+                    .map(|n| n.id)
+                    .expect("the smoke world has a terrain object");
+                build.selection = vec![hill];
+                build.focus_selection();
+                let before = build.gpu.objects[&hill].bounds.1.y;
+                build.ui.smoke_terrain = Some((hill, before));
+                build.preview("Sculpt terrain", &[hill], |n| {
+                    if let Some(terrain) = &mut n.terrain {
+                        sa_scene::terrain::raise(terrain, glam::Vec2::ZERO, 10.0, 5.0);
+                    }
+                });
+                build.commit_preview();
+            }
+            86 => {
+                let build = self.build.as_ref().unwrap();
+                let (hill, before) = build.ui.smoke_terrain.unwrap();
+                let after = build.gpu.objects[&hill].bounds.1.y;
+                assert!(
+                    after > before + 4.0,
+                    "the sculpted terrain mesh did not rise ({before} -> {after})"
+                );
+                capture(self, "build-terrain.png");
+            }
+            88 => {
+                let build = self.build.as_mut().unwrap();
+                build.undo();
+            }
+            90 => {
+                let build = self.build.as_ref().unwrap();
+                let (hill, before) = build.ui.smoke_terrain.unwrap();
+                let after = build.gpu.objects[&hill].bounds.1.y;
+                let log: Vec<&str> = build
+                    .log
+                    .iter()
+                    .rev()
+                    .take(4)
+                    .map(|l| l.text.as_str())
+                    .collect();
+                assert!(
+                    (after - before).abs() < 0.01,
+                    "undo did not restore the terrain ({before} -> {after}); log {log:?}"
+                );
+            }
+            92 => return true,
             _ => {}
         }
         false

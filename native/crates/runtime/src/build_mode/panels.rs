@@ -63,6 +63,10 @@ pub struct UiState {
     pub show_collision: bool,
     /// Viewport: leave out gameplay zones and links.
     pub hide_gameplay: bool,
+    /// A Sculpt stroke is going on: the height Flatten keeps.
+    pub sculpt_stroke: Option<f32>,
+    /// `--smoke-build`: the terrain sculpted and its height before.
+    pub smoke_terrain: Option<(NodeId, f32)>,
     /// Asset Browser pictures; None when one could not be made.
     pub thumbnails: HashMap<AssetRef, Option<egui::TextureHandle>>,
 }
@@ -275,6 +279,7 @@ fn shortcuts(build: &mut BuildMode, ui: &mut Ui) {
         (Key::W, Tool::Move),
         (Key::E, Tool::Rotate),
         (Key::R, Tool::Scale),
+        (Key::T, Tool::Sculpt),
     ] {
         if pressed(ui, key) {
             build.tool = tool;
@@ -474,10 +479,28 @@ fn toolbar(build: &mut BuildMode, ui: &mut Ui) {
             (Tool::Move, "↔", "Move", "W"),
             (Tool::Rotate, "⟲", "Rotate", "E"),
             (Tool::Scale, "⛶", "Scale", "R"),
+            (Tool::Sculpt, "^", "Sculpt terrain", "T"),
         ] {
             if tool_button(ui, build.tool == tool, icon, label, key).clicked() {
                 build.tool = tool;
             }
+        }
+        if build.tool == Tool::Sculpt {
+            egui::ComboBox::from_id_salt("sculpt-brush")
+                .width(80.0)
+                .selected_text(build.sculpt.brush.label())
+                .show_ui(ui, |ui| {
+                    for brush in super::Brush::ALL {
+                        ui.selectable_value(&mut build.sculpt.brush, brush, brush.label());
+                    }
+                });
+            ui.add(
+                egui::Slider::new(&mut build.sculpt.radius, 1.0..=40.0)
+                    .text("m")
+                    .logarithmic(true),
+            )
+            .on_hover_text("Brush radius");
+            ui.add(egui::Slider::new(&mut build.sculpt.strength, 0.05..=1.0).text("strength"));
         }
         ui.separator();
         let local_text = if build.local { "Local" } else { "World" };
@@ -1396,6 +1419,71 @@ fn inspector(build: &mut BuildMode, ui: &mut Ui) {
     }
 }
 
+/// A colour button that changes `color` only when the person picks one:
+/// egui's picker hands back a slightly different colour each frame
+/// (sRGB conversion), which would otherwise look like an edit.
+fn color_button(ui: &mut Ui, color: &mut [f32; 3]) -> bool {
+    let mut shown = *color;
+    let changed = ui.color_edit_button_rgb(&mut shown).changed();
+    if changed {
+        *color = shown.map(|c| c.clamp(0.0, 1.0));
+    }
+    changed
+}
+
+/// A terrain object: its size and colour, and how to sculpt it.
+fn terrain_section(build: &mut BuildMode, ui: &mut Ui, id: NodeId, node: &Node) {
+    let Some(terrain) = &node.terrain else {
+        return;
+    };
+    section(ui, "Terrain");
+    ui.label(format!(
+        "{0:.0} × {0:.0} m in {1} × {1} squares of {2:.1} m",
+        terrain.size,
+        terrain.cells,
+        terrain.spacing()
+    ));
+    let (low, high) = terrain
+        .heights
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(lo, hi), h| (lo.min(*h), hi.max(*h)));
+    ui.label(format!("Heights {low:.1} m to {high:.1} m"));
+    let locked = build.doc.layout.effective_locked(id);
+    let mut edited = terrain.clone();
+    ui.add_enabled_ui(!locked, |ui| {
+        ui.horizontal(|ui| {
+            ui.label("Colour");
+            color_button(ui, &mut edited.color);
+            if ui.small_button("Make flat").clicked() {
+                edited.heights.iter_mut().for_each(|h| *h = 0.0);
+            }
+            if ui
+                .button("^ Sculpt")
+                .on_hover_text("Sculpt tool (T)")
+                .clicked()
+            {
+                build.tool = super::Tool::Sculpt;
+            }
+        });
+    });
+    ui.label(
+        RichText::new(
+            "Sculpt (T): hold the left mouse button on the terrain to raise, lower, smooth or flatten it. Each stroke is one undo step.",
+        )
+        .small()
+        .color(MUTED),
+    );
+    edited.color = edited.color.map(|c| c.clamp(0.0, 1.0));
+    if edited != *terrain {
+        run(
+            build,
+            ops::modify(&build.doc, "Edit terrain", &[id], |n| {
+                n.terrain = Some(edited.clone())
+            }),
+        );
+    }
+}
+
 /// The object's light: a corona and a pool of light on the ground.
 fn light_section(build: &mut BuildMode, ui: &mut Ui, id: NodeId, node: &Node) {
     use sa_scene::world_layout::PointLight;
@@ -1420,7 +1508,7 @@ fn light_section(build: &mut BuildMode, ui: &mut Ui, id: NodeId, node: &Node) {
     ui.add_enabled_ui(!locked, |ui| {
         ui.horizontal(|ui| {
             ui.label("Colour");
-            ui.color_edit_button_rgb(&mut edited.color);
+            color_button(ui, &mut edited.color);
             if ui.small_button("Remove").clicked() {
                 run(
                     build,
@@ -1671,6 +1759,7 @@ fn object(build: &mut BuildMode, ui: &mut Ui, id: NodeId) {
     if !node.is_group() {
         super::gameplay_ui::inspector(build, ui, id, &node);
         light_section(build, ui, id, &node);
+        terrain_section(build, ui, id, &node);
     }
     if let Some(asset) = &node.asset {
         section(ui, "Asset");
@@ -1855,7 +1944,7 @@ fn world_settings(build: &mut BuildMode, ui: &mut Ui) {
         ui.checkbox(&mut own, "Sky colour")
             .on_hover_text("Also the colour of the haze in the distance");
         let mut value = sky.unwrap_or([0.55, 0.7, 0.9]);
-        ui.add_enabled_ui(own, |ui| ui.color_edit_button_rgb(&mut value));
+        ui.add_enabled_ui(own, |ui| color_button(ui, &mut value));
         sky = own.then_some(value.map(|c| c.clamp(0.0, 1.0)));
     });
     ui.horizontal(|ui| {

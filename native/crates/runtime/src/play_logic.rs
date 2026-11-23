@@ -65,9 +65,11 @@ impl PlayLogic {
         };
         let mut solid = Vec::new();
         for node in layout.nodes.iter().filter(|n| switchable.contains(&n.id)) {
-            let Some(asset) = &node.asset else { continue };
+            if node.asset.is_none() {
+                continue;
+            }
             if flags.get(&node.id).is_some_and(|f| f.collision) {
-                match resolver.model(asset) {
+                match sa_scene::content_pack::node_model(node, &mut resolver) {
                     Ok(model) => {
                         let (_, batches) = model.transformed(render_matrix(&node.transform));
                         solid.push((node.id, batches));

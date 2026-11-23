@@ -126,6 +126,26 @@ All of it is saved in `layout.json`, shows while you edit, and is used when
 the world is played from the launcher or hosted on a server (every player
 has the pack, so everyone sees the same).
 
+## Terrain
+
+Place *Terrain 64 m (sculpt)* from the Asset Browser (category Ground): flat
+ground of 32 × 32 squares that you shape yourself. Pick **Sculpt terrain**
+(`T`) in the toolbar, choose a brush and hold the left mouse button on the
+terrain:
+
+| Brush | What it does |
+| --- | --- |
+| Raise / Lower | Lifts or sinks the ground under the brush, most in the middle |
+| Smooth | Evens out bumps and sharp edges |
+| Flatten | Levels the ground to the height where the stroke began (for building plots and roads) |
+
+The brush circle shows where it works; radius (1-40 m) and strength are in
+the toolbar. Each stroke is one undo step. The Inspector shows the
+terrain's size and height range, its colour, and *Make flat*. Terrain is a
+normal object: move, turn or scale it, and it is drawn and solid in
+Playtest, from the launcher and on servers. Its heights are saved in
+`layout.json`, so it travels with the world.
+
 Moving objects in the **World Outliner**: drag a row onto the top or bottom
 half of another row to put it before or after it, onto the middle of a group
 to put it inside, or below the list for the top level. Dragging a selected
@@ -209,6 +229,10 @@ content/my-town/
   Visible, Locked and Collision down to their contents; they have no
   transform of their own yet.
 - Ids are stable and never reused, even after undo.
+- `terrain` is optional: `{ "size": 64, "cells": 32, "heights": [...],
+  "color": [0.36, 0.5, 0.27] }` with (cells + 1)² heights in metres, row by
+  row from south to north (`sa_scene::terrain`). Up to 128 cells and
+  ±200 m.
 - `light` is optional: `{ "color": [1, 0.85, 0.6], "size": 1, "radius": 6,
   "offset": [0, 1, 4.25] }` (linear RGB 0-1, metres, offset in the object's
   axes). `settings.fog` (0.2-10), `sky` (RGB 0-1) and `brightness`
@@ -244,6 +268,7 @@ pipeline or project format.
 | Part | Where | Notes |
 | --- | --- | --- |
 | Layout format | `sa-scene::world_layout` | Serde types, validation, migration hook, atomic writes, Blender-to-glTF transform maths |
+| Terrain | `sa-scene::terrain` | `Terrain` heights on a node, `model` (drawn + solid), `height_at`, brushes `raise`/`smooth`/`flatten`; `content_pack::node_model` gives every path (pack, Playtest, editor) the terrain instead of the asset; the Sculpt tool is in `build_mode/viewport.rs` |
 | Built-in assets | `sa-scene::builtin_assets` | Original shapes generated in code (glTF space); `editor_only` markers are neither drawn nor solid in play |
 | Gameplay | `sa-scene::world_logic` | Components and actions (serde; unknown kinds kept), zone maths, `check` for problems, `preset` for gameplay assets, and the engine: `World` (compiled layout, no state), `Shared` (per world instance: shown/hidden objects, hour, weather, a revision and `Snapshot`) and `PlayerState` (zones, once-triggers, courses, `Happened` events for scripts). `Logic` bundles one of each for single player. `wire` holds the network events. No GPU, UI or GTA types: the server and the game run the same code |
 | Server authority | `sa-server/src/world.rs` | Loads the pack named by `content_pack`, steps every player each frame against the poses the server has, keeps `Shared` per routing bucket, sends snapshots (on change, arrival, bucket change) and personal effects, validates `__sare:worldUse` (position with 2 m slack, 250 ms rate limit), forwards events to Lua; natives in `natives.rs`. Tests: `world_tests.rs` with several connected players |
@@ -316,4 +341,8 @@ Milestone 1 and part of milestone 2 are in. Still to come, roughly in order:
   outlines object bounds).
 - Real per-pixel point and spot lights (needs renderer work; today lights
   are glow and ground light), per-object shadow switches.
-- Terrain, roads and paths, visual scripting, publishing worlds to servers.
+- Terrain: painting several materials, holes, and terrain bigger than one
+  object (place several side by side today).
+- Roads and paths drawn along spline points with their own collision; until
+  then, use the Road pieces and sculpted terrain.
+- Visual scripting, publishing worlds to servers.

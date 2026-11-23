@@ -7,6 +7,7 @@ Coordinates are Blender axes (X east, Y north, Z up, metres); rotation is
 degrees. See docs/build-mode.md for the layout format.
 """
 import json
+import math
 import pathlib
 
 OUT = pathlib.Path(__file__).resolve().parent.parent / "content" / "gameplay-sample"
@@ -52,6 +53,18 @@ add("Lamp post", "lamp-post", (6, 2, 0), turn=180, parent=square, light=LAMP)
 add("Lamp post", "lamp-post", (-6, -14, 0), parent=square, light=dict(LAMP, color=[0.6, 0.8, 1.0]))
 add("Wall north", "wall", (-10, 3, 0), turn=90, parent=square)
 add("Wall south", "wall", (-10, -3, 0), turn=90, parent=square)
+
+# A sculpted hill west of the square: Build Mode terrain, heights in the layout.
+CELLS, SIZE = 24, 48.0
+heights = []
+for row in range(CELLS + 1):
+    for column in range(CELLS + 1):
+        x = -SIZE / 2 + column * SIZE / CELLS
+        y = -SIZE / 2 + row * SIZE / CELLS
+        d2 = (x * x + y * y) / (14.0 * 14.0)
+        heights.append(round(6.0 * math.exp(-d2), 3))
+hill = add("Hill", "terrain", (-44, 0, -0.05), parent=square)
+nodes[-1]["terrain"] = {"size": SIZE, "cells": CELLS, "heights": heights, "color": [0.36, 0.5, 0.27]}
 
 play = add("Gameplay")
 add("Start", "marker-spawn", (0, -6, 0), parent=play, gameplay={"kind": "spawn"})

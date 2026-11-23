@@ -45,6 +45,8 @@ pub struct Gpu {
     pub ghost: Option<ObjectMesh>,
     /// Objects' lights: their glow, drawn in the night glow pass.
     pub lights: HashMap<NodeId, LightMesh>,
+    /// The heights each terrain object's mesh was built from.
+    terrains: HashMap<NodeId, sa_scene::world_layout::Terrain>,
 }
 
 /// The glow of one object's light, where the object stands.
@@ -128,8 +130,29 @@ impl Gpu {
                 .node(*id)
                 .is_some_and(|n| n.asset.as_ref() == Some(&object.asset))
         });
+        self.terrains
+            .retain(|id, _| layout.node(*id).is_some_and(|n| n.terrain.is_some()));
         for node in &layout.nodes {
             let Some(asset) = &node.asset else { continue };
+            if let Some(terrain) = &node.terrain {
+                // Its own mesh, rebuilt when sculpted or moved.
+                let fresh = self.terrains.get(&node.id) == Some(terrain)
+                    && self
+                        .objects
+                        .get(&node.id)
+                        .is_some_and(|o| o.transform == node.transform);
+                if !fresh {
+                    match upload(state, &sa_scene::terrain::model(terrain), false) {
+                        Ok(mesh) => {
+                            let object = instance(state, &mesh, asset.clone(), node.transform);
+                            self.objects.insert(node.id, object);
+                            self.terrains.insert(node.id, terrain.clone());
+                        }
+                        Err(error) => problems.push(format!("{asset}: {error:#}")),
+                    }
+                }
+                continue;
+            }
             match self.objects.get_mut(&node.id) {
                 Some(object) if object.transform == node.transform => {}
                 Some(object) => {

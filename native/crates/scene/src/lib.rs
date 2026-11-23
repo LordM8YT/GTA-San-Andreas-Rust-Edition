@@ -17,6 +17,7 @@ pub mod ped;
 pub mod ped_list;
 pub mod roads;
 mod roadsign;
+pub mod terrain;
 pub mod testbed;
 mod texture;
 pub mod vehicle;
