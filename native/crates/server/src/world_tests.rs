@@ -27,6 +27,11 @@ end)
 "#;
 
 fn server() -> Sarebox {
+    server_with(|_| {})
+}
+
+/// The test server, with the sample world's layout changed by `edit`.
+fn server_with(edit: impl FnOnce(&mut Json)) -> Sarebox {
     Sarebox::boot_with(
         "freeroam",
         &["ensure chat", "ensure world_test"],
@@ -36,9 +41,16 @@ fn server() -> Sarebox {
                 Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../content/gameplay-sample");
             let target = root.join("content/gameplay-sample");
             std::fs::create_dir_all(&target).unwrap();
-            for file in ["content.json", "layout.json"] {
-                std::fs::copy(sample.join(file), target.join(file)).unwrap();
-            }
+            std::fs::copy(sample.join("content.json"), target.join("content.json")).unwrap();
+            let mut layout: Json =
+                serde_json::from_slice(&std::fs::read(sample.join("layout.json")).unwrap())
+                    .unwrap();
+            edit(&mut layout);
+            std::fs::write(
+                target.join("layout.json"),
+                serde_json::to_vec_pretty(&layout).unwrap(),
+            )
+            .unwrap();
             let resource = root.join("resources/[test]/world_test");
             std::fs::create_dir_all(&resource).unwrap();
             std::fs::write(
@@ -351,4 +363,71 @@ fn servers_without_the_pack_run_no_world_gameplay() {
         |_| {},
     );
     assert!(server.shared.borrow().world.is_none());
+}
+
+#[test]
+fn teleports_leading_into_each_other_do_not_bounce() {
+    // Two pads, each sending players onto the other: arriving on a pad
+    // must not send them straight back.
+    let mut server = server_with(|layout| {
+        let pad = |id: u64, name: &str, x: f32, target: u64| {
+            serde_json::json!({
+                "id": id, "name": name, "asset": "builtin:marker-teleport",
+                "transform": { "position": [x, 40.0, 0.0] },
+                "gameplay": { "kind": "trigger", "size": [3.0, 3.0, 2.5],
+                              "on_enter": [ { "do": "teleport", "target": target } ] }
+            })
+        };
+        let spot = |id: u64, name: &str, x: f32| {
+            serde_json::json!({
+                "id": id, "name": name, "asset": "builtin:marker-target",
+                "transform": { "position": [x, 40.0, 0.0] }
+            })
+        };
+        let nodes = layout["nodes"].as_array_mut().unwrap();
+        nodes.push(pad(901, "Pad A", 100.0, 904));
+        nodes.push(pad(902, "Pad B", 140.0, 903));
+        nodes.push(spot(903, "On pad A", 100.0));
+        nodes.push(spot(904, "On pad B", 140.0));
+        layout["next_id"] = 905.into();
+    });
+    let mut anna = join(&mut server);
+    let teleports = |p: &Player| {
+        personal(p)
+            .iter()
+            .filter_map(|e| match e {
+                wire::Personal::Teleport { position, .. } => Some(*position),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    stand(&mut anna, [90.0, 40.0, 0.0]);
+    server.settle(&mut anna);
+    server.idle(&mut [&mut anna], 5);
+    // Onto pad A: off to pad B.
+    stand(&mut anna, [100.0, 40.0, 0.0]);
+    server.until(&mut [&mut anna], "the teleport to pad B", |_, p| {
+        !teleports(p[0]).is_empty()
+    });
+    // Personal teleports carry the destination in the world's own metres.
+    let to = teleports(&anna)[0];
+    assert!((to[0] - 140.0).abs() < 0.5, "{to:?}");
+    // Her game puts her on pad B, as a real client does. She stays there:
+    // no teleport back, however long she stands.
+    stand(&mut anna, [140.0, 40.0, 0.0]);
+    server.idle(&mut [&mut anna], 60);
+    assert_eq!(
+        teleports(&anna).len(),
+        1,
+        "bounced back: {:?}",
+        teleports(&anna)
+    );
+    // Stepping off and on again is a new visit: back to pad A.
+    stand(&mut anna, [150.0, 40.0, 0.0]);
+    server.idle(&mut [&mut anna], 10);
+    stand(&mut anna, [140.0, 40.0, 0.0]);
+    server.until(&mut [&mut anna], "the teleport back to pad A", |_, p| {
+        teleports(p[0]).len() == 2
+    });
+    assert!((teleports(&anna)[1][0] - 100.0).abs() < 0.5);
 }
