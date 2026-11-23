@@ -350,15 +350,21 @@ pub struct PlaceReport {
 
 /// Add every visible (or solid) layout object to `model`, transformed into
 /// pack space. Objects whose asset is missing are reported, not dropped from
-/// the layout: the layout file is never changed here.
+/// the layout: the layout file is never changed here. Objects gameplay can
+/// show or hide ([`crate::world_logic::switchable`]) are left out: the game
+/// draws them, and switches their collision, one by one.
 pub fn place_layout(
     model: &mut gltf_model::Model,
     layout: &world_layout::Layout,
     assets: &mut AssetResolver,
 ) -> PlaceReport {
     let mut report = PlaceReport::default();
+    let switchable = crate::world_logic::switchable(layout);
     for node in &layout.nodes {
         let Some(asset) = &node.asset else { continue };
+        if switchable.contains(&node.id) {
+            continue;
+        }
         if matches!(asset, world_layout::AssetRef::Builtin(name) if crate::builtin_assets::editor_only(name))
         {
             // Gameplay markers only show in Build Mode.

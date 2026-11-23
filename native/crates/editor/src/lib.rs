@@ -297,7 +297,8 @@ mod tests {
         project.save(&doc).unwrap();
         let (_, reopened) = Project::open(&folder).unwrap();
         assert_eq!(reopened, doc, "gameplay survives save and open");
-        // Played as a pack: markers are neither drawn nor solid, doors are.
+        // Played as a pack: markers are neither drawn nor solid, and the door
+        // (gameplay opens it) is drawn and made solid by the game on its own.
         let mut world = PackWorld::open(&folder).unwrap();
         let origin = sa_scene::content_pack::ANCHOR;
         let scene = world.load(origin, origin, 300.0).unwrap();
@@ -305,7 +306,7 @@ mod tests {
             .iter()
             .map(|m| sa_scene::builtin_assets::model(m).unwrap().triangles)
             .sum();
-        let expected: usize = ["ground", "door", "crate"]
+        let expected: usize = ["ground", "crate"]
             .iter()
             .map(|m| sa_scene::builtin_assets::model(m).unwrap().triangles)
             .sum();

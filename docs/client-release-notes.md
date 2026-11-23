@@ -8,7 +8,7 @@ Version 0.54.0:
 - World settings have a weather (clear, cloudy, rain, fog), and worlds played from the launcher now use the world's time of day and weather too.
 - Playtest runs it all: walk into zones, press E at doors, and go back to the editor with F6 as before.
 - New sample world, Gameplay Sample (content/gameplay-sample), with every behaviour in one place. No game files needed.
-- Opening and closing objects (like the door) works in Playtest; in a world played from the launcher it does not yet. Gameplay runs on each player's own PC and is not synchronised on servers yet.
+- Everything also works when the world is played from the launcher, including doors that open and close. Gameplay runs on each player's own PC and is not synchronised on servers yet.
 
 Version 0.53.0:
 - RP servers: police, EMS, mechanic and taxi are now each their own resource (sare_job_police, sare_job_ems, sare_job_mechanic, sare_job_taxi) with their own config.lua: the job and grades, `Config.Locations` as `vector4(...)`, gear, work vehicle and rules like fines and jail time. Change one job without touching the others.

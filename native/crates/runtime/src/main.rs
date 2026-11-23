@@ -2423,6 +2423,7 @@ impl State {
                     .flatten()
                     .flatten(),
             )
+            .chain(self.play_logic.iter().flat_map(|play| play.batches()))
             .chain(self.build.iter().flat_map(|build| {
                 build
                     .gpu
@@ -3244,7 +3245,7 @@ struct App {
     /// Where a content pack asks the player to start, in runtime space.
     spawn_eye: Option<Vec3>,
     /// The pack's Build Mode layout, for its gameplay (not in Build Mode).
-    pack_layout: Option<sa_scene::world_layout::Layout>,
+    pack_layout: Option<(PathBuf, sa_scene::world_layout::Layout)>,
     /// `--build`: the world folder Build Mode edits.
     build_folder: Option<PathBuf>,
     smoke: bool,
@@ -3530,8 +3531,8 @@ impl ApplicationHandler for App {
                 state.standalone = self.standalone;
                 state.pack_id = self.pack_id.clone();
                 state.world_name = self.world_name.clone();
-                if let Some(layout) = &self.pack_layout {
-                    let play = play_logic::PlayLogic::new(layout, false);
+                if let Some((folder, layout)) = &self.pack_layout {
+                    let play = play_logic::PlayLogic::pack(layout, folder);
                     if let Some(pose) = play.logic.spawn() {
                         // A Spawn point object wins over content.json's spawn.
                         self.spawn_eye = Some(play_logic::spawn_eye(&pose));
@@ -4301,8 +4302,18 @@ impl ApplicationHandler for App {
                     );
                     if !state.loading() {
                         self.smoke_frames += 1;
-                        if state.build_mode_smoke(self.smoke_frames, self.capture_dir.as_deref()) {
-                            println!("Build Mode smoke passed: edit, playtest gameplay, return");
+                        let captures = self.capture_dir.as_deref();
+                        if state.build.is_some() {
+                            if state.build_mode_smoke(self.smoke_frames, captures) {
+                                println!(
+                                    "Build Mode smoke passed: edit, playtest gameplay, return"
+                                );
+                                event_loop.exit();
+                            }
+                        } else if state.play_logic_smoke(self.smoke_frames, captures) {
+                            println!(
+                                "Pack gameplay smoke passed: gate opens and closes, door teleports"
+                            );
                             event_loop.exit();
                         }
                     }
@@ -6465,7 +6476,7 @@ fn run() -> Result<()> {
         spawn_eye: spawn_eye.filter(|_| build_folder.is_none()),
         pack_layout: match (&standalone_source, &build_folder) {
             (Some(sa_scene::content::ContentSource::Pack(folder)), None) => {
-                play_logic::load_pack(folder)
+                play_logic::load_pack(folder).map(|layout| (folder.clone(), layout))
             }
             _ => None,
         },

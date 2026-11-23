@@ -488,12 +488,12 @@ impl BuildMode {
             .transform_point3(sa_scene::world_layout::blender_to_gltf(self.doc.info.spawn))
     }
 
-    /// Collision for playtesting: the pack's scene plus every solid object,
-    /// except those gameplay has hidden (an opened door).
-    pub(crate) fn playtest_collision(
-        &mut self,
-        hidden: &std::collections::HashSet<NodeId>,
-    ) -> sa_scene::collision::CollisionWorld {
+    /// Collision for playtesting: the pack's scene plus every solid object.
+    /// Objects gameplay can show or hide are switchable, so an opened door
+    /// lets the player through without rebuilding the world.
+    fn playtest_collision(&mut self) -> sa_scene::collision::CollisionWorld {
+        let switchable = sa_scene::world_logic::switchable(&self.doc.layout);
+        let mut switched = Vec::new();
         let mut batches: Vec<sa_scene::Batch> = self
             .base_collision
             .iter()
@@ -510,13 +510,17 @@ impl BuildMode {
         let mut problems = Vec::new();
         for node in &self.doc.layout.nodes {
             let Some(asset) = &node.asset else { continue };
-            if !self.doc.layout.effective_collision(node.id) || hidden.contains(&node.id) {
+            if !self.doc.layout.effective_collision(node.id) {
                 continue;
             }
             match self.resolver.model(asset) {
                 Ok(model) => {
                     let (_, solid) = model.transformed(gpu::render_matrix(&node.transform));
-                    batches.extend(solid);
+                    if switchable.contains(&node.id) {
+                        switched.push((node.id, solid));
+                    } else {
+                        batches.extend(solid);
+                    }
                 }
                 Err(error) => problems.push(format!("{}: {error:#}", node.name)),
             }
@@ -524,7 +528,11 @@ impl BuildMode {
         for problem in problems {
             self.warn(format!("No collision for {problem}"));
         }
-        sa_scene::collision::CollisionWorld::from_batches(&batches)
+        let mut world = sa_scene::collision::CollisionWorld::from_batches(&batches);
+        for (id, solid) in switched {
+            world.add_switchable(id, &solid);
+        }
+        world
     }
 }
 
@@ -695,9 +703,9 @@ impl State {
             build.autosaved_revision = 0;
             build.autosave();
         }
-        let collision = build.playtest_collision(&Default::default());
+        let collision = build.playtest_collision();
         // Gameplay starts fresh from the layout as it is now.
-        let play = crate::play_logic::PlayLogic::new(&build.doc.layout, true);
+        let play = crate::play_logic::PlayLogic::playtest(&build.doc.layout);
         for problem in sa_scene::world_logic::check(&build.doc.layout) {
             build.warn(format!("Gameplay: {}", problem.text));
         }
@@ -768,7 +776,6 @@ pub fn restart_on(args: &[String], folder: &Path) -> Result<()> {
 impl State {
     /// One rendered frame of the smoke run; true when it has passed.
     pub(crate) fn build_mode_smoke(&mut self, frame: usize, captures: Option<&Path>) -> bool {
-        use sa_scene::world_logic::{Action, Component, Kept};
         let capture = |state: &mut State, name: &str| {
             if let Some(dir) = captures {
                 state.capture_next = Some(dir.join(name));
@@ -778,35 +785,8 @@ impl State {
             .build
             .as_ref()
             .expect("--smoke-build needs --build <world>");
-        // The first object whose behaviour matches, and its position.
-        let find = |wanted: &dyn Fn(&Component) -> bool| {
-            build
-                .doc
-                .layout
-                .nodes
-                .iter()
-                .find(|n| {
-                    n.gameplay
-                        .as_ref()
-                        .and_then(Kept::known)
-                        .is_some_and(wanted)
-                })
-                .map(|n| (n.id, n.transform.position))
-                .expect("the smoke world lacks a behaviour it needs (use content/gameplay-sample)")
-        };
-        let runs = |c: &Component, f: fn(&Action) -> bool| {
-            c.action_lists()
-                .into_iter()
-                .flatten()
-                .any(|a| a.known().is_some_and(f))
-        };
-        let gate = find(&|c| {
-            matches!(c, Component::Interact(_)) && runs(c, |a| matches!(a, Action::Toggle { .. }))
-        });
-        let door = find(&|c| {
-            matches!(c, Component::Interact(_)) && runs(c, |a| matches!(a, Action::Teleport { .. }))
-        });
-        let night = find(&|c| runs(c, |a| matches!(a, Action::SetTime { .. })));
+        let crate::play_logic::SmokeTargets { gate, door, night } =
+            crate::play_logic::smoke_targets(&build.doc.layout);
         match frame {
             5 => {
                 let build = self.build.as_mut().unwrap();
@@ -869,8 +849,8 @@ impl State {
         false
     }
 
-    /// Put the playtest player on the ground at a Blender-axes point.
-    fn smoke_stand_at(&mut self, at: [f32; 3]) {
+    /// Put the player on the ground at a Blender-axes point.
+    pub(crate) fn smoke_stand_at(&mut self, at: [f32; 3]) {
         let eye = crate::play_logic::blender_to_render(at) + Vec3::Y * 2.0;
         if let Some(collision) = &self.collision {
             let player = sa_scene::collision::Player::spawn(collision, eye);

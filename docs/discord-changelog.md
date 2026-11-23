@@ -3,9 +3,9 @@
 🚪 **Doors that open with E**, doors and pads that teleport you somewhere else, and trigger zones that show messages or change the time and weather.
 🏁 **Checkpoint courses** with a timer: drop the checkpoints in and they number themselves.
 🧭 Give any object a behaviour in the Inspector, and see every zone and teleport link in the viewport.
-🎮 Try it all in **Gameplay Sample** with F6 Playtest. No GTA needed.
+🎮 Try it all in **Gameplay Sample**, in Build Mode with F6 Playtest or from the launcher. No GTA needed.
 
-✅ Tested on Windows with an automatic Build Mode playtest run. Opening doors in worlds played from the launcher, and server sync, are coming later.
+✅ Tested on Windows with automatic runs in Build Mode and from the launcher; builds pass on Windows, Linux and macOS. Server sync is coming later.
 
 ---
 

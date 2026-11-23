@@ -14,6 +14,8 @@ struct Triangle {
     b: Vec3,
     c: Vec3,
     normal: Vec3,
+    /// 0 for static geometry, else 1 + an index into `switchable`.
+    owner: u32,
 }
 
 pub struct CollisionWorld {
@@ -21,11 +23,54 @@ pub struct CollisionWorld {
     cells: HashMap<(i32, i32), Vec<usize>>,
     /// Vertical COL/fallback triangles hidden while a matching map door is open.
     open_door_bounds: Vec<(Vec3, Vec3)>,
+    /// Ids of objects whose collision can be switched off (Build Mode
+    /// gameplay: an opened door), in owner order.
+    switchable: Vec<u64>,
+    /// Owners whose triangles are ignored right now.
+    hidden: HashSet<u32>,
 }
 impl CollisionWorld {
     pub fn from_batches(batches: &[Batch]) -> Self {
-        let mut triangles = Vec::new();
-        let mut cells: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+        let mut world = Self {
+            triangles: Vec::new(),
+            cells: HashMap::new(),
+            open_door_bounds: Vec::new(),
+            switchable: Vec::new(),
+            hidden: HashSet::new(),
+        };
+        world.add(batches, 0);
+        world
+    }
+    /// Add an object whose collision [`Self::set_hidden`] can switch off.
+    /// Adding the same id again adds to that object.
+    pub fn add_switchable(&mut self, id: u64, batches: &[Batch]) {
+        let owner = match self.switchable.iter().position(|s| *s == id) {
+            Some(index) => index,
+            None => {
+                self.switchable.push(id);
+                self.switchable.len() - 1
+            }
+        };
+        self.add(batches, owner as u32 + 1);
+    }
+    /// Whether switchable object `id` was added.
+    pub fn has_switchable(&self, id: u64) -> bool {
+        self.switchable.contains(&id)
+    }
+    /// Switch off the collision of these switchable objects (and on for
+    /// every other one).
+    pub fn set_hidden(&mut self, ids: impl IntoIterator<Item = u64>) {
+        let ids: HashSet<u64> = ids.into_iter().collect();
+        self.hidden = self
+            .switchable
+            .iter()
+            .enumerate()
+            .filter(|(_, id)| ids.contains(id))
+            .map(|(index, _)| index as u32 + 1)
+            .collect();
+    }
+    fn add(&mut self, batches: &[Batch], owner: u32) {
+        let (triangles, cells) = (&mut self.triangles, &mut self.cells);
         for batch in batches {
             if batch.alpha {
                 continue;
@@ -58,18 +103,19 @@ impl CollisionWorld {
                     continue;
                 }
                 let index = triangles.len();
-                triangles.push(Triangle { a, b, c, normal });
+                triangles.push(Triangle {
+                    a,
+                    b,
+                    c,
+                    normal,
+                    owner,
+                });
                 for x in x0..=x1 {
                     for z in z0..=z1 {
                         cells.entry((x, z)).or_default().push(index);
                     }
                 }
             }
-        }
-        Self {
-            triangles,
-            cells,
-            open_door_bounds: Vec::new(),
         }
     }
     /// Temporarily ignore vertical collision triangles inside animated door
@@ -170,6 +216,9 @@ impl CollisionWorld {
         // Stable contact order avoids changing the selected correction at corners.
         let mut indices: Vec<_> = seen.into_iter().collect();
         indices.sort_unstable();
+        if !self.hidden.is_empty() {
+            indices.retain(|&index| !self.hidden.contains(&self.triangles[index].owner));
+        }
         if !self.open_door_bounds.is_empty() {
             indices.retain(|&index| {
                 let triangle = self.triangles[index];
@@ -580,6 +629,47 @@ mod tests {
             closed_again.feet.x < 0.75,
             "closed door should block passage"
         );
+    }
+
+    #[test]
+    fn switchable_objects_turn_their_collision_off_and_on() {
+        // A floor that can be hidden (a trap door) above solid ground.
+        let quad = |y: f32| {
+            let v = |x: f32, z: f32| crate::Vertex {
+                position: [x, y, z],
+                uv: [0.0; 2],
+                color: [1.0; 4],
+            };
+            crate::Batch {
+                key: "test".into(),
+                vertices: vec![
+                    v(-2.0, -2.0),
+                    v(2.0, 2.0),
+                    v(2.0, -2.0),
+                    v(-2.0, -2.0),
+                    v(-2.0, 2.0),
+                    v(2.0, 2.0),
+                ],
+                alpha: false,
+                animated: false,
+                uv_animation: None,
+                map_door: None,
+                mlo_entity: None,
+            }
+        };
+        let mut world = CollisionWorld::from_batches(&[quad(0.0)]);
+        world.add_switchable(7, &[quad(3.0)]);
+        assert!(world.has_switchable(7) && !world.has_switchable(8));
+        let top = Vec3::new(0.0, 5.0, 0.0);
+        assert_eq!(world.ground_below(top, 5.0), Some(3.0));
+        world.set_hidden([7]);
+        assert_eq!(
+            world.ground_below(top, 5.0),
+            Some(0.0),
+            "hidden floor is gone"
+        );
+        world.set_hidden([]);
+        assert_eq!(world.ground_below(top, 5.0), Some(3.0));
     }
     #[test]
     fn floor_and_wall() {

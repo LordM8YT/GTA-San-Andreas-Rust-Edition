@@ -444,8 +444,6 @@ pub struct Logic {
     /// After a teleport: take the new position's zones without entering them,
     /// so two doors leading to each other do not bounce the player back.
     settle: bool,
-    /// Objects cannot be shown or hidden here (see [`Logic::set_static_objects`]).
-    static_objects: bool,
 }
 
 impl Logic {
@@ -508,16 +506,7 @@ impl Logic {
             weather: layout.settings.weather.as_deref().and_then(Weather::parse),
             clock: 0.0,
             settle: true,
-            static_objects: false,
         }
-    }
-
-    /// The world draws its objects as one merged scene (a pack played from
-    /// the launcher), so they cannot be shown or hidden: those actions do
-    /// nothing, and interactions that only show or hide offer no prompt and
-    /// leave the interact key to the game.
-    pub fn set_static_objects(&mut self) {
-        self.static_objects = true;
     }
 
     /// The first spawn point object, if the world has one.
@@ -566,24 +555,13 @@ impl Logic {
         self.zones
             .iter()
             .filter_map(|z| match &z.kind {
-                ZoneKind::Interact(i) if z.shape.contains(p) && self.usable(i) => {
+                ZoneKind::Interact(i) if z.shape.contains(p) => {
                     Some((z.node, i, z.shape.base.distance_squared(p)))
                 }
                 _ => None,
             })
             .min_by(|a, b| a.2.total_cmp(&b.2))
             .map(|(node, interact, _)| (node, interact))
-    }
-
-    /// Whether pressing E here would do something in this world.
-    fn usable(&self, interact: &Interact) -> bool {
-        !self.static_objects
-            || interact.actions.iter().any(|a| {
-                !matches!(
-                    a,
-                    Kept::Known(Action::Show { .. } | Action::Hide { .. } | Action::Toggle { .. })
-                )
-            })
     }
 
     /// The player pressed the interact key with their feet at `feet`.
@@ -732,7 +710,7 @@ impl Logic {
                 }
                 Action::Show { node } | Action::Hide { node } | Action::Toggle { node } => {
                     let node = node.unwrap_or(owner);
-                    if self.static_objects || !self.base_visible.contains_key(&node) {
+                    if !self.base_visible.contains_key(&node) {
                         continue;
                     }
                     let visible = match action {
@@ -761,6 +739,37 @@ impl Logic {
             }
         }
     }
+}
+
+/// Objects an action can show or hide. Played worlds keep them out of the
+/// merged scene and draw them, and switch their collision, one by one.
+pub fn switchable(layout: &Layout) -> HashSet<NodeId> {
+    let objects: HashSet<NodeId> = layout
+        .nodes
+        .iter()
+        .filter(|n| !n.is_group())
+        .map(|n| n.id)
+        .collect();
+    let mut out = HashSet::new();
+    for node in &layout.nodes {
+        let Some(component) = node.gameplay.as_ref().and_then(Kept::known) else {
+            continue;
+        };
+        for action in component.action_lists().into_iter().flatten() {
+            if let Some(
+                Action::Show { node: target }
+                | Action::Hide { node: target }
+                | Action::Toggle { node: target },
+            ) = action.known()
+            {
+                let target = target.unwrap_or(node.id);
+                if objects.contains(&target) {
+                    out.insert(target);
+                }
+            }
+        }
+    }
+    out
 }
 
 /// A problem in a layout's gameplay, shown in the editor.
@@ -1212,29 +1221,18 @@ mod tests {
     }
 
     #[test]
-    fn static_worlds_leave_show_and_hide_to_the_game() {
+    fn switchable_objects_are_the_targets_of_show_and_hide() {
         let mut layout = Layout::default();
         let door = object(&mut layout, "Door", [0.0; 3], preset("door", 1));
-        let sign = object(
+        let lamp = object(&mut layout, "Lamp", [5.0, 0.0, 0.0], None);
+        object(
             &mut layout,
-            "Sign",
-            [20.0, 0.0, 0.0],
-            preset("marker-interact", 1),
+            "Switch",
+            [9.0, 0.0, 0.0],
+            Some(trigger(vec![Action::Hide { node: Some(lamp) }])),
         );
-        let _ = sign;
-        let mut logic = Logic::new(&layout);
-        logic.set_static_objects();
-        assert_eq!(
-            logic.prompt([0.0; 3]),
-            None,
-            "a door that cannot open offers nothing"
-        );
-        assert_eq!(logic.interact([0.0; 3]), None, "E stays with the game");
-        assert!(logic.visible(door));
-        assert!(
-            logic.interact([20.0, 0.0, 0.0]).is_some(),
-            "other interactions still work"
-        );
+        object(&mut layout, "Crate", [12.0, 0.0, 0.0], None);
+        assert_eq!(switchable(&layout), HashSet::from([door, lamp]));
     }
 
     #[test]
