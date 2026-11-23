@@ -14,6 +14,7 @@ sv_maxclients <1-20>        player slots
 endpoint_add_tcp <ip:port>  game endpoint (also rcon over UDP)
 ensure|start|stop|restart <resource>
 refresh                     rescan resources/
+world_reset [instance]      reset a Build Mode world instance (all: no number)
 add_ace|remove_ace <principal> <object> <allow|deny>
 add_principal|remove_principal <child> <parent>
 test_ace <principal> <object>, list_aces
@@ -98,6 +99,28 @@ impl Console {
                 for name in args {
                     self.resource_command(&command, name);
                 }
+            }
+            "world_reset" => {
+                let bucket = match arg(0) {
+                    "" => Ok(None),
+                    text => text.parse::<u32>().map(Some),
+                };
+                let mut state = self.shared.borrow_mut();
+                let message = match (bucket, state.world.as_mut()) {
+                    (Err(_), _) => format!(
+                        "Usage: world_reset [instance] (an instance is a routing bucket number, {} is not)",
+                        arg(0)
+                    ),
+                    (_, None) => "No Build Mode world is running (sets content_pack <id>).".into(),
+                    (Ok(bucket), Some(game)) => match (game.reset(bucket), bucket) {
+                        (0, Some(b)) => format!("World instance {b} has no state yet: nothing to reset."),
+                        (0, None) => "No world instance has state yet: nothing to reset.".into(),
+                        (_, Some(b)) => format!("World instance {b} reset: objects, hour and weather as the world starts."),
+                        (n, None) => format!("{n} world instances with state reset: objects, hour and weather as the world starts."),
+                    },
+                };
+                drop(state);
+                self.say(message);
             }
             "refresh" => match script::refresh(&self.shared) {
                 Ok(added) => self.say(format!("Found {added} new resources.")),

@@ -2,6 +2,7 @@ SARE free-roam test client, built and tested from the linked commit.
 
 Version 0.54.0:
 - Build Mode has a new layout that works like the building editors many creators already know: a ribbon with Home, Model, Test and View tabs, the Toolbox on the left, the Explorer (with Workspace and Lighting) above the Properties on the right, and Output at the bottom. Insert a Part with one click, copy, cut and paste objects, and use Ctrl+1 to Ctrl+4 for the tools and F5 to play. Docks can be closed and opened again from the View tab.
+- Servers: `world_reset [instance]` in the console (and `ResetWorldInstance` for scripts) puts a Build Mode world instance back as it starts: doors, hour and weather.
 - Build Mode: interactions can work from a vehicle (tick *Works from a vehicle*): drivers press E there. Teleports now take a driver's car along (damage and all) when it fits at the destination. Servers check it too.
 - Build Mode terrain: paint it with Grass, Dirt, Sand, Rock or Snow (the new Paint brush, softly blended), and cut holes for cave and tunnel entrances (the Hole brush). Painting over a hole fills it. Holes are open when played, also on servers.
 - Build Mode: roads along points. Place *Road along points* (Roads), drag its points in the world or click to draw more, and it follows a smooth curve with lines and kerbs, climbing to each point's height. It is solid when played, also on servers.

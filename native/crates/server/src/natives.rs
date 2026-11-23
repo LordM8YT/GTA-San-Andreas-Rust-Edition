@@ -1424,6 +1424,19 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
         name,
         |_lua, object: String| { Ok(shared.borrow().world.as_ref().and_then(|g| g.find(&object))) }
     );
+    func!(g, "ResetWorldInstance", shared, name, |_lua,
+                                                  bucket: Option<
+        i64,
+    >| {
+        // Like the other world natives, nil is instance 0; the console's
+        // world_reset resets them all.
+        let bucket = bucket_of(bucket)?;
+        Ok(shared
+            .borrow_mut()
+            .world
+            .as_mut()
+            .is_some_and(|game| game.reset(Some(bucket)) > 0))
+    });
     func!(g, "SetWorldHour", shared, name, |_lua,
                                             (hour, bucket): (
         Option<i64>,

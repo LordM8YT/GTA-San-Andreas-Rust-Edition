@@ -87,6 +87,23 @@ impl Game {
         let state = self.buckets.entry(bucket).or_insert_with(|| world.shared());
         world.visible(state, node)
     }
+    /// Put instance `bucket` (or every instance, for None) back to how the
+    /// world starts; players there get the new state, and their "only the
+    /// first time" triggers work again. How many instances had state.
+    pub fn reset(&mut self, bucket: Option<u32>) -> usize {
+        let world = &self.world;
+        let chosen = |b: u32| bucket.is_none_or(|only| b == only);
+        let mut count = 0;
+        for (_, state) in self.buckets.iter_mut().filter(|(b, _)| chosen(**b)) {
+            state.reset(world);
+            count += 1;
+        }
+        // Their once-only triggers work again for the players there.
+        for player in self.players.values_mut().filter(|p| chosen(p.bucket)) {
+            player.state.world_reset();
+        }
+        count
+    }
     /// Players the world keeps state for.
     #[cfg(test)]
     pub fn player_count(&self) -> usize {

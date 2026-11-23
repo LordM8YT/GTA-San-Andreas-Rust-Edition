@@ -237,7 +237,10 @@ Players who join get the pack's world and the server runs its gameplay:
 - Players who leave are forgotten; the world stays as it is.
 - Server resources react to `sare:zoneEnter`, `sare:objectUsed`,
   `sare:raceFinished` and more, and change the world with
-  `SetWorldObjectVisible`, `SetWorldHour` and `SetWorldWeather`.
+  `SetWorldObjectVisible`, `SetWorldHour`, `SetWorldWeather` and
+  `ResetWorldInstance`.
+- The server console's `world_reset [instance]` puts an instance (or all of
+  them) back as the world starts.
 
 Without the pack on the server, each player's game runs the gameplay on its
 own, unsynchronised, as before.
@@ -397,9 +400,8 @@ Milestone 1 and part of milestone 2 are in. Still to come, roughly in order:
 
 - A pivot of its own for a group: today a group turns and scales about the
   middle of its contents, and has no position or rotation you can type in.
-- Multiplayer: server checks of teleport
-  destinations against the player's later position, and a server console
-  command to reset a world instance.
+- Multiplayer: server checks of teleport destinations against the player's
+  later position.
 - More actions (sounds, items, script events) and Lua hooks so server
   resources can react to zones.
 - A wireframe view of the exact collision triangles (the Collision view

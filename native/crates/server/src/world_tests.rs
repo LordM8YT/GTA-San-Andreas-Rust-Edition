@@ -286,6 +286,22 @@ fn late_joiners_instances_scripts_and_departures() {
         "instance 5 keeps its own weather"
     );
 
+    // The console puts the main instance back as the world starts; Carl's
+    // instance is left alone.
+    let carl_revision = snapshot(&carl).unwrap().revision;
+    server.run("world_reset 0");
+    server.until(&mut [&mut anna, &mut carl], "the reset", |_, p| {
+        snapshot(p[0]).is_some_and(|s| s.hour != Some(3) && s.weather.as_deref() != Some("rain"))
+    });
+    assert!(server.output().contains("World instance 0 reset"));
+    assert_eq!(snapshot(&carl).unwrap().revision, carl_revision);
+    server.run("world_reset 77");
+    assert!(server
+        .output()
+        .contains("World instance 77 has no state yet"));
+    server.run("world_reset five");
+    assert!(server.output().contains("Usage: world_reset [instance]"));
+
     // Departed players are forgotten; the world stays as it is.
     server.leave(carl);
     server.idle(&mut [&mut anna], 3);

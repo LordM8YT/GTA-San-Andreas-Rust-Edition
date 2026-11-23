@@ -65,6 +65,7 @@ for rcon) on the port for internet hosting.
 ## Console
 
 `status`, `resources`, `ensure|start|stop|restart <resource>`, `refresh`,
+`world_reset [instance]`,
 `clientkick <id> <reason>`, `say <text>`, `add_principal player.<id> group.admin`,
 `test_ace`, `list_aces`, `cmdlist`, `quit`. Any `RegisterCommand` command can be
 run from the console. Players run commands from chat (`/respawn`); built-in and
@@ -201,8 +202,16 @@ Events (`source` is the player): `sare:zoneEnter` and `sare:zoneLeave`
 Natives (objects are layout ids or object names; `bucket` defaults to 0):
 `SetWorldObjectVisible(object, visible, bucket)` (false when there is no
 such object), `IsWorldObjectVisible(object, bucket)`,
-`GetWorldObjectByName(name)`, `SetWorldHour(hour or nil, bucket)` and
-`SetWorldWeather('clear'|'cloudy'|'rain'|'fog' or nil, bucket)`.
+`GetWorldObjectByName(name)`, `SetWorldHour(hour or nil, bucket)`,
+`SetWorldWeather('clear'|'cloudy'|'rain'|'fog' or nil, bucket)` and
+`ResetWorldInstance(bucket)` (every object as placed, the world's own hour
+and weather, and "only the first time" triggers usable again; true when the
+instance had state).
+
+The console command `world_reset [instance]` does the same: `world_reset 0`
+puts the main world back as it starts, `world_reset` resets every instance
+that has state. Players there get the new state at once and can use "only
+the first time" triggers again; their course progress and times are kept.
 
 ```lua
 AddEventHandler('sare:raceFinished', function(race, seconds)

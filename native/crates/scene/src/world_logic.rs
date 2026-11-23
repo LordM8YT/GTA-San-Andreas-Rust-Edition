@@ -486,6 +486,9 @@ pub struct Shared {
     /// The latest jump of a running clock (number, hour), so players who
     /// get it later still jump once.
     jump: Option<(u32, u8)>,
+    /// Jumps made so far, kept through a reset: players compare jump
+    /// numbers, so a number must never come round again.
+    jumps: u32,
     revision: u64,
 }
 
@@ -530,6 +533,14 @@ impl PlayerState {
     pub fn moved(&mut self) {
         self.settle = true;
     }
+    /// The player's world instance was reset: "only the first time"
+    /// triggers work again, and the zones they stand in are taken quietly.
+    /// Course progress and times are kept.
+    pub fn world_reset(&mut self) {
+        self.fired.clear();
+        self.left.clear();
+        self.settle = true;
+    }
 }
 
 impl Shared {
@@ -542,6 +553,16 @@ impl Shared {
     }
     pub fn revision(&self) -> u64 {
         self.revision
+    }
+    /// Back to how `world` starts: every object as placed, the world's own
+    /// hour and weather. A new revision, so every player gets it.
+    pub fn reset(&mut self, world: &World) {
+        let (revision, jumps) = (self.revision + 1, self.jumps);
+        *self = Shared {
+            revision,
+            jumps,
+            ..world.shared()
+        };
     }
     /// Objects actions hid.
     pub fn hidden_ids(&self) -> impl Iterator<Item = NodeId> + '_ {
@@ -571,8 +592,8 @@ impl Shared {
     }
     /// Make a running clock jump to `hour` (for everyone in the instance).
     pub fn jump_to(&mut self, hour: u8) {
-        let number = self.jump.map_or(1, |(n, _)| n.wrapping_add(1));
-        self.jump = Some((number, hour.min(23)));
+        self.jumps = self.jumps.wrapping_add(1);
+        self.jump = Some((self.jumps, hour.min(23)));
         self.revision += 1;
     }
     /// The latest clock jump: its number and hour.
@@ -630,6 +651,7 @@ impl Shared {
             hour: snapshot.hour.map(|h| h.min(23)),
             weather: snapshot.weather.as_deref().and_then(Weather::parse),
             jump: snapshot.jump.map(|(n, h)| (n, h.min(23))),
+            jumps: snapshot.jump.map_or(0, |(n, _)| n),
             revision: snapshot.revision,
         }
     }
@@ -1548,6 +1570,10 @@ mod tests {
         assert_eq!(messages(&logic.step(outside, 0.1)), vec!["out"]);
         assert!(logic.step([0.0; 3], 0.1).is_empty(), "once means once");
         assert!(logic.step(outside, 0.1).is_empty());
+        // Until the world instance is reset.
+        logic.player_mut().world_reset();
+        logic.step(outside, 0.1);
+        assert_eq!(messages(&logic.step([0.0; 3], 0.1)), vec!["in"]);
     }
 
     #[test]
@@ -1701,6 +1727,16 @@ mod tests {
         // Players of a hosted world get the jump through the snapshot.
         let jump = logic.shared().snapshot().jump;
         assert_eq!(jump, Some((1, 20)));
+        // A reset forgets the jump but not its number: the next one is
+        // new to players who saw the first.
+        let world = World::new(&layout);
+        let mut shared = logic.shared().clone();
+        let revision = shared.revision();
+        shared.reset(&world);
+        assert!(shared.revision() > revision);
+        assert_eq!(shared.jump(), None);
+        shared.jump_to(6);
+        assert_eq!(shared.jump(), Some((2, 6)));
     }
 
     #[test]
