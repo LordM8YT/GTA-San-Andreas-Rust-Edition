@@ -36,6 +36,9 @@ pub fn place(
     if matches!(node.asset.as_ref(), Some(AssetRef::Builtin(b)) if b == "terrain") {
         node.terrain = Some(sa_scene::builtin_assets::preset_terrain());
     }
+    if matches!(node.asset.as_ref(), Some(AssetRef::Builtin(b)) if b == "spline-road") {
+        node.road = Some(sa_scene::builtin_assets::preset_road());
+    }
     node.light = match node.asset.as_ref() {
         Some(AssetRef::Builtin(builtin)) => sa_scene::builtin_assets::light_preset(builtin),
         _ => None,

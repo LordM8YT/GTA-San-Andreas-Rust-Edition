@@ -993,7 +993,53 @@ impl State {
                     "undo did not restore the terrain ({before} -> {after}); log {log:?}"
                 );
             }
-            92 => return true,
+            // A road along points: placed, drawn, and rebuilt when a point
+            // moves.
+            92 => {
+                let build = self.build.as_mut().unwrap();
+                let at = sa_scene::world_layout::Transform {
+                    position: [0.0, -40.0, 0.0],
+                    ..Default::default()
+                };
+                let (command, id) = sa_editor::ops::place(
+                    &mut build.doc,
+                    AssetRef::Builtin("spline-road".into()),
+                    "Road",
+                    at,
+                    None,
+                )
+                .expect("placing a road");
+                build.execute(command);
+                build.selection = vec![id];
+                build.focus_selection();
+            }
+            96 => {
+                let build = self.build.as_mut().unwrap();
+                let id = build.selection[0];
+                let before = build.gpu.objects[&id].bounds;
+                build.ui.smoke_road = Some((id, before.1.y));
+                assert!(
+                    (before.1 - before.0).x > 40.0,
+                    "the road mesh is not along its points: {before:?}"
+                );
+                build.preview("Move road point", &[id], |n| {
+                    if let Some(road) = &mut n.road {
+                        road.points[2][2] = 6.0;
+                    }
+                });
+                build.commit_preview();
+            }
+            100 => {
+                let build = self.build.as_ref().unwrap();
+                let (id, before) = build.ui.smoke_road.unwrap();
+                let after = build.gpu.objects[&id].bounds.1.y;
+                assert!(
+                    after > before + 5.0,
+                    "raising a road point did not rebuild the road ({before} -> {after})"
+                );
+                capture(self, "build-road.png");
+            }
+            102 => return true,
             _ => {}
         }
         false

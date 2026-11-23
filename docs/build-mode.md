@@ -171,6 +171,27 @@ normal object: move, turn or scale it, and it is drawn and solid in
 Playtest, from the launcher and on servers. Its heights are saved in
 `layout.json`, so it travels with the world.
 
+## Roads
+
+Place *Road along points* from the Toolbox (category Roads): an 8 m road
+through three points with a gentle bend. Select it and its points show as
+white dots in the world:
+
+- Drag a dot to move that point (it stays at its height; with Snap on it
+  lands on the grid).
+- **Draw points** in the Properties: every click in the world adds a point
+  at the end of the road, on whatever surface is under the mouse.
+  Right-click or Esc stops.
+- **+ Add point** continues the road 16 m in its direction; × removes a
+  point (a road keeps at least two).
+- Type a point's X, Y and Z (the road's own metres) or the width (1-40 m).
+
+The road runs on a smooth curve through every point. Heights ease from one
+point to the next, so a road can climb a sculpted hill: raise a point's Z.
+It has edge lines, a dashed centre line and a short kerb so it never floats
+over uneven ground, and it is solid when played, from the launcher and on
+servers. Moving, turning or scaling the object moves the whole road.
+
 Moving objects in the **Explorer**: drag a row onto the top or bottom
 half of another row to put it before or after it, onto the middle of a group
 to put it inside, or below the list for the top level. Dragging a selected
@@ -258,6 +279,10 @@ content/my-town/
   "color": [0.36, 0.5, 0.27] }` with (cells + 1)² heights in metres, row by
   row from south to north (`sa_scene::terrain`). Up to 128 cells and
   ±200 m.
+- `road` is optional: `{ "points": [[-24, 0, 0], [0, 6, 0], [24, 0, 0]],
+  "width": 8 }`, 2-256 points in the object's own metres (east, north, up),
+  each coordinate within ±2000 m, at least 0.5 m long, width 1-40 m
+  (`sa_scene::road`).
 - `light` is optional: `{ "color": [1, 0.85, 0.6], "size": 1, "radius": 6,
   "offset": [0, 1, 4.25] }` (linear RGB 0-1, metres, offset in the object's
   axes). `settings.fog` (0.2-10), `sky` (RGB 0-1) and `brightness`
@@ -371,6 +396,6 @@ Milestone 1 and part of milestone 2 are in. Still to come, roughly in order:
   are glow and ground light), per-object shadow switches.
 - Terrain: painting several materials, holes, and terrain bigger than one
   object (place several side by side today).
-- Roads and paths drawn along spline points with their own collision; until
-  then, use the Road pieces and sculpted terrain.
+- Roads: junctions where roads meet, and road surfaces that follow the
+  terrain under them by themselves (today: set the points' heights).
 - Visual scripting, publishing worlds to servers.

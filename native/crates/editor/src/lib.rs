@@ -708,4 +708,43 @@ mod tests {
         let empty = render(&sa_scene::gltf_model::Model::default(), 8);
         assert!(empty.rgba.iter().all(|v| *v == 0));
     }
+
+    #[test]
+    fn a_placed_road_has_points_saves_and_draws_from_them() {
+        let mut doc = doc();
+        let at = Transform {
+            position: [100.0, 50.0, 2.0],
+            ..Transform::default()
+        };
+        let (command, id) = ops::place(
+            &mut doc,
+            AssetRef::Builtin("spline-road".into()),
+            "Road",
+            at,
+            None,
+        )
+        .unwrap();
+        command.apply(&mut doc).unwrap();
+        let node = doc.layout.node(id).unwrap();
+        let road = node.road.clone().expect("a placed road gets its points");
+        assert!(road.is_valid() && road.points.len() >= 2);
+        // It saves and loads with its points, and validates.
+        let json = serde_json::to_string(&doc.layout).unwrap();
+        let loaded: Layout = serde_json::from_str(&json).unwrap();
+        loaded.validate().unwrap();
+        assert_eq!(loaded.node(id).unwrap().road.as_ref(), Some(&road));
+        // The model played and drawn is the road along its own points.
+        let mut resolver = AssetResolver::new(std::path::Path::new("."));
+        let model =
+            sa_scene::content_pack::node_model(loaded.node(id).unwrap(), &mut resolver).unwrap();
+        assert_eq!(model.triangles, sa_scene::road::model(&road).triangles);
+        // A road needs two points: one alone does not validate.
+        let mut broken = loaded.clone();
+        broken.nodes.iter_mut().for_each(|n| {
+            if let Some(road) = &mut n.road {
+                road.points.truncate(1);
+            }
+        });
+        assert!(broken.validate().is_err());
+    }
 }

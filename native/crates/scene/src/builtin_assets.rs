@@ -42,6 +42,11 @@ pub const ALL: &[Builtin] = &[
         category: "Roads",
     },
     Builtin {
+        name: "spline-road",
+        label: "Road along points",
+        category: "Roads",
+    },
+    Builtin {
         name: "floor",
         label: "Floor tile 4 m",
         category: "Buildings",
@@ -156,6 +161,15 @@ pub const GAMEPLAY: &str = "Gameplay";
 /// The ground a placed Terrain starts with: flat, 64 m, 2 m squares.
 pub fn preset_terrain() -> crate::world_layout::Terrain {
     crate::world_layout::Terrain::flat(64.0, 32)
+}
+
+/// The road a placed "Road along points" starts with: 8 m wide, 48 m
+/// long with a gentle bend, ready to drag its points.
+pub fn preset_road() -> crate::world_layout::Road {
+    crate::world_layout::Road {
+        points: vec![[-24.0, 0.0, 0.0], [0.0, 6.0, 0.0], [24.0, 0.0, 0.0]],
+        ..crate::world_layout::Road::straight([0.0; 3], [0.0; 3], 8.0)
+    }
 }
 
 /// The light a built-in comes with when placed (a lamp post glows).
@@ -287,6 +301,10 @@ pub fn model(name: &str) -> Option<Model> {
         // A placed terrain shows its own heights (`Node::terrain`); this is
         // the picture and the stand-in.
         return Some(crate::terrain::model(&preset_terrain()));
+    }
+    if name == "spline-road" {
+        // Likewise: a placed road shows its own points (`Node::road`).
+        return Some(crate::road::model(&preset_road()));
     }
     let mut s = Shape::default();
     match name {

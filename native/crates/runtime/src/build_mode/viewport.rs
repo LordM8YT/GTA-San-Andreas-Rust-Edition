@@ -10,7 +10,7 @@ use sa_editor::ops;
 use sa_editor::viewport::{
     angle_around, blender_axis, gizmo_axes, moved, pick, rotated, snap, Pickable, Ray,
 };
-use sa_scene::world_layout::{gltf_to_blender, Node, NodeId, Transform};
+use sa_scene::world_layout::{gltf_to_blender, Node, NodeId, Road, Transform};
 use sa_scene::world_logic::{self, Action, Component};
 
 /// The camera of the frame being drawn.
@@ -134,6 +134,9 @@ pub fn show(build: &mut BuildMode, ui: &mut Ui, frame: &Frame) {
     let (modifiers, dt) = ui.input(|i| (i.modifiers, i.stable_dt.min(0.1)));
 
     camera_controls(build, ui, &response, dt);
+    if build.tool == Tool::Sculpt || build.placing.is_some() {
+        end_road_editing(build);
+    }
     // Placing an asset works with every tool; sculpting otherwise.
     if build.tool == Tool::Sculpt && build.placing.is_none() {
         sculpt(build, ui, &view, &painter, pointer, dt);
@@ -183,6 +186,13 @@ pub fn show(build: &mut BuildMode, ui: &mut Ui, frame: &Frame) {
         if response.clicked_by(egui::PointerButton::Secondary) {
             build.placing = None;
         }
+        draw_selection(build, &view, &painter);
+        return;
+    }
+
+    // A selected road: its points are handles, and in draw mode a click
+    // adds a point. They come before the gizmo and selection.
+    if road_points(build, ui, &view, &painter, &response, pointer, modifiers) {
         draw_selection(build, &view, &painter);
         return;
     }
@@ -461,6 +471,188 @@ fn movable(build: &BuildMode) -> Vec<NodeId> {
             layout.node(*id).is_some_and(|n| !n.is_group()) && !layout.effective_locked(*id)
         })
         .collect()
+}
+
+/// Stop dragging a road point (keeping the move as one undo step) and
+/// drawing a road.
+pub(super) fn end_road_editing(build: &mut BuildMode) {
+    if build.ui.road_drag.take().is_some() {
+        build.commit_preview();
+    }
+    build.ui.road_draw = None;
+}
+
+/// The one selected road that can be edited: its id, transform and road.
+fn selected_road(build: &BuildMode) -> Option<(NodeId, Transform, Road)> {
+    let [id] = build.selection[..] else {
+        return None;
+    };
+    let layout = &build.doc.layout;
+    let node = layout.node(id)?;
+    let road = node.road.clone()?;
+    (layout.effective_visible(id) && !layout.effective_locked(id)).then_some((
+        id,
+        node.transform,
+        road,
+    ))
+}
+
+/// A road point (the road's own metres) in the pack's Blender axes.
+fn road_to_world(transform: &Transform, point: [f32; 3]) -> Vec3 {
+    let scaled = Vec3::from_array(point) * Vec3::from_array(transform.scale);
+    Vec3::from_array(transform.position) + transform.rotation_quat() * scaled
+}
+
+/// A point in the pack's Blender axes in a road's own metres.
+fn world_to_road(transform: &Transform, world: Vec3) -> [f32; 3] {
+    let local =
+        transform.rotation_quat().inverse() * (world - Vec3::from_array(transform.position));
+    let scale = Vec3::from_array(transform.scale);
+    (local / scale).to_array()
+}
+
+/// The selected road's point handles: drag one to move it (on the level of
+/// the point, snapped to the grid with Snap on), and in draw mode click
+/// to add a point at the end. True when the road took the mouse.
+fn road_points(
+    build: &mut BuildMode,
+    ui: &Ui,
+    view: &View,
+    painter: &egui::Painter,
+    response: &egui::Response,
+    pointer: Option<Pos2>,
+    modifiers: egui::Modifiers,
+) -> bool {
+    let Some((id, transform, road)) = selected_road(build) else {
+        end_road_editing(build);
+        return false;
+    };
+    let drawing = build.ui.road_draw == Some(id);
+    // The curve and its points.
+    let render =
+        |p: [f32; 3]| crate::play_logic::blender_to_render(road_to_world(&transform, p).to_array());
+    let curve: Vec<Vec3> = road.curve().iter().map(|p| render(p.to_array())).collect();
+    for pair in curve.windows(2) {
+        if let Some(segment) = view.segment(pair[0], pair[1]) {
+            painter.line_segment(segment, Stroke::new(2.0, ui_theme::ACCENT));
+        }
+    }
+    let handles: Vec<Option<Pos2>> = road
+        .points
+        .iter()
+        .map(|p| view.project(render(*p)))
+        .collect();
+    let under = |at: Pos2| {
+        handles
+            .iter()
+            .enumerate()
+            .filter_map(|(i, h)| h.map(|h| (i, h.distance(at))))
+            .filter(|(_, d)| *d < 9.0)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(i, _)| i)
+    };
+    // A gizmo drag going on keeps the mouse, even over a point.
+    let hover = pointer.and_then(under).filter(|_| build.drag.is_none());
+
+    // Drag a point.
+    if response.drag_started_by(egui::PointerButton::Primary)
+        && !modifiers.alt
+        && build.drag.is_none()
+    {
+        let index = ui.input(|i| i.pointer.press_origin()).and_then(under);
+        if let Some(index) = index {
+            build.commit_preview();
+            build.ui.road_drag = Some((id, index));
+        }
+    }
+    let dragging = build.ui.road_drag.filter(|(road_id, _)| *road_id == id);
+    if let (Some((_, index)), Some(at)) = (dragging, ui.input(|i| i.pointer.interact_pos())) {
+        if let Some(point) = road.points.get(index) {
+            let level = render(*point);
+            let ray = view.ray(at);
+            if let Some(t) = ray.plane(level, Vec3::Y) {
+                let mut world = Vec3::from_array(crate::play_logic::render_to_blender(ray.at(t)));
+                if build.snap.enabled != modifiers.ctrl {
+                    world.x = snap(world.x, build.snap.step);
+                    world.y = snap(world.y, build.snap.step);
+                }
+                let moved = world_to_road(&transform, world);
+                let mut edited = road.clone();
+                edited.points[index] = moved;
+                if edited.is_valid() {
+                    build.preview("Move road point", &[id], |n| n.road = Some(edited.clone()));
+                }
+            }
+        }
+    }
+    if build.ui.road_drag.is_some() && !ui.input(|i| i.pointer.primary_down()) {
+        build.ui.road_drag = None;
+        build.commit_preview();
+    }
+
+    // Draw mode: a click adds a point where it lands.
+    // Only a point drag or draw mode keep the mouse from the gizmo and
+    // selection; hovering a point does not.
+    let mut took = build.ui.road_drag.is_some();
+    if drawing {
+        took = true;
+        if response.clicked_by(egui::PointerButton::Primary) && hover.is_none() && !modifiers.alt {
+            if let Some(at) = pointer {
+                let ray = view.ray(at);
+                let hit = surface_hit(build, &ray).or_else(|| {
+                    ray.plane(render(*road.points.last().unwrap_or(&[0.0; 3])), Vec3::Y)
+                        .map(|t| ray.at(t))
+                });
+                if let Some(hit) = hit {
+                    let mut world = Vec3::from_array(crate::play_logic::render_to_blender(hit));
+                    if build.snap.enabled != modifiers.ctrl {
+                        world.x = snap(world.x, build.snap.step);
+                        world.y = snap(world.y, build.snap.step);
+                    }
+                    let mut edited = road.clone();
+                    edited.points.push(world_to_road(&transform, world));
+                    if edited.is_valid() {
+                        super::panels::run(
+                            build,
+                            ops::modify(&build.doc, "Add road point", &[id], |n| {
+                                n.road = Some(edited.clone())
+                            }),
+                        );
+                    } else {
+                        build.error(format!(
+                            "A road has at most {} points, each with X, Y and Z within ±{} m of the object (in its own metres)",
+                            Road::MAX_POINTS,
+                            Road::MAX_REACH
+                        ));
+                    }
+                }
+            }
+        }
+        if response.clicked_by(egui::PointerButton::Secondary) {
+            build.ui.road_draw = None;
+        }
+        if pointer.is_some() {
+            response.clone().on_hover_text_at_pointer(
+                "Click to add a road point. Right-click or Esc to stop drawing.",
+            );
+        }
+    }
+    let active = build.ui.road_drag.map(|(_, i)| i).or(hover);
+    for (i, handle) in handles.iter().enumerate() {
+        let Some(handle) = handle else { continue };
+        let radius = if active == Some(i) { 7.0 } else { 5.0 };
+        painter.circle(
+            *handle,
+            radius,
+            if active == Some(i) {
+                ui_theme::ACCENT
+            } else {
+                Color32::WHITE
+            },
+            Stroke::new(1.5, Color32::BLACK),
+        );
+    }
+    took
 }
 
 /// Gizmo origin (render space) and the transform it follows.

@@ -45,8 +45,39 @@ pub struct Gpu {
     pub ghost: Option<ObjectMesh>,
     /// Objects' lights: their glow, drawn in the night glow pass.
     pub lights: HashMap<NodeId, LightMesh>,
-    /// The heights each terrain object's mesh was built from.
-    terrains: HashMap<NodeId, sa_scene::world_layout::Terrain>,
+    /// The terrain or road each generated object's mesh was built from.
+    generated: HashMap<NodeId, Generated>,
+}
+
+/// What a terrain or road object's own mesh is made from.
+#[derive(Clone, PartialEq)]
+enum Generated {
+    Terrain(sa_scene::world_layout::Terrain),
+    Road(sa_scene::world_layout::Road),
+}
+impl Generated {
+    fn of(node: &sa_scene::world_layout::Node) -> Option<Self> {
+        match (&node.terrain, &node.road) {
+            (Some(terrain), _) => Some(Self::Terrain(terrain.clone())),
+            (None, Some(road)) => Some(Self::Road(road.clone())),
+            (None, None) => None,
+        }
+    }
+    /// The node is still what this was made from (compared in place: no
+    /// copy of a big height grid every frame).
+    fn matches(&self, node: &sa_scene::world_layout::Node) -> bool {
+        match (self, &node.terrain, &node.road) {
+            (Self::Terrain(made), Some(now), _) => made == now,
+            (Self::Road(made), None, Some(now)) => made == now,
+            _ => false,
+        }
+    }
+    fn model(&self) -> sa_scene::gltf_model::Model {
+        match self {
+            Self::Terrain(terrain) => sa_scene::terrain::model(terrain),
+            Self::Road(road) => sa_scene::road::model(road),
+        }
+    }
 }
 
 /// The glow of one object's light, where the object stands.
@@ -130,23 +161,33 @@ impl Gpu {
                 .node(*id)
                 .is_some_and(|n| n.asset.as_ref() == Some(&object.asset))
         });
-        self.terrains
-            .retain(|id, _| layout.node(*id).is_some_and(|n| n.terrain.is_some()));
+        self.generated.retain(|id, _| {
+            layout
+                .node(*id)
+                .is_some_and(|n| n.terrain.is_some() || n.road.is_some())
+        });
         for node in &layout.nodes {
             let Some(asset) = &node.asset else { continue };
-            if let Some(terrain) = &node.terrain {
-                // Its own mesh, rebuilt when sculpted or moved.
-                let fresh = self.terrains.get(&node.id) == Some(terrain)
+            if node.terrain.is_some() || node.road.is_some() {
+                // Its own mesh, rebuilt when sculpted, its points change or
+                // it moves.
+                let fresh = self
+                    .generated
+                    .get(&node.id)
+                    .is_some_and(|g| g.matches(node))
                     && self
                         .objects
                         .get(&node.id)
                         .is_some_and(|o| o.transform == node.transform);
                 if !fresh {
-                    match upload(state, &sa_scene::terrain::model(terrain), false) {
+                    let Some(generated) = Generated::of(node) else {
+                        continue;
+                    };
+                    match upload(state, &generated.model(), false) {
                         Ok(mesh) => {
                             let object = instance(state, &mesh, asset.clone(), node.transform);
                             self.objects.insert(node.id, object);
-                            self.terrains.insert(node.id, terrain.clone());
+                            self.generated.insert(node.id, generated);
                         }
                         Err(error) => problems.push(format!("{asset}: {error:#}")),
                     }

@@ -98,8 +98,14 @@ pub struct UiState {
     pub hide_gameplay: bool,
     /// A Sculpt stroke is going on: the height Flatten keeps.
     pub sculpt_stroke: Option<f32>,
+    /// Clicks in the viewport add points to this road.
+    pub road_draw: Option<NodeId>,
+    /// A road point is being dragged: the road and the point.
+    pub road_drag: Option<(NodeId, usize)>,
     /// `--smoke-build`: the terrain sculpted and its height before.
     pub smoke_terrain: Option<(NodeId, f32)>,
+    /// `--smoke-build`: the road placed and its top before a point rose.
+    pub smoke_road: Option<(NodeId, f32)>,
     /// Asset Browser pictures; None when one could not be made.
     pub thumbnails: HashMap<AssetRef, Option<egui::TextureHandle>>,
 }
@@ -392,7 +398,9 @@ fn shortcuts(build: &mut BuildMode, ui: &mut Ui) {
         delete(build);
     }
     if pressed(ui, Key::Escape) {
-        if build.placing.is_some() {
+        if build.ui.road_draw.is_some() {
+            build.ui.road_draw = None;
+        } else if build.placing.is_some() {
             build.placing = None;
         } else {
             build.selection.clear();
@@ -2367,6 +2375,109 @@ fn terrain_section(build: &mut BuildMode, ui: &mut Ui, id: NodeId, node: &Node) 
     }
 }
 
+/// A road object: its width and points, and drawing more of it.
+fn road_section(build: &mut BuildMode, ui: &mut Ui, id: NodeId, node: &Node) {
+    use sa_scene::world_layout::Road;
+    let Some(road) = &node.road else {
+        return;
+    };
+    section(ui, "Road");
+    ui.label(format!(
+        "{} points, {:.0} m long",
+        road.points.len(),
+        road.length()
+    ));
+    let locked = build.doc.layout.effective_locked(id);
+    let mut edited = road.clone();
+    let mut remove = None;
+    ui.add_enabled_ui(!locked, |ui| {
+        ui.horizontal(|ui| {
+            ui.label("Width");
+            ui.add(
+                egui::DragValue::new(&mut edited.width)
+                    .range(Road::MIN_WIDTH..=Road::MAX_WIDTH)
+                    .speed(0.1)
+                    .suffix(" m"),
+            );
+        });
+        ui.horizontal(|ui| {
+            let drawing = build.ui.road_draw == Some(id);
+            if ui
+                .selectable_label(drawing, "✏ Draw points")
+                .on_hover_text(
+                    "Click in the world to add points at the end of the road (Esc stops)",
+                )
+                .clicked()
+            {
+                build.ui.road_draw = if drawing { None } else { Some(id) };
+            }
+            let next = edited.extended(16.0);
+            let room = edited.points.len() < Road::MAX_POINTS
+                && next.iter().all(|v| v.abs() <= Road::MAX_REACH);
+            if ui
+                .add_enabled(room, egui::Button::new("+ Add point").small())
+                .on_hover_text("A point 16 m on from the last one")
+                .on_disabled_hover_text(format!(
+                    "A road has at most {} points, each with X, Y and Z within ±{} m",
+                    Road::MAX_POINTS,
+                    Road::MAX_REACH
+                ))
+                .clicked()
+            {
+                edited.points.push(next);
+            }
+        });
+        egui::Grid::new(("road-points", id))
+            .num_columns(5)
+            .spacing([4.0, 2.0])
+            .show(ui, |ui| {
+                for (i, point) in edited.points.iter_mut().enumerate() {
+                    ui.label(RichText::new(format!("{}", i + 1)).color(MUTED));
+                    for value in point.iter_mut() {
+                        ui.add(
+                            egui::DragValue::new(value)
+                                .range(-Road::MAX_REACH..=Road::MAX_REACH)
+                                .speed(0.1)
+                                .max_decimals(2),
+                        );
+                    }
+                    if ui
+                        .add_enabled(road.points.len() > 2, egui::Button::new("×").small())
+                        .on_hover_text("Remove this point")
+                        .clicked()
+                    {
+                        remove = Some(i);
+                    }
+                    ui.end_row();
+                }
+            });
+    });
+    ui.label(
+        RichText::new(
+            "Drag the white points in the world to bend the road (Snap keeps them on the grid). Points are in the road's own metres: X east, Y north, Z up.",
+        )
+        .small()
+        .color(MUTED),
+    );
+    if let Some(i) = remove {
+        edited.points.remove(i);
+    }
+    if !edited.is_valid() || edited == *road {
+        return;
+    }
+    if edited.points.len() == road.points.len() {
+        // A drag is one undo step, like every other Properties drag.
+        build.preview("Edit road", &[id], |n| n.road = Some(edited.clone()));
+    } else {
+        run(
+            build,
+            ops::modify(&build.doc, "Edit road", &[id], |n| {
+                n.road = Some(edited.clone())
+            }),
+        );
+    }
+}
+
 /// The object's light: a corona and a pool of light on the ground.
 fn light_section(build: &mut BuildMode, ui: &mut Ui, id: NodeId, node: &Node) {
     use sa_scene::world_layout::PointLight;
@@ -2641,6 +2752,7 @@ fn object(build: &mut BuildMode, ui: &mut Ui, id: NodeId) {
         super::gameplay_ui::inspector(build, ui, id, &node);
         light_section(build, ui, id, &node);
         terrain_section(build, ui, id, &node);
+        road_section(build, ui, id, &node);
     }
     if let Some(asset) = &node.asset {
         section(ui, "Asset");

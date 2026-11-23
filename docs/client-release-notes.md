@@ -2,6 +2,7 @@ SARE free-roam test client, built and tested from the linked commit.
 
 Version 0.54.0:
 - Build Mode has a new layout that works like the building editors many creators already know: a ribbon with Home, Model, Test and View tabs, the Toolbox on the left, the Explorer (with Workspace and Lighting) above the Properties on the right, and Output at the bottom. Insert a Part with one click, copy, cut and paste objects, and use Ctrl+1 to Ctrl+4 for the tools and F5 to play. Docks can be closed and opened again from the View tab.
+- Build Mode: roads along points. Place *Road along points* (Roads), drag its points in the world or click to draw more, and it follows a smooth curve with lines and kerbs, climbing to each point's height. It is solid when played, also on servers.
 - Build Mode: Import on the ribbon (and File → Import model) opens your system's file picker for .glb models.
 - Build Mode: a selected group, or several selected objects, now turns and scales as one with the gizmo, about the middle of the selection, instead of every object turning in place.
 - Build Mode runs on slower computers: the new Light editor graphics (View → Performance) draw without shadows, reflections or bloom, at two thirds resolution and at most 30 FPS, which draws less than half the pixels, half as often, without the shadow pass, and used clearly less CPU on our test PC (testing on slower hardware is still pending). It turns on by itself on integrated graphics; playtesting keeps your own graphics settings. Traffic and pedestrians no longer run while you edit.

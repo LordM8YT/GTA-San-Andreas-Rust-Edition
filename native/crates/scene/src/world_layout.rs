@@ -209,6 +209,10 @@ pub struct Node {
     /// its asset's model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terrain: Option<Terrain>,
+    /// A road drawn along points (see [`Road`]); the object shows it
+    /// instead of its asset's model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub road: Option<Road>,
     /// Fields from a newer SARE or a hand edit, written back unchanged.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -232,6 +236,7 @@ impl Node {
             gameplay: None,
             light: None,
             terrain: None,
+            road: None,
             extra: Map::new(),
         }
     }
@@ -248,6 +253,7 @@ impl Node {
             gameplay: None,
             light: None,
             terrain: None,
+            road: None,
             extra: Map::new(),
         }
     }
@@ -310,6 +316,52 @@ impl PointLight {
                 .offset
                 .iter()
                 .all(|v| v.is_finite() && v.abs() <= 100.0)
+    }
+}
+
+/// A road along points, drawn on a smooth curve through them (see
+/// [`crate::road`] for how it is built).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Road {
+    /// Points the road runs through, in the object's own metres (x east,
+    /// y north, z up), in order.
+    pub points: Vec<[f32; 3]>,
+    /// Width in metres.
+    #[serde(default = "road_width")]
+    pub width: f32,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+fn road_width() -> f32 {
+    8.0
+}
+impl Road {
+    pub const MAX_POINTS: usize = 256;
+    pub const MIN_WIDTH: f32 = 1.0;
+    pub const MAX_WIDTH: f32 = 40.0;
+    /// Furthest a point may be from the object along X, Y or Z, in the
+    /// object's own metres.
+    pub const MAX_REACH: f32 = 2000.0;
+    /// Shortest road, metres.
+    pub const MIN_LENGTH: f32 = 0.5;
+    /// A straight road from `from` to `to`.
+    pub fn straight(from: [f32; 3], to: [f32; 3], width: f32) -> Self {
+        Self {
+            points: vec![from, to],
+            width,
+            extra: Map::new(),
+        }
+    }
+    pub fn is_valid(&self) -> bool {
+        (2..=Self::MAX_POINTS).contains(&self.points.len())
+            && (Self::MIN_WIDTH..=Self::MAX_WIDTH).contains(&self.width)
+            && self
+                .points
+                .iter()
+                .flatten()
+                .all(|v| v.is_finite() && v.abs() <= Self::MAX_REACH)
+            // Points all in one place would make a road with no surface.
+            && self.length() >= Self::MIN_LENGTH
     }
 }
 
@@ -533,6 +585,12 @@ impl Layout {
             ensure!(
                 node.transform.is_valid(),
                 "object {} ({}) has an invalid position, rotation or scale",
+                node.id,
+                node.name
+            );
+            ensure!(
+                node.road.as_ref().is_none_or(Road::is_valid),
+                "object {} ({}) has a road with too few or too many points, a bad width or a point too far away",
                 node.id,
                 node.name
             );

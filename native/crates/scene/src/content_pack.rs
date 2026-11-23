@@ -413,13 +413,17 @@ pub fn place_layout(
     report
 }
 
-/// The model a layout object shows: its sculpted terrain, or its asset.
+/// The model a layout object shows: its sculpted terrain, its road, or its
+/// asset.
 pub fn node_model(
     node: &world_layout::Node,
     assets: &mut AssetResolver,
 ) -> Result<std::sync::Arc<gltf_model::Model>> {
     if let Some(terrain) = &node.terrain {
         return Ok(std::sync::Arc::new(crate::terrain::model(terrain)));
+    }
+    if let Some(road) = &node.road {
+        return Ok(std::sync::Arc::new(crate::road::model(road)));
     }
     let asset = node.asset.as_ref().context("a group has no model")?;
     assets.model(asset)

@@ -15,6 +15,7 @@ pub use mods::{share_resource_folders, share_resources};
 pub use mta_map::{MapPickup, PickupKind};
 pub mod ped;
 pub mod ped_list;
+pub mod road;
 pub mod roads;
 mod roadsign;
 pub mod terrain;
