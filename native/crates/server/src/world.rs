@@ -357,7 +357,10 @@ pub fn handle_event(shared: &Shared, source: u32, name: &str, args: &[Json]) -> 
     let mut refusal = None;
     if let (Some(pose), Some(player)) = (pose, game.players.get_mut(&source)) {
         let now = Instant::now();
-        if player
+        if pose.driving && game.world.on_foot_only(node) {
+            // Checked first: a refused driver does not use up the rate limit.
+            refusal = Some("on foot only, and the player is driving");
+        } else if player
             .last_use
             .is_some_and(|last| now - last < USE_INTERVAL)
         {

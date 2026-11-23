@@ -242,6 +242,8 @@ fn fields(
                         .desired_width(190.0),
                 );
             });
+            ui.checkbox(&mut interact.vehicles, "Works from a vehicle")
+                .on_hover_text("Drivers can press E here too (a drive-through, a garage door). Teleports take the car along.");
             actions(
                 ui,
                 "When the player presses E",

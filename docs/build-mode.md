@@ -202,8 +202,14 @@ row moves the whole selection. With several objects selected, the Properties pan
 shows, hides, locks, unlocks, switches collision, resets or drops them all
 at once. Each is one undo step.
 
-While playing, E uses the interaction you stand in. Zones react to a player
-on foot. Every playtest starts the gameplay fresh.
+While playing, E uses the interaction you stand in. Zones and checkpoints
+react to players on foot and in cars. Interactions are on foot only unless
+*Works from a vehicle* is ticked: then a driver presses E there too (a
+drive-through, a garage door). Any teleport a driver gets (from an
+interaction or a zone) takes the car along with the driver at the wheel and
+its damage as it was, when the car has room at the destination; otherwise
+the driver sees "No room for the car there" and stays. Servers check it as
+well and refuse an on-foot interaction from a driver. Every playtest starts the gameplay fresh.
 
 A world played from the launcher (outside Build Mode) runs all of it too.
 The objects that actions show or hide are kept out of the pack's merged
@@ -278,6 +284,8 @@ content/my-town/
   Visible, Locked and Collision down to their contents; they have no
   transform of their own yet.
 - Ids are stable and never reused, even after undo.
+- An `interact` behaviour can have `"vehicles": true` to work for drivers
+  too (left out: on foot only).
 - `terrain` is optional: `{ "size": 64, "cells": 32, "heights": [...],
   "color": [0.36, 0.5, 0.27] }` with (cells + 1)² heights in metres, row by
   row from south to north (`sa_scene::terrain`). Up to 128 cells and
@@ -389,7 +397,7 @@ Milestone 1 and part of milestone 2 are in. Still to come, roughly in order:
 
 - A pivot of its own for a group: today a group turns and scales about the
   middle of its contents, and has no position or rotation you can type in.
-- Multiplayer: interactions while driving, server checks of teleport
+- Multiplayer: server checks of teleport
   destinations against the player's later position, and a server console
   command to reset a world instance.
 - More actions (sounds, items, script events) and Lua hooks so server

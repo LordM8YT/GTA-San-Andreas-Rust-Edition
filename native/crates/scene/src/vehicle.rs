@@ -590,13 +590,61 @@ impl Car {
     pub fn spawn_near(world: &CollisionWorld, eye: Vec3, yaw: f32, clearance: f32) -> Option<Self> {
         let forward = Vec3::new(yaw.sin(), 0.0, yaw.cos());
         let side = Vec3::new(yaw.cos(), 0.0, -yaw.sin());
-        for offset in [
-            forward * 5.0,
-            side * 5.0,
-            -side * 5.0,
-            -forward * 5.0,
-            forward * 8.0,
-        ] {
+        Self::fit_at(
+            world,
+            eye,
+            yaw,
+            clearance,
+            &[
+                forward * 5.0,
+                side * 5.0,
+                -side * 5.0,
+                -forward * 5.0,
+                forward * 8.0,
+            ],
+        )
+    }
+    /// Move this car to stand on the ground at `eye` facing `yaw`, stopped,
+    /// keeping its tuning, size and damage (a teleport with the driver at
+    /// the wheel). Tries the spot itself, then a few metres around it;
+    /// false and the car unchanged when none has room.
+    pub fn teleport(&mut self, world: &CollisionWorld, eye: Vec3, yaw: f32) -> bool {
+        let forward = Vec3::new(yaw.sin(), 0.0, yaw.cos());
+        let side = Vec3::new(yaw.cos(), 0.0, -yaw.sin());
+        let Some(placed) = Self::fit_at(
+            world,
+            eye,
+            yaw,
+            self.clearance,
+            &[
+                Vec3::ZERO,
+                forward * 2.5,
+                -forward * 2.5,
+                side * 2.5,
+                -side * 2.5,
+            ],
+        ) else {
+            return false;
+        };
+        let rigid = self.rigid.is_some();
+        let mut moved = placed.with_handling(self.handling).with_size(self.size);
+        moved.damage = self.damage;
+        moved.set_rigid(rigid);
+        *self = moved;
+        true
+    }
+    /// The first of `offsets` from `eye` where a car stands level, under a
+    /// roof high enough and clear of walls.
+    fn fit_at(
+        world: &CollisionWorld,
+        eye: Vec3,
+        yaw: f32,
+        clearance: f32,
+        offsets: &[Vec3],
+    ) -> Option<Self> {
+        let forward = Vec3::new(yaw.sin(), 0.0, yaw.cos());
+        let side = Vec3::new(yaw.cos(), 0.0, -yaw.sin());
+        for &offset in offsets {
             let target = eye + offset;
             let mut low = f32::INFINITY;
             let mut high = f32::NEG_INFINITY;
@@ -1036,6 +1084,29 @@ impl Car {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_teleported_car_lands_on_the_spot_and_keeps_its_damage() {
+        let ground = crate::terrain::model(&crate::world_layout::Terrain::flat(200.0, 20));
+        let world = CollisionWorld::from_batches(&ground.collision);
+        let mut car = Car::spawn_near(&world, Vec3::new(0.0, 3.0, 0.0), 0.0, 0.6).unwrap();
+        car.damage.dents = 4;
+        car.damage.health *= 0.5;
+        car.speed = 20.0;
+        let before = car.damage;
+        assert!(car.teleport(&world, Vec3::new(50.0, 3.0, -40.0), 1.0));
+        assert!(glam::Vec2::new(car.position.x - 50.0, car.position.z + 40.0).length() < 0.01);
+        assert!(
+            (car.position.y - car.clearance).abs() < 0.1,
+            "on the ground"
+        );
+        assert_eq!(car.damage, before, "no free repair");
+        assert_eq!((car.speed, car.yaw), (0.0, 1.0));
+        // Off the ground there is nowhere to stand: the car stays.
+        let at = car.position;
+        assert!(!car.teleport(&world, Vec3::new(500.0, 3.0, 0.0), 0.0));
+        assert_eq!(car.position, at);
+    }
     use crate::{Batch, Vertex};
 
     #[test]

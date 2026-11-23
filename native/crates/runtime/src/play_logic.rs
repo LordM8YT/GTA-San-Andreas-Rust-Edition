@@ -245,9 +245,12 @@ impl State {
         }
         play.prompt = None;
         // Zones and checkpoints follow the player on foot or in a car;
-        // interactions (E) are on foot only.
+        // interactions (E) too, when they work from vehicles.
         let at = if self.driving {
-            self.car.as_ref().map(|(car, _)| car.position)
+            // Where the car touches the ground, as the server measures it.
+            self.car
+                .as_ref()
+                .map(|(car, _)| car.position - Vec3::Y * car.clearance)
         } else if self.walking {
             self.player.as_ref().map(|p| p.feet)
         } else {
@@ -255,9 +258,7 @@ impl State {
         };
         let Some(at) = at else { return };
         let feet = render_to_blender(at);
-        if !self.driving {
-            play.prompt = play.logic.prompt(feet);
-        }
+        play.prompt = play.logic.prompt_for(feet, self.driving);
         if play.remote {
             // The server steps the zones; its state and effects arrive as
             // events (`handle_world_event`).
@@ -485,16 +486,25 @@ impl State {
 
     /// The interact key: true when the world's gameplay used it.
     pub(crate) fn interact_play_logic(&mut self) -> bool {
-        if !self.walking || self.driving || self.menu.page.is_some() {
+        if !(self.walking || self.driving) || self.menu.page.is_some() {
             return false;
         }
-        let (Some(play), Some(player)) = (&mut self.play_logic, &self.player) else {
+        let driving = self.driving;
+        let at = if driving {
+            self.car
+                .as_ref()
+                .map(|(car, _)| car.position - Vec3::Y * car.clearance)
+        } else {
+            self.player.as_ref().map(|p| p.feet)
+        };
+        let (Some(play), Some(at)) = (&mut self.play_logic, at) else {
             return false;
         };
-        let feet = render_to_blender(player.feet);
+        let feet = render_to_blender(at);
         if play.remote {
             // The server checks we stand there and decides.
-            let (Some(node), Some(session)) = (play.logic.interaction(feet), &self.network_session)
+            let (Some(node), Some(session)) =
+                (play.logic.interaction(feet, driving), &self.network_session)
             else {
                 return false;
             };
@@ -505,7 +515,7 @@ impl State {
             );
             return true;
         }
-        let Some(effects) = play.logic.interact(feet) else {
+        let Some(effects) = play.logic.interact_for(feet, driving) else {
             return false;
         };
         self.apply_play_effects(effects);
@@ -523,8 +533,26 @@ impl State {
                             Some((text, Instant::now() + Duration::from_secs_f32(seconds)));
                     }
                 }
-                Effect::Teleport(_) if self.driving => {
-                    // Teleporting moves a player on foot; a car stays put.
+                Effect::Teleport(pose) if self.driving => {
+                    // The car goes along, with the player at the wheel and
+                    // its damage as it was, when there is room for it.
+                    let (Some(world), Some((car, _))) = (&self.collision, &mut self.car) else {
+                        continue;
+                    };
+                    let yaw = yaw_for(pose.heading);
+                    if car.teleport(world, spawn_eye(&pose), yaw) {
+                        self.car_render_pose = None;
+                        self.position = car.position;
+                        self.yaw = yaw;
+                        if let Some(play) = &mut self.play_logic {
+                            play.logic.player_mut().moved();
+                        }
+                    } else if let Some(play) = &mut self.play_logic {
+                        play.message = Some((
+                            "No room for the car there".into(),
+                            Instant::now() + Duration::from_secs(3),
+                        ));
+                    }
                 }
                 Effect::Teleport(pose) => {
                     if let Some(play) = &mut self.play_logic {

@@ -180,6 +180,20 @@ fn players_share_one_authoritative_world() {
             .all(|p| snapshot(p).is_some_and(|s| !s.hidden.contains(&gate)))
     });
 
+    // At the wheel, Anna cannot use the gate: it works on foot only.
+    thread::sleep(world::USE_INTERVAL);
+    let at = sa_scene::content_pack::ANCHOR;
+    anna.place([at[0] - 10.0, at[1], 0.0], true);
+    server.settle(&mut anna);
+    use_object(&anna, gate);
+    server.idle(&mut [&mut anna, &mut ben], 10);
+    assert!(server
+        .output()
+        .contains("(on foot only, and the player is driving)"));
+    assert!(!snapshot(&anna).unwrap().hidden.contains(&gate));
+    stand(&mut anna, [-10.0, 0.0, 0.0]);
+    server.settle(&mut anna);
+
     // A zone: Ben walks into the night zone. He gets the message, the time
     // changes for everyone, and scripts hear it.
     stand(&mut ben, [10.0, -10.0, 0.0]);

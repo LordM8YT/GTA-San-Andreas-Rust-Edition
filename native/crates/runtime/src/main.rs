@@ -5080,6 +5080,11 @@ impl ApplicationHandler for App {
                                     state.arsenal.cycle(code == KeyCode::KeyE);
                                 }
                             }
+                            // At the wheel, E uses interactions that work
+                            // from vehicles.
+                            KeyCode::KeyE if !event.repeat && state.driving => {
+                                state.interact_play_logic();
+                            }
                             KeyCode::KeyF if !event.repeat => {
                                 state.toggle_car();
                             }

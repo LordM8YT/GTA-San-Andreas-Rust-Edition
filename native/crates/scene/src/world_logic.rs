@@ -200,6 +200,10 @@ pub struct Interact {
     pub prompt: String,
     #[serde(default)]
     pub actions: Vec<Kept<Action>>,
+    /// Players in a vehicle can use it too (a drive-through, a garage
+    /// door); otherwise it is on foot only.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub vehicles: bool,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -725,7 +729,12 @@ impl World {
     }
     /// The interaction the player stands in, and its prompt.
     pub fn prompt(&self, feet: [f32; 3]) -> Option<(NodeId, String)> {
-        let (node, interact) = self.interaction_at(feet, 0.0)?;
+        self.prompt_for(feet, false)
+    }
+    /// [`Self::prompt`] for a player on foot or (`driving`) in a vehicle,
+    /// who only gets interactions that work from one.
+    pub fn prompt_for(&self, feet: [f32; 3], driving: bool) -> Option<(NodeId, String)> {
+        let (node, interact) = self.interaction_at(feet, 0.0, driving)?;
         Some((
             node,
             if interact.prompt.trim().is_empty() {
@@ -735,13 +744,21 @@ impl World {
             },
         ))
     }
-    /// The nearest interaction whose zone, grown by `slack` metres, holds `feet`.
-    fn interaction_at(&self, feet: [f32; 3], slack: f32) -> Option<(NodeId, &Interact)> {
+    /// The nearest interaction whose zone, grown by `slack` metres, holds
+    /// `feet` (one that works from a vehicle, when `driving`).
+    fn interaction_at(
+        &self,
+        feet: [f32; 3],
+        slack: f32,
+        driving: bool,
+    ) -> Option<(NodeId, &Interact)> {
         let p = Vec3::from_array(feet);
         self.zones
             .iter()
             .filter_map(|z| match &z.kind {
-                ZoneKind::Interact(i) if z.shape.contains_within(p, slack) => {
+                ZoneKind::Interact(i)
+                    if (!driving || i.vehicles) && z.shape.contains_within(p, slack) =>
+                {
                     Some((z.node, i, z.shape.base.distance_squared(p)))
                 }
                 _ => None,
@@ -758,8 +775,24 @@ impl World {
         player: &mut PlayerState,
         feet: [f32; 3],
     ) -> Option<Vec<Effect>> {
-        let (node, _) = self.interaction_at(feet, 0.0)?;
+        self.interact_for(shared, player, feet, false)
+    }
+    /// [`Self::interact`] for a player on foot or (`driving`) in a vehicle.
+    pub fn interact_for(
+        &self,
+        shared: &mut Shared,
+        player: &mut PlayerState,
+        feet: [f32; 3],
+        driving: bool,
+    ) -> Option<Vec<Effect>> {
+        let (node, _) = self.interaction_at(feet, 0.0, driving)?;
         self.use_node(shared, player, node, feet, 0.0)
+    }
+    /// Interaction `node` works only for players on foot.
+    pub fn on_foot_only(&self, node: NodeId) -> bool {
+        self.zones
+            .iter()
+            .any(|z| z.node == node && matches!(&z.kind, ZoneKind::Interact(i) if !i.vehicles))
     }
 
     /// A player asks to use interaction `node` (a server checking a
@@ -1053,17 +1086,28 @@ impl Logic {
     }
     /// The prompt of the interaction the player stands in.
     pub fn prompt(&self, feet: [f32; 3]) -> Option<String> {
-        self.world.prompt(feet).map(|(_, prompt)| prompt)
+        self.prompt_for(feet, false)
     }
-    /// The interaction the player stands in.
-    pub fn interaction(&self, feet: [f32; 3]) -> Option<NodeId> {
-        self.world.prompt(feet).map(|(node, _)| node)
+    /// The prompt for a player on foot or (`driving`) in a vehicle.
+    pub fn prompt_for(&self, feet: [f32; 3], driving: bool) -> Option<String> {
+        self.world
+            .prompt_for(feet, driving)
+            .map(|(_, prompt)| prompt)
+    }
+    /// The interaction the player stands in (on foot, or one that works
+    /// from a vehicle when `driving`).
+    pub fn interaction(&self, feet: [f32; 3], driving: bool) -> Option<NodeId> {
+        self.world.prompt_for(feet, driving).map(|(node, _)| node)
     }
     /// The player pressed the interact key with their feet at `feet`.
     /// None: no interaction here (the key may do something else).
     pub fn interact(&mut self, feet: [f32; 3]) -> Option<Vec<Effect>> {
+        self.interact_for(feet, false)
+    }
+    /// [`Self::interact`] for a player on foot or (`driving`) in a vehicle.
+    pub fn interact_for(&mut self, feet: [f32; 3], driving: bool) -> Option<Vec<Effect>> {
         self.world
-            .interact(&mut self.shared, &mut self.player, feet)
+            .interact_for(&mut self.shared, &mut self.player, feet, driving)
     }
     /// Advance by `dt` seconds with the player's feet at `feet` (Blender axes).
     pub fn step(&mut self, feet: [f32; 3], dt: f32) -> Vec<Effect> {
@@ -1325,6 +1369,7 @@ pub fn preset(builtin: &str, next_order: u32) -> Option<Component> {
             size: [2.0, 2.0, 2.5],
             prompt: "Use".into(),
             actions: vec![message("It works!")],
+            vehicles: false,
             extra: Map::new(),
         }),
         "marker-checkpoint" => Component::Checkpoint(Checkpoint {
@@ -1337,12 +1382,14 @@ pub fn preset(builtin: &str, next_order: u32) -> Option<Component> {
             size: [2.4, 3.0, 2.6],
             prompt: "Open / close the door".into(),
             actions: vec![Action::Toggle { node: None }.into()],
+            vehicles: false,
             extra: Map::new(),
         }),
         "door-teleport" => Component::Interact(Interact {
             size: [2.4, 3.0, 2.6],
             prompt: "Go through the door".into(),
             actions: vec![Action::Teleport { target: None }.into()],
+            vehicles: false,
             extra: Map::new(),
         }),
         _ => return None,
@@ -1575,6 +1622,22 @@ mod tests {
         assert_eq!(logic.hidden_by_actions().collect::<Vec<_>>(), vec![door]);
         logic.interact([0.0; 3]);
         assert!(logic.visible(door));
+        // The door is on foot only: nothing for a driver, until it works
+        // from vehicles too.
+        assert_eq!(logic.prompt_for([0.0; 3], true), None);
+        assert_eq!(logic.interact_for([0.0; 3], true), None);
+        assert!(logic.world.on_foot_only(door));
+        let mut drive_through = layout.clone();
+        if let Some(Kept::Known(Component::Interact(i))) =
+            &mut drive_through.node_mut(door).unwrap().gameplay
+        {
+            i.vehicles = true;
+        }
+        let mut drive = Logic::new(&drive_through);
+        assert!(drive.prompt_for([0.0; 3], true).is_some());
+        assert!(drive.interact_for([0.0; 3], true).is_some());
+        assert!(!drive.visible(door));
+        assert!(!drive.world.on_foot_only(door));
 
         logic.step([0.0, -10.0, 0.0], 0.1);
         let effects = logic.step([0.0, 3.0, 0.0], 0.1);
