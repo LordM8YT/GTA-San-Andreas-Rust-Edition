@@ -106,6 +106,8 @@ pub struct UiState {
     pub smoke_terrain: Option<(NodeId, f32)>,
     /// `--smoke-build`: the road placed and its top before a point rose.
     pub smoke_road: Option<(NodeId, f32)>,
+    /// `--smoke-build`: the painted terrain and its triangles before a hole.
+    pub smoke_paint: Option<(NodeId, usize)>,
     /// Asset Browser pictures; None when one could not be made.
     pub thumbnails: HashMap<AssetRef, Option<egui::TextureHandle>>,
 }
@@ -864,7 +866,7 @@ fn terrain_group(build: &mut BuildMode, ui: &mut Ui) {
             "Sculpt",
             sculpting,
             true,
-            "Raise, lower, smooth or flatten a terrain object (T). Insert one from the Toolbox: Ground › Terrain.",
+            "Raise, lower, smooth, flatten, paint or cut holes in a terrain object (T). Insert one from the Toolbox: Ground › Terrain.",
         )
         .clicked()
         {
@@ -872,14 +874,39 @@ fn terrain_group(build: &mut BuildMode, ui: &mut Ui) {
         }
         if sculpting {
             ui.vertical(|ui| {
-                egui::ComboBox::from_id_salt("sculpt-brush")
-                    .width(80.0)
-                    .selected_text(build.sculpt.brush.label())
-                    .show_ui(ui, |ui| {
-                        for brush in super::Brush::ALL {
-                            ui.selectable_value(&mut build.sculpt.brush, brush, brush.label());
-                        }
-                    });
+                ui.horizontal(|ui| {
+                    egui::ComboBox::from_id_salt("sculpt-brush")
+                        .width(80.0)
+                        .selected_text(build.sculpt.brush.label())
+                        .show_ui(ui, |ui| {
+                            for brush in super::Brush::ALL {
+                                ui.selectable_value(&mut build.sculpt.brush, brush, brush.label())
+                                    .on_hover_text(brush.hint());
+                            }
+                        });
+                    if build.sculpt.brush == super::Brush::Paint {
+                        use sa_scene::world_layout::TERRAIN_MATERIALS;
+                        let current = TERRAIN_MATERIALS
+                            .get(usize::from(build.sculpt.material))
+                            .map_or("Ground", |(name, _)| name);
+                        egui::ComboBox::from_id_salt("sculpt-material")
+                            .width(70.0)
+                            .selected_text(current)
+                            .show_ui(ui, |ui| {
+                                for (index, (name, _)) in TERRAIN_MATERIALS.iter().enumerate() {
+                                    ui.selectable_value(
+                                        &mut build.sculpt.material,
+                                        index as u8,
+                                        *name,
+                                    );
+                                }
+                            })
+                            .response
+                            .on_hover_text(
+                                "What Paint paints (Ground is the terrain's own colour)",
+                            );
+                    }
+                });
                 ui.add(
                     egui::Slider::new(&mut build.sculpt.radius, 1.0..=40.0)
                         .text("m")
@@ -2334,6 +2361,15 @@ fn terrain_section(build: &mut BuildMode, ui: &mut Ui, id: NodeId, node: &Node) 
         .iter()
         .fold((f32::MAX, f32::MIN), |(lo, hi), h| (lo.min(*h), hi.max(*h)));
     ui.label(format!("Heights {low:.1} m to {high:.1} m"));
+    let holes = terrain
+        .paint
+        .iter()
+        .filter(|m| **m == sa_scene::world_layout::Terrain::HOLE)
+        .count();
+    let painted = terrain.paint.iter().filter(|m| **m != 0).count() - holes;
+    if painted + holes > 0 {
+        ui.label(format!("{painted} squares painted, {holes} cut out"));
+    }
     let locked = build.doc.layout.effective_locked(id);
     let mut edited = terrain.clone();
     ui.add_enabled_ui(!locked, |ui| {
@@ -2342,6 +2378,14 @@ fn terrain_section(build: &mut BuildMode, ui: &mut Ui, id: NodeId, node: &Node) 
             color_button(ui, &mut edited.color);
             if ui.small_button("Make flat").clicked() {
                 edited.heights.iter_mut().for_each(|h| *h = 0.0);
+            }
+            if !edited.paint.is_empty()
+                && ui
+                    .small_button("Clear paint")
+                    .on_hover_text("Back to the terrain's own colour everywhere, holes filled")
+                    .clicked()
+            {
+                edited.paint.clear();
             }
             if ui
                 .button("^ Sculpt")
@@ -2354,14 +2398,14 @@ fn terrain_section(build: &mut BuildMode, ui: &mut Ui, id: NodeId, node: &Node) 
     });
     ui.label(
         RichText::new(
-            "Sculpt (T): hold the left mouse button on the terrain to raise, lower, smooth or flatten it. Each stroke is one undo step.",
+            "Sculpt (T): hold the left mouse button on the terrain to raise, lower, smooth, flatten or paint it, or cut holes. Each stroke is one undo step.",
         )
         .small()
         .color(MUTED),
     );
     edited.color = edited.color.map(|c| c.clamp(0.0, 1.0));
     // A colour drag is one undo step, like every other Inspector drag.
-    if edited.heights == terrain.heights && edited != *terrain {
+    if edited.heights == terrain.heights && edited.paint == terrain.paint && edited != *terrain {
         build.preview("Edit terrain", &[id], |n| n.terrain = Some(edited.clone()));
         return;
     }

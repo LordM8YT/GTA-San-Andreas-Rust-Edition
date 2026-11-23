@@ -378,13 +378,30 @@ pub struct Terrain {
     /// Ground colour, linear RGB 0-1.
     #[serde(default = "ground_color")]
     pub color: [f32; 3],
+    /// The material of each square, cells², rows south to north (an index
+    /// in [`TERRAIN_MATERIALS`], or [`Terrain::HOLE`]); empty: all ground.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paint: Vec<u8>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
+
+/// What terrain squares can be painted with: a name and a colour (linear
+/// RGB). The first is the terrain's own colour ([`Terrain::color`]).
+pub const TERRAIN_MATERIALS: [(&str, [f32; 3]); 6] = [
+    ("Ground", [0.36, 0.5, 0.27]),
+    ("Grass", [0.3, 0.52, 0.2]),
+    ("Dirt", [0.42, 0.31, 0.2]),
+    ("Sand", [0.76, 0.69, 0.5]),
+    ("Rock", [0.44, 0.43, 0.42]),
+    ("Snow", [0.9, 0.92, 0.95]),
+];
 fn ground_color() -> [f32; 3] {
     [0.36, 0.5, 0.27]
 }
 impl Terrain {
+    /// A square cut out: nothing is drawn there and nothing is solid.
+    pub const HOLE: u8 = 255;
     /// Highest hill or deepest pit, metres.
     pub const MAX_HEIGHT: f32 = 200.0;
     pub const MAX_CELLS: u16 = 128;
@@ -396,6 +413,7 @@ impl Terrain {
             cells,
             heights: vec![0.0; side * side],
             color: ground_color(),
+            paint: Vec::new(),
             extra: Map::new(),
         }
     }
@@ -412,6 +430,28 @@ impl Terrain {
                 .color
                 .iter()
                 .all(|c| c.is_finite() && (0.0..=1.0).contains(c))
+            && (self.paint.is_empty()
+                || (self.paint.len() == usize::from(self.cells).pow(2)
+                    && self
+                        .paint
+                        .iter()
+                        .all(|m| usize::from(*m) < TERRAIN_MATERIALS.len() || *m == Self::HOLE)))
+    }
+    /// The material of the square at (column, row).
+    pub fn material(&self, column: usize, row: usize) -> u8 {
+        self.paint
+            .get(row * usize::from(self.cells) + column)
+            .copied()
+            .unwrap_or(0)
+    }
+    /// The colour material `index` paints (the terrain's own for 0).
+    pub fn material_color(&self, index: u8) -> [f32; 3] {
+        match index {
+            0 => self.color,
+            i => TERRAIN_MATERIALS
+                .get(usize::from(i))
+                .map_or(self.color, |(_, c)| *c),
+        }
     }
 }
 
@@ -596,7 +636,7 @@ impl Layout {
             );
             ensure!(
                 node.terrain.as_ref().is_none_or(Terrain::is_valid),
-                "object {} ({}) has terrain with a bad size, grid or heights",
+                "object {} ({}) has terrain with a bad size, grid, heights or paint",
                 node.id,
                 node.name
             );

@@ -10,7 +10,7 @@ use sa_editor::ops;
 use sa_editor::viewport::{
     angle_around, blender_axis, gizmo_axes, moved, pick, rotated, snap, Pickable, Ray,
 };
-use sa_scene::world_layout::{gltf_to_blender, Node, NodeId, Road, Transform};
+use sa_scene::world_layout::{gltf_to_blender, Node, NodeId, Road, Terrain, Transform};
 use sa_scene::world_logic::{self, Action, Component};
 
 /// The camera of the frame being drawn.
@@ -349,6 +349,60 @@ fn pick_object(build: &BuildMode, ray: &Ray) -> Option<NodeId> {
     Some(id)
 }
 
+/// Where `ray` first meets the surface of an editable terrain object,
+/// holes included (they have no mesh to pick): its heights, turned and
+/// scaled with the object. The nearest such terrain and point.
+fn terrain_surface_hit(build: &BuildMode, ray: &Ray) -> Option<(NodeId, Vec3)> {
+    let layout = &build.doc.layout;
+    // Render space to the pack's Blender axes, without a matrix per sample.
+    let offset = crate::play_logic::blender_to_render([0.0; 3]);
+    layout
+        .nodes
+        .iter()
+        .filter(|n| {
+            n.terrain.is_some() && layout.effective_visible(n.id) && !layout.effective_locked(n.id)
+        })
+        .filter_map(|n| {
+            let terrain = n.terrain.as_ref()?;
+            let t = &n.transform;
+            let (turn, position) = (t.rotation_quat().inverse(), Vec3::from_array(t.position));
+            let scale = Vec3::from_array(t.scale);
+            // How far the ray at `along` is above the ground under it (None
+            // outside the terrain's square).
+            let above = |along: f32| {
+                let world = Vec3::from_array(gltf_to_blender(ray.at(along) - offset));
+                let local = (turn * (world - position)) / scale;
+                terrain.height_at(local.x, local.y).map(|h| local.z - h)
+            };
+            let step =
+                (terrain.spacing() * 0.5 * scale.x.abs().min(scale.y.abs())).clamp(0.05, 1.0);
+            let mut previous: Option<(f32, f32)> = None;
+            let mut along = 0.0;
+            while along < 3000.0 {
+                match (above(along), previous) {
+                    (Some(now), Some((before_t, before))) if before > 0.0 && now <= 0.0 => {
+                        // Crossed the surface: narrow it down.
+                        let (mut low, mut high) = (before_t, along);
+                        for _ in 0..12 {
+                            let middle = (low + high) * 0.5;
+                            if above(middle).is_some_and(|d| d > 0.0) {
+                                low = middle;
+                            } else {
+                                high = middle;
+                            }
+                        }
+                        return Some((n.id, ray.at(high), high));
+                    }
+                    (now, _) => previous = now.map(|d| (along, d)),
+                }
+                along += step;
+            }
+            None
+        })
+        .min_by(|a, b| a.2.total_cmp(&b.2))
+        .map(|(id, at, _)| (id, at))
+}
+
 /// The Sculpt tool: the brush follows the mouse over terrain objects, and
 /// holding the left button shapes the terrain under it. A stroke changes the
 /// layout live and becomes one undo step when the button is let go.
@@ -377,7 +431,15 @@ fn sculpt(
                 bounds: o.bounds,
             })
         });
-        pick(&ray, items).map(|(id, t)| (id, ray.at(t)))
+        pick(&ray, items)
+            .map(|(id, t)| (id, ray.at(t)))
+            // Over a hole there is no mesh to hit: Paint finds the
+            // terrain's own surface there, so it can fill the hole again.
+            .or_else(|| {
+                (build.sculpt.brush == Brush::Paint)
+                    .then(|| terrain_surface_hit(build, &ray))
+                    .flatten()
+            })
     });
     let Some((id, point)) = hit else {
         if !held && build.ui.sculpt_stroke.take().is_some() {
@@ -435,6 +497,8 @@ fn sculpt(
                 Brush::Flatten => {
                     terrain::flatten(terrain, center, radius, level, (rate * 8.0).min(1.0))
                 }
+                Brush::Paint => terrain::paint(terrain, center, radius, sculpt.material),
+                Brush::Hole => terrain::paint(terrain, center, radius, Terrain::HOLE),
             };
         }
     });

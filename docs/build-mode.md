@@ -163,10 +163,13 @@ terrain:
 | Raise / Lower | Lifts or sinks the ground under the brush, most in the middle |
 | Smooth | Evens out bumps and sharp edges |
 | Flatten | Levels the ground to the height where the stroke began (for building plots and roads) |
+| Paint | Paints the squares under the brush with a material: Ground (the terrain's own colour), Grass, Dirt, Sand, Rock or Snow. Neighbouring materials blend softly. Painting over a hole fills it |
+| Hole | Cuts the squares under the brush out: nothing is drawn or solid there, for cave and tunnel entrances |
 
 The brush circle shows where it works; radius (1-40 m) and strength are in
 the ribbon. Each stroke is one undo step. The Properties shows the
-terrain's size and height range, its colour, and *Make flat*. Terrain is a
+terrain's size and height range, how much is painted or cut out, its
+colour, *Make flat* and *Clear paint*. Terrain is a
 normal object: move, turn or scale it, and it is drawn and solid in
 Playtest, from the launcher and on servers. Its heights are saved in
 `layout.json`, so it travels with the world.
@@ -278,7 +281,8 @@ content/my-town/
 - `terrain` is optional: `{ "size": 64, "cells": 32, "heights": [...],
   "color": [0.36, 0.5, 0.27] }` with (cells + 1)² heights in metres, row by
   row from south to north (`sa_scene::terrain`). Up to 128 cells and
-  ±200 m.
+  ±200 m. Optional `"paint"`: cells² material indexes, rows south to north
+  (0 Ground, 1 Grass, 2 Dirt, 3 Sand, 4 Rock, 5 Snow, 255 a hole).
 - `road` is optional: `{ "points": [[-24, 0, 0], [0, 6, 0], [24, 0, 0]],
   "width": 8 }`, 2-256 points in the object's own metres (east, north, up),
   each coordinate within ±2000 m, at least 0.5 m long, width 1-40 m
@@ -394,8 +398,8 @@ Milestone 1 and part of milestone 2 are in. Still to come, roughly in order:
   outlines object bounds).
 - Real per-pixel point and spot lights (needs renderer work; today lights
   are glow and ground light), per-object shadow switches.
-- Terrain: painting several materials, holes, and terrain bigger than one
-  object (place several side by side today).
+- Terrain bigger than one object (place several side by side today), and
+  textured materials (today: colours).
 - Roads: junctions where roads meet, and road surfaces that follow the
   terrain under them by themselves (today: set the points' heights).
 - Visual scripting, publishing worlds to servers.

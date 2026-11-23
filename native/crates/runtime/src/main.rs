@@ -3882,6 +3882,12 @@ impl ApplicationHandler for App {
                         .window
                         .set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
                 }
+                if self.smoke_build {
+                    // Test edits must never replace a real autosave.
+                    if let Some(build) = &mut state.build {
+                        build.autosave_off = true;
+                    }
+                }
                 self.state = Some(state);
                 match gilrs::Gilrs::new() {
                     Ok(gilrs) => {

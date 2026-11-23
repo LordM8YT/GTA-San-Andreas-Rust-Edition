@@ -46,15 +46,38 @@ pub enum Brush {
     Lower,
     Smooth,
     Flatten,
+    /// Paint squares with [`Sculpt::material`].
+    Paint,
+    /// Cut squares out of the terrain.
+    Hole,
 }
 impl Brush {
-    pub const ALL: [Brush; 4] = [Self::Raise, Self::Lower, Self::Smooth, Self::Flatten];
+    pub const ALL: [Brush; 6] = [
+        Self::Raise,
+        Self::Lower,
+        Self::Smooth,
+        Self::Flatten,
+        Self::Paint,
+        Self::Hole,
+    ];
     pub fn label(self) -> &'static str {
         match self {
             Self::Raise => "Raise",
             Self::Lower => "Lower",
             Self::Smooth => "Smooth",
             Self::Flatten => "Flatten",
+            Self::Paint => "Paint",
+            Self::Hole => "Hole",
+        }
+    }
+    pub fn hint(self) -> &'static str {
+        match self {
+            Self::Raise => "Lift the ground under the brush",
+            Self::Lower => "Sink the ground under the brush",
+            Self::Smooth => "Even out bumps and sharp edges",
+            Self::Flatten => "Level the ground to where the stroke began",
+            Self::Paint => "Paint the ground with a material; painting over a hole fills it",
+            Self::Hole => "Cut the ground away (for caves and tunnels); Paint fills it again",
         }
     }
 }
@@ -67,6 +90,8 @@ pub struct Sculpt {
     pub radius: f32,
     /// 0-1: how fast the brush works.
     pub strength: f32,
+    /// What Paint paints: an index in `TERRAIN_MATERIALS`.
+    pub material: u8,
 }
 impl Default for Sculpt {
     fn default() -> Self {
@@ -74,6 +99,7 @@ impl Default for Sculpt {
             brush: Brush::Raise,
             radius: 6.0,
             strength: 0.5,
+            material: 1,
         }
     }
 }
@@ -167,6 +193,8 @@ pub struct BuildMode {
     base_bounds: Option<(Vec3, Vec3)>,
     last_autosave: Instant,
     autosaved_revision: u64,
+    /// `--smoke-build`: its test edits must not replace a real autosave.
+    pub autosave_off: bool,
     ui: panels::UiState,
     /// Draw only when something changes while editing (see `pacing`).
     pacing: pacing::Pacing,
@@ -251,6 +279,7 @@ impl BuildMode {
             base_bounds,
             last_autosave: Instant::now(),
             autosaved_revision: 0,
+            autosave_off: false,
             ui: panels::UiState::default(),
             pacing: pacing::Pacing::default(),
             history: History::default(),
@@ -435,7 +464,10 @@ impl BuildMode {
         self.autosave();
     }
     pub fn autosave(&mut self) {
-        if !self.history.dirty() || self.history.revision == self.autosaved_revision {
+        if self.autosave_off
+            || !self.history.dirty()
+            || self.history.revision == self.autosaved_revision
+        {
             return;
         }
         match self.project.autosave(&self.doc) {
@@ -879,6 +911,9 @@ impl State {
         };
         // A menu shown on a first start would take the E key: keep it shut.
         self.menu.page = None;
+        if let Some(build) = &mut self.build {
+            build.autosave_off = true;
+        }
         let build = self
             .build
             .as_ref()
@@ -888,6 +923,9 @@ impl State {
         match frame {
             5 => {
                 let build = self.build.as_mut().unwrap();
+                // An autosave left by someone's own session: keep it (the
+                // file stays), but do not let its question cover the shots.
+                build.recovery = None;
                 build.selection = vec![door.0];
                 build.focus_selection();
             }
@@ -1039,7 +1077,38 @@ impl State {
                 );
                 capture(self, "build-road.png");
             }
-            102 => return true,
+            // Terrain paint and holes: sand around a hole, fewer triangles.
+            102 => {
+                let build = self.build.as_mut().unwrap();
+                let (hill, _) = build.ui.smoke_terrain.unwrap();
+                let before = build.gpu.objects[&hill].triangles.len();
+                build.ui.smoke_paint = Some((hill, before));
+                build.selection = vec![hill];
+                build.focus_selection();
+                build.preview("Paint terrain", &[hill], |n| {
+                    if let Some(terrain) = &mut n.terrain {
+                        sa_scene::terrain::paint(terrain, glam::Vec2::ZERO, 14.0, 3);
+                        sa_scene::terrain::paint(
+                            terrain,
+                            glam::Vec2::ZERO,
+                            5.0,
+                            sa_scene::world_layout::Terrain::HOLE,
+                        );
+                    }
+                });
+                build.commit_preview();
+            }
+            106 => {
+                let build = self.build.as_ref().unwrap();
+                let (hill, before) = build.ui.smoke_paint.unwrap();
+                let after = build.gpu.objects[&hill].triangles.len();
+                assert!(
+                    after < before,
+                    "the hole did not remove terrain triangles ({before} -> {after})"
+                );
+                capture(self, "build-terrain-paint.png");
+            }
+            108 => return true,
             _ => {}
         }
         false

@@ -90,6 +90,49 @@ impl Terrain {
     }
 }
 
+/// Paint every square whose middle is within `radius` of `center` with
+/// `material` (an index in [`crate::world_layout::TERRAIN_MATERIALS`], or
+/// [`Terrain::HOLE`] to cut it out). Painting a hole fills it again. True if
+/// anything changed.
+pub fn paint(terrain: &mut Terrain, center: Vec2, radius: f32, material: u8) -> bool {
+    let cells = usize::from(terrain.cells);
+    if terrain.paint.len() != cells * cells {
+        if material == 0 {
+            return false; // Unpainted ground is already ground.
+        }
+        terrain.paint = vec![0; cells * cells];
+    }
+    let before = terrain.paint.clone();
+    let half = terrain.size * 0.5;
+    let spacing = terrain.spacing();
+    // A brush smaller than a square still paints the square it is in.
+    let radius = radius.max(spacing * 0.5);
+    let mut changed = false;
+    for row in 0..cells {
+        for column in 0..cells {
+            let middle = Vec2::new(
+                -half + (column as f32 + 0.5) * spacing,
+                -half + (row as f32 + 0.5) * spacing,
+            );
+            let slot = &mut terrain.paint[row * cells + column];
+            if middle.distance(center) <= radius && *slot != material {
+                *slot = material;
+                changed = true;
+            }
+        }
+    }
+    if terrain.paint.iter().all(|m| *m == Terrain::HOLE) {
+        // A terrain cut away completely would be nothing to select or
+        // paint again: keep the last of it.
+        terrain.paint = before;
+        return false;
+    }
+    if terrain.paint.iter().all(|m| *m == 0) {
+        terrain.paint.clear();
+    }
+    changed
+}
+
 /// Raise (or with a negative `amount`, lower) the ground around `center` by
 /// up to `amount` metres.
 pub fn raise(terrain: &mut Terrain, center: Vec2, radius: f32, amount: f32) -> bool {
@@ -142,18 +185,52 @@ fn shaded(color: [f32; 3], normal: Vec3) -> [f32; 4] {
 /// The terrain as a model in glTF space (Y up), drawn and solid.
 pub fn model(terrain: &Terrain) -> Model {
     let side = terrain.side();
+    let cells = side - 1;
     let to_gltf = |p: Vec3| crate::world_layout::blender_to_gltf(p.to_array());
-    let mut vertices = Vec::with_capacity(usize::from(terrain.cells).pow(2) * 6);
-    for row in 0..side - 1 {
-        for column in 0..side - 1 {
-            let a = terrain.corner(column, row);
-            let b = terrain.corner(column + 1, row);
-            let c = terrain.corner(column + 1, row + 1);
-            let d = terrain.corner(column, row + 1);
+    // Each corner takes the average colour of the squares around it (holes
+    // left out), so painted areas blend into each other.
+    let corner_colors: Vec<Vec3> = (0..side * side)
+        .map(|index| {
+            let (row, column) = (index / side, index % side);
+            let mut sum = Vec3::ZERO;
+            let mut count = 0.0;
+            for (r, c) in [(row, column), (row, column.wrapping_sub(1))]
+                .into_iter()
+                .chain([
+                    (row.wrapping_sub(1), column),
+                    (row.wrapping_sub(1), column.wrapping_sub(1)),
+                ])
+            {
+                if r < cells && c < cells {
+                    let material = terrain.material(c, r);
+                    if material != Terrain::HOLE {
+                        sum += Vec3::from_array(terrain.material_color(material));
+                        count += 1.0;
+                    }
+                }
+            }
+            if count > 0.0 {
+                sum / count
+            } else {
+                Vec3::from_array(terrain.color)
+            }
+        })
+        .collect();
+    let mut vertices = Vec::with_capacity(cells.pow(2) * 6);
+    for row in 0..cells {
+        for column in 0..cells {
+            if terrain.material(column, row) == Terrain::HOLE {
+                continue;
+            }
+            let corner = |c: usize, r: usize| (terrain.corner(c, r), corner_colors[r * side + c]);
+            let a = corner(column, row);
+            let b = corner(column + 1, row);
+            let c = corner(column + 1, row + 1);
+            let d = corner(column, row + 1);
             for [p, q, r] in [[a, b, c], [a, c, d]] {
-                let normal = (q - p).cross(r - p).normalize_or_zero();
-                let color = shaded(terrain.color, normal);
-                for corner in [p, q, r] {
+                let normal = (q.0 - p.0).cross(r.0 - p.0).normalize_or_zero();
+                for (corner, tint) in [p, q, r] {
+                    let color = shaded(tint.to_array(), normal);
                     let local = Vec2::new(corner.x, corner.y) / terrain.size + 0.5;
                     vertices.push(Vertex {
                         position: to_gltf(corner).to_array(),
@@ -230,6 +307,60 @@ mod tests {
             .iter()
             .all(|h| h.abs() <= Terrain::MAX_HEIGHT));
         assert!(terrain.is_valid());
+    }
+
+    #[test]
+    fn paint_colours_squares_and_holes_cut_through() {
+        let mut terrain = Terrain::flat(32.0, 16);
+        let flat = model(&terrain).triangles;
+        // Painting the terrain's own material on unpainted ground is a no-op.
+        assert!(!paint(&mut terrain, Vec2::ZERO, 4.0, 0));
+        assert!(terrain.paint.is_empty());
+        // Sand around the middle: the colour changes there, not far away.
+        assert!(paint(&mut terrain, Vec2::ZERO, 4.0, 3));
+        assert!(terrain.is_valid());
+        assert_eq!(terrain.material(8, 8), 3);
+        assert_eq!(terrain.material(0, 0), 0);
+        let sandy = model(&terrain);
+        let near = |m: &Model, x: f32, y: f32| {
+            m.drawn[0]
+                .vertices
+                .iter()
+                .find(|v| (v.position[0] - x).abs() < 0.01 && (v.position[2] + y).abs() < 0.01)
+                .map(|v| v.color)
+                .unwrap()
+        };
+        assert_ne!(
+            near(&sandy, 0.0, 0.0),
+            near(&model(&Terrain::flat(32.0, 16)), 0.0, 0.0)
+        );
+        // A hole: fewer triangles, and nothing to stand on there.
+        assert!(paint(&mut terrain, Vec2::new(8.0, 8.0), 2.0, Terrain::HOLE));
+        let holed = model(&terrain);
+        assert!(holed.triangles < flat);
+        let world = crate::collision::CollisionWorld::from_batches(&holed.collision);
+        // Blender (9, 9) is glTF (9, -9).
+        assert!(world
+            .ground_below(Vec3::new(9.0, 5.0, -9.0), 10.0)
+            .is_none());
+        assert!(world
+            .ground_below(Vec3::new(-9.0, 5.0, 9.0), 10.0)
+            .is_some());
+        // Painting over it fills it again.
+        paint(&mut terrain, Vec2::new(8.0, 8.0), 2.0, 1);
+        assert_eq!(model(&terrain).triangles, flat);
+        // Painting it all back to ground drops the paint list.
+        paint(&mut terrain, Vec2::ZERO, 100.0, 0);
+        assert!(terrain.paint.is_empty());
+        // The Hole brush never cuts the whole terrain away.
+        let mut small = Terrain::flat(8.0, 2);
+        assert!(!paint(&mut small, Vec2::ZERO, 100.0, Terrain::HOLE));
+        assert!(model(&small).triangles > 0);
+        // A paint list of the wrong size or an unknown material is invalid.
+        terrain.paint = vec![0; 3];
+        assert!(!terrain.is_valid());
+        terrain.paint = vec![9; 16 * 16];
+        assert!(!terrain.is_valid());
     }
 
     #[test]
