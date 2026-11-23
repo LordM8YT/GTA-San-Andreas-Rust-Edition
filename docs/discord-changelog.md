@@ -5,7 +5,9 @@
 🧭 Give any object a behaviour in the Inspector, and see every zone and teleport link in the viewport.
 🎮 Try it all in **Gameplay Sample**, in Build Mode with F6 Playtest or from the launcher. No GTA needed.
 
-✅ Tested on Windows with automatic runs in Build Mode and from the launcher; builds pass on Windows, Linux and macOS. Server sync is coming later.
+🌐 **Multiplayer worlds:** host your Build Mode world and everyone shares the same doors, time and weather. The server decides, and your Lua scripts can react to zones and races.
+
+✅ Tested on Windows with automatic runs in Build Mode, from the launcher and joined to a local server, plus server tests with several players; builds pass on Windows, Linux and macOS.
 
 ---
 

@@ -1358,6 +1358,101 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
             })
         });
     }
+    // Build Mode gameplay of the content pack world (`world.rs`). Objects
+    // are layout ids (or names); `bucket` defaults to 0, the main world.
+    let world_object = |shared: &Shared, object: &Value| -> Option<u64> {
+        let state = shared.borrow();
+        let game = state.world.as_ref()?;
+        match object {
+            Value::Integer(id) => u64::try_from(*id).ok(),
+            Value::Number(id) if id.fract() == 0.0 && *id >= 0.0 => Some(*id as u64),
+            Value::String(name) => game.find(&name.to_string_lossy()),
+            _ => None,
+        }
+    };
+    let bucket_of = |bucket: Option<i64>| u32::try_from(bucket.unwrap_or(0)).unwrap_or(0);
+    {
+        func!(g, "SetWorldObjectVisible", shared, name, |_lua,
+                                                         (
+            object,
+            visible,
+            bucket,
+        ): (
+            Value,
+            bool,
+            Option<i64>
+        )| {
+            let Some(node) = world_object(&shared, &object) else {
+                return Ok(false);
+            };
+            let mut state = shared.borrow_mut();
+            let Some(game) = state.world.as_mut() else {
+                return Ok(false);
+            };
+            Ok(game.set_visible(bucket_of(bucket), node, visible))
+        });
+    }
+    {
+        func!(g, "IsWorldObjectVisible", shared, name, |_lua,
+                                                        (
+            object,
+            bucket,
+        ): (
+            Value,
+            Option<i64>
+        )| {
+            let Some(node) = world_object(&shared, &object) else {
+                return Ok(false);
+            };
+            let mut state = shared.borrow_mut();
+            let Some(game) = state.world.as_mut() else {
+                return Ok(false);
+            };
+            Ok(game.visible(bucket_of(bucket), node))
+        });
+    }
+    func!(
+        g,
+        "GetWorldObjectByName",
+        shared,
+        name,
+        |_lua, object: String| { Ok(shared.borrow().world.as_ref().and_then(|g| g.find(&object))) }
+    );
+    func!(g, "SetWorldHour", shared, name, |_lua,
+                                            (hour, bucket): (
+        Option<i64>,
+        Option<i64>
+    )| {
+        let hour = match hour {
+            Some(h) if (0..=23).contains(&h) => Some(h as u8),
+            Some(_) => {
+                return Err(mlua::Error::runtime(
+                    "hour must be 0-23, or nil to let the clock run",
+                ))
+            }
+            None => None,
+        };
+        if let Some(game) = shared.borrow_mut().world.as_mut() {
+            game.bucket(bucket_of(bucket)).set_hour(hour);
+        }
+        Ok(())
+    });
+    func!(g, "SetWorldWeather", shared, name, |_lua,
+                                               (weather, bucket): (
+        Option<String>,
+        Option<i64>
+    )| {
+        let weather = match weather.as_deref() {
+            None => None,
+            Some(text) => Some(sa_scene::world_logic::Weather::parse(text).ok_or_else(|| {
+                mlua::Error::runtime("weather must be clear, cloudy, rain or fog (or nil)")
+            })?),
+        };
+        if let Some(game) = shared.borrow_mut().world.as_mut() {
+            game.bucket(bucket_of(bucket)).set_weather(weather);
+        }
+        Ok(())
+    });
     func!(
         g,
         "SetRoutingBucketPopulationEnabled",

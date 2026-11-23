@@ -111,9 +111,34 @@ on foot. Every playtest starts the gameplay fresh.
 
 A world played from the launcher (outside Build Mode) runs all of it too.
 The objects that actions show or hide are kept out of the pack's merged
-scene and drawn one by one, and their collision switches with them. The
-logic runs on each player's own computer and is not yet synchronised
-between players on a server.
+scene and drawn one by one, and their collision switches with them.
+
+## Multiplayer
+
+Host the world and everyone plays the same gameplay. Put the pack in
+`content/<id>` next to the server's `server.cfg` and add
+`sets content_pack <id>` (see [server hosting](server-hosting.md#build-mode-worlds)).
+Players who join get the pack's world and the server runs its gameplay:
+
+- **The server decides.** It loads the pack's `layout.json` and checks each
+  player's zones against the positions it receives. Clients never send
+  effects or state; they draw what the server says.
+- **Shared:** objects shown or hidden (doors), the hour and the weather. A
+  door one player opens is open for everyone, also for players who join
+  later. Each routing bucket (instance) has its own copy, starting from the
+  world as it was saved.
+- **Per player:** messages, teleports, checkpoint progress and timers, and
+  "only the first time" triggers.
+- **E** sends a request to the server, which accepts it only if the player
+  stands in that interaction (with 2 m to spare for network delay) and not
+  more often than every 250 ms. Refusals are logged on the server.
+- Players who leave are forgotten; the world stays as it is.
+- Server resources react to `sare:zoneEnter`, `sare:objectUsed`,
+  `sare:raceFinished` and more, and change the world with
+  `SetWorldObjectVisible`, `SetWorldHour` and `SetWorldWeather`.
+
+Without the pack on the server, each player's game runs the gameplay on its
+own, unsynchronised, as before.
 
 ## Files
 
@@ -189,7 +214,8 @@ pipeline or project format.
 | --- | --- | --- |
 | Layout format | `sa-scene::world_layout` | Serde types, validation, migration hook, atomic writes, Blender-to-glTF transform maths |
 | Built-in assets | `sa-scene::builtin_assets` | Original shapes generated in code (glTF space); `editor_only` markers are neither drawn nor solid in play |
-| Gameplay | `sa-scene::world_logic` | Components and actions (serde; unknown kinds kept), zone maths, `check` for problems, `preset` for gameplay assets, and `Logic`: a deterministic engine fed the player's feet and `dt` that returns effects. No GPU or UI, so a server can run it later |
+| Gameplay | `sa-scene::world_logic` | Components and actions (serde; unknown kinds kept), zone maths, `check` for problems, `preset` for gameplay assets, and the engine: `World` (compiled layout, no state), `Shared` (per world instance: shown/hidden objects, hour, weather, a revision and `Snapshot`) and `PlayerState` (zones, once-triggers, courses, `Happened` events for scripts). `Logic` bundles one of each for single player. `wire` holds the network events. No GPU, UI or GTA types: the server and the game run the same code |
+| Server authority | `sa-server/src/world.rs` | Loads the pack named by `content_pack`, steps every player each frame against the poses the server has, keeps `Shared` per routing bucket, sends snapshots (on change, arrival, bucket change) and personal effects, validates `__sare:worldUse` (position with 2 m slack, 250 ms rate limit), forwards events to Lua; natives in `natives.rs`. Tests: `world_tests.rs` with several connected players |
 | Packs with layouts | `sa-scene::content_pack` | `world.layout`, `world.scene` now optional; `PackWorld::open` places layout objects into the world, `open_base` leaves them out for the editor; `AssetResolver` finds `builtin:`/`self:`/`pack:` models; `place_layout` reports missing ones |
 | Editor core | `sa-editor` crate | No GPU or UI: `project` (create, open, save, save as, autosave, recovery, import), `history` (document + command-based undo/redo), `ops` (place, delete, duplicate, rename, group, ungroup, reparent), `catalog` (asset providers), `viewport` (rays, picking, gizmo maths, snapping, orbit/fly camera) |
 | Runtime glue | `sa-runtime/src/build_mode/` | `gpu.rs` uploads each asset once and gives each object its own vertex buffers, rewritten in place when it moves (like cars and peds); `viewport.rs` camera, picking, placement, gizmos, grid, gameplay and collision overlays; `panels.rs` the egui interface; `gameplay_ui.rs` the Inspector's Gameplay section; `mod.rs` session, autosave, playtest, `--smoke-build` |
@@ -232,6 +258,9 @@ the editor, checks that nothing changed and saves screenshots. The same
 flag on a played pack, `sa-runtime --content content/gameplay-sample
 --smoke-build`, opens and closes the gate (checking that it is drawn and
 that a walker gets through only while it is open) and uses the front door.
+Joined to a server that runs the world (`--content content/gameplay-sample
+--join 127.0.0.1:<port> --smoke-build`), it waits for the server's world
+state, presses E at the gate and passes only when the server opens it.
 `content/gameplay-sample` is generated by `tools/make-gameplay-sample.py`.
 
 Switchable objects: `world_logic::switchable` lists the objects actions
@@ -245,7 +274,9 @@ Milestone 1 and part of milestone 2 are in. Still to come, roughly in order:
 
 - A native file picker for import.
 - Drag and drop in the outliner; group transforms (groups are folders now).
-- Gameplay synchronised between players on a server.
+- Multiplayer: interactions while driving, server checks of teleport
+  destinations against the player's later position, and a server console
+  command to reset a world instance.
 - More actions (sounds, items, script events) and Lua hooks so server
   resources can react to zones.
 - A wireframe view of the exact collision triangles (the Collision view

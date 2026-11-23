@@ -8,7 +8,9 @@ Version 0.54.0:
 - World settings have a weather (clear, cloudy, rain, fog), and worlds played from the launcher now use the world's time of day and weather too.
 - Playtest runs it all: walk into zones, press E at doors, and go back to the editor with F6 as before.
 - New sample world, Gameplay Sample (content/gameplay-sample), with every behaviour in one place. No game files needed.
-- Everything also works when the world is played from the launcher, including doors that open and close. Gameplay runs on each player's own PC and is not synchronised on servers yet.
+- Everything also works when the world is played from the launcher, including doors that open and close.
+- Multiplayer worlds: host a Build Mode world (`sets content_pack <id>` with the pack in the server's `content/` folder) and the server runs its gameplay for everyone. A door one player opens is open for all, also for players who join later; time and weather are shared; messages, teleports and checkpoint times stay personal. The server checks that a player really stands at what they use, and each instance (routing bucket) has its own doors.
+- Server scripts: new events `sare:zoneEnter`, `sare:zoneLeave`, `sare:objectUsed`, `sare:checkpoint` and `sare:raceFinished`, and natives `SetWorldObjectVisible`, `IsWorldObjectVisible`, `GetWorldObjectByName`, `SetWorldHour` and `SetWorldWeather`.
 
 Version 0.53.0:
 - RP servers: police, EMS, mechanic and taxi are now each their own resource (sare_job_police, sare_job_ems, sare_job_mechanic, sare_job_taxi) with their own config.lua: the job and grades, `Config.Locations` as `vector4(...)`, gear, work vehicle and rules like fines and jail time. Change one job without touching the others.

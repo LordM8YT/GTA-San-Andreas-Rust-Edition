@@ -28,6 +28,13 @@ pub struct PlayLogic {
     /// Real time of the last step: frame `dt` is capped for physics, so the
     /// checkpoint clock uses the wall clock instead.
     last_step: Option<Instant>,
+    /// A server runs this world's gameplay (it sent the world state): zones
+    /// and actions are its decisions, and E asks it to use an object.
+    remote: bool,
+    /// `--smoke-build` over the network: the frame the server took over.
+    smoke_remote_since: Option<usize>,
+    /// ...and the frame the gate opened (a screenshot is taken after it).
+    smoke_opened: Option<usize>,
 }
 
 /// The pack's merged scene leaves out objects gameplay can show or hide
@@ -93,6 +100,9 @@ impl PlayLogic {
             message: None,
             prompt: None,
             last_step: None,
+            remote: false,
+            smoke_remote_since: None,
+            smoke_opened: None,
         }
     }
     /// The pack's switchable objects as they are drawn right now.
@@ -228,11 +238,54 @@ impl State {
         };
         let Some(at) = at else { return };
         let feet = render_to_blender(at);
-        let effects = play.logic.step(feet, dt);
         if !self.driving {
             play.prompt = play.logic.prompt(feet);
         }
+        if play.remote {
+            // The server steps the zones; its state and effects arrive as
+            // events (`handle_world_event`).
+            if self.network_session.is_none() {
+                play.remote = false;
+            }
+            return;
+        }
+        let effects = play.logic.step(feet, dt);
         self.apply_play_effects(effects);
+    }
+
+    /// World gameplay events from a server: its shared state for this
+    /// instance, and effects for this player. True when the event was one.
+    pub(crate) fn handle_world_event(&mut self, name: &str, payload: &str) -> bool {
+        use sa_scene::world_logic::{wire, Shared, Snapshot};
+        match name {
+            wire::STATE_EVENT => {
+                let Ok((snapshot,)) = serde_json::from_str::<(Snapshot,)>(payload) else {
+                    return true;
+                };
+                if let Some(play) = &mut self.play_logic {
+                    if !play.remote {
+                        crate::runtime_log::line("World gameplay: the server runs it");
+                    }
+                    play.remote = true;
+                    let shared = Shared::from_snapshot(play.logic.world(), &snapshot);
+                    play.logic.set_shared(shared);
+                    if let Some(collision) = &mut self.collision {
+                        collision.set_hidden(play.logic.hidden_by_actions());
+                    }
+                }
+                true
+            }
+            wire::EFFECTS_EVENT => {
+                let effects: Vec<Effect> = serde_json::from_str::<(Vec<wire::Personal>,)>(payload)
+                    .map(|(list,)| list.iter().filter_map(wire::Personal::effect).collect())
+                    .unwrap_or_default();
+                if self.play_logic.as_ref().is_some_and(|p| p.remote) {
+                    self.apply_play_effects(effects);
+                }
+                true
+            }
+            _ => false,
+        }
     }
 
     /// A played pack's switchable objects: upload them once, and keep their
@@ -288,6 +341,9 @@ impl State {
         };
         // A menu shown on a first start would take the E key: keep it shut.
         self.menu.page = None;
+        if self.network_session.is_some() {
+            return self.play_logic_smoke_remote(frame, captures);
+        }
         match frame {
             1 => self.capture(false),
             10 => self.smoke_stand_at(gate.1),
@@ -333,6 +389,61 @@ impl State {
         false
     }
 
+    /// `--smoke-build` joined to a server that runs the world: E at the gate
+    /// asks the server, and the gate opens only when its state says so.
+    fn play_logic_smoke_remote(
+        &mut self,
+        frame: usize,
+        captures: Option<&std::path::Path>,
+    ) -> bool {
+        let play = self
+            .play_logic
+            .as_mut()
+            .expect("--smoke-build needs a content pack with gameplay");
+        let SmokeTargets { gate, .. } = smoke_targets(&play.layout);
+        assert!(frame < 3000, "the server never ran the world's gameplay");
+        let since = match (play.remote, play.smoke_remote_since) {
+            (false, _) => return false,
+            (true, Some(since)) => since,
+            (true, None) => {
+                println!("Remote smoke: the server runs the world (frame {frame})");
+                *play.smoke_remote_since.insert(frame)
+            }
+        };
+        match frame - since {
+            5 => {
+                self.capture(false);
+                self.smoke_stand_at(gate.1);
+            }
+            // Give the server time to see where we stand.
+            60 => assert!(self.interact_play_logic(), "E did not ask the server"),
+            61..=1200 => {
+                let play = self.play_logic.as_mut().unwrap();
+                if let Some(opened) = play.smoke_opened {
+                    // The screenshot was taken on the frames in between.
+                    return frame >= opened + 3;
+                }
+                if !play.logic.visible(gate.0) {
+                    play.smoke_opened = Some(frame);
+                    println!(
+                        "Remote smoke: the server opened the gate {} frames after E",
+                        frame - since - 60
+                    );
+                    assert!(
+                        self.smoke_walks_through(gate.1),
+                        "the gate opened but still blocks"
+                    );
+                    if let Some(dir) = captures {
+                        self.capture_next = Some(dir.join("remote-gate-open.png"));
+                    }
+                }
+            }
+            1201.. => panic!("the server did not open the gate"),
+            _ => {}
+        }
+        false
+    }
+
     /// Walk a test player west through a gate standing at `at` (Blender axes):
     /// true when it gets past. The real player is not moved.
     fn smoke_walks_through(&self, at: [f32; 3]) -> bool {
@@ -353,7 +464,21 @@ impl State {
         let (Some(play), Some(player)) = (&mut self.play_logic, &self.player) else {
             return false;
         };
-        let Some(effects) = play.logic.interact(render_to_blender(player.feet)) else {
+        let feet = render_to_blender(player.feet);
+        if play.remote {
+            // The server checks we stand there and decides.
+            let (Some(node), Some(session)) = (play.logic.interaction(feet), &self.network_session)
+            else {
+                return false;
+            };
+            let _ = session.trigger(
+                None,
+                sa_scene::world_logic::wire::USE_EVENT,
+                &format!("[{node}]"),
+            );
+            return true;
+        }
+        let Some(effects) = play.logic.interact(feet) else {
             return false;
         };
         self.apply_play_effects(effects);
@@ -375,6 +500,9 @@ impl State {
                     // Teleporting moves a player on foot; a car stays put.
                 }
                 Effect::Teleport(pose) => {
+                    if let Some(play) = &mut self.play_logic {
+                        play.logic.player_mut().moved();
+                    }
                     if let Some(collision) = &self.collision {
                         let player = Player::spawn(collision, spawn_eye(&pose));
                         self.position = player.eye();

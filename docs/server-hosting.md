@@ -186,6 +186,34 @@ the colours `skin`, `hairColor`, `topColor`, `pantsColor`, `shoesColor`
 (`{r, g, b}`, 0–255). The server keeps it until the player leaves; save it
 yourself (`sare_rp_identity` keeps it in character metadata).
 
+### Build Mode worlds
+
+With `sets content_pack <id>` and the pack in `content/<id>` next to
+server.cfg, the server runs the world's [Build Mode gameplay](build-mode.md#multiplayer)
+for everyone: doors, zones, checkpoints, time and weather are the server's
+decisions, per routing bucket. The console says `World gameplay: <id> ...
+runs on the server`. Without the pack on the server, each player's game runs
+the gameplay alone, unsynchronised.
+
+Events (`source` is the player): `sare:zoneEnter` and `sare:zoneLeave`
+(`node`, `name`), `sare:objectUsed` (`node`, `name`), `sare:checkpoint`
+(`race`, `number`, `total`) and `sare:raceFinished` (`race`, `seconds`).
+Natives (objects are layout ids or object names; `bucket` defaults to 0):
+`SetWorldObjectVisible(object, visible, bucket)` (false when there is no
+such object), `IsWorldObjectVisible(object, bucket)`,
+`GetWorldObjectByName(name)`, `SetWorldHour(hour or nil, bucket)` and
+`SetWorldWeather('clear'|'cloudy'|'rain'|'fog' or nil, bucket)`.
+
+```lua
+AddEventHandler('sare:raceFinished', function(race, seconds)
+    TriggerClientEvent('chat:addMessage', -1, { args = { 'Race', ('%s finished in %.1f s'):format(GetPlayerName(source), seconds) } })
+end)
+RegisterCommand('lockdown', function()
+    SetWorldObjectVisible('Garden gate', true)  -- shut the gate for everyone
+    SetWorldWeather('fog')
+end, true)
+```
+
 Not supported yet: NUI pages (by design: use the script UI), passenger seats in server vehicles, OneSync population, entity lockdown modes, replicated state bags,
 databases (oxmysql is a Node.js resource), `PerformHttpRequest`, and identifiers
 other than `license`, `sare` and `legacy`. `playerConnecting` runs after the player has

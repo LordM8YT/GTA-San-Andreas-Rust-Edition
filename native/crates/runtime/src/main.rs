@@ -4312,7 +4312,7 @@ impl ApplicationHandler for App {
                             }
                         } else if state.play_logic_smoke(self.smoke_frames, captures) {
                             println!(
-                                "Pack gameplay smoke passed: gate opens and closes, door teleports"
+                                "Pack gameplay smoke passed"
                             );
                             event_loop.exit();
                         }

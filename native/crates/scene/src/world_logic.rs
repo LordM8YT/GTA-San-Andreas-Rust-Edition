@@ -360,11 +360,15 @@ impl ZoneShape {
         }
     }
     pub fn contains(&self, point: Vec3) -> bool {
+        self.contains_within(point, 0.0)
+    }
+    /// Inside the box grown by `slack` metres on every side.
+    pub fn contains_within(&self, point: Vec3, slack: f32) -> bool {
         let local = self.rotation.inverse() * (point - self.base);
-        local.x.abs() <= self.size.x * 0.5
-            && local.y.abs() <= self.size.y * 0.5
-            && local.z >= -FEET_TOLERANCE
-            && local.z <= self.size.z
+        local.x.abs() <= self.size.x * 0.5 + slack
+            && local.y.abs() <= self.size.y * 0.5 + slack
+            && local.z >= -FEET_TOLERANCE - slack
+            && local.z <= self.size.z + slack
     }
     /// The 8 corners in Blender axes; bit 0 = +X, bit 1 = +Y, bit 2 = top.
     pub fn corners(&self) -> [Vec3; 8] {
@@ -385,21 +389,47 @@ pub fn zone_of(node: &Node) -> Option<ZoneShape> {
     Some(ZoneShape::of(&node.transform, size))
 }
 
-/// What the game should do after a step of [`Logic`].
+/// What the game should do after a step of the world logic.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Effect {
-    Message {
-        text: String,
+    /// For the player who caused it.
+    Message { text: String, seconds: f32 },
+    /// Moves the player who caused it.
+    Teleport(Pose),
+    /// Shared: an object was shown or hidden (hidden objects have no collision).
+    Visibility { node: NodeId, visible: bool },
+    /// Shared: the hour of day.
+    Time(u8),
+    /// Shared: the weather.
+    Weather(Weather),
+}
+impl Effect {
+    /// Changes the world everyone in it shares, not only the one player.
+    pub fn is_shared(&self) -> bool {
+        matches!(
+            self,
+            Self::Visibility { .. } | Self::Time(_) | Self::Weather(_)
+        )
+    }
+}
+
+/// Gameplay moments, for scripts (a server's Lua resources) to react to.
+/// Collected per player; see [`PlayerState::take_events`].
+#[derive(Clone, Debug, PartialEq)]
+pub enum Happened {
+    Entered(NodeId),
+    Left(NodeId),
+    Used(NodeId),
+    /// Reached checkpoint `index + 1` of `total` (the start is index 0).
+    Checkpoint {
+        race: String,
+        index: usize,
+        total: usize,
+    },
+    Finished {
+        race: String,
         seconds: f32,
     },
-    Teleport(Pose),
-    /// An object was shown or hidden (hidden objects have no collision).
-    Visibility {
-        node: NodeId,
-        visible: bool,
-    },
-    Time(u8),
-    Weather(Weather),
 }
 
 #[derive(Clone, Debug)]
@@ -422,9 +452,12 @@ struct Progress {
     started: f32,
 }
 
-/// A layout's gameplay, ready to run, and one play session's state.
+/// A layout's gameplay, compiled once: zones, places and courses. It holds
+/// no state, so one `World` serves every player and every instance: the
+/// state lives in [`Shared`] (per world instance) and [`PlayerState`] (per
+/// player). A server runs the same code as a client.
 #[derive(Clone, Debug)]
-pub struct Logic {
+pub struct World {
     zones: Vec<Zone>,
     poses: HashMap<NodeId, Pose>,
     spawn: Option<Pose>,
@@ -432,21 +465,149 @@ pub struct Logic {
     races: HashMap<String, Vec<u32>>,
     /// Visible in the layout, before any action.
     base_visible: HashMap<NodeId, bool>,
-    // Session state.
+    hour: Option<u8>,
+    weather: Option<Weather>,
+}
+
+/// What everyone in one world instance (a server's routing bucket) shares:
+/// objects shown or hidden by actions, the hour and the weather. `revision`
+/// counts changes, so a server knows who needs a new [`Snapshot`].
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Shared {
+    visibility: HashMap<NodeId, bool>,
+    hour: Option<u8>,
+    weather: Option<Weather>,
+    revision: u64,
+}
+
+/// One player's progress: the zones they stand in, the once-triggers they
+/// used, their courses and their clock.
+#[derive(Clone, Debug)]
+pub struct PlayerState {
     inside: HashSet<NodeId>,
     fired: HashSet<NodeId>,
     left: HashSet<NodeId>,
     progress: HashMap<String, Progress>,
-    visibility: HashMap<NodeId, bool>,
-    hour: Option<u8>,
-    weather: Option<Weather>,
     clock: f32,
-    /// After a teleport: take the new position's zones without entering them,
-    /// so two doors leading to each other do not bounce the player back.
+    /// After a teleport or a spawn: take the zones where the player is
+    /// without entering them, so two doors leading to each other do not
+    /// bounce the player back.
     settle: bool,
+    events: Vec<Happened>,
+}
+impl Default for PlayerState {
+    fn default() -> Self {
+        Self {
+            inside: HashSet::new(),
+            fired: HashSet::new(),
+            left: HashSet::new(),
+            progress: HashMap::new(),
+            clock: 0.0,
+            settle: true,
+            events: Vec::new(),
+        }
+    }
+}
+impl PlayerState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    /// What happened since the last call, oldest first.
+    pub fn take_events(&mut self) -> Vec<Happened> {
+        std::mem::take(&mut self.events)
+    }
+    /// The player was moved by something else (a server script, a respawn):
+    /// take the zones at the new place quietly.
+    pub fn moved(&mut self) {
+        self.settle = true;
+    }
 }
 
-impl Logic {
+impl Shared {
+    /// Fixed hour of day (None: the clock runs).
+    pub fn hour(&self) -> Option<u8> {
+        self.hour
+    }
+    pub fn weather(&self) -> Option<Weather> {
+        self.weather
+    }
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+    /// Objects actions hid.
+    pub fn hidden_ids(&self) -> impl Iterator<Item = NodeId> + '_ {
+        self.visibility
+            .iter()
+            .filter(|(_, visible)| !**visible)
+            .map(|(id, _)| *id)
+    }
+    /// Show or hide an object of `world`. False when there is no such
+    /// object; nothing changes when it already is that way.
+    pub fn set_visible(&mut self, world: &World, node: NodeId, visible: bool) -> bool {
+        if !world.base_visible.contains_key(&node) {
+            return false;
+        }
+        if world.visible(self, node) != visible {
+            self.visibility.insert(node, visible);
+            self.revision += 1;
+        }
+        true
+    }
+    /// Fix the hour (None lets the clock run).
+    pub fn set_hour(&mut self, hour: Option<u8>) {
+        let hour = hour.map(|h| h.min(23));
+        if self.hour != hour {
+            self.hour = hour;
+            self.revision += 1;
+        }
+    }
+    pub fn set_weather(&mut self, weather: Option<Weather>) {
+        if self.weather != weather {
+            self.weather = weather;
+            self.revision += 1;
+        }
+    }
+    /// The state as it travels to players.
+    pub fn snapshot(&self) -> Snapshot {
+        let mut shown = Vec::new();
+        let mut hidden = Vec::new();
+        for (node, visible) in &self.visibility {
+            if *visible {
+                shown.push(*node);
+            } else {
+                hidden.push(*node);
+            }
+        }
+        shown.sort_unstable();
+        hidden.sort_unstable();
+        Snapshot {
+            revision: self.revision,
+            shown,
+            hidden,
+            hour: self.hour,
+            weather: self.weather.map(|w| w.as_str().to_owned()),
+        }
+    }
+    /// The state a server sent; objects `world` does not have are ignored.
+    pub fn from_snapshot(world: &World, snapshot: &Snapshot) -> Self {
+        let mut visibility = HashMap::new();
+        for (list, visible) in [(&snapshot.shown, true), (&snapshot.hidden, false)] {
+            for node in list {
+                if world.base_visible.contains_key(node) {
+                    visibility.insert(*node, visible);
+                }
+            }
+        }
+        Self {
+            visibility,
+            hour: snapshot.hour.map(|h| h.min(23)),
+            weather: snapshot.weather.as_deref().and_then(Weather::parse),
+            revision: snapshot.revision,
+        }
+    }
+}
+
+impl World {
     pub fn new(layout: &Layout) -> Self {
         let mut zones = Vec::new();
         let mut spawn = None;
@@ -497,18 +658,19 @@ impl Logic {
                 .into_iter()
                 .map(|(id, flags)| (id, flags.visible))
                 .collect(),
-            inside: HashSet::new(),
-            fired: HashSet::new(),
-            left: HashSet::new(),
-            progress: HashMap::new(),
-            visibility: HashMap::new(),
             hour: layout.settings.hour,
             weather: layout.settings.weather.as_deref().and_then(Weather::parse),
-            clock: 0.0,
-            settle: true,
         }
     }
-
+    /// A fresh shared state: the world's own hour and weather, nothing
+    /// shown or hidden yet.
+    pub fn shared(&self) -> Shared {
+        Shared {
+            hour: self.hour,
+            weather: self.weather,
+            ..Shared::default()
+        }
+    }
     /// The first spawn point object, if the world has one.
     pub fn spawn(&self) -> Option<Pose> {
         self.spawn
@@ -516,46 +678,41 @@ impl Logic {
     pub fn has_gameplay(&self) -> bool {
         !self.zones.is_empty() || self.spawn.is_some()
     }
-    /// Fixed hour of day right now (None: the clock runs).
-    pub fn hour(&self) -> Option<u8> {
-        self.hour
-    }
-    pub fn weather(&self) -> Option<Weather> {
-        self.weather
-    }
     /// Shown right now, after actions.
-    pub fn visible(&self, node: NodeId) -> bool {
-        self.visibility
+    pub fn visible(&self, shared: &Shared, node: NodeId) -> bool {
+        shared
+            .visibility
             .get(&node)
             .copied()
             .unwrap_or_else(|| self.base_visible.get(&node).copied().unwrap_or(true))
     }
     /// Objects an action hid: they have no collision until shown again.
-    pub fn hidden_by_actions(&self) -> impl Iterator<Item = NodeId> + '_ {
-        self.visibility
+    pub fn hidden_by_actions<'a>(&self, shared: &'a Shared) -> impl Iterator<Item = NodeId> + 'a {
+        shared
+            .visibility
             .iter()
             .filter(|(_, visible)| !**visible)
             .map(|(id, _)| *id)
     }
-    /// Objects an action showed or hid, and how they are now.
-    pub fn changed_visibility(&self) -> &HashMap<NodeId, bool> {
-        &self.visibility
+    /// The interaction the player stands in, and its prompt.
+    pub fn prompt(&self, feet: [f32; 3]) -> Option<(NodeId, String)> {
+        let (node, interact) = self.interaction_at(feet, 0.0)?;
+        Some((
+            node,
+            if interact.prompt.trim().is_empty() {
+                "Use".into()
+            } else {
+                interact.prompt.clone()
+            },
+        ))
     }
-    /// The interaction the player stands in (nearest one), if any.
-    pub fn prompt(&self, feet: [f32; 3]) -> Option<String> {
-        let (_, interact) = self.interaction_at(feet)?;
-        Some(if interact.prompt.trim().is_empty() {
-            "Use".into()
-        } else {
-            interact.prompt.clone()
-        })
-    }
-    fn interaction_at(&self, feet: [f32; 3]) -> Option<(NodeId, &Interact)> {
+    /// The nearest interaction whose zone, grown by `slack` metres, holds `feet`.
+    fn interaction_at(&self, feet: [f32; 3], slack: f32) -> Option<(NodeId, &Interact)> {
         let p = Vec3::from_array(feet);
         self.zones
             .iter()
             .filter_map(|z| match &z.kind {
-                ZoneKind::Interact(i) if z.shape.contains(p) => {
+                ZoneKind::Interact(i) if z.shape.contains_within(p, slack) => {
                     Some((z.node, i, z.shape.base.distance_squared(p)))
                 }
                 _ => None,
@@ -566,17 +723,53 @@ impl Logic {
 
     /// The player pressed the interact key with their feet at `feet`.
     /// None: no interaction here (the key may do something else).
-    pub fn interact(&mut self, feet: [f32; 3]) -> Option<Vec<Effect>> {
-        let (node, interact) = self.interaction_at(feet)?;
-        let actions = interact.actions.clone();
+    pub fn interact(
+        &self,
+        shared: &mut Shared,
+        player: &mut PlayerState,
+        feet: [f32; 3],
+    ) -> Option<Vec<Effect>> {
+        let (node, _) = self.interaction_at(feet, 0.0)?;
+        self.use_node(shared, player, node, feet, 0.0)
+    }
+
+    /// A player asks to use interaction `node` (a server checking a
+    /// client's request): None unless that zone, grown by `slack` metres
+    /// for network delay, holds the player's `feet`.
+    pub fn use_node(
+        &self,
+        shared: &mut Shared,
+        player: &mut PlayerState,
+        node: NodeId,
+        feet: [f32; 3],
+        slack: f32,
+    ) -> Option<Vec<Effect>> {
+        let zone = self.zones.iter().find(|z| z.node == node)?;
+        let ZoneKind::Interact(interact) = &zone.kind else {
+            return None;
+        };
+        if !zone
+            .shape
+            .contains_within(Vec3::from_array(feet), slack.max(0.0))
+        {
+            return None;
+        }
         let mut out = Vec::new();
-        self.run(node, &actions, &mut out);
+        player.events.push(Happened::Used(node));
+        self.run(shared, player, node, &interact.actions, &mut out);
         Some(out)
     }
 
-    /// Advance by `dt` seconds with the player's feet at `feet` (Blender axes).
-    pub fn step(&mut self, feet: [f32; 3], dt: f32) -> Vec<Effect> {
-        self.clock += dt.max(0.0);
+    /// Advance one player by `dt` seconds with their feet at `feet`
+    /// (Blender axes).
+    pub fn step(
+        &self,
+        shared: &mut Shared,
+        player: &mut PlayerState,
+        feet: [f32; 3],
+        dt: f32,
+    ) -> Vec<Effect> {
+        player.clock += dt.max(0.0);
         let p = Vec3::from_array(feet);
         let now: HashSet<NodeId> = self
             .zones
@@ -585,63 +778,75 @@ impl Logic {
             .map(|z| z.node)
             .collect();
         let mut out = Vec::new();
-        if std::mem::take(&mut self.settle) {
+        if std::mem::take(&mut player.settle) {
             // Arrival zones are taken quietly, but the zones the player was
-            // teleported out of still see them leave.
-            let left: Vec<usize> = (0..self.zones.len())
-                .filter(|i| {
-                    let node = self.zones[*i].node;
-                    self.inside.contains(&node) && !now.contains(&node)
-                })
+            // moved out of still see them leave.
+            let left: Vec<&Zone> = self
+                .zones
+                .iter()
+                .filter(|z| player.inside.contains(&z.node) && !now.contains(&z.node))
                 .collect();
-            self.inside = now;
-            for index in left {
-                let node = self.zones[index].node;
-                if let ZoneKind::Trigger(trigger) = self.zones[index].kind.clone() {
-                    self.leave(node, &trigger, &mut out);
+            player.inside = now;
+            for zone in left {
+                player.events.push(Happened::Left(zone.node));
+                if let ZoneKind::Trigger(trigger) = &zone.kind {
+                    self.leave(shared, player, zone.node, trigger, &mut out);
                 }
             }
             return out;
         }
-        for index in 0..self.zones.len() {
-            let node = self.zones[index].node;
-            let entered = now.contains(&node) && !self.inside.contains(&node);
-            let left = !now.contains(&node) && self.inside.contains(&node);
+        for zone in &self.zones {
+            let node = zone.node;
+            let entered = now.contains(&node) && !player.inside.contains(&node);
+            let left = !now.contains(&node) && player.inside.contains(&node);
+            if entered {
+                player.events.push(Happened::Entered(node));
+            }
+            if left {
+                player.events.push(Happened::Left(node));
+            }
             if !entered && !left {
                 continue;
             }
-            match self.zones[index].kind.clone() {
+            match &zone.kind {
                 ZoneKind::Trigger(trigger) => {
                     // `once`: the enter actions and the leave actions each
-                    // run one time per play session.
-                    if entered && !(trigger.once && self.fired.contains(&node)) {
-                        self.fired.insert(node);
-                        self.run(node, &trigger.on_enter, &mut out);
+                    // run one time per player and play session.
+                    if entered && !(trigger.once && player.fired.contains(&node)) {
+                        player.fired.insert(node);
+                        self.run(shared, player, node, &trigger.on_enter, &mut out);
                     }
                     if left {
-                        self.leave(node, &trigger, &mut out);
+                        self.leave(shared, player, node, trigger, &mut out);
                     }
                 }
                 ZoneKind::Checkpoint { race, order } if entered => {
-                    self.checkpoint(&race, order, &mut out);
+                    self.checkpoint(player, race, *order, &mut out);
                 }
                 _ => {}
             }
         }
         // A teleport during this step sets `settle` again: the next step
         // takes the arrival zones quietly.
-        self.inside = now;
+        player.inside = now;
         out
     }
 
-    fn leave(&mut self, node: NodeId, trigger: &Trigger, out: &mut Vec<Effect>) {
-        if !(trigger.once && self.left.contains(&node)) {
-            self.left.insert(node);
-            self.run(node, &trigger.on_leave, out);
+    fn leave(
+        &self,
+        shared: &mut Shared,
+        player: &mut PlayerState,
+        node: NodeId,
+        trigger: &Trigger,
+        out: &mut Vec<Effect>,
+    ) {
+        if !(trigger.once && player.left.contains(&node)) {
+            player.left.insert(node);
+            self.run(shared, player, node, &trigger.on_leave, out);
         }
     }
 
-    fn checkpoint(&mut self, race: &str, order: u32, out: &mut Vec<Effect>) {
+    fn checkpoint(&self, player: &mut PlayerState, race: &str, order: u32, out: &mut Vec<Effect>) {
         let Some(orders) = self.races.get(race) else {
             return;
         };
@@ -655,36 +860,49 @@ impl Logic {
             format!("{race}: ")
         };
         let message = |text: String| Effect::Message { text, seconds: 3.0 };
+        let reached = |player: &mut PlayerState, index| {
+            player.events.push(Happened::Checkpoint {
+                race: race.to_owned(),
+                index,
+                total,
+            })
+        };
         if index == 0 {
+            reached(player, 0);
             if total == 1 {
                 out.push(message(format!("{name}Checkpoint reached")));
                 return;
             }
-            self.progress.insert(
+            player.progress.insert(
                 race.to_owned(),
                 Progress {
                     next: 1,
-                    started: self.clock,
+                    started: player.clock,
                 },
             );
             out.push(message(format!("{name}Go! Checkpoint 1/{total}")));
             return;
         }
-        let Some(progress) = self.progress.get(race).copied() else {
+        let Some(progress) = player.progress.get(race).copied() else {
             return;
         };
         if index != progress.next {
             return;
         }
+        reached(player, index);
         if index + 1 == total {
-            self.progress.remove(race);
-            let seconds = self.clock - progress.started;
+            player.progress.remove(race);
+            let seconds = player.clock - progress.started;
+            player.events.push(Happened::Finished {
+                race: race.to_owned(),
+                seconds,
+            });
             out.push(Effect::Message {
                 text: format!("{name}Finished in {seconds:.1} s"),
                 seconds: 6.0,
             });
         } else {
-            self.progress.insert(
+            player.progress.insert(
                 race.to_owned(),
                 Progress {
                     next: index + 1,
@@ -695,7 +913,14 @@ impl Logic {
         }
     }
 
-    fn run(&mut self, owner: NodeId, actions: &[Kept<Action>], out: &mut Vec<Effect>) {
+    fn run(
+        &self,
+        shared: &mut Shared,
+        player: &mut PlayerState,
+        owner: NodeId,
+        actions: &[Kept<Action>],
+        out: &mut Vec<Effect>,
+    ) {
         for action in actions.iter().filter_map(Kept::known) {
             match action {
                 Action::Message { text, seconds } => out.push(Effect::Message {
@@ -705,7 +930,7 @@ impl Logic {
                 Action::Teleport { target } => {
                     if let Some(pose) = target.and_then(|t| self.poses.get(&t)) {
                         out.push(Effect::Teleport(*pose));
-                        self.settle = true;
+                        player.settle = true;
                     }
                 }
                 Action::Show { node } | Action::Hide { node } | Action::Toggle { node } => {
@@ -716,29 +941,187 @@ impl Logic {
                     let visible = match action {
                         Action::Show { .. } => true,
                         Action::Hide { .. } => false,
-                        _ => !self.visible(node),
+                        _ => !self.visible(shared, node),
                     };
-                    self.visibility.insert(node, visible);
+                    shared.set_visible(self, node, visible);
                     out.push(Effect::Visibility { node, visible });
                 }
                 Action::SetTime { hour } => {
                     // A fixed clock moves to the new hour; a running clock
                     // jumps there and keeps running.
                     let hour = (*hour).min(23);
-                    if self.hour.is_some() {
-                        self.hour = Some(hour);
+                    if shared.hour.is_some() {
+                        shared.set_hour(Some(hour));
                     }
                     out.push(Effect::Time(hour));
                 }
                 Action::SetWeather { weather } => {
                     if let Some(weather) = Weather::parse(weather) {
-                        self.weather = Some(weather);
+                        shared.set_weather(Some(weather));
                         out.push(Effect::Weather(weather));
                     }
                 }
             }
         }
     }
+}
+
+/// A layout's gameplay for one player alone: the [`World`] with its own
+/// [`Shared`] state and one [`PlayerState`] (Build Mode's playtest, or a
+/// pack played without a server).
+#[derive(Clone, Debug)]
+pub struct Logic {
+    world: World,
+    shared: Shared,
+    player: PlayerState,
+}
+
+impl Logic {
+    pub fn new(layout: &Layout) -> Self {
+        let world = World::new(layout);
+        Self {
+            shared: world.shared(),
+            player: PlayerState::new(),
+            world,
+        }
+    }
+    pub fn world(&self) -> &World {
+        &self.world
+    }
+    pub fn shared(&self) -> &Shared {
+        &self.shared
+    }
+    /// Take the shared state a server decided.
+    pub fn set_shared(&mut self, shared: Shared) {
+        self.shared = shared;
+    }
+    pub fn player_mut(&mut self) -> &mut PlayerState {
+        &mut self.player
+    }
+    /// The first spawn point object, if the world has one.
+    pub fn spawn(&self) -> Option<Pose> {
+        self.world.spawn()
+    }
+    pub fn has_gameplay(&self) -> bool {
+        self.world.has_gameplay()
+    }
+    /// Fixed hour of day right now (None: the clock runs).
+    pub fn hour(&self) -> Option<u8> {
+        self.shared.hour
+    }
+    pub fn weather(&self) -> Option<Weather> {
+        self.shared.weather
+    }
+    /// Shown right now, after actions.
+    pub fn visible(&self, node: NodeId) -> bool {
+        self.world.visible(&self.shared, node)
+    }
+    /// Objects an action hid: they have no collision until shown again.
+    pub fn hidden_by_actions(&self) -> impl Iterator<Item = NodeId> + '_ {
+        self.world.hidden_by_actions(&self.shared)
+    }
+    /// The prompt of the interaction the player stands in.
+    pub fn prompt(&self, feet: [f32; 3]) -> Option<String> {
+        self.world.prompt(feet).map(|(_, prompt)| prompt)
+    }
+    /// The interaction the player stands in.
+    pub fn interaction(&self, feet: [f32; 3]) -> Option<NodeId> {
+        self.world.prompt(feet).map(|(node, _)| node)
+    }
+    /// The player pressed the interact key with their feet at `feet`.
+    /// None: no interaction here (the key may do something else).
+    pub fn interact(&mut self, feet: [f32; 3]) -> Option<Vec<Effect>> {
+        self.world
+            .interact(&mut self.shared, &mut self.player, feet)
+    }
+    /// Advance by `dt` seconds with the player's feet at `feet` (Blender axes).
+    pub fn step(&mut self, feet: [f32; 3], dt: f32) -> Vec<Effect> {
+        self.world
+            .step(&mut self.shared, &mut self.player, feet, dt)
+    }
+}
+
+/// How gameplay travels between a server and its players, over ordinary
+/// script events (no protocol change).
+pub mod wire {
+    use super::{Effect, NodeId, Pose};
+    use serde::{Deserialize, Serialize};
+
+    /// Server to players: the shared state of their world instance, as a
+    /// [`super::Snapshot`]. Sent when it changes and when a player arrives.
+    pub const STATE_EVENT: &str = "__sare:worldState";
+    /// Server to one player: what only that player sees or feels.
+    pub const EFFECTS_EVENT: &str = "__sare:worldEffects";
+    /// Player to server: use the interaction with this node id.
+    pub const USE_EVENT: &str = "__sare:worldUse";
+
+    /// A personal effect on the wire.
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    #[serde(tag = "do", rename_all = "snake_case")]
+    pub enum Personal {
+        Message { text: String, seconds: f32 },
+        Teleport { position: [f32; 3], heading: f32 },
+    }
+    impl Personal {
+        /// The personal part of an effect; shared ones travel in snapshots.
+        pub fn of(effect: &Effect) -> Option<Self> {
+            match effect {
+                Effect::Message { text, seconds } => Some(Self::Message {
+                    text: text.clone(),
+                    seconds: *seconds,
+                }),
+                Effect::Teleport(pose) => Some(Self::Teleport {
+                    position: pose.position,
+                    heading: pose.heading,
+                }),
+                _ => None,
+            }
+        }
+        /// Back to an effect, if the values are sane.
+        pub fn effect(&self) -> Option<Effect> {
+            match self {
+                Self::Message { text, seconds } if seconds.is_finite() => Some(Effect::Message {
+                    text: text.chars().take(512).collect(),
+                    seconds: seconds.clamp(0.5, 60.0),
+                }),
+                Self::Teleport { position, heading }
+                    if position
+                        .iter()
+                        .all(|v| v.is_finite() && v.abs() <= 100_000.0)
+                        && heading.is_finite() =>
+                {
+                    Some(Effect::Teleport(Pose {
+                        position: *position,
+                        heading: *heading,
+                    }))
+                }
+                _ => None,
+            }
+        }
+    }
+    /// The payload of a `USE_EVENT`.
+    pub fn parse_use(payload: &str) -> Option<NodeId> {
+        serde_json::from_str::<(NodeId,)>(payload)
+            .ok()
+            .map(|(n,)| n)
+    }
+}
+
+/// The shared state of one world instance on the wire.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Snapshot {
+    #[serde(rename = "r")]
+    pub revision: u64,
+    /// Objects actions showed.
+    #[serde(rename = "s", default)]
+    pub shown: Vec<NodeId>,
+    /// Objects actions hid.
+    #[serde(rename = "x", default)]
+    pub hidden: Vec<NodeId>,
+    #[serde(rename = "h", default, skip_serializing_if = "Option::is_none")]
+    pub hour: Option<u8>,
+    #[serde(rename = "w", default, skip_serializing_if = "Option::is_none")]
+    pub weather: Option<String>,
 }
 
 /// Objects an action can show or hide. Played worlds keep them out of the
@@ -1233,6 +1616,147 @@ mod tests {
         );
         object(&mut layout, "Crate", [12.0, 0.0, 0.0], None);
         assert_eq!(switchable(&layout), HashSet::from([door, lamp]));
+    }
+
+    #[test]
+    fn players_share_doors_time_and_weather_but_not_progress() {
+        let mut layout = Layout::default();
+        layout.settings.hour = Some(12);
+        let door = object(&mut layout, "Door", [0.0; 3], preset("door", 1));
+        let once = object(&mut layout, "Hello", [20.0, 0.0, 0.0], None);
+        layout.node_mut(once).unwrap().gameplay = Some(Kept::Known(Component::Trigger(Trigger {
+            size: [2.0, 2.0, 2.0],
+            once: true,
+            on_enter: vec![
+                Action::Message {
+                    text: "hi".into(),
+                    seconds: 1.0,
+                }
+                .into(),
+                Action::SetTime { hour: 21 }.into(),
+            ],
+            on_leave: Vec::new(),
+            extra: Map::new(),
+        })));
+        let world = World::new(&layout);
+        let mut shared = world.shared();
+        let (mut anna, mut ben) = (PlayerState::new(), PlayerState::new());
+        let away = [50.0, 50.0, 0.0];
+        world.step(&mut shared, &mut anna, away, 0.1);
+        world.step(&mut shared, &mut ben, away, 0.1);
+        // Anna opens the door: it is open for Ben too.
+        let before = shared.revision();
+        world.interact(&mut shared, &mut anna, [0.0; 3]).unwrap();
+        assert!(!world.visible(&shared, door));
+        assert!(shared.revision() > before);
+        assert_eq!(anna.take_events(), vec![Happened::Used(door)]);
+        assert!(ben.take_events().is_empty());
+        // "Once" is per player: both get the message, the time is shared.
+        let hello = |state: &mut PlayerState, shared: &mut Shared| {
+            world.step(shared, state, [20.0, 0.0, 0.0], 0.1)
+        };
+        assert_eq!(messages(&hello(&mut anna, &mut shared)), vec!["hi"]);
+        assert_eq!(shared.hour(), Some(21));
+        assert_eq!(messages(&hello(&mut ben, &mut shared)), vec!["hi"]);
+        assert_eq!(
+            ben.take_events(),
+            vec![Happened::Entered(once)],
+            "scripts see who entered"
+        );
+        world.step(&mut shared, &mut anna, away, 0.1);
+        assert!(messages(&hello(&mut anna, &mut shared)).is_empty());
+    }
+
+    #[test]
+    fn snapshots_carry_the_shared_state_to_late_joiners() {
+        let mut layout = Layout::default();
+        let door = object(&mut layout, "Door", [0.0; 3], preset("door", 1));
+        let lamp = object(&mut layout, "Lamp", [3.0, 0.0, 0.0], None);
+        layout.node_mut(lamp).unwrap().visible = false;
+        let world = World::new(&layout);
+        let mut shared = world.shared();
+        assert!(shared.set_visible(&world, door, false));
+        assert!(shared.set_visible(&world, lamp, true));
+        assert!(!shared.set_visible(&world, 999, true), "no such object");
+        shared.set_weather(Some(Weather::Fog));
+        let text = serde_json::to_string(&shared.snapshot()).unwrap();
+        assert!(crate::world_logic::tests::fits_one_event(&text));
+        let snapshot: Snapshot = serde_json::from_str(&text).unwrap();
+        let late = Shared::from_snapshot(&world, &snapshot);
+        assert_eq!(late, shared);
+        assert!(!world.visible(&late, door) && world.visible(&late, lamp));
+        // Unknown objects in a snapshot are ignored.
+        let odd = Snapshot {
+            hidden: vec![door, 12345],
+            ..Snapshot::default()
+        };
+        assert_eq!(
+            Shared::from_snapshot(&world, &odd)
+                .hidden_ids()
+                .collect::<Vec<_>>(),
+            vec![door]
+        );
+    }
+
+    #[test]
+    fn remote_use_is_checked_against_the_players_position() {
+        let mut layout = Layout::default();
+        let door = object(&mut layout, "Door", [0.0; 3], preset("door", 1));
+        let crate_id = object(&mut layout, "Crate", [5.0, 0.0, 0.0], None);
+        let world = World::new(&layout);
+        let mut shared = world.shared();
+        let mut player = PlayerState::new();
+        // Far away: refused, nothing changes.
+        assert!(world
+            .use_node(&mut shared, &mut player, door, [10.0, 0.0, 0.0], 1.5)
+            .is_none());
+        // Not an interaction: refused.
+        assert!(world
+            .use_node(&mut shared, &mut player, crate_id, [5.0, 0.0, 0.0], 1.5)
+            .is_none());
+        assert_eq!(shared.revision(), 0);
+        // Just outside the zone but within the network slack: allowed.
+        assert!(world
+            .use_node(&mut shared, &mut player, door, [2.2, 0.0, 0.0], 1.5)
+            .is_some());
+        assert!(!world.visible(&shared, door));
+    }
+
+    #[test]
+    fn personal_effects_round_trip_and_bad_ones_are_dropped() {
+        use wire::Personal;
+        let effects = [
+            Effect::Message {
+                text: "hi".into(),
+                seconds: 3.0,
+            },
+            Effect::Teleport(Pose {
+                position: [1.0, 2.0, 3.0],
+                heading: 90.0,
+            }),
+        ];
+        let wire: Vec<Personal> = effects.iter().filter_map(Personal::of).collect();
+        let text = serde_json::to_string(&(&wire,)).unwrap();
+        let (back,): (Vec<Personal>,) = serde_json::from_str(&text).unwrap();
+        let back: Vec<Effect> = back.iter().filter_map(Personal::effect).collect();
+        assert_eq!(back, effects);
+        assert_eq!(
+            Personal::of(&Effect::Time(3)),
+            None,
+            "shared effects travel in snapshots"
+        );
+        let bad = Personal::Teleport {
+            position: [f32::NAN, 0.0, 0.0],
+            heading: 0.0,
+        };
+        assert_eq!(bad.effect(), None);
+        assert_eq!(wire::parse_use("[7]"), Some(7));
+        assert_eq!(wire::parse_use("[\"x\"]"), None);
+    }
+
+    /// Within sa-net's script event payload limit (4 KiB).
+    pub fn fits_one_event(payload: &str) -> bool {
+        payload.len() + 2 <= 4 * 1024
     }
 
     #[test]

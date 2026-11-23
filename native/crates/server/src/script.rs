@@ -69,6 +69,8 @@ pub struct State {
     pub drivers: crate::vehicles::Drivers,
     /// Character looks set with `SetPlayerAppearance`, by player id.
     pub appearances: BTreeMap<u32, sa_net::appearance::Appearance>,
+    /// Build Mode gameplay of the content pack world, run by the server.
+    pub world: Option<crate::world::Game>,
 }
 impl State {
     pub fn new(resources_dir: PathBuf) -> Self {
@@ -99,6 +101,7 @@ impl State {
             entities: crate::entities::Registry::default(),
             drivers: Default::default(),
             appearances: BTreeMap::new(),
+            world: None,
         }
     }
     pub fn convar(&self, name: &str) -> Option<&str> {
