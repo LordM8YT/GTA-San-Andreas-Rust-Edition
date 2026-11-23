@@ -1,8 +1,9 @@
 SARE free-roam test client, built and tested from the linked commit.
 
 Version 0.54.0:
-- Build Mode: worlds can now have gameplay. Select any object and give it a behaviour in the Inspector: a trigger zone, an interaction (press E), a checkpoint or a spawn point. Behaviours run actions: show a message, teleport the player, show, hide or toggle an object, and set the time or the weather.
-- New Gameplay category in the Asset Browser: a door that opens with E, a door to another place, a teleport pad, a destination point, a spawn point, a trigger zone, an interaction point and checkpoints that number themselves. Drop one in and it works.
+- Build Mode has a new layout that works like the building editors many creators already know: a ribbon with Home, Model, Test and View tabs, the Toolbox on the left, the Explorer (with Workspace and Lighting) above the Properties on the right, and Output at the bottom. Insert a Part with one click, copy, cut and paste objects, and use Ctrl+1 to Ctrl+4 for the tools and F5 to play. Docks can be closed and opened again from the View tab.
+- Build Mode: worlds can now have gameplay. Select any object and give it a behaviour in the Properties panel: a trigger zone, an interaction (press E), a checkpoint or a spawn point. Behaviours run actions: show a message, teleport the player, show, hide or toggle an object, and set the time or the weather.
+- New Gameplay category in the Toolbox: a door that opens with E, a door to another place, a teleport pad, a destination point, a spawn point, a trigger zone, an interaction point and checkpoints that number themselves. Drop one in and it works.
 - Checkpoints make a timed course: the first starts the clock, the last shows your time.
 - The viewport shows every zone with a label and where teleports lead. The new Collision view outlines solid objects in cyan and objects without collision in red.
 - World settings have a weather (clear, cloudy, rain, fog), and worlds played from the launcher now use the world's time of day and weather too.
@@ -12,7 +13,7 @@ Version 0.54.0:
 - Multiplayer worlds: host a Build Mode world (`sets content_pack <id>` with the pack in the server's `content/` folder) and the server runs its gameplay for everyone. A door one player opens is open for all, also for players who join later; time and weather are shared; messages, teleports and checkpoint times stay personal. The server checks that a player really stands at what they use, and each instance (routing bucket) has its own doors.
 - Lights: give any object a light (colour, glow size, ground light radius) that glows from dusk to dawn like SARE's street lamps; lamp posts come with one. World settings add fog density, sky colour and brightness. Lights do not light other objects yet.
 - Terrain: place Terrain 64 m and shape it with the new Sculpt tool (T): raise, lower, smooth and flatten with a brush, one undo step per stroke. It is solid and plays everywhere, also on servers.
-- World Outliner: drag objects to reorder them and to move them in and out of groups. With several objects selected, show, hide, lock, switch collision, reset or drop them all at once. Teleports without a destination offer "New destination here".
+- Explorer: drag objects to reorder them and to move them in and out of groups. With several objects selected, show, hide, lock, switch collision, reset or drop them all at once. Teleports without a destination offer "New destination here".
 - Server scripts: new events `sare:zoneEnter`, `sare:zoneLeave`, `sare:objectUsed`, `sare:checkpoint` and `sare:raceFinished`, and natives `SetWorldObjectVisible`, `IsWorldObjectVisible`, `GetWorldObjectByName`, `SetWorldHour` and `SetWorldWeather`.
 
 Version 0.53.0:

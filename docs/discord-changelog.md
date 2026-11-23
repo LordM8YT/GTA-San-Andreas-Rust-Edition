@@ -2,9 +2,10 @@
 
 🚪 **Doors that open with E**, doors and pads that teleport you somewhere else, and trigger zones that show messages or change the time and weather.
 🏁 **Checkpoint courses** with a timer: drop the checkpoints in and they number themselves.
-🧭 Give any object a behaviour in the Inspector, and see every zone and teleport link in the viewport.
+🧭 Give any object a behaviour in the Properties panel, and see every zone and teleport link in the viewport.
 🎮 Try it all in **Gameplay Sample**, in Build Mode with F6 Playtest or from the launcher. No GTA needed.
 
+🧰 **A familiar editor:** Build Mode now has a ribbon with Home, Model, Test and View tabs, plus Toolbox, Explorer, Properties and Output panels. Insert a Part, copy and paste, Ctrl+1 to 4 for the tools and F5 to play.
 ⛰️ **Terrain and lights:** sculpt hills with the new Sculpt tool, and lamps glow at night.
 🌐 **Multiplayer worlds:** host your Build Mode world and everyone shares the same doors, time and weather. The server decides, and your Lua scripts can react to zones and races.
 

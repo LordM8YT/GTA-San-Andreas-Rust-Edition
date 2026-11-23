@@ -1,6 +1,8 @@
-//! The Build Mode interface: menu and toolbar, Asset Browser and World
-//! Outliner on the left, Inspector on the right, log tabs and status bar at
-//! the bottom, and the viewport in the middle.
+//! The Build Mode interface, laid out like the building editors creators
+//! already know: a menu and a ribbon of tabs (Home, Model, Test, View) on
+//! top, the Toolbox (assets) on the left, the Explorer above the Properties
+//! on the right, Output and the status bar at the bottom and the viewport in
+//! the middle. Every dock can be closed and opened again from the View tab.
 use super::{viewport, BuildMode, Level, Placing, Request, Tool};
 use crate::ui_theme::{ACCENT, BACKGROUND, MUTED, SUCCESS, SURFACE, SURFACE_HIGH, TEXT};
 use egui::{Color32, Key, KeyboardShortcut, Modifiers, RichText, Ui};
@@ -14,11 +16,22 @@ use std::time::{Duration, Instant};
 pub(super) const WARNING: Color32 = Color32::from_rgb(232, 170, 70);
 pub(super) const ERROR: Color32 = Color32::from_rgb(232, 96, 86);
 
+/// The ribbon tab shown under the menu.
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
-pub enum LeftTab {
+pub enum RibbonTab {
     #[default]
-    Assets,
-    Outliner,
+    Home,
+    Model,
+    Test,
+    View,
+}
+/// What the Properties show with nothing selected: the Explorer's
+/// Workspace row (the world itself) or its Lighting row (environment).
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub enum WorldPage {
+    #[default]
+    Workspace,
+    Lighting,
 }
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum BottomTab {
@@ -31,7 +44,16 @@ pub enum BottomTab {
 
 #[derive(Default)]
 pub struct UiState {
-    left: LeftTab,
+    ribbon: RibbonTab,
+    world_page: WorldPage,
+    /// Docks closed with their close button (the View tab opens them again).
+    hide_toolbox: bool,
+    hide_explorer: bool,
+    hide_properties: bool,
+    /// The Explorer's Workspace row is folded.
+    workspace_collapsed: bool,
+    /// Objects copied or cut, as they were then (see [`ops::copy`]).
+    clipboard: Vec<Node>,
     bottom: BottomTab,
     bottom_open: bool,
     asset_search: String,
@@ -88,9 +110,20 @@ fn compact(ui: &mut Ui) {
     }
 }
 
+/// A category bar in the Properties.
 pub(super) fn section(ui: &mut Ui, title: &str) {
-    ui.add_space(4.0);
-    ui.label(RichText::new(title).color(ACCENT).strong());
+    ui.add_space(6.0);
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 20.0), egui::Sense::hover());
+    ui.painter().rect_filled(rect, 2.0, SURFACE_HIGH);
+    ui.painter().text(
+        rect.left_center() + egui::vec2(6.0, 0.0),
+        egui::Align2::LEFT_CENTER,
+        title,
+        egui::FontId::proportional(12.5),
+        ACCENT,
+    );
+    ui.add_space(2.0);
 }
 
 /// The whole editor for one frame.
@@ -106,7 +139,7 @@ pub fn draw(build: &mut BuildMode, root: &mut Ui, frame: &viewport::Frame) {
         .show(root, |ui| {
             compact(ui);
             menu_bar(build, ui);
-            toolbar(build, ui);
+            ribbon(build, ui);
         });
     egui::Panel::bottom("build-status")
         .exact_size(24.0)
@@ -129,22 +162,48 @@ pub fn draw(build: &mut BuildMode, root: &mut Ui, frame: &viewport::Frame) {
             bottom(build, ui);
         });
     build.ui.bottom_open = bottom_open;
-    egui::Panel::left("build-left")
-        .resizable(true)
-        .default_size(270.0)
-        .frame(egui::Frame::new().fill(SURFACE).inner_margin(8))
-        .show(root, |ui| {
-            compact(ui);
-            left(build, ui);
-        });
-    egui::Panel::right("build-right")
-        .resizable(true)
-        .default_size(300.0)
-        .frame(egui::Frame::new().fill(SURFACE).inner_margin(8))
-        .show(root, |ui| {
-            compact(ui);
-            egui::ScrollArea::vertical().show(ui, |ui| inspector(build, ui));
-        });
+    if !build.ui.hide_toolbox {
+        egui::Panel::left("build-left")
+            .resizable(true)
+            .default_size(270.0)
+            .frame(egui::Frame::new().fill(SURFACE).inner_margin(8))
+            .show(root, |ui| {
+                compact(ui);
+                toolbox(build, ui);
+            });
+    }
+    let explorer_on = !build.ui.hide_explorer;
+    let properties_on = !build.ui.hide_properties;
+    if explorer_on || properties_on {
+        egui::Panel::right("build-right")
+            .resizable(true)
+            .default_size(310.0)
+            .frame(egui::Frame::new().fill(SURFACE).inner_margin(8))
+            .show(root, |ui| {
+                compact(ui);
+                if explorer_on && properties_on {
+                    // Explorer above, Properties below; drag the line between.
+                    egui::Panel::top("build-explorer")
+                        .resizable(true)
+                        .default_size(300.0)
+                        .size_range(120.0..=1000.0)
+                        .frame(
+                            egui::Frame::new()
+                                .fill(SURFACE)
+                                .inner_margin(egui::Margin::symmetric(0, 4)),
+                        )
+                        .show(ui, |ui| {
+                            compact(ui);
+                            explorer(build, ui);
+                        });
+                    properties(build, ui);
+                } else if explorer_on {
+                    explorer(build, ui);
+                } else {
+                    properties(build, ui);
+                }
+            });
+    }
     egui::CentralPanel::no_frame().show(root, |ui| {
         viewport::show(build, ui, frame);
         if let Some(placing) = build.placing.as_ref().filter(|p| p.dragged) {
@@ -205,7 +264,7 @@ fn dropped_files(build: &mut BuildMode, root: &mut Ui) {
     }
     if let Some((asset, label)) = last {
         build.refresh_catalog();
-        build.ui.left = LeftTab::Assets;
+        build.ui.hide_toolbox = false;
         build.selection.clear();
         build.placing = Some(Placing {
             asset,
@@ -259,6 +318,43 @@ fn shortcuts(build: &mut BuildMode, ui: &mut Ui) {
         ungroup(build);
     } else if consume(ctrl(Key::G)) {
         group(build);
+    }
+    // Ctrl+1..4 pick the tools, as in other building editors.
+    for (key, tool) in [
+        (Key::Num1, Tool::Select),
+        (Key::Num2, Tool::Move),
+        (Key::Num3, Tool::Scale),
+        (Key::Num4, Tool::Rotate),
+    ] {
+        if consume(ctrl(key)) {
+            build.tool = tool;
+        }
+    }
+    if consume(ctrl(Key::L)) {
+        build.local = !build.local;
+    }
+    // Copy, cut and paste arrive as clipboard events, not key presses.
+    let (copy, cut, paste_now) = ui.input(|i| {
+        i.events
+            .iter()
+            .fold((false, false, false), |(c, x, v), e| match e {
+                egui::Event::Copy => (true, x, v),
+                egui::Event::Cut => (c, true, v),
+                egui::Event::Paste(_) => (c, x, true),
+                _ => (c, x, v),
+            })
+    });
+    if copy {
+        copy_selection(build, ui.ctx());
+    }
+    if cut {
+        cut_selection(build, ui.ctx());
+    }
+    if paste_now {
+        paste(build);
+    }
+    if ui.input(|i| i.key_pressed(Key::F5)) {
+        build.requests.push(Request::Playtest);
     }
     let pressed = |ui: &mut Ui, key| ui.input(|i| i.key_pressed(key) && i.modifiers.is_none());
     if pressed(ui, Key::Delete) || pressed(ui, Key::Backspace) {
@@ -388,6 +484,27 @@ fn menu_bar(build: &mut BuildMode, ui: &mut Ui) {
             ui.separator();
             let any = !build.selection.is_empty();
             if ui
+                .add_enabled(any, egui::Button::new("Copy").shortcut_text("Ctrl+C"))
+                .clicked()
+            {
+                copy_selection(build, ui.ctx());
+            }
+            if ui
+                .add_enabled(any, egui::Button::new("Cut").shortcut_text("Ctrl+X"))
+                .clicked()
+            {
+                cut_selection(build, ui.ctx());
+            }
+            if ui
+                .add_enabled(
+                    !build.ui.clipboard.is_empty(),
+                    egui::Button::new("Paste").shortcut_text("Ctrl+V"),
+                )
+                .clicked()
+            {
+                paste(build);
+            }
+            if ui
                 .add_enabled(any, egui::Button::new("Duplicate").shortcut_text("Ctrl+D"))
                 .clicked()
             {
@@ -444,7 +561,8 @@ fn menu_bar(build: &mut BuildMode, ui: &mut Ui) {
                     .logarithmic(true)
                     .text("Fly speed m/s"),
             );
-            ui.checkbox(&mut build.ui.bottom_open, "Console panel");
+            ui.separator();
+            dock_toggles(build, ui);
         });
         ui.menu_button("Help", |ui| {
             if ui.button("Controls").clicked() {
@@ -463,133 +581,642 @@ fn menu_bar(build: &mut BuildMode, ui: &mut Ui) {
     });
 }
 
-fn tool_button(ui: &mut Ui, selected: bool, icon: &str, label: &str, key: &str) -> egui::Response {
-    let text =
-        RichText::new(format!("{icon} {label}")).color(if selected { BACKGROUND } else { TEXT });
-    let button = egui::Button::new(text)
-        .fill(if selected { ACCENT } else { SURFACE_HIGH })
-        .min_size(egui::vec2(0.0, 26.0));
-    ui.add(button).on_hover_text(format!("{label} ({key})"))
+/// Height of a ribbon button: icon above, label below.
+const RIBBON_BUTTON: f32 = 50.0;
+
+/// A large ribbon button: icon above its label.
+fn big_button(
+    ui: &mut Ui,
+    icon: &str,
+    label: &str,
+    selected: bool,
+    enabled: bool,
+    hover: &str,
+) -> egui::Response {
+    let font = egui::FontId::proportional(11.5);
+    let width = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font.clone(), TEXT)
+        .size()
+        .x
+        .max(34.0)
+        + 14.0;
+    let sense = if enabled {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, RIBBON_BUTTON), sense);
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        if selected {
+            painter.rect_filled(rect, 4.0, ACCENT.gamma_multiply(0.22));
+            painter.rect_stroke(
+                rect,
+                4.0,
+                egui::Stroke::new(1.0, ACCENT),
+                egui::StrokeKind::Inside,
+            );
+        } else if enabled && response.hovered() {
+            painter.rect_filled(rect, 4.0, SURFACE_HIGH);
+        }
+        let color = if !enabled {
+            MUTED.gamma_multiply(0.5)
+        } else if selected {
+            ACCENT
+        } else {
+            TEXT
+        };
+        painter.text(
+            rect.center_top() + egui::vec2(0.0, 17.0),
+            egui::Align2::CENTER_CENTER,
+            icon,
+            egui::FontId::proportional(21.0),
+            color,
+        );
+        painter.text(
+            rect.center_bottom() - egui::vec2(0.0, 9.0),
+            egui::Align2::CENTER_CENTER,
+            label,
+            font,
+            color,
+        );
+    }
+    response.on_hover_text(hover)
 }
 
-fn toolbar(build: &mut BuildMode, ui: &mut Ui) {
+/// A small ribbon button, stacked three high beside the large ones.
+fn small_button(ui: &mut Ui, icon: &str, label: &str, enabled: bool, hover: &str) -> bool {
+    ui.add_enabled(
+        enabled,
+        egui::Button::new(RichText::new(format!("{icon} {label}")).size(12.0))
+            .frame(false)
+            .min_size(egui::vec2(0.0, 15.0)),
+    )
+    .on_hover_text(hover)
+    .clicked()
+}
+
+/// One ribbon group: its buttons with the group name underneath.
+fn ribbon_group(ui: &mut Ui, caption: &str, add: impl FnOnce(&mut Ui)) {
+    ui.vertical(|ui| {
+        let width = ui
+            .horizontal(|ui| {
+                ui.set_min_height(RIBBON_BUTTON + 4.0);
+                add(ui);
+            })
+            .response
+            .rect
+            .width();
+        ui.allocate_ui_with_layout(
+            egui::vec2(width, 14.0),
+            egui::Layout::top_down(egui::Align::Center),
+            |ui| {
+                ui.label(RichText::new(caption).size(11.0).color(MUTED));
+            },
+        );
+    });
+    ui.separator();
+}
+
+/// The ribbon: a row of tabs, then the chosen tab's tool groups.
+fn ribbon(build: &mut BuildMode, ui: &mut Ui) {
     ui.horizontal(|ui| {
-        for (tool, icon, label, key) in [
-            (Tool::Select, "⬉", "Select", "Q"),
-            (Tool::Move, "↔", "Move", "W"),
-            (Tool::Rotate, "⟲", "Rotate", "E"),
-            (Tool::Scale, "⛶", "Scale", "R"),
-            (Tool::Sculpt, "^", "Sculpt terrain", "T"),
+        for (tab, label) in [
+            (RibbonTab::Home, "HOME"),
+            (RibbonTab::Model, "MODEL"),
+            (RibbonTab::Test, "TEST"),
+            (RibbonTab::View, "VIEW"),
         ] {
-            if tool_button(ui, build.tool == tool, icon, label, key).clicked() {
+            let selected = build.ui.ribbon == tab;
+            let text = RichText::new(label).size(12.0).strong();
+            let text = if selected {
+                text.color(BACKGROUND)
+            } else {
+                text
+            };
+            if ui.selectable_label(selected, text).clicked() {
+                build.ui.ribbon = tab;
+            }
+        }
+    });
+    egui::Frame::new()
+        .fill(SURFACE)
+        .corner_radius(4)
+        .inner_margin(egui::Margin::symmetric(6, 3))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            egui::ScrollArea::horizontal()
+                .id_salt("build-ribbon")
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| match build.ui.ribbon {
+                        RibbonTab::Home => {
+                            clipboard_group(build, ui);
+                            tools_group(build, ui);
+                            terrain_group(build, ui);
+                            insert_group(build, ui);
+                            edit_group(build, ui);
+                            play_group(build, ui);
+                        }
+                        RibbonTab::Model => {
+                            tools_group(build, ui);
+                            snap_group(build, ui);
+                            terrain_group(build, ui);
+                            insert_group(build, ui);
+                            effects_group(build, ui);
+                            edit_group(build, ui);
+                        }
+                        RibbonTab::Test => {
+                            play_group(build, ui);
+                            spawn_group(build, ui);
+                        }
+                        RibbonTab::View => view_groups(build, ui),
+                    });
+                });
+        });
+}
+
+fn clipboard_group(build: &mut BuildMode, ui: &mut Ui) {
+    let any = !build.selection.is_empty();
+    ribbon_group(ui, "Clipboard", |ui| {
+        let pasted = big_button(
+            ui,
+            "📋",
+            "Paste",
+            false,
+            !build.ui.clipboard.is_empty(),
+            "Paste the copied objects (Ctrl+V)",
+        );
+        if pasted.clicked() {
+            paste(build);
+        }
+        ui.vertical(|ui| {
+            if small_button(ui, "🗐", "Copy", any, "Copy the selection (Ctrl+C)") {
+                copy_selection(build, ui.ctx());
+            }
+            if small_button(ui, "✂", "Cut", any, "Cut the selection (Ctrl+X)") {
+                cut_selection(build, ui.ctx());
+            }
+            if small_button(
+                ui,
+                "⎘",
+                "Duplicate",
+                any,
+                "Duplicate the selection (Ctrl+D)",
+            ) {
+                duplicate(build);
+            }
+        });
+    });
+}
+
+fn tools_group(build: &mut BuildMode, ui: &mut Ui) {
+    ribbon_group(ui, "Tools", |ui| {
+        for (tool, icon, label, keys) in [
+            (Tool::Select, "⬉", "Select", "Ctrl+1 or Q"),
+            (Tool::Move, "↔", "Move", "Ctrl+2 or W"),
+            (Tool::Scale, "⛶", "Scale", "Ctrl+3 or R"),
+            (Tool::Rotate, "⟲", "Rotate", "Ctrl+4 or E"),
+        ] {
+            let hover = format!("{label} ({keys})");
+            if big_button(ui, icon, label, build.tool == tool, true, &hover).clicked() {
                 build.tool = tool;
             }
         }
-        if build.tool == Tool::Sculpt {
-            egui::ComboBox::from_id_salt("sculpt-brush")
-                .width(80.0)
-                .selected_text(build.sculpt.brush.label())
-                .show_ui(ui, |ui| {
-                    for brush in super::Brush::ALL {
-                        ui.selectable_value(&mut build.sculpt.brush, brush, brush.label());
-                    }
-                });
-            ui.add(
-                egui::Slider::new(&mut build.sculpt.radius, 1.0..=40.0)
-                    .text("m")
-                    .logarithmic(true),
-            )
-            .on_hover_text("Brush radius");
-            ui.add(egui::Slider::new(&mut build.sculpt.strength, 0.05..=1.0).text("strength"));
-        }
-        ui.separator();
-        let local_text = if build.local { "Local" } else { "World" };
-        if ui
-            .button(local_text)
-            .on_hover_text("Gizmo axes: world or object (L)")
-            .clicked()
-        {
-            build.local = !build.local;
-        }
-        if tool_button(ui, false, "🗐", "Duplicate", "Ctrl+D").clicked() {
-            duplicate(build);
-        }
-        if ui
-            .add_enabled(build.history.can_undo(), egui::Button::new("↺"))
-            .on_hover_text("Undo (Ctrl+Z)")
-            .clicked()
-        {
-            build.undo();
-        }
-        if ui
-            .add_enabled(build.history.can_redo(), egui::Button::new("↻"))
-            .on_hover_text("Redo (Ctrl+Y)")
-            .clicked()
-        {
-            build.redo();
-        }
-        ui.separator();
-        if tool_button(ui, build.snap.enabled, "#", "Snap", "G").clicked() {
-            build.snap.enabled = !build.snap.enabled;
-        }
-        egui::ComboBox::from_id_salt("grid-step")
-            .width(70.0)
-            .selected_text(format!("{} m", build.snap.step))
-            .show_ui(ui, |ui| {
-                for step in [0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0] {
-                    ui.selectable_value(&mut build.snap.step, step, format!("{step} m"));
-                }
-            })
-            .response
-            .on_hover_text("Grid size");
-        egui::ComboBox::from_id_salt("angle-step")
-            .width(60.0)
-            .selected_text(format!("{}°", build.snap.angle))
-            .show_ui(ui, |ui| {
-                for step in [5.0, 15.0, 30.0, 45.0, 90.0] {
-                    ui.selectable_value(&mut build.snap.angle, step, format!("{step}°"));
-                }
-            })
-            .response
-            .on_hover_text("Rotation snap");
-        ui.checkbox(&mut build.snap.surface, "Surface")
-            .on_hover_text("Place new objects on the surface under the mouse");
-        ui.separator();
-        let mut gameplay = !build.ui.hide_gameplay;
-        if ui
-            .checkbox(&mut gameplay, "Zones")
-            .on_hover_text("Show trigger zones, interactions, checkpoints and where teleports lead")
-            .changed()
-        {
-            build.ui.hide_gameplay = !gameplay;
-        }
-        ui.checkbox(&mut build.ui.show_collision, "Collision")
-            .on_hover_text("Outline solid objects in cyan and objects without collision in red");
-        ui.separator();
-        let play =
-            egui::Button::new(RichText::new("▶ Playtest").color(BACKGROUND).strong()).fill(SUCCESS);
-        if ui
-            .add(play)
-            .on_hover_text("Play this world now; F6 comes back (F6)")
-            .clicked()
-        {
-            build.requests.push(Request::Playtest);
-        }
-        if tool_button(ui, false, "💾", "Save", "Ctrl+S").clicked() {
-            build.save();
-        }
-        if tool_button(
+        ui.vertical(|ui| {
+            let axes = if build.local {
+                "Local axes"
+            } else {
+                "World axes"
+            };
+            if small_button(
+                ui,
+                "🌐",
+                axes,
+                true,
+                "Gizmo axes: the world's or the object's own (Ctrl+L or L)",
+            ) {
+                build.local = !build.local;
+            }
+            let snap = if build.snap.enabled {
+                "Snap on"
+            } else {
+                "Snap off"
+            };
+            if small_button(ui, "#", snap, true, "Snap to the grid (G)") {
+                build.snap.enabled = !build.snap.enabled;
+            }
+        });
+    });
+}
+
+fn terrain_group(build: &mut BuildMode, ui: &mut Ui) {
+    ribbon_group(ui, "Terrain", |ui| {
+        let sculpting = build.tool == Tool::Sculpt;
+        if big_button(
             ui,
-            build.selection.is_empty() && build.ui.left == LeftTab::Outliner,
-            "🌐",
-            "World",
-            "click empty space",
+            "🗻",
+            "Sculpt",
+            sculpting,
+            true,
+            "Raise, lower, smooth or flatten a terrain object (T). Insert one from the Toolbox: Ground › Terrain.",
+        )
+        .clicked()
+        {
+            build.tool = Tool::Sculpt;
+        }
+        if sculpting {
+            ui.vertical(|ui| {
+                egui::ComboBox::from_id_salt("sculpt-brush")
+                    .width(80.0)
+                    .selected_text(build.sculpt.brush.label())
+                    .show_ui(ui, |ui| {
+                        for brush in super::Brush::ALL {
+                            ui.selectable_value(&mut build.sculpt.brush, brush, brush.label());
+                        }
+                    });
+                ui.add(
+                    egui::Slider::new(&mut build.sculpt.radius, 1.0..=40.0)
+                        .text("m")
+                        .logarithmic(true),
+                )
+                .on_hover_text("Brush radius");
+                ui.add(egui::Slider::new(&mut build.sculpt.strength, 0.05..=1.0).text("strength"));
+            });
+        }
+    });
+}
+
+fn insert_group(build: &mut BuildMode, ui: &mut Ui) {
+    ribbon_group(ui, "Insert", |ui| {
+        let placing_part = build
+            .placing
+            .as_ref()
+            .is_some_and(|p| p.asset == AssetRef::Builtin("cube".into()));
+        if big_button(
+            ui,
+            "■",
+            "Part",
+            placing_part,
+            true,
+            "A plain block: click in the world to place it, then scale and colour it",
         )
         .clicked()
         {
             build.selection.clear();
+            build.placing = Some(Placing {
+                asset: AssetRef::Builtin("cube".into()),
+                label: "Part".into(),
+                turn: 0.0,
+                dragged: false,
+            });
+        }
+        if big_button(
+            ui,
+            "📦",
+            "Toolbox",
+            !build.ui.hide_toolbox,
+            true,
+            "Show or hide the Toolbox with every asset",
+        )
+        .clicked()
+        {
+            build.ui.hide_toolbox = !build.ui.hide_toolbox;
         }
     });
+}
+
+fn effects_group(build: &mut BuildMode, ui: &mut Ui) {
+    let objects: Vec<NodeId> = build
+        .selection
+        .iter()
+        .copied()
+        .filter(|id| {
+            build.doc.layout.node(*id).is_some_and(|n| !n.is_group())
+                && !build.doc.layout.effective_locked(*id)
+        })
+        .collect();
+    ribbon_group(ui, "Effects", |ui| {
+        if big_button(
+            ui,
+            "💡",
+            "Light",
+            false,
+            !objects.is_empty(),
+            "Give the selected objects a lamp: a glow and a pool of light on the ground, from dusk to dawn",
+        )
+        .clicked()
+        {
+            use sa_scene::world_layout::PointLight;
+            run(
+                build,
+                ops::modify(&build.doc, "Add light", &objects, |n| {
+                    n.light.get_or_insert_with(PointLight::lamp);
+                }),
+            );
+        }
+    });
+}
+
+fn edit_group(build: &mut BuildMode, ui: &mut Ui) {
+    let any = !build.selection.is_empty();
+    let all_locked = any
+        && build
+            .selection
+            .iter()
+            .all(|id| build.doc.layout.node(*id).is_some_and(|n| n.locked));
+    ribbon_group(ui, "Edit", |ui| {
+        if big_button(
+            ui,
+            "📁",
+            "Group",
+            false,
+            any,
+            "Group the selection (Ctrl+G)",
+        )
+        .clicked()
+        {
+            group(build);
+        }
+        let groups = build
+            .selection
+            .iter()
+            .any(|id| build.doc.layout.node(*id).is_some_and(Node::is_group));
+        if big_button(
+            ui,
+            "📂",
+            "Ungroup",
+            false,
+            groups,
+            "Dissolve the selected groups (Ctrl+Shift+G)",
+        )
+        .clicked()
+        {
+            ungroup(build);
+        }
+        let (icon, label) = if all_locked {
+            ("🔓", "Unlock")
+        } else {
+            ("🔒", "Lock")
+        };
+        if big_button(
+            ui,
+            icon,
+            label,
+            all_locked,
+            any,
+            "Locked objects cannot be picked in the viewport or moved",
+        )
+        .clicked()
+        {
+            let ids = build.selection.clone();
+            let label = if all_locked {
+                "Unlock objects"
+            } else {
+                "Lock objects"
+            };
+            run(
+                build,
+                ops::modify(&build.doc, label, &ids, |n| n.locked = !all_locked),
+            );
+        }
+    });
+}
+
+fn play_group(build: &mut BuildMode, ui: &mut Ui) {
+    ribbon_group(ui, "Test", |ui| {
+        let play = big_button(
+            ui,
+            "▶",
+            "Play",
+            false,
+            true,
+            "Play this world now (F5). F6 brings you back to Build Mode.",
+        );
+        // The one green button: easy to find, as in other editors.
+        ui.painter().text(
+            play.rect.center_top() + egui::vec2(0.0, 17.0),
+            egui::Align2::CENTER_CENTER,
+            "▶",
+            egui::FontId::proportional(21.0),
+            SUCCESS,
+        );
+        if play.clicked() {
+            build.requests.push(Request::Playtest);
+        }
+        if big_button(ui, "💾", "Save", false, true, "Save the world (Ctrl+S)").clicked() {
+            build.save();
+        }
+    });
+}
+
+fn snap_group(build: &mut BuildMode, ui: &mut Ui) {
+    ribbon_group(ui, "Snap to Grid", |ui| {
+        ui.vertical(|ui| {
+            ui.checkbox(&mut build.snap.enabled, "Snap")
+                .on_hover_text("Moves and turns snap to the steps on the right (G)");
+            ui.checkbox(&mut build.snap.surface, "Surface")
+                .on_hover_text("Place new objects on the surface under the mouse");
+        });
+        egui::Grid::new("snap-steps").num_columns(2).show(ui, |ui| {
+            ui.label("Move");
+            egui::ComboBox::from_id_salt("grid-step")
+                .width(70.0)
+                .selected_text(format!("{} m", build.snap.step))
+                .show_ui(ui, |ui| {
+                    for step in [0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0] {
+                        ui.selectable_value(&mut build.snap.step, step, format!("{step} m"));
+                    }
+                });
+            ui.end_row();
+            ui.label("Rotate");
+            egui::ComboBox::from_id_salt("angle-step")
+                .width(70.0)
+                .selected_text(format!("{}°", build.snap.angle))
+                .show_ui(ui, |ui| {
+                    for step in [5.0, 15.0, 30.0, 45.0, 90.0] {
+                        ui.selectable_value(&mut build.snap.angle, step, format!("{step}°"));
+                    }
+                });
+            ui.end_row();
+        });
+    });
+}
+
+fn spawn_group(build: &mut BuildMode, ui: &mut Ui) {
+    ribbon_group(ui, "Spawn", |ui| {
+        if big_button(
+            ui,
+            "🚩",
+            "Set spawn",
+            false,
+            true,
+            "Players start where the camera is looking",
+        )
+        .clicked()
+        {
+            let info = build.doc.info.clone();
+            let focus = sa_scene::world_layout::gltf_to_blender(build.camera.focus);
+            let spawn = [focus[0], focus[1], focus[2].max(0.0)];
+            build.execute(Command::Info {
+                before: info.clone(),
+                after: WorldInfo { spawn, ..info },
+            });
+        }
+        let [x, y, z] = build.doc.info.spawn;
+        ui.label(RichText::new(format!("Spawn\n{x:.1}, {y:.1}, {z:.1}")).color(MUTED));
+    });
+}
+
+/// Explorer, Properties, Toolbox and Output on or off.
+fn dock_toggles(build: &mut BuildMode, ui: &mut Ui) {
+    let mut explorer = !build.ui.hide_explorer;
+    let mut properties = !build.ui.hide_properties;
+    let mut toolbox = !build.ui.hide_toolbox;
+    ui.checkbox(&mut explorer, "Explorer");
+    ui.checkbox(&mut properties, "Properties");
+    ui.checkbox(&mut toolbox, "Toolbox");
+    ui.checkbox(&mut build.ui.bottom_open, "Output");
+    build.ui.hide_explorer = !explorer;
+    build.ui.hide_properties = !properties;
+    build.ui.hide_toolbox = !toolbox;
+}
+
+fn view_groups(build: &mut BuildMode, ui: &mut Ui) {
+    ribbon_group(ui, "Show", |ui| {
+        for (icon, label, hover) in [
+            ("☰", "Explorer", "Every object in the world, in groups"),
+            ("⚙", "Properties", "Edit what is selected"),
+            ("📦", "Toolbox", "Every asset you can place"),
+            ("🖥", "Output", "Messages, errors and warnings"),
+        ] {
+            let flag = match label {
+                "Explorer" => &mut build.ui.hide_explorer,
+                "Properties" => &mut build.ui.hide_properties,
+                "Toolbox" => &mut build.ui.hide_toolbox,
+                _ => {
+                    let open = build.ui.bottom_open;
+                    if big_button(ui, icon, label, open, true, hover).clicked() {
+                        build.ui.bottom_open = !open;
+                    }
+                    continue;
+                }
+            };
+            if big_button(ui, icon, label, !*flag, true, hover).clicked() {
+                *flag = !*flag;
+            }
+        }
+    });
+    ribbon_group(ui, "Viewport", |ui| {
+        if big_button(ui, "#", "Grid", build.snap.show_grid, true, "Show the grid").clicked() {
+            build.snap.show_grid = !build.snap.show_grid;
+        }
+        if big_button(
+            ui,
+            "🎯",
+            "Zones",
+            !build.ui.hide_gameplay,
+            true,
+            "Show trigger zones, interactions, checkpoints and where teleports lead",
+        )
+        .clicked()
+        {
+            build.ui.hide_gameplay = !build.ui.hide_gameplay;
+        }
+        if big_button(
+            ui,
+            "🔲",
+            "Collision",
+            build.ui.show_collision,
+            true,
+            "Outline solid objects in cyan and objects without collision in red",
+        )
+        .clicked()
+        {
+            build.ui.show_collision = !build.ui.show_collision;
+        }
+    });
+    ribbon_group(ui, "Camera", |ui| {
+        if big_button(
+            ui,
+            "🔍",
+            "Focus",
+            false,
+            !build.selection.is_empty(),
+            "Look at the selection (F)",
+        )
+        .clicked()
+        {
+            build.focus_selection();
+        }
+        if big_button(ui, "↺", "Reset", false, true, "Reset the camera (Home)").clicked() {
+            build.reset_camera();
+        }
+        ui.vertical(|ui| {
+            ui.label(RichText::new("Fly speed").color(MUTED));
+            ui.add(
+                egui::Slider::new(&mut build.camera.speed, 1.0..=400.0)
+                    .logarithmic(true)
+                    .suffix(" m/s"),
+            );
+        });
+    });
+    ribbon_group(ui, "Help", |ui| {
+        if big_button(
+            ui,
+            "?",
+            "Controls",
+            false,
+            true,
+            "Every mouse and keyboard control",
+        )
+        .clicked()
+        {
+            build.ui.show_help = true;
+        }
+    });
+}
+
+/// Put the selection on the editor's clipboard. True when something was copied.
+fn copy_selection(build: &mut BuildMode, ctx: &egui::Context) -> bool {
+    if build.selection.is_empty() {
+        return false;
+    }
+    match ops::copy(&build.doc, &build.selection) {
+        Ok(nodes) => {
+            let count = build.selection.len();
+            build.ui.clipboard = nodes;
+            // Text on the system clipboard is what lets Ctrl+V reach the editor.
+            ctx.copy_text(format!("SARE Build Mode: {count} objects copied"));
+            build.info(format!("Copied {count} objects"));
+            true
+        }
+        Err(error) => {
+            build.error(format!("{error:#}"));
+            false
+        }
+    }
+}
+
+fn cut_selection(build: &mut BuildMode, ctx: &egui::Context) {
+    if copy_selection(build, ctx) {
+        delete(build);
+    }
+}
+
+fn paste(build: &mut BuildMode) {
+    if build.ui.clipboard.is_empty() {
+        return;
+    }
+    let offset = [build.snap.step.max(1.0), 0.0, 0.0];
+    let copied = build.ui.clipboard.clone();
+    match ops::paste(&mut build.doc, &copied, offset) {
+        Ok((command, roots)) => {
+            build.execute(command);
+            build.selection = roots;
+        }
+        Err(error) => build.error(format!("{error:#}")),
+    }
 }
 
 fn status_bar(build: &mut BuildMode, ui: &mut Ui) {
@@ -630,9 +1257,9 @@ fn status_bar(build: &mut BuildMode, ui: &mut Ui) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
                 .small_button(if build.ui.bottom_open {
-                    "Hide console"
+                    "Hide Output"
                 } else {
-                    "Console"
+                    "Output"
                 })
                 .clicked()
             {
@@ -664,7 +1291,7 @@ fn bottom(build: &mut BuildMode, ui: &mut Ui) {
         let problems =
             build.log.iter().filter(|l| l.level != Level::Info).count() + gameplay_problems;
         for (tab, label) in [
-            (BottomTab::Console, "Console".to_string()),
+            (BottomTab::Console, "Output".to_string()),
             (
                 BottomTab::Problems,
                 format!("Errors and warnings ({problems})"),
@@ -733,25 +1360,31 @@ fn bottom(build: &mut BuildMode, ui: &mut Ui) {
     });
 }
 
-fn left(build: &mut BuildMode, ui: &mut Ui) {
+/// A dock's title bar with its close button.
+fn dock_header(ui: &mut Ui, title: &str, detail: &str, hide: &mut bool) {
     ui.horizontal(|ui| {
-        for (tab, label) in [
-            (LeftTab::Assets, "📦 Asset Browser"),
-            (LeftTab::Outliner, "☰ World Outliner"),
-        ] {
+        ui.label(RichText::new(title).strong().size(14.0));
+        if !detail.is_empty() {
+            ui.label(RichText::new(detail).color(MUTED));
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
-                .selectable_label(build.ui.left == tab, RichText::new(label).strong())
+                .add(egui::Button::new(RichText::new("×").size(16.0)).frame(false))
+                .on_hover_text(format!("Close {title}; the View tab opens it again"))
                 .clicked()
             {
-                build.ui.left = tab;
+                *hide = true;
             }
-        }
+        });
     });
     ui.separator();
-    match build.ui.left {
-        LeftTab::Assets => assets(build, ui),
-        LeftTab::Outliner => outliner(build, ui),
-    }
+}
+
+fn toolbox(build: &mut BuildMode, ui: &mut Ui) {
+    let mut hide = false;
+    dock_header(ui, "📦 Toolbox", "", &mut hide);
+    build.ui.hide_toolbox = hide;
+    assets(build, ui);
 }
 
 fn assets(build: &mut BuildMode, ui: &mut Ui) {
@@ -956,11 +1589,14 @@ fn asset_tooltip(ui: &mut Ui, entry: &sa_editor::catalog::AssetEntry) {
     };
 }
 
-fn outliner(build: &mut BuildMode, ui: &mut Ui) {
+fn explorer(build: &mut BuildMode, ui: &mut Ui) {
+    let mut hide = false;
+    dock_header(ui, "☰ Explorer", "", &mut hide);
+    build.ui.hide_explorer = hide;
     ui.horizontal(|ui| {
         ui.add(
             egui::TextEdit::singleline(&mut build.ui.outliner_search)
-                .hint_text("🔍 Search objects…")
+                .hint_text("🔍 Filter workspace…")
                 .desired_width(150.0),
         );
         if ui
@@ -981,13 +1617,39 @@ fn outliner(build: &mut BuildMode, ui: &mut Ui) {
     egui::ScrollArea::vertical()
         .auto_shrink(false)
         .show(ui, |ui| {
-            if build.doc.layout.nodes.is_empty() {
-                ui.label(
-                    RichText::new("Nothing placed yet. Pick an asset in the Asset Browser.")
-                        .color(MUTED),
-                );
-            }
             if filter.is_empty() {
+                let page = build.selection.is_empty().then_some(build.ui.world_page);
+                let open = !build.ui.workspace_collapsed;
+                ui.horizontal(|ui| {
+                    if ui.small_button(if open { "⏷" } else { "⏵" }).clicked() {
+                        build.ui.workspace_collapsed = open;
+                    }
+                    let row = ui
+                        .selectable_label(
+                            page == Some(WorldPage::Workspace),
+                            format!("🌐 Workspace  ({})", build.doc.info.name),
+                        )
+                        .on_hover_text(
+                            "The world itself: name, description and spawn point. Drop objects here to move them to the top level.",
+                        );
+                    if row.clicked() {
+                        build.selection.clear();
+                        build.ui.world_page = WorldPage::Workspace;
+                    }
+                    if let Some(dragged) = row.dnd_release_payload::<Vec<NodeId>>() {
+                        actions.push(OutlinerAction::Drop((*dragged).clone(), ops::Drop::End));
+                    }
+                });
+                if build.doc.layout.nodes.is_empty() && open {
+                    ui.label(
+                        RichText::new(
+                            "Nothing placed yet. Insert a Part from the Home tab or pick something in the Toolbox.",
+                        )
+                        .color(MUTED),
+                    );
+                }
+            }
+            if filter.is_empty() && !build.ui.workspace_collapsed {
                 let roots: Vec<NodeId> = build
                     .doc
                     .layout
@@ -997,7 +1659,7 @@ fn outliner(build: &mut BuildMode, ui: &mut Ui) {
                     .map(|n| n.id)
                     .collect();
                 for id in roots {
-                    row(build, ui, id, 0, &mut actions);
+                    row(build, ui, id, 1, &mut actions);
                 }
                 // Below the list: drop here to move to the top level, last.
                 let (rect, response) = ui.allocate_exact_size(
@@ -1016,7 +1678,7 @@ fn outliner(build: &mut BuildMode, ui: &mut Ui) {
                 if let Some(dragged) = response.dnd_release_payload::<Vec<NodeId>>() {
                     actions.push(OutlinerAction::Drop((*dragged).clone(), ops::Drop::End));
                 }
-            } else {
+            } else if !filter.is_empty() {
                 let matches: Vec<NodeId> = build
                     .doc
                     .layout
@@ -1028,6 +1690,20 @@ fn outliner(build: &mut BuildMode, ui: &mut Ui) {
                 for id in matches {
                     row_single(build, ui, id, 0, &mut actions);
                 }
+            }
+            if filter.is_empty() {
+                let page = build.selection.is_empty().then_some(build.ui.world_page);
+                ui.horizontal(|ui| {
+                    ui.add_space(22.0);
+                    if ui
+                        .selectable_label(page == Some(WorldPage::Lighting), "☀ Lighting")
+                        .on_hover_text("Time of day, weather, fog, sky colour and brightness")
+                        .clicked()
+                    {
+                        build.selection.clear();
+                        build.ui.world_page = WorldPage::Lighting;
+                    }
+                });
             }
         });
     for action in actions {
@@ -1378,7 +2054,7 @@ fn group(build: &mut BuildMode) {
         Ok((command, id)) => {
             build.execute(command);
             build.selection = vec![id];
-            build.ui.left = LeftTab::Outliner;
+            build.ui.hide_explorer = false;
         }
         Err(error) => build.error(format!("{error:#}")),
     }
@@ -1395,11 +2071,37 @@ fn ungroup(build: &mut BuildMode) {
     }
 }
 
+fn properties(build: &mut BuildMode, ui: &mut Ui) {
+    let detail = match build.selection.as_slice() {
+        [] => match build.ui.world_page {
+            WorldPage::Workspace => "Workspace".to_owned(),
+            WorldPage::Lighting => "Lighting".to_owned(),
+        },
+        [id] => build
+            .doc
+            .layout
+            .node(*id)
+            .map(|n| {
+                let kind = if n.is_group() { "Group" } else { "Object" };
+                format!("{kind} \"{}\"", n.name)
+            })
+            .unwrap_or_default(),
+        many => format!("{} objects", many.len()),
+    };
+    let mut hide = false;
+    dock_header(ui, "⚙ Properties", &format!("– {detail}"), &mut hide);
+    build.ui.hide_properties = hide;
+    egui::ScrollArea::vertical()
+        .auto_shrink(false)
+        .show(ui, |ui| inspector(build, ui));
+}
+
 fn inspector(build: &mut BuildMode, ui: &mut Ui) {
-    ui.label(RichText::new("⚙ Inspector").strong().size(15.0));
-    ui.separator();
     match build.selection.len() {
-        0 => world_settings(build, ui),
+        0 => match build.ui.world_page {
+            WorldPage::Workspace => world_settings(build, ui),
+            WorldPage::Lighting => lighting(build, ui),
+        },
         1 => object(build, ui, build.selection[0]),
         n => {
             ui.label(format!("{n} objects selected"));
@@ -1685,9 +2387,7 @@ fn object(build: &mut BuildMode, ui: &mut Ui, id: NodeId) {
     if !node.is_group() {
         section(ui, "Transform");
         if locked {
-            ui.label(
-                RichText::new("🔒 Locked: unlock it in the World Outliner to edit.").color(WARNING),
-            );
+            ui.label(RichText::new("🔒 Locked: unlock it in the Explorer to edit.").color(WARNING));
         }
         ui.add_enabled_ui(!locked, |ui| {
             let mut t = node.transform;
@@ -1838,11 +2538,13 @@ fn object(build: &mut BuildMode, ui: &mut Ui, id: NodeId) {
 }
 
 fn world_settings(build: &mut BuildMode, ui: &mut Ui) {
-    ui.label(RichText::new("World settings").strong());
     ui.label(
-        RichText::new("Select an object to edit it. These apply to the whole world.").color(MUTED),
+        RichText::new(
+            "The whole world. Select an object to edit it, or Lighting in the Explorer for the time, weather and sky.",
+        )
+        .color(MUTED),
     );
-    section(ui, "World");
+    section(ui, "Data");
     let info = build.doc.info.clone();
     ui.label("Name");
     let name = build.ui.world_name.get_or_insert_with(|| info.name.clone());
@@ -1904,6 +2606,11 @@ fn world_settings(build: &mut BuildMode, ui: &mut Ui) {
             after: WorldInfo { spawn, ..info },
         });
     }
+}
+
+/// The Explorer's Lighting row: the world's time, weather, fog, sky and
+/// brightness.
+fn lighting(build: &mut BuildMode, ui: &mut Ui) {
     section(ui, "Environment");
     let settings = build.doc.layout.settings.clone();
     let mut fixed = settings.hour.is_some();
@@ -2322,8 +3029,11 @@ fn dialogs(build: &mut BuildMode, root: &mut Ui) {
                     ("Mouse wheel", "Zoom"),
                     ("F / double-click", "Focus selection"),
                     ("Home", "Reset camera"),
+                    ("Ctrl+1 2 3 4", "Select, Move, Scale, Rotate"),
                     ("Q W E R", "Select, Move, Rotate, Scale"),
-                    ("L", "World or local gizmo axes"),
+                    ("L / Ctrl+L", "World or local gizmo axes"),
+                    ("Ctrl+C / X / V", "Copy / cut / paste"),
+                    ("F5", "Play (Playtest)"),
                     ("G", "Snap on or off (Ctrl while dragging inverts it)"),
                     ("Ctrl+click", "Add to or remove from selection"),
                     ("Ctrl+D / Del", "Duplicate / delete"),

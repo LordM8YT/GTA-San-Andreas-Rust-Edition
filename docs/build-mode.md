@@ -31,13 +31,13 @@ the launcher.
 
 | Area | What it does |
 | --- | --- |
-| Toolbar | Select (Q), Move (W), Rotate (E), Scale (R), World/Local axes (L), Duplicate, Undo, Redo, Snap (G) with grid size and angle step, Surface placement, Zones (gameplay overlay), Collision (outlines solid objects), Playtest (F6), Save (Ctrl+S), World settings |
-| Asset Browser (left) | Picture tiles with search and category filters. Built-in shapes, models from every installed content pack and this world's own models. Missing or broken models are marked ⚠ |
-| World Outliner (left) | The scene tree: show/hide 👁, lock 🔒, double-click to rename, right-click for focus, duplicate, group, ungroup, move to group and delete. Search filters by name |
-| Inspector (right) | Selected object: name, position/rotation/scale (drag or type), Visible, Locked, Collision, Gameplay (behaviour and actions), Light, asset and its load status, Advanced (size, triangles, materials, id, extra data). Several selected: batch edits. Nothing selected: world name, description, spawn point, time of day, weather, fog, sky colour and brightness |
-| Bottom | Console, Errors and warnings (including live gameplay checks; click one to select its object), Asset status, Playtest tabs; the status bar shows selection, grid and save state |
+| Ribbon (top) | Tabs like other building editors. **Home**: Clipboard (Paste, Copy, Cut, Duplicate), Tools (Select, Move, Scale, Rotate, World/Local axes, Snap), Terrain (Sculpt), Insert (Part, Toolbox), Edit (Group, Ungroup, Lock), Test (Play, Save). **Model**: the tools, Snap to Grid (move step, rotate step, Surface placement), Terrain, Insert, Effects (Light) and Edit. **Test**: Play and Set spawn. **View**: show or hide the Explorer, Properties, Toolbox and Output, the grid, Zones (gameplay overlay) and Collision (outlines solid objects), Focus, Reset camera, fly speed and Controls |
+| Toolbox (left) | Picture tiles with search and category filters. Built-in shapes, models from every installed content pack and this world's own models. Missing or broken models are marked ⚠ |
+| Explorer (right, top) | The scene tree under **Workspace**, with **Lighting** below it: show/hide 👁, lock 🔒, double-click to rename, right-click for focus, duplicate, group, ungroup, move to group and delete. The filter box searches by name. Click Workspace for the world's name, description and spawn point, or Lighting for the time of day, weather, fog, sky colour and brightness |
+| Properties (right, below the Explorer) | Selected object, in category bars: name, position/rotation/scale (drag or type), Visible, Locked, Collision, Gameplay (behaviour and actions), Light, asset and its load status, Advanced (size, triangles, materials, id, extra data). Several selected: batch edits |
+| Output (bottom) | Output, Errors and warnings (including live gameplay checks; click one to select its object), Asset status, Playtest tabs; the status bar shows selection, grid and save state |
 
-Placing: drag an asset from the Asset Browser into the world and let go.
+Placing: drag an asset from the Toolbox into the world and let go.
 Or click it, move the mouse over the world (a preview follows) and click to
 place; every click places another one until you right-click or press Esc.
 `[` and `]` turn the preview.
@@ -54,6 +54,12 @@ and *File → Open world* (Ctrl+O) lists every installed world. SARE restarts on
 the chosen world (each world loads its own base scene at start-up), and asks
 first if there are unsaved changes.
 
+Shortcuts familiar from other building editors work too: Ctrl+1, 2, 3 and 4
+pick Select, Move, Scale and Rotate, Ctrl+L switches world and local axes,
+Ctrl+C, Ctrl+X and Ctrl+V copy, cut and paste objects (groups with their
+contents), and F5 plays the world. Every dock has a ✕ to close it; the View
+tab brings it back.
+
 Camera: right mouse + WASD/QE flies (Shift faster, wheel changes speed),
 middle mouse pans, Alt + left mouse orbits, the wheel zooms, F or a
 double-click focuses the selection, Home resets. *Help → Controls* lists
@@ -67,15 +73,15 @@ history as they were. Nothing is restarted.
 ## Gameplay
 
 Any object can get one **behaviour**: select it and use *+ Trigger zone*,
-*+ Interaction (E)*, *+ Checkpoint* or *+ Spawn point* in the Inspector's
-Gameplay section. The Asset Browser's **Gameplay** category has ready-made
+*+ Interaction (E)*, *+ Checkpoint* or *+ Spawn point* in the Properties panel's
+Gameplay section. The Toolbox's **Gameplay** category has ready-made
 ones; placing one attaches its behaviour:
 
 | Asset | Behaviour |
 | --- | --- |
-| Spawn point | Players start here, facing the arrow. The first one in the World Outliner replaces the world's spawn |
+| Spawn point | Players start here, facing the arrow. The first one in the Explorer replaces the world's spawn |
 | Door (opens with E) | An interaction that toggles the door itself: when open it is hidden and has no collision |
-| Door to another place | An interaction that teleports the player; pick the destination in the Inspector |
+| Door to another place | An interaction that teleports the player; pick the destination in the Properties panel |
 | Teleport pad | A trigger that teleports the player who steps on it |
 | Destination point | A place to teleport to; the arrow is the way the player faces |
 | Trigger zone | Actions when a player walks in, and when they walk out |
@@ -88,7 +94,7 @@ Build Mode. Doors are real objects.
 **Zones** are boxes. *Zone size* is width, depth and height in metres; the
 box stands on the object, turns with it and does not scale with it. The
 viewport draws each zone with a label (turn them off with *Zones* in the
-toolbar). Dashed lines show where teleports lead, thin lines show which
+View tab). Dashed lines show where teleports lead, thin lines show which
 objects an action shows or hides.
 
 **Actions** run in order: *Show message*, *Teleport player* (to any object,
@@ -110,11 +116,11 @@ actions can change them while playing.
 
 Only what SARE's renderer really draws is offered:
 
-- **Lights on objects** (Inspector → *+ Light*): a glowing corona at the
+- **Lights on objects** (Properties → *+ Light*): a glowing corona at the
   lamp and a soft pool of light on the ground under it, from dusk to dawn,
   the same way SARE draws street lamps. Colour, glow size (m), ground light
   radius (m) and where the lamp sits on the object. Lamp posts from the
-  Asset Browser come with one. Lights do not light up other objects or cast
+  Toolbox come with one. Lights do not light up other objects or cast
   shadows: the renderer has one sun and no per-object lights. Set a fixed
   time after 20:00 to see them while editing.
 - **World settings → Environment**: the hour, the weather, *Fog* (density
@@ -128,9 +134,9 @@ has the pack, so everyone sees the same).
 
 ## Terrain
 
-Place *Terrain 64 m (sculpt)* from the Asset Browser (category Ground): flat
-ground of 32 × 32 squares that you shape yourself. Pick **Sculpt terrain**
-(`T`) in the toolbar, choose a brush and hold the left mouse button on the
+Place *Terrain 64 m (sculpt)* from the Toolbox (category Ground): flat
+ground of 32 × 32 squares that you shape yourself. Pick **Sculpt**
+(`T`) in the Home or Model tab, choose a brush and hold the left mouse button on the
 terrain:
 
 | Brush | What it does |
@@ -140,16 +146,16 @@ terrain:
 | Flatten | Levels the ground to the height where the stroke began (for building plots and roads) |
 
 The brush circle shows where it works; radius (1-40 m) and strength are in
-the toolbar. Each stroke is one undo step. The Inspector shows the
+the ribbon. Each stroke is one undo step. The Properties shows the
 terrain's size and height range, its colour, and *Make flat*. Terrain is a
 normal object: move, turn or scale it, and it is drawn and solid in
 Playtest, from the launcher and on servers. Its heights are saved in
 `layout.json`, so it travels with the world.
 
-Moving objects in the **World Outliner**: drag a row onto the top or bottom
+Moving objects in the **Explorer**: drag a row onto the top or bottom
 half of another row to put it before or after it, onto the middle of a group
 to put it inside, or below the list for the top level. Dragging a selected
-row moves the whole selection. With several objects selected, the Inspector
+row moves the whole selection. With several objects selected, the Properties panel
 shows, hides, locks, unlocks, switches collision, resets or drops them all
 at once. Each is one undo step.
 
@@ -274,7 +280,7 @@ pipeline or project format.
 | Server authority | `sa-server/src/world.rs` | Loads the pack named by `content_pack`, steps every player each frame against the poses the server has, keeps `Shared` per routing bucket, sends snapshots (on change, arrival, bucket change) and personal effects, validates `__sare:worldUse` (position with 2 m slack, 250 ms rate limit), forwards events to Lua; natives in `natives.rs`. Tests: `world_tests.rs` with several connected players |
 | Packs with layouts | `sa-scene::content_pack` | `world.layout`, `world.scene` now optional; `PackWorld::open` places layout objects into the world, `open_base` leaves them out for the editor; `AssetResolver` finds `builtin:`/`self:`/`pack:` models; `place_layout` reports missing ones |
 | Editor core | `sa-editor` crate | No GPU or UI: `project` (create, open, save, save as, autosave, recovery, import), `history` (document + command-based undo/redo), `ops` (place, delete, duplicate, rename, group, ungroup, reparent), `catalog` (asset providers), `viewport` (rays, picking, gizmo maths, snapping, orbit/fly camera) |
-| Runtime glue | `sa-runtime/src/build_mode/` | `gpu.rs` uploads each asset once and gives each object its own vertex buffers, rewritten in place when it moves (like cars and peds); `viewport.rs` camera, picking, placement, gizmos, grid, gameplay and collision overlays; `panels.rs` the egui interface; `gameplay_ui.rs` the Inspector's Gameplay section; `mod.rs` session, autosave, playtest, `--smoke-build` |
+| Runtime glue | `sa-runtime/src/build_mode/` | `gpu.rs` uploads each asset once and gives each object its own vertex buffers, rewritten in place when it moves (like cars and peds); `viewport.rs` camera, picking, placement, gizmos, grid, gameplay and collision overlays; `panels.rs` the egui interface; `gameplay_ui.rs` the Properties panel's Gameplay section; `mod.rs` session, autosave, playtest, `--smoke-build` |
 | Playing gameplay | `sa-runtime/src/play_logic.rs` | Runs `Logic` in playtest and in played packs: messages, the E prompt, teleports, rebuilding playtest collision when objects are hidden, time and weather (`daycycle::apply_weather`) |
 | Hooks in `main.rs` | `--build`, `State.build` | Editor camera drives the view, editor objects join `drawn_batches`, editor UI replaces the HUD while editing, F6 toggles playtest, keyboard/mouse go to egui while editing |
 | Launcher | Home page | *Create world* and *Edit <pack>* start `sa-runtime --build` |
@@ -287,7 +293,7 @@ minimised. Playtest is paced like the game.
 
 Undo/redo: every change is an `sa_editor::history::Command` (insert, remove,
 modify nodes, world info, settings, or a batch). A gizmo drag or an
-Inspector drag changes the document live and records one command when it
+Properties drag changes the document live and records one command when it
 ends, so a whole drag is one undo step.
 
 Extending it:

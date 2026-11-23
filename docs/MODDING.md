@@ -158,7 +158,7 @@ are two ways, and you can mix them: build it inside SARE with **Build Mode**
 under **Build Mode** and press **Create world**. Build Mode opens with a
 ground plate and a spawn point.
 
-**Step 2. Place things.** The **Asset Browser** on the left shows a picture of
+**Step 2. Place things.** The **Toolbox** on the left shows a picture of
 every piece: ground and grass plates, roads, floors, walls, stairs, ramps,
 houses, trees, crates, benches, lamp posts, plus the models of every content
 pack you have installed. To place one:
@@ -174,8 +174,8 @@ the toolbar).
 
 **Step 3. Arrange.** Click an object to select it. Move (W), Rotate (E) and
 Scale (R) give you handles to drag, or type exact numbers in the
-**Inspector** on the right. Ctrl+D duplicates, Delete removes, Ctrl+Z undoes
-anything. The **World Outliner** tab lists every object: rename, group, hide
+**Properties** on the right. Ctrl+D duplicates, Delete removes, Ctrl+Z undoes
+anything. The **Explorer** on the right lists every object: rename, group, hide
 and lock them there.
 
 **Step 4. Your own models.** Drag a `.glb` file from your file explorer onto
@@ -185,7 +185,7 @@ so the world stays one folder you can share. Make the model in Blender as in
 
 **Step 5. Play it.** Press **F6** to walk around your world right away, and
 F6 again to go back to editing. Move the green spawn marker with **Set spawn
-at camera focus** in the Inspector (click empty space first to see the world
+at camera focus** in the Properties panel (click empty space first to see the world
 settings).
 
 **Step 6. Save.** Ctrl+S. Your work is also autosaved, and offered back if
@@ -310,7 +310,7 @@ These are world coordinates, like in FiveM scripts. Two ways to get them:
 - **In game:** stand on the spot and type `/coords`. Chat shows
   `vector4(...)` with your heading; the server console prints it too, to copy.
 - **In Build Mode:** select an object where the spot should be (a small cube,
-  a sign, a door) and press **Copy position** in the Inspector. The
+  a sign, a door) and press **Copy position** in the Properties panel. The
   `vector4(...)` is now on your clipboard; paste it into `config.lua`. The
   heading is the object's Z rotation.
 
@@ -389,7 +389,7 @@ channels. JPEG textures are skipped: save your images as PNG.
   `[x, y, z]`: x east, y north, z up, in metres. Grove Street is around
   `[2495, -1665, 13.3]`. The pause menu map shows where you are.
 - **In a content pack**: positions are Blender coordinates around your
-  world's origin, `[east, north, up]`. Build Mode's Inspector shows the same
+  world's origin, `[east, north, up]`. Build Mode's Properties shows the same
   numbers (X east, Y north, Z up).
 - **In server scripts** (RP jobs, spawn points): world coordinates. A
   content pack's origin is world `(2500, -1670, 0)`, so Build Mode's

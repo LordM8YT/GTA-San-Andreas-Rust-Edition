@@ -136,6 +136,55 @@ mod tests {
     }
 
     #[test]
+    fn cut_and_paste_keeps_groups_and_lands_at_top_level() {
+        let mut doc = doc();
+        let mut history = History::default();
+        let mut ids = Vec::new();
+        for x in 0..2 {
+            let (place, id) = ops::place(
+                &mut doc,
+                crate_asset(),
+                "Crate",
+                Transform::at([x as f32, 0.0, 0.0]),
+                None,
+            )
+            .unwrap();
+            history.execute(&mut doc, place).unwrap();
+            ids.push(id);
+        }
+        let (group, gid) = ops::group(&mut doc, &ids[..1], "Stack").unwrap();
+        history.execute(&mut doc, group).unwrap();
+        let (outer, outer_id) = ops::group(&mut doc, &[gid], "Outer").unwrap();
+        history.execute(&mut doc, outer).unwrap();
+        // Cut the inner group: copy, then delete.
+        let copied = ops::copy(&doc, &[gid]).unwrap();
+        assert_eq!(copied.len(), 2, "the group and the crate inside it");
+        let command = ops::delete(&doc, &[gid]).unwrap();
+        history.execute(&mut doc, command).unwrap();
+        let (paste, roots) = ops::paste(&mut doc, &copied, [0.0, 0.0, 2.0]).unwrap();
+        history.execute(&mut doc, paste).unwrap();
+        assert_eq!(roots.len(), 1);
+        let pasted = doc.layout.node(roots[0]).unwrap();
+        assert!(pasted.is_group());
+        // Its old group still exists, so it goes back in there.
+        assert_eq!(pasted.parent, Some(outer_id));
+        let inside = doc.layout.descendants(roots[0]);
+        assert_eq!(inside.len(), 1);
+        assert_eq!(
+            doc.layout.node(inside[0]).unwrap().transform.position[2],
+            2.0
+        );
+        // With the old group gone too, a paste lands at the top level.
+        let command = ops::delete(&doc, &[outer_id]).unwrap();
+        history.execute(&mut doc, command).unwrap();
+        let (paste, roots) = ops::paste(&mut doc, &copied, [0.0; 3]).unwrap();
+        history.execute(&mut doc, paste).unwrap();
+        assert_eq!(doc.layout.node(roots[0]).unwrap().parent, None);
+        doc.layout.validate().unwrap();
+        assert!(ops::paste(&mut doc, &[], [0.0; 3]).is_err());
+    }
+
+    #[test]
     fn duplicate_group_and_ungroup() {
         let mut doc = doc();
         let mut history = History::default();

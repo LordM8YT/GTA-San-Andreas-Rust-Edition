@@ -20,7 +20,7 @@ A world is a content pack folder: content.json + layout.json (+ its own .glb mod
 - Groups (\"group\" in place_objects) keep the outliner tidy: one group per building, street or area.
 - Gameplay assets (category Gameplay) come with their behaviour: \"door\" opens with E, \"marker-checkpoint\"
   numbers itself, \"marker-spawn\" is where players start. Teleport doors and pads need a destination,
-  which the creator picks in Build Mode's Inspector; tell them to.
+  which the creator picks in Build Mode's Properties panel; tell them to.
 - Workflow: list_worlds / create_world -> list_assets -> place_objects in batches -> get_world to check -> set_spawn.
 - The creator sees the result by opening the world in Build Mode (launcher, or `sa-runtime --build <id>`).
   If the world is already open in Build Mode, they must reopen it (File > Open world) to see your changes,

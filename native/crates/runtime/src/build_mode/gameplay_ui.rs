@@ -208,7 +208,7 @@ fn fields(
         Component::Spawn(_) => {
             ui.label(
                 RichText::new(
-                    "Players start here, facing the arrow (+Y). The first spawn point in the World Outliner is used instead of the world's spawn.",
+                    "Players start here, facing the arrow (+Y). The first spawn point in the Explorer is used instead of the world's spawn.",
                 )
                 .color(MUTED),
             );

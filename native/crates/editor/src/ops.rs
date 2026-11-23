@@ -93,23 +93,51 @@ pub fn duplicate(
     ids: &[NodeId],
     offset: [f32; 3],
 ) -> Result<(Command, Vec<NodeId>)> {
+    let nodes = copy(doc, ids)?;
+    paste(doc, &nodes, offset)
+}
+
+/// The objects `ids` (groups with their contents) as they are now, in tree
+/// order: what Copy puts on the editor's clipboard.
+pub fn copy(doc: &Document, ids: &[NodeId]) -> Result<Vec<Node>> {
     let all = with_descendants(doc, ids);
     ensure!(!all.is_empty(), "nothing selected");
+    all.iter()
+        .map(|id| doc.layout.node(*id).cloned().context("object vanished"))
+        .collect()
+}
+
+/// Insert copies of `copied` (from [`copy`]) with new ids, moved by
+/// `offset` metres in Blender axes. A copied object whose group is gone (it
+/// was cut) lands at the top level. Returns the command and the new ids of
+/// the pasted roots.
+pub fn paste(
+    doc: &mut Document,
+    copied: &[Node],
+    offset: [f32; 3],
+) -> Result<(Command, Vec<NodeId>)> {
+    ensure!(!copied.is_empty(), "nothing to paste");
     let mut remap = HashMap::new();
-    for id in &all {
-        remap.insert(*id, doc.layout.allocate_id());
+    for node in copied {
+        remap.insert(node.id, doc.layout.allocate_id());
     }
     let mut nodes = Vec::new();
     let mut roots = Vec::new();
-    for id in &all {
-        let mut copy = doc.layout.node(*id).context("object vanished")?.clone();
-        copy.id = remap[id];
+    for node in copied {
+        let mut copy = node.clone();
+        copy.id = remap[&node.id];
         let parent_copied = copy.parent.and_then(|p| remap.get(&p).copied());
         match parent_copied {
             Some(parent) => copy.parent = Some(parent),
             None => {
                 roots.push(copy.id);
                 copy.name = unique_name(doc, &copy.name);
+                if !copy
+                    .parent
+                    .is_some_and(|p| doc.layout.node(p).is_some_and(Node::is_group))
+                {
+                    copy.parent = None;
+                }
             }
         }
         for (axis, delta) in offset.iter().enumerate() {
