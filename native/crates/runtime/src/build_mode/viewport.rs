@@ -733,9 +733,22 @@ fn continue_drag(build: &mut BuildMode, view: &View, pointer: Pos2, fine: bool) 
                 angle = snap(angle, angle_step);
             }
             label = "Rotate";
+            let together = starts.len() > 1;
             for (id, start) in &starts {
                 let mut t = *start;
-                t.rotation = rotated(start.rotation, i, angle, local);
+                t.rotation = if together && local {
+                    // All turn about the primary object's own axis.
+                    sa_editor::viewport::turned_about(start.rotation, drag.axis, angle)
+                } else {
+                    rotated(start.rotation, i, angle, local)
+                };
+                if together {
+                    // A group (or several objects) turns as one about the
+                    // gizmo: each object also swings around it.
+                    let at = super::gpu::render_matrix(start).transform_point3(Vec3::ZERO);
+                    let to = sa_editor::viewport::orbit(at, drag.origin, drag.axis, angle);
+                    t.position = moved(start.position, to - at);
+                }
                 updates.push((*id, t));
             }
         }
@@ -746,6 +759,7 @@ fn continue_drag(build: &mut BuildMode, view: &View, pointer: Pos2, fine: bool) 
             let size = gizmo_size(view, drag.origin);
             let ratio = ((s - drag.start) / size + 1.0).max(0.01);
             label = "Scale";
+            let together = starts.len() > 1;
             for (id, start) in &starts {
                 let mut t = *start;
                 let value = start.scale[i] * ratio;
@@ -754,14 +768,22 @@ fn continue_drag(build: &mut BuildMode, view: &View, pointer: Pos2, fine: bool) 
                 } else {
                     value
                 });
+                if together {
+                    // Objects spread out (or close up) from the gizmo too.
+                    t.position = spread(start, drag.origin, Some(drag.axis), ratio);
+                }
                 updates.push((*id, t));
             }
         }
         Handle::ScaleAll => {
             let ratio = (-(pointer.y - drag.start_mouse.y) * 0.01).exp();
             label = "Scale";
+            let together = starts.len() > 1;
             for (id, start) in &starts {
                 let mut t = *start;
+                if together {
+                    t.position = spread(start, drag.origin, None, ratio);
+                }
                 for axis in 0..3 {
                     let value = start.scale[axis] * ratio;
                     t.scale[axis] = clamp_scale(if snap_on {
@@ -779,6 +801,13 @@ fn continue_drag(build: &mut BuildMode, view: &View, pointer: Pos2, fine: bool) 
             build.preview(label, &[id], |n| n.transform = transform);
         }
     }
+}
+
+/// The position of an object of a group scaled by `ratio` from `pivot`.
+fn spread(start: &Transform, pivot: Vec3, axis: Option<Vec3>, ratio: f32) -> [f32; 3] {
+    let at = super::gpu::render_matrix(start).transform_point3(Vec3::ZERO);
+    let to = sa_editor::viewport::scaled_about(at, pivot, axis, ratio);
+    moved(start.position, to - at)
 }
 
 fn clamp_scale(value: f32) -> f32 {

@@ -187,6 +187,20 @@ pub fn rotated(rotation: [f32; 3], axis: usize, degrees: f32, local: bool) -> [f
     let (z, y, x) = result.normalize().to_euler(EulerRot::ZYX);
     [x, y, z].map(|r| tidy(r.to_degrees()))
 }
+/// Rotate Blender Euler angles (degrees) by `degrees` about a render-space
+/// `axis` in world orientation: one object of several turned together
+/// about the primary object's local axis.
+pub fn turned_about(rotation: [f32; 3], axis: Vec3, degrees: f32) -> [f32; 3] {
+    let current = Transform {
+        rotation,
+        ..Transform::default()
+    }
+    .rotation_quat();
+    let blender = (BLENDER_TO_GLTF.transpose() * axis).normalize();
+    let turn = Quat::from_axis_angle(blender, degrees.to_radians());
+    let (z, y, x) = (turn * current).normalize().to_euler(EulerRot::ZYX);
+    [x, y, z].map(|r| tidy(r.to_degrees()))
+}
 fn wrap_degrees(d: f32) -> f32 {
     let wrapped = (d + 180.0).rem_euclid(360.0) - 180.0;
     tidy(if wrapped == -180.0 { 180.0 } else { wrapped })
@@ -199,6 +213,27 @@ fn tidy(d: f32) -> f32 {
     } else {
         rounded
     }
+}
+
+/// Where `point` lands when turned `degrees` about `axis` through `pivot`
+/// (render space): how objects in a group or a multiple selection move
+/// when the group turns as one.
+pub fn orbit(point: Vec3, pivot: Vec3, axis: Vec3, degrees: f32) -> Vec3 {
+    pivot + Quat::from_axis_angle(axis.normalize(), degrees.to_radians()) * (point - pivot)
+}
+
+/// Where `point` lands when a group is scaled by `ratio` from `pivot`
+/// (render space): along `axis` only, or in every direction.
+pub fn scaled_about(point: Vec3, pivot: Vec3, axis: Option<Vec3>, ratio: f32) -> Vec3 {
+    let offset = point - pivot;
+    pivot
+        + match axis {
+            Some(axis) => {
+                let axis = axis.normalize();
+                offset + axis * offset.dot(axis) * (ratio - 1.0)
+            }
+            None => offset * ratio,
+        }
 }
 
 /// Signed angle (degrees) from `from` to `to` around `axis`.
@@ -280,6 +315,56 @@ impl EditorCamera {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn close(a: Vec3, b: Vec3) -> bool {
+        a.distance(b) < 1e-4
+    }
+
+    #[test]
+    fn a_group_turns_and_scales_as_one() {
+        let up = blender_axis(2);
+        let pivot = Vec3::new(10.0, 0.0, 0.0);
+        // A quarter turn about up swings an object east of the pivot to
+        // its north (render -Z), like the whole group turning.
+        let east = pivot + blender_axis(0) * 2.0;
+        let to = orbit(east, pivot, up, 90.0);
+        assert!(close(to, pivot + blender_axis(1) * 2.0), "{to}");
+        // The object's own rotation turns the same way: its local east
+        // axis now points where it went.
+        let r = rotated([0.0; 3], 2, 90.0, false);
+        let t = Transform {
+            rotation: r,
+            ..Transform::default()
+        };
+        let facing = BLENDER_TO_GLTF * (t.rotation_quat() * Vec3::X);
+        assert!(close(facing, blender_axis(1)), "{facing}");
+        // About any axis, turned_about matches rotated in world axes.
+        for i in 0..3 {
+            let a = turned_about([10.0, 20.0, 30.0], blender_axis(i), 25.0);
+            let b = rotated([10.0, 20.0, 30.0], i, 25.0, false);
+            let qa = Transform {
+                rotation: a,
+                ..Transform::default()
+            }
+            .rotation_quat();
+            let qb = Transform {
+                rotation: b,
+                ..Transform::default()
+            }
+            .rotation_quat();
+            assert!(qa.angle_between(qb) < 1e-3, "axis {i}: {a:?} vs {b:?}");
+        }
+        // Scaling spreads objects out from the pivot: along one axis, or all.
+        let p = pivot + Vec3::new(1.0, 2.0, 3.0);
+        assert!(close(
+            scaled_about(p, pivot, Some(Vec3::X), 2.0),
+            pivot + Vec3::new(2.0, 2.0, 3.0)
+        ));
+        assert!(close(
+            scaled_about(p, pivot, None, 0.5),
+            pivot + Vec3::new(0.5, 1.0, 1.5)
+        ));
+    }
 
     #[test]
     fn rays_hit_triangles_boxes_and_planes() {

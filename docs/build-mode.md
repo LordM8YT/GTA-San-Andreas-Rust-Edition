@@ -72,6 +72,12 @@ own graphics settings, so you see the world the way players will. Traffic and
 pedestrians stay away while you edit. The choice is saved with your other
 settings.
 
+Select a group (or several objects) and the gizmo moves, turns and scales
+them as one, about the middle of what is selected: a house turns with its
+doors and lamps in place. Scaling along one axis spreads the objects out
+along it; objects that are turned inside the group stretch along their own
+axes.
+
 Camera: right mouse + WASD/QE flies (Shift faster, wheel changes speed),
 middle mouse pans, Alt + left mouse orbits, the wheel zooms, F or a
 double-click focuses the selection, Home resets. *Help → Controls* lists
@@ -353,8 +359,8 @@ Milestone 1 and part of milestone 2 are in. Still to come, roughly in order:
 
 - A native file picker for import (today: drag `.glb` files onto the window,
   or *File → Import model* with a path).
-- Group transforms: groups are folders; moving a group with the gizmo moves
-  its contents, but a group has no pivot or rotation of its own.
+- A pivot of its own for a group: today a group turns and scales about the
+  middle of its contents, and has no position or rotation you can type in.
 - Multiplayer: interactions while driving, server checks of teleport
   destinations against the player's later position, and a server console
   command to reset a world instance.
