@@ -43,7 +43,8 @@ place; every click places another one until you right-click or press Esc.
 `[` and `]` turn the preview.
 
 Your own models: drag `.glb` files from your file explorer onto the SARE
-window, or use *File → Import model*. They are copied into the world's
+window, or use *Import* (Home or Model tab) or *File → Import model*,
+which open your system's file picker. They are copied into the world's
 `assets/` folder (dropped files go to `assets/imported/`) and are ready to
 place. With *Surface* on, objects land on what is under
 the mouse; otherwise on the ground plane. With Snap on, positions snap to
@@ -357,8 +358,6 @@ collision without rebuilding the world (also used by Playtest).
 
 Milestone 1 and part of milestone 2 are in. Still to come, roughly in order:
 
-- A native file picker for import (today: drag `.glb` files onto the window,
-  or *File → Import model* with a path).
 - A pivot of its own for a group: today a group turns and scales about the
   middle of its contents, and has no position or rotation you can type in.
 - Multiplayer: interactions while driving, server checks of teleport

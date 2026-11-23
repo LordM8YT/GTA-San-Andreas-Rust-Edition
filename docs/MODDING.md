@@ -179,7 +179,7 @@ anything. The **Explorer** on the right lists every object: rename, group, hide
 and lock them there.
 
 **Step 4. Your own models.** Drag a `.glb` file from your file explorer onto
-the SARE window, or use **File → Import model**. It is copied into your world,
+the SARE window, or use **Import** on the ribbon (or **File → Import model**) to pick it with your system's file picker. It is copied into your world,
 so the world stays one folder you can share. Make the model in Blender as in
 [Tutorial 4](#4-tutorial-your-first-prop-in-5-minutes).
 

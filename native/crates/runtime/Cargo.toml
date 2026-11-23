@@ -27,6 +27,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 
 sa-client = { path = "../client" }
 sa-editor = { path = "../editor" }
+rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal", "pollster"] }
 
 [dev-dependencies]
 naga = { version = "30.0.1", features = ["wgsl-in"] }

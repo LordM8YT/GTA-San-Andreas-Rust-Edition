@@ -465,7 +465,11 @@ fn menu_bar(build: &mut BuildMode, ui: &mut Ui) {
             }
             ui.separator();
             if ui.button("Import model (.glb)…").clicked() {
-                build.ui.import = Some((String::new(), "custom".into()));
+                // The system's file picker first; the window then asks for
+                // the category (and still takes a typed path).
+                if let Some(path) = pick_model() {
+                    build.ui.import = Some((path, "custom".into()));
+                }
             }
             if ui.button("Reload assets").clicked() {
                 build.gpu.clear();
@@ -916,6 +920,20 @@ fn insert_group(build: &mut BuildMode, ui: &mut Ui) {
         {
             build.ui.hide_toolbox = !build.ui.hide_toolbox;
         }
+        if big_button(
+            ui,
+            "📥",
+            "Import",
+            false,
+            true,
+            "Import your own .glb model from this computer",
+        )
+        .clicked()
+        {
+            if let Some(path) = pick_model() {
+                build.ui.import = Some((path, "custom".into()));
+            }
+        }
     });
 }
 
@@ -1295,6 +1313,16 @@ fn view_groups(build: &mut BuildMode, ui: &mut Ui) {
             build.ui.show_help = true;
         }
     });
+}
+
+/// A .glb file chosen with the system's file picker, as a path string; None
+/// when cancelled.
+fn pick_model() -> Option<String> {
+    rfd::FileDialog::new()
+        .set_title("Import a model")
+        .add_filter("glTF binary model", &["glb"])
+        .pick_file()
+        .map(|path| path.display().to_string())
 }
 
 /// Put the selection on the editor's clipboard. The number of objects
@@ -3082,7 +3110,14 @@ fn dialogs(build: &mut BuildMode, root: &mut Ui) {
             .show(&ctx, |ui| {
                 compact(ui);
                 ui.label("Path to a .glb file on this computer. It is copied into this world's assets folder, so the world stays portable. Tip: you can also drag .glb files from your file explorer onto this window.");
-                ui.add(egui::TextEdit::singleline(path).hint_text("C:/Users/me/Desktop/bench.glb").desired_width(380.0));
+                ui.horizontal(|ui| {
+                    ui.add(egui::TextEdit::singleline(path).hint_text("C:/Users/me/Desktop/bench.glb").desired_width(300.0));
+                    if ui.button("Browse…").on_hover_text("Choose the file with your system's file picker").clicked() {
+                        if let Some(picked) = pick_model() {
+                            *path = picked;
+                        }
+                    }
+                });
                 ui.horizontal(|ui| {
                     ui.label("Category");
                     ui.text_edit_singleline(category);
