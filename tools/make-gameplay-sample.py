@@ -13,7 +13,10 @@ OUT = pathlib.Path(__file__).resolve().parent.parent / "content" / "gameplay-sam
 nodes = []
 
 
-def add(name, asset=None, at=(0, 0, 0), turn=0.0, parent=None, gameplay=None, scale=None):
+LAMP = {"color": [1.0, 0.85, 0.6], "size": 1.0, "radius": 6.0, "offset": [0.0, 1.0, 4.25]}
+
+
+def add(name, asset=None, at=(0, 0, 0), turn=0.0, parent=None, gameplay=None, scale=None, light=None):
     node = {"id": len(nodes) + 1, "name": name}
     if parent:
         node["parent"] = parent
@@ -26,6 +29,8 @@ def add(name, asset=None, at=(0, 0, 0), turn=0.0, parent=None, gameplay=None, sc
         }
     if gameplay:
         node["gameplay"] = gameplay
+    if light:
+        node["light"] = light
     nodes.append(node)
     return node["id"]
 
@@ -42,7 +47,9 @@ add("House", "house", (0, 8, 0), parent=square)
 for x in (-6, 6):
     add("Tree", "tree", (x, 12, 0), parent=square)
 add("Bench", "bench", (4, -2, 0), turn=180, parent=square)
-add("Lamp post", "lamp-post", (-4, -2, 0), parent=square)
+add("Lamp post", "lamp-post", (-4, -2, 0), parent=square, light=LAMP)
+add("Lamp post", "lamp-post", (6, 2, 0), turn=180, parent=square, light=LAMP)
+add("Lamp post", "lamp-post", (-6, -14, 0), parent=square, light=dict(LAMP, color=[0.6, 0.8, 1.0]))
 add("Wall north", "wall", (-10, 3, 0), turn=90, parent=square)
 add("Wall south", "wall", (-10, -3, 0), turn=90, parent=square)
 

@@ -10,6 +10,8 @@ Version 0.54.0:
 - New sample world, Gameplay Sample (content/gameplay-sample), with every behaviour in one place. No game files needed.
 - Everything also works when the world is played from the launcher, including doors that open and close.
 - Multiplayer worlds: host a Build Mode world (`sets content_pack <id>` with the pack in the server's `content/` folder) and the server runs its gameplay for everyone. A door one player opens is open for all, also for players who join later; time and weather are shared; messages, teleports and checkpoint times stay personal. The server checks that a player really stands at what they use, and each instance (routing bucket) has its own doors.
+- Lights: give any object a light (colour, glow size, ground light radius) that glows from dusk to dawn like SARE's street lamps; lamp posts come with one. World settings add fog density, sky colour and brightness. Lights do not light other objects yet.
+- World Outliner: drag objects to reorder them and to move them in and out of groups. With several objects selected, show, hide, lock, switch collision, reset or drop them all at once. Teleports without a destination offer "New destination here".
 - Server scripts: new events `sare:zoneEnter`, `sare:zoneLeave`, `sare:objectUsed`, `sare:checkpoint` and `sare:raceFinished`, and natives `SetWorldObjectVisible`, `IsWorldObjectVisible`, `GetWorldObjectByName`, `SetWorldHour` and `SetWorldWeather`.
 
 Version 0.53.0:

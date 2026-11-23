@@ -33,6 +33,10 @@ pub fn place(
     let mut node = Node::object(id, unique_name(doc, name), asset, transform);
     node.parent = parent;
     node.gameplay = gameplay.map(world_logic::Kept::Known);
+    node.light = match node.asset.as_ref() {
+        Some(AssetRef::Builtin(builtin)) => sa_scene::builtin_assets::light_preset(builtin),
+        _ => None,
+    };
     Ok((Command::Insert(vec![(doc.layout.nodes.len(), node)]), id))
 }
 

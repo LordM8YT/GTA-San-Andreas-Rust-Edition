@@ -70,10 +70,69 @@ pub(super) fn add(
     }
 }
 
+/// The glow of a Build Mode [`PointLight`], in the object's own glTF space
+/// (the node's transform places it): a corona at the lamp and a pool on the
+/// ground at the object's base, in the corona/pool encoding above.
+///
+/// [`PointLight`]: crate::world_layout::PointLight
+pub fn point_light_model(light: &crate::world_layout::PointLight) -> crate::gltf_model::Model {
+    use crate::world_layout::PointLight;
+    let centre = crate::world_layout::blender_to_gltf(light.offset).to_array();
+    let color = [light.color[0], light.color[1], light.color[2], 1.0];
+    let size = light.size.clamp(0.1, PointLight::MAX_SIZE);
+    let mut batches = HashMap::new();
+    batch(&mut batches, CORONA_KEY)
+        .vertices
+        .extend(CORNERS.map(|[x, y]| Vertex {
+            position: centre,
+            uv: [x * size, y * size],
+            color,
+        }));
+    let radius = light.radius.min(PointLight::MAX_RADIUS);
+    if radius > 0.1 {
+        batch(&mut batches, POOL_KEY)
+            .vertices
+            .extend(CORNERS.map(|[x, z]| Vertex {
+                position: [centre[0] + x * radius, 0.05, centre[2] + z * radius],
+                uv: [x, z],
+                color,
+            }));
+    }
+    let mut drawn: Vec<Batch> = batches.into_values().collect();
+    drawn.sort_by(|a, b| a.key.cmp(&b.key));
+    crate::gltf_model::Model {
+        textures: drawn
+            .iter()
+            .map(|b| (b.key.clone(), crate::builtin_assets::white()))
+            .collect(),
+        drawn,
+        collision: Vec::new(),
+        triangles: 0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use sa_assets::light::Light;
+    #[test]
+    fn build_mode_lights_glow_at_their_lamp_and_pool_on_the_ground() {
+        let mut light = crate::world_layout::PointLight::lamp();
+        light.offset = [0.0, 1.0, 4.0];
+        let model = point_light_model(&light);
+        assert!(model.collision.is_empty(), "lights are never solid");
+        let corona = model.drawn.iter().find(|b| b.key == CORONA_KEY).unwrap();
+        // Blender (0, 1, 4) is glTF (0, 4, -1).
+        assert_eq!(corona.vertices[0].position, [0.0, 4.0, -1.0]);
+        assert_eq!(corona.vertices[2].uv, [1.0, 1.0]);
+        let pool = model.drawn.iter().find(|b| b.key == POOL_KEY).unwrap();
+        assert!(pool.vertices.iter().all(|v| v.position[1] == 0.05));
+        assert!(model.textures.contains_key(CORONA_KEY));
+        assert!(model.textures.contains_key(POOL_KEY));
+        light.radius = 0.0;
+        assert_eq!(point_light_model(&light).drawn.len(), 1, "no pool");
+    }
+
     #[test]
     fn lamp_gets_a_corona_and_a_ground_pool() {
         let geometry = Geometry {

@@ -2276,6 +2276,7 @@ impl State {
         if let Some(weather) = self.world_weather() {
             daycycle::apply_weather(&mut lighting, weather, hour);
         }
+        self.apply_world_environment(&mut lighting);
         if self.interior != 0 {
             // Interiors keep their own baked lighting at every hour.
             lighting.ambient = Vec3::ONE;
@@ -3133,9 +3134,15 @@ impl State {
                 pass.set_pipeline(&self.corona);
                 pass.draw(0..self.fire_glow_count, 0..1);
             }
-            for b in self.batches.iter().filter(|b| {
-                night && is_glow(b) && (!self.culling_enabled || self.frustum.visible(b.bounds))
-            }) {
+            let creator_glows = self.creator_glows().filter(|_| night);
+            for b in self
+                .batches
+                .iter()
+                .filter(|b| {
+                    night && is_glow(b) && (!self.culling_enabled || self.frustum.visible(b.bounds))
+                })
+                .chain(creator_glows)
+            {
                 pass.set_pipeline(if b.texture_key == sa_scene::lights::CORONA_KEY {
                     &self.corona
                 } else {

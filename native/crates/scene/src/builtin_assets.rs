@@ -148,6 +148,14 @@ pub const ALL: &[Builtin] = &[
 /// Catalog category of gameplay assets.
 pub const GAMEPLAY: &str = "Gameplay";
 
+/// The light a built-in comes with when placed (a lamp post glows).
+pub fn light_preset(name: &str) -> Option<crate::world_layout::PointLight> {
+    (name == "lamp-post").then(|| crate::world_layout::PointLight {
+        offset: [0.0, 1.0, 4.25],
+        ..crate::world_layout::PointLight::lamp()
+    })
+}
+
 /// Shown only in Build Mode: gameplay markers are invisible and have no
 /// collision when the world is played.
 pub fn editor_only(name: &str) -> bool {

@@ -386,6 +386,15 @@ pub fn place_layout(
             }
         };
         let (drawn, collision) = source.transformed(node.transform.matrix());
+        if let Some(light) = node.light.as_ref().filter(|_| visible) {
+            let glow = crate::lights::point_light_model(light);
+            model
+                .drawn
+                .extend(glow.transformed(node.transform.matrix()).0);
+            for (key, texture) in glow.textures {
+                model.textures.entry(key).or_insert(texture);
+            }
+        }
         if visible {
             model.triangles += source.triangles;
             model.drawn.extend(drawn);

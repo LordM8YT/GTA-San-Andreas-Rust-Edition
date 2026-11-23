@@ -105,6 +105,18 @@ impl PlayLogic {
             smoke_opened: None,
         }
     }
+    /// The glow of the lights of the pack's switchable objects.
+    pub fn glows(&self) -> impl Iterator<Item = &GpuBatch> + '_ {
+        self.objects
+            .iter()
+            .flat_map(|o| o.gpu.lights.iter())
+            .filter(|(id, _)| self.logic.visible(**id))
+            .flat_map(|(_, light)| &light.object.batches)
+    }
+    /// The world settings of the layout being played.
+    pub fn settings(&self) -> &sa_scene::world_layout::WorldSettings {
+        &self.layout.settings
+    }
     /// The pack's switchable objects as they are drawn right now.
     pub fn batches(&self) -> impl Iterator<Item = &GpuBatch> + '_ {
         self.objects
@@ -299,6 +311,9 @@ impl State {
             objects
                 .gpu
                 .sync(self, &mut objects.resolver, &objects.layout, &mut problems);
+            objects
+                .gpu
+                .sync_lights(self, &objects.layout, &mut problems);
             for problem in problems {
                 crate::runtime_log::line(format!(
                     "World gameplay: model failed to load: {problem}"
@@ -533,6 +548,46 @@ impl State {
 
     /// The world's weather right now (Build Mode while editing previews the
     /// world setting).
+    /// Lights of Build Mode objects and of a played pack's switchable
+    /// objects (the pack's other lights are part of its world batches).
+    pub(crate) fn creator_glows(&self) -> impl Iterator<Item = &GpuBatch> + '_ {
+        let build = self.build.iter().flat_map(move |build| {
+            build
+                .gpu
+                .lights
+                .iter()
+                .filter(move |(id, _)| {
+                    if build.playtesting {
+                        self.play_logic_visible(**id)
+                            .unwrap_or_else(|| build.doc.layout.effective_visible(**id))
+                    } else {
+                        build.doc.layout.effective_visible(**id)
+                    }
+                })
+                .flat_map(|(_, light)| &light.object.batches)
+        });
+        build.chain(self.play_logic.iter().flat_map(PlayLogic::glows))
+    }
+
+    /// The world's own fog, sky colour and brightness, over the time and
+    /// weather's lighting.
+    pub(crate) fn apply_world_environment(&self, lighting: &mut crate::daycycle::Lighting) {
+        let settings = match (&self.build, &self.play_logic) {
+            (Some(build), _) => &build.doc.layout.settings,
+            (None, Some(play)) => play.settings(),
+            (None, None) => return,
+        };
+        if let Some(fog) = settings.fog {
+            lighting.fog *= fog.clamp(0.2, 10.0);
+        }
+        if let Some(sky) = settings.sky {
+            lighting.sky = Vec3::from_array(sky).clamp(Vec3::ZERO, Vec3::ONE);
+        }
+        if let Some(brightness) = settings.brightness {
+            lighting.ambient *= brightness.clamp(0.3, 1.5);
+        }
+    }
+
     pub(crate) fn world_weather(&self) -> Option<Weather> {
         if let Some(build) = self.build.as_ref().filter(|b| !b.playtesting) {
             return build

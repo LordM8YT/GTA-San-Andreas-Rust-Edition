@@ -636,6 +636,9 @@ impl State {
         build
             .gpu
             .sync(self, &mut build.resolver, &build.doc.layout, &mut problems);
+        build
+            .gpu
+            .sync_lights(self, &build.doc.layout, &mut problems);
         let ghost = build.placing.as_ref().map(|p| p.asset.clone());
         match (ghost, build.ui.ghost_transform) {
             (Some(asset), Some(transform)) if !build.playtesting => {

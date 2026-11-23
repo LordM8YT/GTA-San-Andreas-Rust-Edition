@@ -43,6 +43,15 @@ pub struct Gpu {
     pub objects: HashMap<NodeId, ObjectMesh>,
     /// The placement preview, drawn like an object.
     pub ghost: Option<ObjectMesh>,
+    /// Objects' lights: their glow, drawn in the night glow pass.
+    pub lights: HashMap<NodeId, LightMesh>,
+}
+
+/// The glow of one object's light, where the object stands.
+pub struct LightMesh {
+    light: sa_scene::world_layout::PointLight,
+    transform: Transform,
+    pub object: ObjectMesh,
 }
 
 /// Render space from pack space: the pack origin is the runtime origin
@@ -161,6 +170,48 @@ impl Gpu {
     }
     pub fn is_placeholder(&self, asset: &AssetRef) -> bool {
         self.assets.get(asset).is_some_and(|a| a.placeholder)
+    }
+}
+
+impl Gpu {
+    /// Keep every object's light glow in step with the layout.
+    pub fn sync_lights(&mut self, state: &State, layout: &Layout, problems: &mut Vec<String>) {
+        self.lights.retain(|id, mesh| {
+            layout
+                .node(*id)
+                .and_then(|n| n.light.as_ref())
+                .is_some_and(|light| *light == mesh.light)
+        });
+        for node in &layout.nodes {
+            let Some(light) = &node.light else { continue };
+            if self
+                .lights
+                .get(&node.id)
+                .is_some_and(|mesh| mesh.transform == node.transform)
+            {
+                continue;
+            }
+            let model = sa_scene::lights::point_light_model(light);
+            match upload(state, &model, false) {
+                Ok(mesh) => {
+                    let object = instance(
+                        state,
+                        &mesh,
+                        AssetRef::Builtin("light".into()),
+                        node.transform,
+                    );
+                    self.lights.insert(
+                        node.id,
+                        LightMesh {
+                            light: light.clone(),
+                            transform: node.transform,
+                            object,
+                        },
+                    );
+                }
+                Err(error) => problems.push(format!("light of {}: {error:#}", node.name)),
+            }
+        }
     }
 }
 

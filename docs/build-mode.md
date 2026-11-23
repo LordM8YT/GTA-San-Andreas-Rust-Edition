@@ -34,7 +34,7 @@ the launcher.
 | Toolbar | Select (Q), Move (W), Rotate (E), Scale (R), World/Local axes (L), Duplicate, Undo, Redo, Snap (G) with grid size and angle step, Surface placement, Zones (gameplay overlay), Collision (outlines solid objects), Playtest (F6), Save (Ctrl+S), World settings |
 | Asset Browser (left) | Picture tiles with search and category filters. Built-in shapes, models from every installed content pack and this world's own models. Missing or broken models are marked ⚠ |
 | World Outliner (left) | The scene tree: show/hide 👁, lock 🔒, double-click to rename, right-click for focus, duplicate, group, ungroup, move to group and delete. Search filters by name |
-| Inspector (right) | Selected object: name, position/rotation/scale (drag or type), Visible, Locked, Collision, Gameplay (behaviour and actions), asset and its load status, Advanced (size, triangles, materials, id, extra data). Nothing selected: world name, description, spawn point, time of day and weather |
+| Inspector (right) | Selected object: name, position/rotation/scale (drag or type), Visible, Locked, Collision, Gameplay (behaviour and actions), Light, asset and its load status, Advanced (size, triangles, materials, id, extra data). Several selected: batch edits. Nothing selected: world name, description, spawn point, time of day, weather, fog, sky colour and brightness |
 | Bottom | Console, Errors and warnings (including live gameplay checks; click one to select its object), Asset status, Playtest tabs; the status bar shows selection, grid and save state |
 
 Placing: drag an asset from the Asset Browser into the world and let go.
@@ -106,6 +106,33 @@ several courses; give each its own *Course* name.
 fog). Both show while you edit and apply when the world is played, and
 actions can change them while playing.
 
+## Lights and environment
+
+Only what SARE's renderer really draws is offered:
+
+- **Lights on objects** (Inspector → *+ Light*): a glowing corona at the
+  lamp and a soft pool of light on the ground under it, from dusk to dawn,
+  the same way SARE draws street lamps. Colour, glow size (m), ground light
+  radius (m) and where the lamp sits on the object. Lamp posts from the
+  Asset Browser come with one. Lights do not light up other objects or cast
+  shadows: the renderer has one sun and no per-object lights. Set a fixed
+  time after 20:00 to see them while editing.
+- **World settings → Environment**: the hour, the weather, *Fog* (density
+  ×0.2 to ×10 over the time and weather's own), *Sky colour* (also the
+  colour of the distant haze) and *Brightness* (ambient light ×0.3 to ×1.5).
+  The sun follows the hour and casts shadows.
+
+All of it is saved in `layout.json`, shows while you edit, and is used when
+the world is played from the launcher or hosted on a server (every player
+has the pack, so everyone sees the same).
+
+Moving objects in the **World Outliner**: drag a row onto the top or bottom
+half of another row to put it before or after it, onto the middle of a group
+to put it inside, or below the list for the top level. Dragging a selected
+row moves the whole selection. With several objects selected, the Inspector
+shows, hides, locks, unlocks, switches collision, resets or drops them all
+at once. Each is one undo step.
+
 While playing, E uses the interaction you stand in. Zones react to a player
 on foot. Every playtest starts the gameplay fresh.
 
@@ -160,7 +187,7 @@ content/my-town/
   "format": "sare-world-layout",
   "version": 1,
   "next_id": 5,
-  "settings": { "hour": 12, "weather": "clear" },
+  "settings": { "hour": 12, "weather": "clear", "fog": 1.5, "sky": [0.5, 0.65, 0.9], "brightness": 1.0 },
   "nodes": [
     { "id": 1, "name": "Ground", "asset": "builtin:ground",
       "transform": { "position": [0, 0, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1] },
@@ -182,6 +209,10 @@ content/my-town/
   Visible, Locked and Collision down to their contents; they have no
   transform of their own yet.
 - Ids are stable and never reused, even after undo.
+- `light` is optional: `{ "color": [1, 0.85, 0.6], "size": 1, "radius": 6,
+  "offset": [0, 1, 4.25] }` (linear RGB 0-1, metres, offset in the object's
+  axes). `settings.fog` (0.2-10), `sky` (RGB 0-1) and `brightness`
+  (0.3-1.5) are optional too; values out of range are refused on load.
 - `gameplay` is optional. `kind` is `spawn`, `trigger` (`size`, `once`,
   `on_enter`, `on_leave`), `interact` (`size`, `prompt`, `actions`) or
   `checkpoint` (`size`, `race`, `order`). Every action has a `do`: `message`
@@ -272,8 +303,10 @@ collision without rebuilding the world (also used by Playtest).
 
 Milestone 1 and part of milestone 2 are in. Still to come, roughly in order:
 
-- A native file picker for import.
-- Drag and drop in the outliner; group transforms (groups are folders now).
+- A native file picker for import (today: drag `.glb` files onto the window,
+  or *File → Import model* with a path).
+- Group transforms: groups are folders; moving a group with the gizmo moves
+  its contents, but a group has no pivot or rotation of its own.
 - Multiplayer: interactions while driving, server checks of teleport
   destinations against the player's later position, and a server console
   command to reset a world instance.
@@ -281,7 +314,6 @@ Milestone 1 and part of milestone 2 are in. Still to come, roughly in order:
   resources can react to zones.
 - A wireframe view of the exact collision triangles (the Collision view
   outlines object bounds).
-- Lights (point, spot, sun), sky and fog colour settings. The renderer has no
-  per-object lights or per-object shadow switches yet, so the Inspector does
-  not offer them.
+- Real per-pixel point and spot lights (needs renderer work; today lights
+  are glow and ground light), per-object shadow switches.
 - Terrain, roads and paths, visual scripting, publishing worlds to servers.

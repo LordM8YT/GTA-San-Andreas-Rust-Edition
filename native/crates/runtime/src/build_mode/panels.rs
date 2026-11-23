@@ -1396,6 +1396,58 @@ fn inspector(build: &mut BuildMode, ui: &mut Ui) {
     }
 }
 
+/// The object's light: a corona and a pool of light on the ground.
+fn light_section(build: &mut BuildMode, ui: &mut Ui, id: NodeId, node: &Node) {
+    use sa_scene::world_layout::PointLight;
+    section(ui, "Light");
+    let locked = build.doc.layout.effective_locked(id);
+    let Some(light) = &node.light else {
+        if ui
+            .add_enabled(!locked, egui::Button::new("+ Light"))
+            .on_hover_text("A glowing lamp and a pool of light on the ground, from dusk to dawn")
+            .clicked()
+        {
+            run(
+                build,
+                ops::modify(&build.doc, "Add light", &[id], |n| {
+                    n.light = Some(PointLight::lamp())
+                }),
+            );
+        }
+        return;
+    };
+    let mut edited = light.clone();
+    ui.add_enabled_ui(!locked, |ui| {
+        ui.horizontal(|ui| {
+            ui.label("Colour");
+            ui.color_edit_button_rgb(&mut edited.color);
+            if ui.small_button("Remove").clicked() {
+                run(
+                    build,
+                    ops::modify(&build.doc, "Remove light", &[id], |n| n.light = None),
+                );
+            }
+        });
+        ui.add(egui::Slider::new(&mut edited.size, 0.1..=PointLight::MAX_SIZE).text("glow (m)"));
+        ui.add(
+            egui::Slider::new(&mut edited.radius, 0.0..=PointLight::MAX_RADIUS)
+                .text("ground light (m)"),
+        );
+        axis_row(ui, "Lamp at", &mut edited.offset, 0.05, " m");
+    });
+    ui.label(
+        RichText::new(
+            "Glows from dusk to dawn: set a fixed time of day after 20:00 to see it. It does not light up other objects.",
+        )
+        .small()
+        .color(MUTED),
+    );
+    edited.color = edited.color.map(|c| c.clamp(0.0, 1.0));
+    if edited != *light && edited.is_valid() && build.doc.layout.node(id).is_some() {
+        build.preview("Edit light", &[id], |n| n.light = Some(edited.clone()));
+    }
+}
+
 /// A change applied to every selected object.
 type NodeEdit = fn(&mut Node);
 
@@ -1618,6 +1670,7 @@ fn object(build: &mut BuildMode, ui: &mut Ui, id: NodeId) {
     }
     if !node.is_group() {
         super::gameplay_ui::inspector(build, ui, id, &node);
+        light_section(build, ui, id, &node);
     }
     if let Some(asset) = &node.asset {
         section(ui, "Asset");
@@ -1781,9 +1834,43 @@ fn world_settings(build: &mut BuildMode, ui: &mut Ui) {
                 });
         });
     }
+    // The renderer's own haze, sky colour and ambient light.
+    let mut fog = settings.fog;
+    let mut sky = settings.sky;
+    let mut brightness = settings.brightness;
+    ui.horizontal(|ui| {
+        let mut own = fog.is_some();
+        ui.checkbox(&mut own, "Fog");
+        let mut value = fog.unwrap_or(1.0);
+        ui.add_enabled(
+            own,
+            egui::Slider::new(&mut value, 0.2..=10.0)
+                .logarithmic(true)
+                .text("× density"),
+        );
+        fog = own.then_some(value);
+    });
+    ui.horizontal(|ui| {
+        let mut own = sky.is_some();
+        ui.checkbox(&mut own, "Sky colour")
+            .on_hover_text("Also the colour of the haze in the distance");
+        let mut value = sky.unwrap_or([0.55, 0.7, 0.9]);
+        ui.add_enabled_ui(own, |ui| ui.color_edit_button_rgb(&mut value));
+        sky = own.then_some(value.map(|c| c.clamp(0.0, 1.0)));
+    });
+    ui.horizontal(|ui| {
+        let mut own = brightness.is_some();
+        ui.checkbox(&mut own, "Brightness");
+        let mut value = brightness.unwrap_or(1.0);
+        ui.add_enabled(own, egui::Slider::new(&mut value, 0.3..=1.5));
+        brightness = own.then_some(value);
+    });
     let after = WorldSettings {
         hour: fixed.then_some(hour),
         weather,
+        fog,
+        sky,
+        brightness,
         ..settings.clone()
     };
     let dragging = ui.ctx().egui_is_using_pointer();
@@ -1807,7 +1894,7 @@ fn world_settings(build: &mut BuildMode, ui: &mut Ui) {
         }
     }
     ui.label(
-        RichText::new("Shown here while you edit and used when the world is played. Gameplay actions can change the time and weather while playing.")
+        RichText::new("Shown here while you edit and used when the world is played or hosted. Gameplay actions can change the time and weather while playing. Lights on objects glow from dusk to dawn.")
             .small()
             .color(MUTED),
     );

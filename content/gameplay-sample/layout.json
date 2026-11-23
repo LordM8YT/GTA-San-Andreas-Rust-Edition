@@ -1,7 +1,7 @@
 {
   "format": "sare-world-layout",
   "version": 1,
-  "next_id": 30,
+  "next_id": 32,
   "settings": {
     "hour": 12,
     "weather": "clear"
@@ -170,10 +170,98 @@
           1,
           1
         ]
+      },
+      "light": {
+        "color": [
+          1.0,
+          0.85,
+          0.6
+        ],
+        "size": 1.0,
+        "radius": 6.0,
+        "offset": [
+          0.0,
+          1.0,
+          4.25
+        ]
       }
     },
     {
       "id": 9,
+      "name": "Lamp post",
+      "parent": 1,
+      "asset": "builtin:lamp-post",
+      "transform": {
+        "position": [
+          6,
+          2,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          180
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "light": {
+        "color": [
+          1.0,
+          0.85,
+          0.6
+        ],
+        "size": 1.0,
+        "radius": 6.0,
+        "offset": [
+          0.0,
+          1.0,
+          4.25
+        ]
+      }
+    },
+    {
+      "id": 10,
+      "name": "Lamp post",
+      "parent": 1,
+      "asset": "builtin:lamp-post",
+      "transform": {
+        "position": [
+          -6,
+          -14,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "light": {
+        "color": [
+          0.6,
+          0.8,
+          1.0
+        ],
+        "size": 1.0,
+        "radius": 6.0,
+        "offset": [
+          0.0,
+          1.0,
+          4.25
+        ]
+      }
+    },
+    {
+      "id": 11,
       "name": "Wall north",
       "parent": 1,
       "asset": "builtin:wall",
@@ -196,7 +284,7 @@
       }
     },
     {
-      "id": 10,
+      "id": 12,
       "name": "Wall south",
       "parent": 1,
       "asset": "builtin:wall",
@@ -219,13 +307,13 @@
       }
     },
     {
-      "id": 11,
+      "id": 13,
       "name": "Gameplay"
     },
     {
-      "id": 12,
+      "id": 14,
       "name": "Start",
-      "parent": 11,
+      "parent": 13,
       "asset": "builtin:marker-spawn",
       "transform": {
         "position": [
@@ -249,9 +337,9 @@
       }
     },
     {
-      "id": 13,
+      "id": 15,
       "name": "Outside the house",
-      "parent": 11,
+      "parent": 13,
       "asset": "builtin:marker-target",
       "transform": {
         "position": [
@@ -272,9 +360,9 @@
       }
     },
     {
-      "id": 14,
+      "id": 16,
       "name": "Inside the house",
-      "parent": 11,
+      "parent": 13,
       "asset": "builtin:marker-target",
       "transform": {
         "position": [
@@ -295,9 +383,9 @@
       }
     },
     {
-      "id": 15,
+      "id": 17,
       "name": "Front door",
-      "parent": 11,
+      "parent": 13,
       "asset": "builtin:door-teleport",
       "transform": {
         "position": [
@@ -327,7 +415,7 @@
         "actions": [
           {
             "do": "teleport",
-            "target": 14
+            "target": 16
           },
           {
             "do": "message",
@@ -338,9 +426,9 @@
       }
     },
     {
-      "id": 16,
+      "id": 18,
       "name": "Garden gate",
-      "parent": 11,
+      "parent": 13,
       "asset": "builtin:door",
       "transform": {
         "position": [
@@ -375,9 +463,9 @@
       }
     },
     {
-      "id": 17,
+      "id": 19,
       "name": "Welcome sign",
-      "parent": 11,
+      "parent": 13,
       "asset": "builtin:marker-interact",
       "transform": {
         "position": [
@@ -414,9 +502,9 @@
       }
     },
     {
-      "id": 18,
+      "id": 20,
       "name": "Night zone",
-      "parent": 11,
+      "parent": 13,
       "asset": "builtin:marker-trigger",
       "transform": {
         "position": [
@@ -462,9 +550,9 @@
       }
     },
     {
-      "id": 19,
+      "id": 21,
       "name": "Rain zone",
-      "parent": 11,
+      "parent": 13,
       "asset": "builtin:marker-trigger",
       "transform": {
         "position": [
@@ -510,14 +598,14 @@
       }
     },
     {
-      "id": 20,
+      "id": 22,
       "name": "Checkpoint course",
-      "parent": 11
+      "parent": 13
     },
     {
-      "id": 21,
+      "id": 23,
       "name": "Checkpoint 1",
-      "parent": 20,
+      "parent": 22,
       "asset": "builtin:marker-checkpoint",
       "transform": {
         "position": [
@@ -548,9 +636,9 @@
       }
     },
     {
-      "id": 22,
+      "id": 24,
       "name": "Checkpoint 2",
-      "parent": 20,
+      "parent": 22,
       "asset": "builtin:marker-checkpoint",
       "transform": {
         "position": [
@@ -581,9 +669,9 @@
       }
     },
     {
-      "id": 23,
+      "id": 25,
       "name": "Checkpoint 3",
-      "parent": 20,
+      "parent": 22,
       "asset": "builtin:marker-checkpoint",
       "transform": {
         "position": [
@@ -614,13 +702,13 @@
       }
     },
     {
-      "id": 24,
+      "id": 26,
       "name": "Inside"
     },
     {
-      "id": 25,
+      "id": 27,
       "name": "Floor",
-      "parent": 24,
+      "parent": 26,
       "asset": "builtin:ground",
       "transform": {
         "position": [
@@ -641,9 +729,9 @@
       }
     },
     {
-      "id": 26,
+      "id": 28,
       "name": "Crate",
-      "parent": 24,
+      "parent": 26,
       "asset": "builtin:crate",
       "transform": {
         "position": [
@@ -664,9 +752,9 @@
       }
     },
     {
-      "id": 27,
+      "id": 29,
       "name": "Crate",
-      "parent": 24,
+      "parent": 26,
       "asset": "builtin:crate",
       "transform": {
         "position": [
@@ -687,9 +775,9 @@
       }
     },
     {
-      "id": 28,
+      "id": 30,
       "name": "Crate",
-      "parent": 24,
+      "parent": 26,
       "asset": "builtin:crate",
       "transform": {
         "position": [
@@ -710,9 +798,9 @@
       }
     },
     {
-      "id": 29,
+      "id": 31,
       "name": "Way out",
-      "parent": 24,
+      "parent": 26,
       "asset": "builtin:marker-teleport",
       "transform": {
         "position": [
@@ -741,7 +829,7 @@
         "on_enter": [
           {
             "do": "teleport",
-            "target": 13
+            "target": 15
           }
         ]
       }

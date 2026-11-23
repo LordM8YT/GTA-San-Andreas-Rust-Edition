@@ -202,6 +202,9 @@ pub struct Node {
     /// see [`crate::world_logic`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gameplay: Option<Kept<Component>>,
+    /// A light glowing on the object from dusk to dawn (see [`PointLight`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub light: Option<PointLight>,
     /// Fields from a newer SARE or a hand edit, written back unchanged.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -223,6 +226,7 @@ impl Node {
             locked: false,
             collision: true,
             gameplay: None,
+            light: None,
             extra: Map::new(),
         }
     }
@@ -237,11 +241,69 @@ impl Node {
             locked: false,
             collision: true,
             gameplay: None,
+            light: None,
             extra: Map::new(),
         }
     }
     pub fn is_group(&self) -> bool {
         self.asset.is_none()
+    }
+}
+
+/// A light on an object, drawn the way SARE draws street lamps: a glowing
+/// corona at the lamp and a soft pool of light on the ground under it,
+/// from dusk to dawn. It does not light other objects (the renderer has
+/// no per-object lights).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PointLight {
+    /// Linear RGB, 0-1.
+    pub color: [f32; 3],
+    /// Corona size in metres.
+    #[serde(default = "light_size")]
+    pub size: f32,
+    /// Radius of the pool of light on the ground, in metres (0: none).
+    #[serde(default = "light_radius")]
+    pub radius: f32,
+    /// Where the lamp is, in the object's own axes (metres, Blender).
+    #[serde(default = "light_offset")]
+    pub offset: [f32; 3],
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+fn light_size() -> f32 {
+    1.0
+}
+fn light_radius() -> f32 {
+    6.0
+}
+fn light_offset() -> [f32; 3] {
+    [0.0, 0.0, 3.0]
+}
+impl PointLight {
+    pub const MAX_SIZE: f32 = 6.0;
+    pub const MAX_RADIUS: f32 = 12.0;
+    /// A warm street lamp.
+    pub fn lamp() -> Self {
+        Self {
+            color: [1.0, 0.85, 0.6],
+            size: light_size(),
+            radius: light_radius(),
+            offset: light_offset(),
+            extra: Map::new(),
+        }
+    }
+    pub fn is_valid(&self) -> bool {
+        self.color
+            .iter()
+            .all(|c| c.is_finite() && (0.0..=1.0).contains(c))
+            && self.size.is_finite()
+            && (0.1..=Self::MAX_SIZE).contains(&self.size)
+            && self.radius.is_finite()
+            && (0.0..=Self::MAX_RADIUS).contains(&self.radius)
+            && self
+                .offset
+                .iter()
+                .all(|v| v.is_finite() && v.abs() <= 100.0)
     }
 }
 
@@ -256,6 +318,15 @@ pub struct WorldSettings {
     /// [`crate::world_logic::Weather`]), or None for the game's own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub weather: Option<String>,
+    /// Haze density multiplier (1 = the time and weather's own), 0.2-10.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fog: Option<f32>,
+    /// Sky and haze colour, linear RGB 0-1, instead of the time of day's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sky: Option<[f32; 3]>,
+    /// Brightness multiplier of the scene's ambient light, 0.3-1.5.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brightness: Option<f32>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -264,6 +335,9 @@ impl Default for WorldSettings {
         Self {
             hour: Some(12),
             weather: None,
+            fog: None,
+            sky: None,
+            brightness: None,
             extra: Map::new(),
         }
     }
@@ -366,6 +440,16 @@ impl Layout {
     }
     pub fn validate(&self) -> Result<()> {
         ensure!(self.format == FORMAT, "not a SARE world layout");
+        let s = &self.settings;
+        ensure!(
+            s.fog
+                .is_none_or(|f| f.is_finite() && (0.2..=10.0).contains(&f))
+                && s.brightness
+                    .is_none_or(|b| b.is_finite() && (0.3..=1.5).contains(&b))
+                && s.sky
+                    .is_none_or(|c| c.iter().all(|v| v.is_finite() && (0.0..=1.0).contains(v))),
+            "the world's fog, sky colour or brightness is out of range"
+        );
         ensure!(
             self.version == VERSION,
             "layout version {} not migrated",
@@ -393,6 +477,12 @@ impl Layout {
             ensure!(
                 node.transform.is_valid(),
                 "object {} ({}) has an invalid position, rotation or scale",
+                node.id,
+                node.name
+            );
+            ensure!(
+                node.light.as_ref().is_none_or(PointLight::is_valid),
+                "object {} ({}) has a light with an invalid colour, size, radius or position",
                 node.id,
                 node.name
             );

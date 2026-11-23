@@ -437,6 +437,14 @@ mod tests {
         let [x, y, z] = world.spawn().unwrap();
         let point = glam::Vec3::new(x - origin[0], z, origin[1] - y);
         assert!(collision.standing_at(point, z + 2.0).is_some());
+        // Its lamp posts glow: their coronas are part of the played world.
+        let coronas = scene
+            .batches
+            .iter()
+            .filter(|b| b.key == sa_scene::lights::CORONA_KEY)
+            .map(|b| b.vertices.len() / 6)
+            .sum::<usize>();
+        assert_eq!(coronas, 3);
     }
 
     #[test]
