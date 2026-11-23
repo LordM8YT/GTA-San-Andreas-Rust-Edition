@@ -4311,9 +4311,7 @@ impl ApplicationHandler for App {
                                 event_loop.exit();
                             }
                         } else if state.play_logic_smoke(self.smoke_frames, captures) {
-                            println!(
-                                "Pack gameplay smoke passed"
-                            );
+                            println!("Pack gameplay smoke passed");
                             event_loop.exit();
                         }
                     }
