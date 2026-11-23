@@ -465,6 +465,8 @@ pub struct World {
     races: HashMap<String, Vec<u32>>,
     /// Visible in the layout, before any action.
     base_visible: HashMap<NodeId, bool>,
+    /// Objects actions show or hide: the only ones a played world can.
+    switchable: HashSet<NodeId>,
     hour: Option<u8>,
     weather: Option<Weather>,
 }
@@ -477,6 +479,9 @@ pub struct Shared {
     visibility: HashMap<NodeId, bool>,
     hour: Option<u8>,
     weather: Option<Weather>,
+    /// The latest jump of a running clock (number, hour), so players who
+    /// get it later still jump once.
+    jump: Option<(u32, u8)>,
     revision: u64,
 }
 
@@ -542,16 +547,33 @@ impl Shared {
             .map(|(id, _)| *id)
     }
     /// Show or hide an object of `world`. False when there is no such
-    /// object; nothing changes when it already is that way.
+    /// object or it cannot be shown or hidden (only objects some action
+    /// shows or hides can: the rest are part of the merged world).
+    /// Nothing changes when it already is that way.
     pub fn set_visible(&mut self, world: &World, node: NodeId, visible: bool) -> bool {
-        if !world.base_visible.contains_key(&node) {
+        if !world.switchable.contains(&node) {
             return false;
         }
         if world.visible(self, node) != visible {
-            self.visibility.insert(node, visible);
+            // Only differences from the layout are kept, so snapshots stay small.
+            if world.base_visible.get(&node) == Some(&visible) {
+                self.visibility.remove(&node);
+            } else {
+                self.visibility.insert(node, visible);
+            }
             self.revision += 1;
         }
         true
+    }
+    /// Make a running clock jump to `hour` (for everyone in the instance).
+    pub fn jump_to(&mut self, hour: u8) {
+        let number = self.jump.map_or(1, |(n, _)| n.wrapping_add(1));
+        self.jump = Some((number, hour.min(23)));
+        self.revision += 1;
+    }
+    /// The latest clock jump: its number and hour.
+    pub fn jump(&self) -> Option<(u32, u8)> {
+        self.jump
     }
     /// Fix the hour (None lets the clock run).
     pub fn set_hour(&mut self, hour: Option<u8>) {
@@ -586,6 +608,7 @@ impl Shared {
             hidden,
             hour: self.hour,
             weather: self.weather.map(|w| w.as_str().to_owned()),
+            jump: self.jump,
         }
     }
     /// The state a server sent; objects `world` does not have are ignored.
@@ -602,6 +625,7 @@ impl Shared {
             visibility,
             hour: snapshot.hour.map(|h| h.min(23)),
             weather: snapshot.weather.as_deref().and_then(Weather::parse),
+            jump: snapshot.jump.map(|(n, h)| (n, h.min(23))),
             revision: snapshot.revision,
         }
     }
@@ -658,9 +682,14 @@ impl World {
                 .into_iter()
                 .map(|(id, flags)| (id, flags.visible))
                 .collect(),
+            switchable: switchable(layout),
             hour: layout.settings.hour,
             weather: layout.settings.weather.as_deref().and_then(Weather::parse),
         }
+    }
+    /// Whether the layout has this object (not a group).
+    pub fn has_object(&self, node: NodeId) -> bool {
+        self.poses.contains_key(&node)
     }
     /// A fresh shared state: the world's own hour and weather, nothing
     /// shown or hidden yet.
@@ -952,6 +981,8 @@ impl World {
                     let hour = (*hour).min(23);
                     if shared.hour.is_some() {
                         shared.set_hour(Some(hour));
+                    } else {
+                        shared.jump_to(hour);
                     }
                     out.push(Effect::Time(hour));
                 }
@@ -1122,6 +1153,9 @@ pub struct Snapshot {
     pub hour: Option<u8>,
     #[serde(rename = "w", default, skip_serializing_if = "Option::is_none")]
     pub weather: Option<String>,
+    /// The latest jump of a running clock: (number, hour).
+    #[serde(rename = "j", default, skip_serializing_if = "Option::is_none")]
+    pub jump: Option<(u32, u8)>,
 }
 
 /// Objects an action can show or hide. Played worlds keep them out of the
@@ -1601,6 +1635,9 @@ mod tests {
         logic.step([9.0, 9.0, 0.0], 0.1);
         assert_eq!(logic.step([0.0; 3], 0.1), vec![Effect::Time(20)]);
         assert_eq!(logic.hour(), None, "the clock is not frozen");
+        // Players of a hosted world get the jump through the snapshot.
+        let jump = logic.shared().snapshot().jump;
+        assert_eq!(jump, Some((1, 20)));
     }
 
     #[test]
@@ -1673,7 +1710,18 @@ mod tests {
         let door = object(&mut layout, "Door", [0.0; 3], preset("door", 1));
         let lamp = object(&mut layout, "Lamp", [3.0, 0.0, 0.0], None);
         layout.node_mut(lamp).unwrap().visible = false;
+        let house = object(&mut layout, "House", [9.0, 0.0, 0.0], None);
+        object(
+            &mut layout,
+            "Switch",
+            [6.0, 0.0, 0.0],
+            Some(trigger(vec![Action::Show { node: Some(lamp) }])),
+        );
         let world = World::new(&layout);
+        assert!(
+            !world.shared().set_visible(&world, house, false),
+            "only switchable objects can be hidden"
+        );
         let mut shared = world.shared();
         assert!(shared.set_visible(&world, door, false));
         assert!(shared.set_visible(&world, lamp, true));
@@ -1685,6 +1733,10 @@ mod tests {
         let late = Shared::from_snapshot(&world, &snapshot);
         assert_eq!(late, shared);
         assert!(!world.visible(&late, door) && world.visible(&late, lamp));
+        // Back to the layout's state: nothing is left to send.
+        shared.set_visible(&world, door, true);
+        shared.set_visible(&world, lamp, false);
+        assert!(shared.snapshot().shown.is_empty() && shared.snapshot().hidden.is_empty());
         // Unknown objects in a snapshot are ignored.
         let odd = Snapshot {
             hidden: vec![door, 12345],

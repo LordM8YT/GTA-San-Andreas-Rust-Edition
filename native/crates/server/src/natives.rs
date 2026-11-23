@@ -1370,7 +1370,10 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
             _ => None,
         }
     };
-    let bucket_of = |bucket: Option<i64>| u32::try_from(bucket.unwrap_or(0)).unwrap_or(0);
+    let bucket_of = |bucket: Option<i64>| {
+        u32::try_from(bucket.unwrap_or(0))
+            .map_err(|_| mlua::Error::runtime("routing bucket must be 0 or more"))
+    };
     {
         func!(g, "SetWorldObjectVisible", shared, name, |_lua,
                                                          (
@@ -1389,7 +1392,7 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
             let Some(game) = state.world.as_mut() else {
                 return Ok(false);
             };
-            Ok(game.set_visible(bucket_of(bucket), node, visible))
+            Ok(game.set_visible(bucket_of(bucket)?, node, visible))
         });
     }
     {
@@ -1408,7 +1411,10 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
             let Some(game) = state.world.as_mut() else {
                 return Ok(false);
             };
-            Ok(game.visible(bucket_of(bucket), node))
+            if !game.has_object(node) {
+                return Ok(false);
+            }
+            Ok(game.visible(bucket_of(bucket)?, node))
         });
     }
     func!(
@@ -1433,7 +1439,7 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
             None => None,
         };
         if let Some(game) = shared.borrow_mut().world.as_mut() {
-            game.bucket(bucket_of(bucket)).set_hour(hour);
+            game.bucket(bucket_of(bucket)?).set_hour(hour);
         }
         Ok(())
     });
@@ -1449,7 +1455,7 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
             })?),
         };
         if let Some(game) = shared.borrow_mut().world.as_mut() {
-            game.bucket(bucket_of(bucket)).set_weather(weather);
+            game.bucket(bucket_of(bucket)?).set_weather(weather);
         }
         Ok(())
     });

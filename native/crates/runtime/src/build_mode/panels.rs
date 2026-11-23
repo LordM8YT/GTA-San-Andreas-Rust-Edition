@@ -1268,11 +1268,19 @@ fn row_single(
 
 fn apply_outliner(build: &mut BuildMode, action: OutlinerAction) {
     match action {
-        OutlinerAction::Drop(ids, to) => match ops::move_nodes(&build.doc, &ids, to) {
-            Ok(Some(command)) => build.execute(command),
-            Ok(None) => {}
-            Err(error) => build.warn(format!("{error:#}")),
-        },
+        OutlinerAction::Drop(ids, to) => {
+            // Let go on itself (a slip of the mouse): nothing to do.
+            if let ops::Drop::Before(t) | ops::Drop::After(t) | ops::Drop::Into(t) = to {
+                if ops::with_descendants(&build.doc, &ids).contains(&t) {
+                    return;
+                }
+            }
+            match ops::move_nodes(&build.doc, &ids, to) {
+                Ok(Some(command)) => build.execute(command),
+                Ok(None) => {}
+                Err(error) => build.warn(format!("{error:#}")),
+            }
+        }
         OutlinerAction::Select(id, add) => {
             if add {
                 if let Some(i) = build.selection.iter().position(|s| *s == id) {
@@ -1474,6 +1482,11 @@ fn terrain_section(build: &mut BuildMode, ui: &mut Ui, id: NodeId, node: &Node) 
         .color(MUTED),
     );
     edited.color = edited.color.map(|c| c.clamp(0.0, 1.0));
+    // A colour drag is one undo step, like every other Inspector drag.
+    if edited.heights == terrain.heights && edited != *terrain {
+        build.preview("Edit terrain", &[id], |n| n.terrain = Some(edited.clone()));
+        return;
+    }
     if edited != *terrain {
         run(
             build,

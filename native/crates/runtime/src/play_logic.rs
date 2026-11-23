@@ -31,6 +31,8 @@ pub struct PlayLogic {
     /// A server runs this world's gameplay (it sent the world state): zones
     /// and actions are its decisions, and E asks it to use an object.
     remote: bool,
+    /// The last clock jump taken from the server.
+    last_jump: Option<u32>,
     /// `--smoke-build` over the network: the frame the server took over.
     smoke_remote_since: Option<usize>,
     /// ...and the frame the gate opened (a screenshot is taken after it).
@@ -103,6 +105,7 @@ impl PlayLogic {
             prompt: None,
             last_step: None,
             remote: false,
+            last_jump: None,
             smoke_remote_since: None,
             smoke_opened: None,
         }
@@ -282,6 +285,13 @@ impl State {
                     }
                     play.remote = true;
                     let shared = Shared::from_snapshot(play.logic.world(), &snapshot);
+                    // A running clock that an action made jump.
+                    if let Some((number, hour)) = shared.jump() {
+                        if play.last_jump != Some(number) {
+                            play.last_jump = Some(number);
+                            self.daycycle.minutes = f32::from(hour) * 60.0;
+                        }
+                    }
                     play.logic.set_shared(shared);
                     if let Some(collision) = &mut self.collision {
                         collision.set_hidden(play.logic.hidden_by_actions());

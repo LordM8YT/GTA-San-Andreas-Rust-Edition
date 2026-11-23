@@ -34,10 +34,12 @@ const LOGGED_REFUSALS: u32 = 3;
 
 pub struct Game {
     pub world: World,
-    names: BTreeMap<NodeId, String>,
+    /// Object names in layout order.
+    names: Vec<(NodeId, String)>,
     /// Shared state per routing bucket, created when someone first plays there.
     pub buckets: BTreeMap<u32, WorldState>,
     players: BTreeMap<u32, Player>,
+    warned_size: bool,
 }
 
 struct Player {
@@ -48,6 +50,9 @@ struct Player {
     last_step: Instant,
     last_use: Option<Instant>,
     refused: u32,
+    /// A teleport the player's game has not reported yet: where to, and
+    /// since when. Zones wait until the server sees the player arrive.
+    arriving: Option<([f32; 3], Instant)>,
 }
 
 impl Game {
@@ -61,6 +66,7 @@ impl Game {
                 .collect(),
             buckets: BTreeMap::new(),
             players: BTreeMap::new(),
+            warned_size: false,
         }
     }
     /// The shared state of `bucket`, created from the world on first use.
@@ -86,13 +92,30 @@ impl Game {
     pub fn player_count(&self) -> usize {
         self.players.len()
     }
-    /// The first object with this name in the layout.
+    /// The first object with this name in the layout (outliner order).
     pub fn find(&self, name: &str) -> Option<NodeId> {
         self.names
             .iter()
             .find(|(_, n)| n.as_str() == name)
             .map(|(id, _)| *id)
     }
+    /// Whether the layout has this object.
+    pub fn has_object(&self, node: NodeId) -> bool {
+        self.world.has_object(node)
+    }
+}
+
+/// How close (metres) to a teleport's destination counts as arrived.
+const ARRIVED: f32 = 3.0;
+/// Longest wait for a teleported player's game to report the new place.
+const ARRIVAL_WAIT: Duration = Duration::from_secs(3);
+
+/// Where the last teleport among `effects` leads.
+fn teleport(effects: &[sa_scene::world_logic::Effect]) -> Option<[f32; 3]> {
+    effects.iter().rev().find_map(|e| match e {
+        sa_scene::world_logic::Effect::Teleport(pose) => Some(pose.position),
+        _ => None,
+    })
 }
 
 /// Find content pack `id` for the server: `content/` next to server.cfg,
@@ -165,7 +188,7 @@ fn deliver(
     player: u32,
     effects: &[sa_scene::world_logic::Effect],
     events: Vec<Happened>,
-    names: &BTreeMap<NodeId, String>,
+    names: &[(NodeId, String)],
 ) {
     let personal: Vec<wire::Personal> = effects.iter().filter_map(wire::Personal::of).collect();
     for chunk in personal.chunks(8) {
@@ -176,7 +199,14 @@ fn deliver(
             &[serde_json::to_value(chunk).unwrap_or_default()],
         );
     }
-    let name = |node: &NodeId| Json::from(names.get(node).cloned().unwrap_or_default());
+    let name = |node: &NodeId| {
+        Json::from(
+            names
+                .iter()
+                .find(|(id, _)| id == node)
+                .map_or("", |(_, n)| n.as_str()),
+        )
+    };
     for event in events {
         let (event_name, args) = match &event {
             Happened::Entered(node) => ("sare:zoneEnter", vec![Json::from(*node), name(node)]),
@@ -221,6 +251,7 @@ pub fn tick(shared: &Shared) {
             last_step: now,
             last_use: None,
             refused: 0,
+            arriving: None,
         });
         if player.bucket != bucket {
             // Another instance: its zones are new, its state is another.
@@ -230,13 +261,32 @@ pub fn tick(shared: &Shared) {
         }
         let dt = (now - player.last_step).as_secs_f32().min(1.0);
         player.last_step = now;
+        // Not spawned yet: the pose is still the default one.
+        if peer.pose == sa_net::Pose::default() {
+            continue;
+        }
+        let here = feet(&peer.pose);
+        if let Some((to, since)) = player.arriving {
+            let gap: f32 = here.iter().zip(to).map(|(a, b)| (a - b) * (a - b)).sum();
+            let there = gap.sqrt() < ARRIVED;
+            if !there && now - since < ARRIVAL_WAIT {
+                continue;
+            }
+            // Arrived (or gave up waiting): take the zones here quietly.
+            player.arriving = None;
+            player.state.moved();
+        }
         let world = &game.world;
         let state = game.buckets.entry(bucket).or_insert_with(|| world.shared());
-        let effects = world.step(state, &mut player.state, feet(&peer.pose), dt);
+        let effects = world.step(state, &mut player.state, here, dt);
+        if let Some(to) = teleport(&effects) {
+            player.arriving = Some((to, now));
+        }
         deliveries.push((peer.id, effects, player.state.take_events()));
     }
     // Snapshots for whoever has not seen their bucket's latest state.
     let mut snapshots = Vec::new();
+    let mut too_big = None;
     for (id, player) in &mut game.players {
         let world = &game.world;
         let state = game
@@ -246,12 +296,27 @@ pub fn tick(shared: &Shared) {
         let current = (player.bucket, state.revision());
         if player.sent != Some(current) {
             player.sent = Some(current);
-            snapshots.push((*id, state.snapshot()));
+            let snapshot = state.snapshot();
+            let size = serde_json::to_string(&snapshot).map_or(0, |s| s.len());
+            if size + 2 > sa_net::MAX_EVENT_PAYLOAD && !game.warned_size {
+                game.warned_size = true;
+                too_big = Some(size);
+            }
+            snapshots.push((*id, snapshot));
         }
     }
     let names = game.names.clone();
     // Handlers may call the world natives: give the game back first.
     shared.borrow_mut().world = Some(game);
+    if let Some(size) = too_big {
+        out(
+            shared,
+            format!(
+                "World gameplay: the world state is {size} bytes, over the {} byte event limit; too many objects are shown or hidden at once",
+                sa_net::MAX_EVENT_PAYLOAD
+            ),
+        );
+    }
     for (id, snapshot) in snapshots {
         send(
             shared,
@@ -305,7 +370,12 @@ pub fn handle_event(shared: &Shared, source: u32, name: &str, args: &[Json]) -> 
                 .entry(player.bucket)
                 .or_insert_with(|| world.shared());
             match world.use_node(state, &mut player.state, node, feet(&pose), USE_SLACK) {
-                Some(effects) => result = Some((effects, player.state.take_events())),
+                Some(effects) => {
+                    if let Some(to) = teleport(&effects) {
+                        player.arriving = Some((to, now));
+                    }
+                    result = Some((effects, player.state.take_events()))
+                }
                 None => refusal = Some("not standing in it"),
             }
         }

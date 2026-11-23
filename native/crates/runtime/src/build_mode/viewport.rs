@@ -134,7 +134,8 @@ pub fn show(build: &mut BuildMode, ui: &mut Ui, frame: &Frame) {
     let (modifiers, dt) = ui.input(|i| (i.modifiers, i.stable_dt.min(0.1)));
 
     camera_controls(build, ui, &response, dt);
-    if build.tool == Tool::Sculpt {
+    // Placing an asset works with every tool; sculpting otherwise.
+    if build.tool == Tool::Sculpt && build.placing.is_none() {
         sculpt(build, ui, &view, &painter, pointer, dt);
         return;
     }

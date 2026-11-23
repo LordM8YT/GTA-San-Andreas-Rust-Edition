@@ -286,6 +286,31 @@ fn late_joiners_instances_scripts_and_departures() {
 }
 
 #[test]
+fn teleports_wait_for_the_player_to_arrive_and_do_not_bounce() {
+    let mut server = server();
+    let mut anna = join(&mut server);
+    let teleports = |p: &Player| {
+        personal(p)
+            .iter()
+            .filter(|e| matches!(e, wire::Personal::Teleport { .. }))
+            .count()
+    };
+    // The way-out pad inside the house leads to the spot outside.
+    stand(&mut anna, [60.0, -8.0, 0.0]);
+    server.until(&mut [&mut anna], "the pad's teleport", |_, p| {
+        teleports(p[0]) == 1
+    });
+    // The game is slow to report the new place: no second teleport meanwhile.
+    server.idle(&mut [&mut anna], 20);
+    assert_eq!(teleports(&anna), 1);
+    // It arrives outside: taken quietly, and nothing sends it back.
+    stand(&mut anna, [0.0, 2.0, 0.0]);
+    server.settle(&mut anna);
+    server.idle(&mut [&mut anna], 20);
+    assert_eq!(teleports(&anna), 1, "no bounce after arriving");
+}
+
+#[test]
 fn servers_without_the_pack_run_no_world_gameplay() {
     let server = Sarebox::boot_with(
         "freeroam",
