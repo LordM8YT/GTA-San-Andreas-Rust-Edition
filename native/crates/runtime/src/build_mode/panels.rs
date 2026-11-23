@@ -45,7 +45,7 @@ pub enum BottomTab {
 #[derive(Default)]
 pub struct UiState {
     ribbon: RibbonTab,
-    world_page: WorldPage,
+    pub world_page: WorldPage,
     /// Docks closed with their close button (the View tab opens them again).
     hide_toolbox: bool,
     hide_explorer: bool,
@@ -54,6 +54,11 @@ pub struct UiState {
     workspace_collapsed: bool,
     /// Objects copied or cut, as they were then (see [`ops::copy`]).
     clipboard: Vec<Node>,
+    /// The clipboard was cut: the first paste puts the objects back as they
+    /// were, with their own ids.
+    clipboard_cut: bool,
+    /// Copies pasted from this clipboard so far; each lands one step on.
+    pastes: u32,
     bottom: BottomTab,
     bottom_open: bool,
     asset_search: String,
@@ -334,6 +339,11 @@ fn shortcuts(build: &mut BuildMode, ui: &mut Ui) {
         build.local = !build.local;
     }
     // Copy, cut and paste arrive as clipboard events, not key presses.
+    // Text selected in a label (an Output line) is copied as text instead.
+    let label_text = ui
+        .ctx()
+        .plugin_opt::<egui::text_selection::LabelSelectionState>()
+        .is_some_and(|state| state.lock().has_selection());
     let (copy, cut, paste_now) = ui.input(|i| {
         i.events
             .iter()
@@ -344,16 +354,31 @@ fn shortcuts(build: &mut BuildMode, ui: &mut Ui) {
                 _ => (c, x, v),
             })
     });
-    if copy {
+    if copy && !label_text {
         copy_selection(build, ui.ctx());
     }
-    if cut {
+    if cut && !label_text {
         cut_selection(build, ui.ctx());
     }
     if paste_now {
         paste(build);
     }
-    if ui.input(|i| i.key_pressed(Key::F5)) {
+    // F5 plays; F6 (handled by the game loop) comes back.
+    let play = ui.input(|i| {
+        i.modifiers.is_none()
+            && i.events.iter().any(|e| {
+                matches!(
+                    e,
+                    egui::Event::Key {
+                        key: Key::F5,
+                        pressed: true,
+                        repeat: false,
+                        ..
+                    }
+                )
+            })
+    });
+    if play {
         build.requests.push(Request::Playtest);
     }
     let pressed = |ui: &mut Ui, key| ui.input(|i| i.key_pressed(key) && i.modifiers.is_none());
@@ -716,6 +741,7 @@ fn ribbon(build: &mut BuildMode, ui: &mut Ui) {
                             terrain_group(build, ui);
                             insert_group(build, ui);
                             edit_group(build, ui);
+                            world_group(build, ui);
                             play_group(build, ui);
                         }
                         RibbonTab::Model => {
@@ -729,6 +755,7 @@ fn ribbon(build: &mut BuildMode, ui: &mut Ui) {
                         RibbonTab::Test => {
                             play_group(build, ui);
                             spawn_group(build, ui);
+                            world_group(build, ui);
                         }
                         RibbonTab::View => view_groups(build, ui),
                     });
@@ -926,6 +953,34 @@ fn edit_group(build: &mut BuildMode, ui: &mut Ui) {
             .iter()
             .all(|id| build.doc.layout.node(*id).is_some_and(|n| n.locked));
     ribbon_group(ui, "Edit", |ui| {
+        ui.vertical(|ui| {
+            let undo = build
+                .history
+                .undo_label()
+                .map_or("Undo".into(), |l| format!("Undo {l}"));
+            if small_button(
+                ui,
+                "↺",
+                "Undo",
+                build.history.can_undo(),
+                &format!("{undo} (Ctrl+Z)"),
+            ) {
+                build.undo();
+            }
+            let redo = build
+                .history
+                .redo_label()
+                .map_or("Redo".into(), |l| format!("Redo {l}"));
+            if small_button(
+                ui,
+                "↻",
+                "Redo",
+                build.history.can_redo(),
+                &format!("{redo} (Ctrl+Y)"),
+            ) {
+                build.redo();
+            }
+        });
         if big_button(
             ui,
             "📁",
@@ -1006,6 +1061,33 @@ fn play_group(build: &mut BuildMode, ui: &mut Ui) {
         }
         if big_button(ui, "💾", "Save", false, true, "Save the world (Ctrl+S)").clicked() {
             build.save();
+        }
+    });
+}
+
+/// The world's own pages in the Properties, also with the Explorer closed.
+fn world_group(build: &mut BuildMode, ui: &mut Ui) {
+    let page = build.selection.is_empty().then_some(build.ui.world_page);
+    ribbon_group(ui, "World", |ui| {
+        for (target, icon, label, hover) in [
+            (
+                WorldPage::Workspace,
+                "🌐",
+                "Workspace",
+                "The world's name, description and spawn point",
+            ),
+            (
+                WorldPage::Lighting,
+                "☀",
+                "Lighting",
+                "Time of day, weather, fog, sky colour and brightness",
+            ),
+        ] {
+            if big_button(ui, icon, label, page == Some(target), true, hover).clicked() {
+                build.selection.clear();
+                build.ui.world_page = target;
+                build.ui.hide_properties = false;
+            }
         }
     });
 }
@@ -1177,30 +1259,39 @@ fn view_groups(build: &mut BuildMode, ui: &mut Ui) {
     });
 }
 
-/// Put the selection on the editor's clipboard. True when something was copied.
-fn copy_selection(build: &mut BuildMode, ctx: &egui::Context) -> bool {
+/// Put the selection on the editor's clipboard. The number of objects
+/// copied (groups count once), or None when nothing was.
+fn copy_selection(build: &mut BuildMode, ctx: &egui::Context) -> Option<usize> {
     if build.selection.is_empty() {
-        return false;
+        return None;
     }
     match ops::copy(&build.doc, &build.selection) {
         Ok(nodes) => {
-            let count = build.selection.len();
+            let copied: HashSet<NodeId> = nodes.iter().map(|n| n.id).collect();
+            let roots = nodes
+                .iter()
+                .filter(|n| !n.parent.is_some_and(|p| copied.contains(&p)))
+                .count();
             build.ui.clipboard = nodes;
+            build.ui.clipboard_cut = false;
+            build.ui.pastes = 0;
             // Text on the system clipboard is what lets Ctrl+V reach the editor.
-            ctx.copy_text(format!("SARE Build Mode: {count} objects copied"));
-            build.info(format!("Copied {count} objects"));
-            true
+            ctx.copy_text(format!("SARE Build Mode: {roots} objects"));
+            build.info(format!("Copied {roots} objects"));
+            Some(roots)
         }
         Err(error) => {
             build.error(format!("{error:#}"));
-            false
+            None
         }
     }
 }
 
 fn cut_selection(build: &mut BuildMode, ctx: &egui::Context) {
-    if copy_selection(build, ctx) {
+    if let Some(count) = copy_selection(build, ctx) {
+        build.ui.clipboard_cut = true;
         delete(build);
+        build.info(format!("Cut {count} objects; paste puts them back"));
     }
 }
 
@@ -1208,8 +1299,19 @@ fn paste(build: &mut BuildMode) {
     if build.ui.clipboard.is_empty() {
         return;
     }
-    let offset = [build.snap.step.max(1.0), 0.0, 0.0];
     let copied = build.ui.clipboard.clone();
+    // Cut objects come back as themselves, so what links to them still does.
+    if build.ui.clipboard_cut {
+        build.ui.clipboard_cut = false;
+        if let Some((command, roots)) = ops::paste_cut(&build.doc, &copied) {
+            build.execute(command);
+            build.selection = roots;
+            return;
+        }
+    }
+    // Each further paste lands one more step along, not on the last one.
+    build.ui.pastes += 1;
+    let offset = [build.snap.step.max(1.0) * build.ui.pastes as f32, 0.0, 0.0];
     match ops::paste(&mut build.doc, &copied, offset) {
         Ok((command, roots)) => {
             build.execute(command);

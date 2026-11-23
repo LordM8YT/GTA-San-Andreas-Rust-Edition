@@ -170,7 +170,7 @@ pack you have installed. To place one:
 `[` and `]` turn the piece before you place it. With **Surface** on (the
 default), pieces land on whatever is under the mouse, so a house can stand on
 a platform. With **Snap** on, they line up on a 1 m grid (change the size in
-the toolbar).
+the ribbon's Model tab).
 
 **Step 3. Arrange.** Click an object to select it. Move (W), Rotate (E) and
 Scale (R) give you handles to drag, or type exact numbers in the
@@ -185,8 +185,8 @@ so the world stays one folder you can share. Make the model in Blender as in
 
 **Step 5. Play it.** Press **F6** to walk around your world right away, and
 F6 again to go back to editing. Move the green spawn marker with **Set spawn
-at camera focus** in the Properties panel (click empty space first to see the world
-settings).
+at camera focus** in the Properties panel (click empty space or **Workspace** in the Explorer
+first), or with **Set spawn** in the ribbon's Test tab.
 
 **Step 6. Save.** Ctrl+S. Your work is also autosaved, and offered back if
 SARE closes unexpectedly. The world is now a normal content pack in

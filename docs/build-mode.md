@@ -31,7 +31,7 @@ the launcher.
 
 | Area | What it does |
 | --- | --- |
-| Ribbon (top) | Tabs like other building editors. **Home**: Clipboard (Paste, Copy, Cut, Duplicate), Tools (Select, Move, Scale, Rotate, World/Local axes, Snap), Terrain (Sculpt), Insert (Part, Toolbox), Edit (Group, Ungroup, Lock), Test (Play, Save). **Model**: the tools, Snap to Grid (move step, rotate step, Surface placement), Terrain, Insert, Effects (Light) and Edit. **Test**: Play and Set spawn. **View**: show or hide the Explorer, Properties, Toolbox and Output, the grid, Zones (gameplay overlay) and Collision (outlines solid objects), Focus, Reset camera, fly speed and Controls |
+| Ribbon (top) | Tabs like other building editors. **Home**: Clipboard (Paste, Copy, Cut, Duplicate), Tools (Select, Move, Scale, Rotate, World/Local axes, Snap), Terrain (Sculpt), Insert (Part, Toolbox), Edit (Undo, Redo, Group, Ungroup, Lock), World (Workspace, Lighting), Test (Play, Save). **Model**: the tools, Snap to Grid (move step, rotate step, Surface placement), Terrain, Insert, Effects (Light) and Edit. **Test**: Play, Set spawn, Workspace and Lighting. **View**: show or hide the Explorer, Properties, Toolbox and Output, the grid, Zones (gameplay overlay) and Collision (outlines solid objects), Focus, Reset camera, fly speed and Controls |
 | Toolbox (left) | Picture tiles with search and category filters. Built-in shapes, models from every installed content pack and this world's own models. Missing or broken models are marked ⚠ |
 | Explorer (right, top) | The scene tree under **Workspace**, with **Lighting** below it: show/hide 👁, lock 🔒, double-click to rename, right-click for focus, duplicate, group, ungroup, move to group and delete. The filter box searches by name. Click Workspace for the world's name, description and spawn point, or Lighting for the time of day, weather, fog, sky colour and brightness |
 | Properties (right, below the Explorer) | Selected object, in category bars: name, position/rotation/scale (drag or type), Visible, Locked, Collision, Gameplay (behaviour and actions), Light, asset and its load status, Advanced (size, triangles, materials, id, extra data). Several selected: batch edits |
@@ -57,7 +57,10 @@ first if there are unsaved changes.
 Shortcuts familiar from other building editors work too: Ctrl+1, 2, 3 and 4
 pick Select, Move, Scale and Rotate, Ctrl+L switches world and local axes,
 Ctrl+C, Ctrl+X and Ctrl+V copy, cut and paste objects (groups with their
-contents), and F5 plays the world. Every dock has a ✕ to close it; the View
+contents), and F5 plays the world (F6 comes back). Each paste lands one grid
+step further on. Cut and paste puts the objects back as themselves, so doors
+that lead to them and checkpoint numbers still work; a paste into a group
+that is now locked or hidden goes to the top level instead. Every dock has a ✕ to close it; the View
 tab brings it back.
 
 Camera: right mouse + WASD/QE flies (Shift faster, wheel changes speed),
@@ -108,7 +111,7 @@ same number, show under the behaviour and in *Errors and warnings*.
 must follow in order, and the highest shows the time. A world can have
 several courses; give each its own *Course* name.
 
-**World settings** hold a fixed hour and a weather (clear, cloudy, rain or
+**Lighting** (in the Explorer) holds a fixed hour and a weather (clear, cloudy, rain or
 fog). Both show while you edit and apply when the world is played, and
 actions can change them while playing.
 
@@ -123,7 +126,7 @@ Only what SARE's renderer really draws is offered:
   Toolbox come with one. Lights do not light up other objects or cast
   shadows: the renderer has one sun and no per-object lights. Set a fixed
   time after 20:00 to see them while editing.
-- **World settings → Environment**: the hour, the weather, *Fog* (density
+- **Explorer → Lighting**: the hour, the weather, *Fog* (density
   ×0.2 to ×10 over the time and weather's own), *Sky colour* (also the
   colour of the distant haze) and *Brightness* (ambient light ×0.3 to ×1.5).
   The sun follows the hour and casts shadows.

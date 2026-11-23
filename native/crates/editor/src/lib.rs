@@ -185,6 +185,51 @@ mod tests {
     }
 
     #[test]
+    fn cut_paste_keeps_ids_and_pastes_stay_editable_and_uniquely_named() {
+        let mut doc = doc();
+        let mut history = History::default();
+        let mut ids = Vec::new();
+        for _ in 0..2 {
+            let (place, id) =
+                ops::place(&mut doc, crate_asset(), "Crate", Transform::default(), None).unwrap();
+            history.execute(&mut doc, place).unwrap();
+            ids.push(id);
+        }
+        // "Crate" and "Crate 2": pasting both must not name two "Crate 3".
+        let copied = ops::copy(&doc, &ids).unwrap();
+        let (paste, roots) = ops::paste(&mut doc, &copied, [1.0, 0.0, 0.0]).unwrap();
+        history.execute(&mut doc, paste).unwrap();
+        let names: Vec<&str> = roots
+            .iter()
+            .map(|id| doc.layout.node(*id).unwrap().name.as_str())
+            .collect();
+        assert_ne!(names[0], names[1]);
+        // Cut and paste brings back the same ids, where they were.
+        let cut = ops::copy(&doc, &[ids[0]]).unwrap();
+        let command = ops::delete(&doc, &[ids[0]]).unwrap();
+        history.execute(&mut doc, command).unwrap();
+        let (restore, back) = ops::paste_cut(&doc, &cut).unwrap();
+        history.execute(&mut doc, restore).unwrap();
+        assert_eq!(back, vec![ids[0]]);
+        assert_eq!(
+            doc.layout.node(ids[0]).unwrap().transform.position,
+            [0.0; 3]
+        );
+        // It exists again, so a second paste makes copies.
+        assert!(ops::paste_cut(&doc, &cut).is_none());
+        // A copy from a group that is now locked lands at the top level.
+        let (group, gid) = ops::group(&mut doc, &[ids[1]], "Houses").unwrap();
+        history.execute(&mut doc, group).unwrap();
+        let copied = ops::copy(&doc, &[ids[1]]).unwrap();
+        let lock = ops::modify(&doc, "Lock", &[gid], |n| n.locked = true).unwrap();
+        history.execute(&mut doc, lock).unwrap();
+        let (paste, roots) = ops::paste(&mut doc, &copied, [0.0; 3]).unwrap();
+        history.execute(&mut doc, paste).unwrap();
+        assert_eq!(doc.layout.node(roots[0]).unwrap().parent, None);
+        doc.layout.validate().unwrap();
+    }
+
+    #[test]
     fn duplicate_group_and_ungroup() {
         let mut doc = doc();
         let mut history = History::default();

@@ -45,7 +45,14 @@ pub fn place(
 
 /// `name`, or `name 2`, `name 3`, ... if an object already has that name.
 pub fn unique_name(doc: &Document, name: &str) -> String {
-    let taken: HashSet<&str> = doc.layout.nodes.iter().map(|n| n.name.as_str()).collect();
+    unique_name_besides(doc, name, &HashSet::new())
+}
+
+/// [`unique_name`], also avoiding `more` (names given earlier in the same
+/// paste, which are not in the document yet).
+fn unique_name_besides(doc: &Document, name: &str, more: &HashSet<String>) -> String {
+    let mut taken: HashSet<&str> = doc.layout.nodes.iter().map(|n| n.name.as_str()).collect();
+    taken.extend(more.iter().map(String::as_str));
     if !taken.contains(name) {
         return name.to_owned();
     }
@@ -107,10 +114,50 @@ pub fn copy(doc: &Document, ids: &[NodeId]) -> Result<Vec<Node>> {
         .collect()
 }
 
+/// Where a pasted object whose group was not pasted with it goes: back into
+/// that group while it exists and can be edited (shown, not locked),
+/// otherwise the top level, so a paste is never born hidden or locked.
+fn paste_parent(doc: &Document, parent: Option<NodeId>) -> Option<NodeId> {
+    parent.filter(|p| {
+        doc.layout.node(*p).is_some_and(Node::is_group)
+            && doc.layout.effective_visible(*p)
+            && !doc.layout.effective_locked(*p)
+    })
+}
+
+/// Put cut objects (from [`copy`], then deleted) back with their own ids,
+/// so links to them from other objects (teleport destinations, shown or
+/// hidden objects) and checkpoint numbers still hold. None when any of them
+/// exists again (an undo brought it back): paste copies then.
+pub fn paste_cut(doc: &Document, cut: &[Node]) -> Option<(Command, Vec<NodeId>)> {
+    if cut.is_empty() || cut.iter().any(|n| doc.layout.node(n.id).is_some()) {
+        return None;
+    }
+    let ids: HashSet<NodeId> = cut.iter().map(|n| n.id).collect();
+    let mut names = HashSet::new();
+    let mut roots = Vec::new();
+    let start = doc.layout.nodes.len();
+    let inserted = cut
+        .iter()
+        .enumerate()
+        .map(|(i, node)| {
+            let mut node = node.clone();
+            if !node.parent.is_some_and(|p| ids.contains(&p)) {
+                roots.push(node.id);
+                node.parent = paste_parent(doc, node.parent);
+                node.name = unique_name_besides(doc, &node.name, &names);
+                names.insert(node.name.clone());
+            }
+            (start + i, node)
+        })
+        .collect();
+    Some((Command::Insert(inserted), roots))
+}
+
 /// Insert copies of `copied` (from [`copy`]) with new ids, moved by
-/// `offset` metres in Blender axes. A copied object whose group is gone (it
-/// was cut) lands at the top level. Returns the command and the new ids of
-/// the pasted roots.
+/// `offset` metres in Blender axes. A copied object goes back into its
+/// group when that still exists and can be edited, else the top level.
+/// Returns the command and the new ids of the pasted roots.
 pub fn paste(
     doc: &mut Document,
     copied: &[Node],
@@ -123,6 +170,7 @@ pub fn paste(
     }
     let mut nodes = Vec::new();
     let mut roots = Vec::new();
+    let mut names = HashSet::new();
     for node in copied {
         let mut copy = node.clone();
         copy.id = remap[&node.id];
@@ -131,13 +179,9 @@ pub fn paste(
             Some(parent) => copy.parent = Some(parent),
             None => {
                 roots.push(copy.id);
-                copy.name = unique_name(doc, &copy.name);
-                if !copy
-                    .parent
-                    .is_some_and(|p| doc.layout.node(p).is_some_and(Node::is_group))
-                {
-                    copy.parent = None;
-                }
+                copy.name = unique_name_besides(doc, &copy.name, &names);
+                names.insert(copy.name.clone());
+                copy.parent = paste_parent(doc, copy.parent);
             }
         }
         for (axis, delta) in offset.iter().enumerate() {

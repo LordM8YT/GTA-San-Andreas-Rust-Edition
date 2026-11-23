@@ -223,7 +223,11 @@ pub fn show(build: &mut BuildMode, ui: &mut Ui, frame: &Frame) {
                     }
                 }
                 (Some(id), false) => build.selection = vec![id],
-                (None, false) => build.selection.clear(),
+                (None, false) => {
+                    // Empty space: the world's own settings, as before.
+                    build.selection.clear();
+                    build.ui.world_page = super::panels::WorldPage::Workspace;
+                }
                 (None, true) => {}
             }
         }
