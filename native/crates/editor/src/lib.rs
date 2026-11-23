@@ -236,6 +236,136 @@ mod tests {
     }
 
     #[test]
+    fn gameplay_assets_place_with_behaviour_save_and_play() {
+        use sa_scene::world_logic::{self, Action, Component, Effect, Kept, Logic};
+        let root = temp("gameplay");
+        let folder = root.join("w");
+        let (project, mut doc) = Project::create(&folder, "w", "W").unwrap();
+        let mut history = History::default();
+        let mut place = |doc: &mut Document, name: &str, at: [f32; 3]| {
+            let (command, id) = ops::place(
+                doc,
+                AssetRef::Builtin(name.into()),
+                name,
+                Transform::at(at),
+                None,
+            )
+            .unwrap();
+            history.execute(doc, command).unwrap();
+            id
+        };
+        let door = place(&mut doc, "door", [0.0, 5.0, 0.0]);
+        let pad = place(&mut doc, "marker-teleport", [8.0, 0.0, 0.0]);
+        let target = place(&mut doc, "marker-target", [-8.0, 0.0, 0.0]);
+        let first = place(&mut doc, "marker-checkpoint", [0.0, -8.0, 0.0]);
+        let second = place(&mut doc, "marker-checkpoint", [0.0, -14.0, 0.0]);
+        let plain = place(&mut doc, "crate", [3.0, 3.0, 0.0]);
+        let gameplay = |doc: &Document, id| doc.layout.node(id).unwrap().gameplay.clone();
+        assert!(matches!(
+            gameplay(&doc, door),
+            Some(Kept::Known(Component::Interact(_)))
+        ));
+        assert!(
+            gameplay(&doc, target).is_none(),
+            "a destination is only a place"
+        );
+        assert!(gameplay(&doc, plain).is_none());
+        let order = |doc: &Document, id| match gameplay(doc, id) {
+            Some(Kept::Known(Component::Checkpoint(c))) => c.order,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!((order(&doc, first), order(&doc, second)), (1, 2));
+        // The pad has no destination yet: the editor says so.
+        assert!(world_logic::check(&doc.layout)
+            .iter()
+            .any(|p| p.node == pad && p.text.contains("no destination")));
+        let point = ops::modify(&doc, "Edit gameplay", &[pad], |n| {
+            if let Some(Kept::Known(Component::Trigger(t))) = &mut n.gameplay {
+                t.on_enter = vec![Kept::Known(Action::Teleport {
+                    target: Some(target),
+                })];
+            }
+        })
+        .unwrap();
+        history.execute(&mut doc, point).unwrap();
+        assert!(world_logic::check(&doc.layout).is_empty());
+        // One undo takes the edit back.
+        history.undo(&mut doc).unwrap();
+        assert!(!world_logic::check(&doc.layout).is_empty());
+        history.redo(&mut doc).unwrap();
+
+        project.save(&doc).unwrap();
+        let (_, reopened) = Project::open(&folder).unwrap();
+        assert_eq!(reopened, doc, "gameplay survives save and open");
+        // Played as a pack: markers are neither drawn nor solid, doors are.
+        let mut world = PackWorld::open(&folder).unwrap();
+        let origin = sa_scene::content_pack::ANCHOR;
+        let scene = world.load(origin, origin, 300.0).unwrap();
+        let markers: usize = ["marker-teleport", "marker-target", "marker-checkpoint"]
+            .iter()
+            .map(|m| sa_scene::builtin_assets::model(m).unwrap().triangles)
+            .sum();
+        let expected: usize = ["ground", "door", "crate"]
+            .iter()
+            .map(|m| sa_scene::builtin_assets::model(m).unwrap().triangles)
+            .sum();
+        assert!(markers > 0);
+        assert_eq!(scene.triangles, expected);
+        // Duplicating the course end gives the next number; duplicating the
+        // pad with its destination makes the copy lead to the copy.
+        let (copy, new) = ops::duplicate(&mut doc, &[second], [2.0, 0.0, 0.0]).unwrap();
+        history.execute(&mut doc, copy).unwrap();
+        assert_eq!(order(&doc, new[0]), 3);
+        let (group, gid) = ops::group(&mut doc, &[pad, target], "Pad").unwrap();
+        history.execute(&mut doc, group).unwrap();
+        let (copy, new) = ops::duplicate(&mut doc, &[gid], [0.0, 20.0, 0.0]).unwrap();
+        history.execute(&mut doc, copy).unwrap();
+        let inside = doc.layout.descendants(new[0]);
+        let new_pad = *inside
+            .iter()
+            .find(|id| gameplay(&doc, **id).is_some())
+            .unwrap();
+        let new_target = *inside.iter().find(|id| **id != new_pad).unwrap();
+        match gameplay(&doc, new_pad) {
+            Some(Kept::Known(Component::Trigger(t))) => assert_eq!(
+                t.on_enter,
+                vec![Kept::Known(Action::Teleport {
+                    target: Some(new_target)
+                })]
+            ),
+            other => panic!("{other:?}"),
+        }
+        assert!(world_logic::check(&doc.layout).is_empty());
+        let mut logic = Logic::new(&reopened.layout);
+        logic.step([20.0, 20.0, 0.0], 0.1);
+        logic.step([20.0, 20.0, 0.0], 0.1);
+        let effects = logic.step([8.0, 0.0, 0.0], 0.1);
+        assert!(matches!(&effects[..], [Effect::Teleport(p)] if p.position == [-8.0, 0.0, 0.0]));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_gameplay_sample_is_clean_and_playable() {
+        use sa_scene::world_logic::{self, Logic};
+        let folder = PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../content/gameplay-sample"
+        ));
+        let (_, doc) = Project::open(&folder).unwrap();
+        assert_eq!(world_logic::check(&doc.layout), Vec::new());
+        let logic = Logic::new(&doc.layout);
+        assert_eq!(logic.spawn().unwrap().position, [0.0, -6.0, 0.0]);
+        assert!(logic.prompt([6.0, -6.0, 0.0]).is_some(), "the sign");
+        let mut world = PackWorld::open(&folder).unwrap();
+        let origin = sa_scene::content_pack::ANCHOR;
+        let scene = world.load(origin, origin, 300.0).unwrap();
+        let collision = scene.collision.unwrap();
+        let [x, y, z] = world.spawn().unwrap();
+        let point = glam::Vec3::new(x - origin[0], z, origin[1] - y);
+        assert!(collision.standing_at(point, z + 2.0).is_some());
+    }
+
+    #[test]
     fn autosave_recovers_unsaved_work() {
         let root = temp("autosave");
         let (project, mut doc) = Project::create(&root.join("w"), "w", "W").unwrap();

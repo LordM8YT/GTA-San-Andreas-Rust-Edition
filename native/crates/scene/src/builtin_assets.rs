@@ -101,7 +101,58 @@ pub const ALL: &[Builtin] = &[
         label: "Rock",
         category: "Nature",
     },
+    // Gameplay: placing one also attaches its behaviour (see
+    // `world_logic::preset`). Markers are only drawn in the editor.
+    Builtin {
+        name: "marker-spawn",
+        label: "Spawn point",
+        category: GAMEPLAY,
+    },
+    Builtin {
+        name: "door",
+        label: "Door (opens with E)",
+        category: GAMEPLAY,
+    },
+    Builtin {
+        name: "door-teleport",
+        label: "Door to another place",
+        category: GAMEPLAY,
+    },
+    Builtin {
+        name: "marker-teleport",
+        label: "Teleport pad",
+        category: GAMEPLAY,
+    },
+    Builtin {
+        name: "marker-target",
+        label: "Destination point",
+        category: GAMEPLAY,
+    },
+    Builtin {
+        name: "marker-trigger",
+        label: "Trigger zone",
+        category: GAMEPLAY,
+    },
+    Builtin {
+        name: "marker-interact",
+        label: "Interaction point",
+        category: GAMEPLAY,
+    },
+    Builtin {
+        name: "marker-checkpoint",
+        label: "Checkpoint",
+        category: GAMEPLAY,
+    },
 ];
+
+/// Catalog category of gameplay assets.
+pub const GAMEPLAY: &str = "Gameplay";
+
+/// Shown only in Build Mode: gameplay markers are invisible and have no
+/// collision when the world is played.
+pub fn editor_only(name: &str) -> bool {
+    name.starts_with("marker-")
+}
 
 pub fn find(name: &str) -> Option<&'static Builtin> {
     ALL.iter().find(|b| b.name == name)
@@ -284,6 +335,33 @@ pub fn model(name: &str) -> Option<Model> {
             s.cuboid([-0.9, -0.7, 0.0], [0.9, 0.7, 0.8], [0.5, 0.48, 0.45]);
             s.cuboid([-0.5, -0.4, 0.8], [0.6, 0.5, 1.2], [0.55, 0.53, 0.5]);
         }
+        "door" | "door-teleport" => {
+            let panel = if name == "door" {
+                WOOD
+            } else {
+                [0.25, 0.32, 0.55]
+            };
+            s.cuboid([-0.6, -0.06, 0.0], [0.6, 0.06, 2.2], panel);
+            s.cuboid([0.38, -0.12, 1.0], [0.48, 0.12, 1.08], [0.85, 0.75, 0.4]);
+        }
+        marker if editor_only(marker) => {
+            let color = match marker {
+                "marker-spawn" => [0.3, 0.85, 0.4],
+                "marker-teleport" => [0.7, 0.4, 0.95],
+                "marker-target" => [0.35, 0.6, 1.0],
+                "marker-trigger" => [1.0, 0.6, 0.2],
+                "marker-interact" => [0.3, 0.85, 0.9],
+                "marker-checkpoint" => [1.0, 0.85, 0.2],
+                _ => return None,
+            };
+            s.cuboid([-0.5, -0.5, 0.0], [0.5, 0.5, 0.05], color);
+            s.cuboid([-0.05, -0.05, 0.05], [0.05, 0.05, 1.6], DARK);
+            s.cuboid([0.05, -0.02, 1.2], [0.5, 0.02, 1.6], color);
+            if matches!(marker, "marker-spawn" | "marker-target") {
+                // The way the player will face: +Y.
+                s.cuboid([-0.12, 0.0, 0.05], [0.12, 0.9, 0.12], color);
+            }
+        }
         _ => return None,
     }
     let triangles = s.vertices.len() / 3;
@@ -296,8 +374,14 @@ pub fn model(name: &str) -> Option<Model> {
         map_door: None,
         mlo_entity: None,
     };
+    // Markers are pictures for the editor, never solid.
+    let collision = if editor_only(name) {
+        Vec::new()
+    } else {
+        vec![batch(s.vertices.clone())]
+    };
     Some(Model {
-        collision: vec![batch(s.vertices.clone())],
+        collision,
         drawn: vec![batch(s.vertices)],
         textures: HashMap::from([(KEY.into(), white())]),
         triangles,
@@ -322,7 +406,13 @@ mod tests {
         for builtin in ALL {
             let model = model(builtin.name).unwrap_or_else(|| panic!("{}", builtin.name));
             assert!(model.triangles > 0, "{}", builtin.name);
-            assert!(!model.collision.is_empty());
+            // Gameplay markers are never solid; everything else is.
+            assert_eq!(
+                model.collision.is_empty(),
+                editor_only(builtin.name),
+                "{}",
+                builtin.name
+            );
             let lowest = model.drawn[0]
                 .vertices
                 .iter()

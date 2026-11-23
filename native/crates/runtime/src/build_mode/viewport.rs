@@ -11,6 +11,7 @@ use sa_editor::viewport::{
     angle_around, blender_axis, gizmo_axes, moved, pick, rotated, snap, Pickable, Ray,
 };
 use sa_scene::world_layout::{gltf_to_blender, Node, NodeId, Transform};
+use sa_scene::world_logic::{self, Action, Component};
 
 /// The camera of the frame being drawn.
 pub struct Frame {
@@ -136,6 +137,12 @@ pub fn show(build: &mut BuildMode, ui: &mut Ui, frame: &Frame) {
 
     if build.snap.show_grid {
         draw_grid(build, &view, &painter);
+    }
+    if build.ui.show_collision {
+        draw_collision(build, &view, &painter);
+    }
+    if !build.ui.hide_gameplay {
+        draw_gameplay(build, &view, &painter);
     }
     draw_spawn(build, &view, &painter);
 
@@ -686,35 +693,160 @@ fn draw_selection(build: &BuildMode, view: &View, painter: &egui::Painter) {
         let Some(object) = build.gpu.objects.get(&id) else {
             continue;
         };
-        let (lo, hi) = object.local_bounds;
-        let corner = |k: usize| {
-            object.matrix.transform_point3(Vec3::new(
-                if k & 1 == 0 { lo.x } else { hi.x },
-                if k & 2 == 0 { lo.y } else { hi.y },
-                if k & 4 == 0 { lo.z } else { hi.z },
-            ))
-        };
         let color = if object.placeholder {
             Color32::from_rgb(230, 60, 230)
         } else {
             ui_theme::ACCENT
         };
-        for (a, b) in [
-            (0, 1),
-            (2, 3),
-            (4, 5),
-            (6, 7),
-            (0, 2),
-            (1, 3),
-            (4, 6),
-            (5, 7),
-            (0, 4),
-            (1, 5),
-            (2, 6),
-            (3, 7),
-        ] {
-            if let Some(segment) = view.segment(corner(a), corner(b)) {
-                painter.line_segment(segment, Stroke::new(1.5, color));
+        draw_box(view, painter, &box_corners(object), Stroke::new(1.5, color));
+    }
+}
+
+/// An object's model bounds in render space; bit 0 = +x, 1 = +y, 2 = +z.
+fn box_corners(object: &super::gpu::ObjectMesh) -> [Vec3; 8] {
+    let (lo, hi) = object.local_bounds;
+    std::array::from_fn(|k| {
+        object.matrix.transform_point3(Vec3::new(
+            if k & 1 == 0 { lo.x } else { hi.x },
+            if k & 2 == 0 { lo.y } else { hi.y },
+            if k & 4 == 0 { lo.z } else { hi.z },
+        ))
+    })
+}
+
+/// The 12 edges of a box given as 8 corners numbered by bits.
+fn draw_box(view: &View, painter: &egui::Painter, corners: &[Vec3; 8], stroke: Stroke) {
+    for (a, b) in [
+        (0, 1),
+        (2, 3),
+        (4, 5),
+        (6, 7),
+        (0, 2),
+        (1, 3),
+        (4, 6),
+        (5, 7),
+        (0, 4),
+        (1, 5),
+        (2, 6),
+        (3, 7),
+    ] {
+        if let Some(segment) = view.segment(corners[a], corners[b]) {
+            painter.line_segment(segment, stroke);
+        }
+    }
+}
+
+/// Collision view: solid objects in cyan, objects without collision in red.
+/// The outline is the model's bounds; collision itself uses its triangles.
+fn draw_collision(build: &BuildMode, view: &View, painter: &egui::Painter) {
+    let flags = build.doc.layout.effective_all();
+    for (id, object) in &build.gpu.objects {
+        let Some(flags) = flags.get(id) else { continue };
+        // Hidden but solid objects (invisible walls) are what this view is for.
+        let color = if object.editor_only() || !(flags.visible || flags.collision) {
+            continue;
+        } else if flags.collision {
+            Color32::from_rgb(70, 210, 230).gamma_multiply(0.7)
+        } else {
+            Color32::from_rgb(230, 80, 80).gamma_multiply(0.7)
+        };
+        draw_box(view, painter, &box_corners(object), Stroke::new(1.0, color));
+    }
+}
+
+fn gameplay_color(component: &Component) -> Color32 {
+    let teleports = component
+        .action_lists()
+        .into_iter()
+        .flatten()
+        .any(|a| matches!(a.known(), Some(Action::Teleport { .. })));
+    match component {
+        _ if teleports => Color32::from_rgb(180, 110, 245),
+        Component::Spawn(_) => ui_theme::SUCCESS,
+        Component::Trigger(_) => Color32::from_rgb(245, 155, 60),
+        Component::Interact(_) => Color32::from_rgb(80, 215, 230),
+        Component::Checkpoint(_) => Color32::from_rgb(245, 215, 60),
+    }
+}
+
+/// Gameplay zones as boxes with a label, and lines to what actions affect.
+fn draw_gameplay(build: &BuildMode, view: &View, painter: &egui::Painter) {
+    let layout = &build.doc.layout;
+    let flags = layout.effective_all();
+    let to_render = crate::play_logic::blender_to_render;
+    let font = egui::FontId::proportional(12.0);
+    for node in &layout.nodes {
+        let Some(component) = node.gameplay.as_ref().and_then(|g| g.known()) else {
+            continue;
+        };
+        if !flags.get(&node.id).is_some_and(|f| f.visible) {
+            continue;
+        }
+        let selected = build.selection.contains(&node.id);
+        let color = gameplay_color(component);
+        let width = if selected { 2.5 } else { 1.2 };
+        let label = match component {
+            Component::Spawn(_) => "Spawn point".to_owned(),
+            Component::Trigger(_) => format!("Trigger: {}", node.name),
+            Component::Interact(i) if !i.prompt.is_empty() => format!("E: {}", i.prompt),
+            Component::Interact(_) => format!("E: {}", node.name),
+            Component::Checkpoint(c) => format!("Checkpoint {}", c.order),
+        };
+        let mut top = to_render(node.transform.position) + Vec3::Y * 1.8;
+        if let Some(zone) = world_logic::zone_of(node) {
+            let corners = zone.corners().map(|c| to_render(c.to_array()));
+            draw_box(
+                view,
+                painter,
+                &corners,
+                Stroke::new(width, color.gamma_multiply(0.85)),
+            );
+            top = (corners[4] + corners[7]) * 0.5;
+        }
+        if let Some(at) = view.project(top) {
+            painter.text(at, egui::Align2::CENTER_BOTTOM, label, font.clone(), color);
+        }
+        // Where its actions lead: dashed for teleports, thin for objects
+        // it shows, hides or toggles.
+        let from = top - Vec3::Y * 0.4;
+        for action in component.action_lists().into_iter().flatten() {
+            let (target, dashed) = match action.known() {
+                Some(Action::Teleport { target: Some(t) }) => (*t, true),
+                Some(Action::Show { node: Some(t) })
+                | Some(Action::Hide { node: Some(t) })
+                | Some(Action::Toggle { node: Some(t) })
+                    if *t != node.id =>
+                {
+                    (*t, false)
+                }
+                _ => continue,
+            };
+            let Some(goal) = layout.node(target) else {
+                continue;
+            };
+            let to = to_render(goal.transform.position) + Vec3::Y * 0.2;
+            let pieces = 24;
+            for k in 0..pieces {
+                if dashed && k % 2 == 1 {
+                    continue;
+                }
+                let (a, b) = (k as f32 / pieces as f32, (k + 1) as f32 / pieces as f32);
+                if let Some(segment) = view.segment(from.lerp(to, a), from.lerp(to, b)) {
+                    painter
+                        .line_segment(segment, Stroke::new(if dashed { 2.0 } else { 1.0 }, color));
+                }
+            }
+            if let Some(end) = view.project(to) {
+                painter.circle_stroke(end, 5.0, Stroke::new(2.0, color));
+                if dashed {
+                    painter.text(
+                        end + egui::vec2(7.0, 0.0),
+                        egui::Align2::LEFT_CENTER,
+                        format!("\u{2192} {}", goal.name),
+                        font.clone(),
+                        color,
+                    );
+                }
             }
         }
     }
@@ -769,6 +901,16 @@ fn draw_grid(build: &BuildMode, view: &View, painter: &egui::Painter) {
 }
 
 fn draw_spawn(build: &BuildMode, view: &View, painter: &egui::Painter) {
+    // A Spawn point object replaces the world's spawn; its marker shows it.
+    let has_spawn_object = build.doc.layout.nodes.iter().any(|n| {
+        matches!(
+            n.gameplay.as_ref().and_then(|g| g.known()),
+            Some(Component::Spawn(_))
+        )
+    });
+    if has_spawn_object {
+        return;
+    }
     let spawn = build.spawn_render();
     let top = spawn + Vec3::Y * 1.8;
     if let Some(segment) = view.segment(spawn, top) {

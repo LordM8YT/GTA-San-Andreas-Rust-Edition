@@ -11,8 +11,8 @@ use sa_scene::world_layout::{AssetRef, Node, NodeId, Transform, WorldSettings};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-const WARNING: Color32 = Color32::from_rgb(232, 170, 70);
-const ERROR: Color32 = Color32::from_rgb(232, 96, 86);
+pub(super) const WARNING: Color32 = Color32::from_rgb(232, 170, 70);
+pub(super) const ERROR: Color32 = Color32::from_rgb(232, 96, 86);
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum LeftTab {
@@ -59,6 +59,10 @@ pub struct UiState {
     open_world: Option<Vec<(std::path::PathBuf, String)>>,
     /// Another world to open once unsaved changes are dealt with.
     confirm_switch: Option<std::path::PathBuf>,
+    /// Viewport: draw the bounds of solid objects.
+    pub show_collision: bool,
+    /// Viewport: leave out gameplay zones and links.
+    pub hide_gameplay: bool,
     /// Asset Browser pictures; None when one could not be made.
     pub thumbnails: HashMap<AssetRef, Option<egui::TextureHandle>>,
 }
@@ -80,7 +84,7 @@ fn compact(ui: &mut Ui) {
     }
 }
 
-fn section(ui: &mut Ui, title: &str) {
+pub(super) fn section(ui: &mut Ui, title: &str) {
     ui.add_space(4.0);
     ui.label(RichText::new(title).color(ACCENT).strong());
 }
@@ -528,6 +532,17 @@ fn toolbar(build: &mut BuildMode, ui: &mut Ui) {
         ui.checkbox(&mut build.snap.surface, "Surface")
             .on_hover_text("Place new objects on the surface under the mouse");
         ui.separator();
+        let mut gameplay = !build.ui.hide_gameplay;
+        if ui
+            .checkbox(&mut gameplay, "Zones")
+            .on_hover_text("Show trigger zones, interactions, checkpoints and where teleports lead")
+            .changed()
+        {
+            build.ui.hide_gameplay = !gameplay;
+        }
+        ui.checkbox(&mut build.ui.show_collision, "Collision")
+            .on_hover_text("Outline solid objects in cyan and objects without collision in red");
+        ui.separator();
         let play =
             egui::Button::new(RichText::new("▶ Playtest").color(BACKGROUND).strong()).fill(SUCCESS);
         if ui
@@ -622,7 +637,9 @@ fn status_bar(build: &mut BuildMode, ui: &mut Ui) {
 
 fn bottom(build: &mut BuildMode, ui: &mut Ui) {
     ui.horizontal(|ui| {
-        let problems = build.log.iter().filter(|l| l.level != Level::Info).count();
+        let gameplay_problems = sa_scene::world_logic::check(&build.doc.layout).len();
+        let problems =
+            build.log.iter().filter(|l| l.level != Level::Info).count() + gameplay_problems;
         for (tab, label) in [
             (BottomTab::Console, "Console".to_string()),
             (
@@ -647,6 +664,17 @@ fn bottom(build: &mut BuildMode, ui: &mut Ui) {
         match build.ui.bottom {
             BottomTab::Console | BottomTab::Problems => {
                 let only_problems = build.ui.bottom == BottomTab::Problems;
+                if only_problems {
+                    // Live checks of the world's gameplay; click one to select it.
+                    for problem in sa_scene::world_logic::check(&build.doc.layout) {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(RichText::new("[GAMEPLAY]").monospace().color(WARNING));
+                            if ui.link(RichText::new(&problem.text).monospace()).clicked() {
+                                build.selection = vec![problem.node];
+                            }
+                        });
+                    }
+                }
                 for line in build.log.iter().filter(|l| !only_problems || l.level != Level::Info) {
                     let (tag, color) = match line.level {
                         Level::Info => ("[INFO]", SUCCESS),
@@ -1212,7 +1240,7 @@ fn apply_outliner(build: &mut BuildMode, action: OutlinerAction) {
     }
 }
 
-fn run(build: &mut BuildMode, command: anyhow::Result<Command>) {
+pub(super) fn run(build: &mut BuildMode, command: anyhow::Result<Command>) {
     match command {
         Ok(command) => build.execute(command),
         Err(error) => build.error(format!("{error:#}")),
@@ -1297,7 +1325,13 @@ fn inspector(build: &mut BuildMode, ui: &mut Ui) {
     }
 }
 
-fn axis_row(ui: &mut Ui, label: &str, values: &mut [f32; 3], speed: f32, suffix: &str) -> bool {
+pub(super) fn axis_row(
+    ui: &mut Ui,
+    label: &str,
+    values: &mut [f32; 3],
+    speed: f32,
+    suffix: &str,
+) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
         ui.add_sized(
@@ -1439,6 +1473,9 @@ fn object(build: &mut BuildMode, ui: &mut Ui, id: NodeId) {
             }),
         );
     }
+    if !node.is_group() {
+        super::gameplay_ui::inspector(build, ui, id, &node);
+    }
     if let Some(asset) = &node.asset {
         section(ui, "Asset");
         ui.label(RichText::new(asset.to_string()).monospace().small());
@@ -1576,8 +1613,34 @@ fn world_settings(build: &mut BuildMode, ui: &mut Ui) {
     ui.checkbox(&mut fixed, "Fixed time of day")
         .on_hover_text("Off: the clock runs while playing");
     ui.add_enabled(fixed, egui::Slider::new(&mut hour, 0..=23).text("hour"));
+    let mut weather = settings.weather.clone();
+    {
+        use sa_scene::world_logic::Weather;
+        let shown = match weather.as_deref() {
+            None => "Game default".to_owned(),
+            Some(text) => {
+                Weather::parse(text).map_or_else(|| text.to_owned(), |w| w.label().into())
+            }
+        };
+        ui.horizontal(|ui| {
+            ui.label("Weather");
+            egui::ComboBox::from_id_salt("world-weather")
+                .selected_text(shown)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut weather, None, "Game default");
+                    for option in Weather::ALL {
+                        ui.selectable_value(
+                            &mut weather,
+                            Some(option.as_str().to_owned()),
+                            option.label(),
+                        );
+                    }
+                });
+        });
+    }
     let after = WorldSettings {
         hour: fixed.then_some(hour),
+        weather,
         ..settings.clone()
     };
     let dragging = ui.ctx().egui_is_using_pointer();
@@ -1601,7 +1664,7 @@ fn world_settings(build: &mut BuildMode, ui: &mut Ui) {
         }
     }
     ui.label(
-        RichText::new("Sky, fog and lights come in a later Build Mode milestone.")
+        RichText::new("Shown here while you edit and used when the world is played. Gameplay actions can change the time and weather while playing.")
             .small()
             .color(MUTED),
     );

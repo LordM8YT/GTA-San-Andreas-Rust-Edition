@@ -1,5 +1,15 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.54.0:
+- Build Mode: worlds can now have gameplay. Select any object and give it a behaviour in the Inspector: a trigger zone, an interaction (press E), a checkpoint or a spawn point. Behaviours run actions: show a message, teleport the player, show, hide or toggle an object, and set the time or the weather.
+- New Gameplay category in the Asset Browser: a door that opens with E, a door to another place, a teleport pad, a destination point, a spawn point, a trigger zone, an interaction point and checkpoints that number themselves. Drop one in and it works.
+- Checkpoints make a timed course: the first starts the clock, the last shows your time.
+- The viewport shows every zone with a label and where teleports lead. The new Collision view outlines solid objects in cyan and objects without collision in red.
+- World settings have a weather (clear, cloudy, rain, fog), and worlds played from the launcher now use the world's time of day and weather too.
+- Playtest runs it all: walk into zones, press E at doors, and go back to the editor with F6 as before.
+- New sample world, Gameplay Sample (content/gameplay-sample), with every behaviour in one place. No game files needed.
+- Opening and closing objects (like the door) works in Playtest; in a world played from the launcher it does not yet. Gameplay runs on each player's own PC and is not synchronised on servers yet.
+
 Version 0.53.0:
 - RP servers: police, EMS, mechanic and taxi are now each their own resource (sare_job_police, sare_job_ems, sare_job_mechanic, sare_job_taxi) with their own config.lua: the job and grades, `Config.Locations` as `vector4(...)`, gear, work vehicle and rules like fines and jail time. Change one job without touching the others.
 - sare_rp_jobs is now the shared job tools: City Hall job centre, `/911` and `/call`, bills, duty menus, locker gear and the F2 menu. Any job, also your own, adds its calls, bills and F2 actions with exports (`AddService`, `AllowBills`, `AddJobAction`, `DutyMenu`, `Gear`).

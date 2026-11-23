@@ -24,6 +24,7 @@ pub mod vehicle_list;
 pub mod water;
 pub mod weapon_list;
 pub mod world_layout;
+pub mod world_logic;
 use anyhow::{ensure, Context, Result};
 use sa_assets::{decode_dff, decode_txd, Geometry, Img, Texture};
 use std::{

@@ -54,6 +54,13 @@ pub fn render_matrix(transform: &Transform) -> Mat4 {
     Mat4::from_translation(offset) * transform.matrix()
 }
 
+impl ObjectMesh {
+    /// A gameplay marker: drawn while editing, not while playing.
+    pub fn editor_only(&self) -> bool {
+        matches!(&self.asset, AssetRef::Builtin(name) if sa_scene::builtin_assets::editor_only(name))
+    }
+}
+
 impl Gpu {
     /// Upload an asset once; failures become a visible placeholder.
     pub fn asset(

@@ -9,6 +9,7 @@
 //!
 //! Start it with `sa-runtime --build <pack id | folder | new:Name>`.
 //! See docs/build-mode.md.
+mod gameplay_ui;
 pub mod gpu;
 mod pacing;
 mod panels;
@@ -487,8 +488,12 @@ impl BuildMode {
             .transform_point3(sa_scene::world_layout::blender_to_gltf(self.doc.info.spawn))
     }
 
-    /// Collision for playtesting: the pack's scene plus every solid object.
-    fn playtest_collision(&mut self) -> sa_scene::collision::CollisionWorld {
+    /// Collision for playtesting: the pack's scene plus every solid object,
+    /// except those gameplay has hidden (an opened door).
+    pub(crate) fn playtest_collision(
+        &mut self,
+        hidden: &std::collections::HashSet<NodeId>,
+    ) -> sa_scene::collision::CollisionWorld {
         let mut batches: Vec<sa_scene::Batch> = self
             .base_collision
             .iter()
@@ -505,7 +510,7 @@ impl BuildMode {
         let mut problems = Vec::new();
         for node in &self.doc.layout.nodes {
             let Some(asset) = &node.asset else { continue };
-            if !self.doc.layout.effective_collision(node.id) {
+            if !self.doc.layout.effective_collision(node.id) || hidden.contains(&node.id) {
                 continue;
             }
             match self.resolver.model(asset) {
@@ -570,11 +575,12 @@ impl State {
     /// Before the game update: the editor camera drives the view.
     pub(crate) fn build_mode_begin_frame(&mut self) {
         let Some(build) = &mut self.build else { return };
+        if build.playtesting {
+            // The world's gameplay sets the time while playing.
+            return;
+        }
         if let Some(hour) = build.doc.layout.settings.hour {
             self.daycycle.minutes = f32::from(hour.min(23)) * 60.0;
-        }
-        if build.playtesting {
-            return;
         }
         build.autosave_if_due();
         let eye = build.camera.eye();
@@ -671,6 +677,7 @@ impl State {
             }
             self.walking = false;
             self.player = None;
+            self.play_logic = None;
             self.capture(false);
             self.keys.clear();
             if let Some(build) = &mut self.build {
@@ -688,17 +695,27 @@ impl State {
             build.autosaved_revision = 0;
             build.autosave();
         }
-        let collision = build.playtest_collision();
-        let spawn = build.spawn_render() + Vec3::Y * 2.0;
-        let player = sa_scene::collision::Player::spawn(&collision, spawn);
-        let feet = build.spawn_render();
+        let collision = build.playtest_collision(&Default::default());
+        // Gameplay starts fresh from the layout as it is now.
+        let play = crate::play_logic::PlayLogic::new(&build.doc.layout, true);
+        for problem in sa_scene::world_logic::check(&build.doc.layout) {
+            build.warn(format!("Gameplay: {}", problem.text));
+        }
+        let (feet, yaw) = match play.logic.spawn() {
+            Some(pose) => (
+                crate::play_logic::blender_to_render(pose.position),
+                crate::play_logic::yaw_for(pose.heading),
+            ),
+            None => (build.spawn_render(), build.camera.yaw),
+        };
+        let player = sa_scene::collision::Player::spawn(&collision, feet + Vec3::Y * 2.0);
         let standing = collision.standing_at(feet, feet.y + 2.0).is_some();
         build.playtesting = true;
         build.info("Playtest started. Press F6 to return to Build Mode.");
         if !standing {
             build.warn("Nothing solid under the spawn point: the player may fall. Move the spawn or add ground.");
         }
-        let yaw = build.camera.yaw;
+        self.play_logic = Some(play);
         self.collision = Some(collision);
         self.position = player.eye();
         self.player = Some(player);
@@ -743,4 +760,122 @@ pub fn restart_on(args: &[String], folder: &Path) -> Result<()> {
         .spawn()
         .context("starting SARE on the other world")?;
     Ok(())
+}
+
+/// `--smoke-build`: drive Build Mode through editing, a playtest of the
+/// world's gameplay and back, with screenshots when `--capture-dir` is set.
+/// Meant for `content/gameplay-sample`.
+impl State {
+    /// One rendered frame of the smoke run; true when it has passed.
+    pub(crate) fn build_mode_smoke(&mut self, frame: usize, captures: Option<&Path>) -> bool {
+        use sa_scene::world_logic::{Action, Component, Kept};
+        let capture = |state: &mut State, name: &str| {
+            if let Some(dir) = captures {
+                state.capture_next = Some(dir.join(name));
+            }
+        };
+        let build = self
+            .build
+            .as_ref()
+            .expect("--smoke-build needs --build <world>");
+        // The first object whose behaviour matches, and its position.
+        let find = |wanted: &dyn Fn(&Component) -> bool| {
+            build
+                .doc
+                .layout
+                .nodes
+                .iter()
+                .find(|n| {
+                    n.gameplay
+                        .as_ref()
+                        .and_then(Kept::known)
+                        .is_some_and(wanted)
+                })
+                .map(|n| (n.id, n.transform.position))
+                .expect("the smoke world lacks a behaviour it needs (use content/gameplay-sample)")
+        };
+        let runs = |c: &Component, f: fn(&Action) -> bool| {
+            c.action_lists()
+                .into_iter()
+                .flatten()
+                .any(|a| a.known().is_some_and(f))
+        };
+        let gate = find(&|c| {
+            matches!(c, Component::Interact(_)) && runs(c, |a| matches!(a, Action::Toggle { .. }))
+        });
+        let door = find(&|c| {
+            matches!(c, Component::Interact(_)) && runs(c, |a| matches!(a, Action::Teleport { .. }))
+        });
+        let night = find(&|c| runs(c, |a| matches!(a, Action::SetTime { .. })));
+        match frame {
+            5 => {
+                let build = self.build.as_mut().unwrap();
+                build.selection = vec![door.0];
+                build.focus_selection();
+            }
+            15 => capture(self, "build-editor.png"),
+            20 => {
+                self.toggle_playtest();
+                assert!(
+                    self.build.as_ref().unwrap().playtesting,
+                    "playtest did not start"
+                );
+            }
+            30 => self.smoke_stand_at(gate.1),
+            34 => {
+                let prompt = self
+                    .play_logic
+                    .as_ref()
+                    .and_then(|p| p.prompt().map(str::to_owned));
+                assert!(prompt.is_some(), "no prompt at the gate");
+                assert!(self.interact_play_logic(), "E did nothing at the gate");
+                assert!(
+                    !self.play_logic.as_ref().unwrap().logic.visible(gate.0),
+                    "the gate did not open"
+                );
+            }
+            40 => capture(self, "playtest-gate-open.png"),
+            45 => self.smoke_stand_at(night.1),
+            52 => {
+                let play = self.play_logic.as_ref().unwrap();
+                assert_eq!(play.hour(), Some(22), "the night zone did not set the time");
+                assert!(play.message().is_some(), "no message from the night zone");
+                capture(self, "playtest-night-zone.png");
+            }
+            60 => self.smoke_stand_at(door.1),
+            64 => {
+                let before = self.player.as_ref().unwrap().feet;
+                assert!(self.interact_play_logic(), "E did nothing at the door");
+                let after = self.player.as_ref().unwrap().feet;
+                assert!(
+                    before.distance(after) > 20.0,
+                    "the door did not teleport the player"
+                );
+            }
+            72 => capture(self, "playtest-inside.png"),
+            80 => {
+                let revision = self.build.as_ref().unwrap().history.revision;
+                self.toggle_playtest();
+                let build = self.build.as_ref().unwrap();
+                assert!(!build.playtesting && self.play_logic.is_none());
+                assert_eq!(
+                    build.history.revision, revision,
+                    "playtest changed the document"
+                );
+            }
+            90 => return true,
+            _ => {}
+        }
+        false
+    }
+
+    /// Put the playtest player on the ground at a Blender-axes point.
+    fn smoke_stand_at(&mut self, at: [f32; 3]) {
+        let eye = crate::play_logic::blender_to_render(at) + Vec3::Y * 2.0;
+        if let Some(collision) = &self.collision {
+            let player = sa_scene::collision::Player::spawn(collision, eye);
+            self.position = player.eye();
+            self.player = Some(player);
+        }
+    }
 }

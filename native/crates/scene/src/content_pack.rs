@@ -359,6 +359,11 @@ pub fn place_layout(
     let mut report = PlaceReport::default();
     for node in &layout.nodes {
         let Some(asset) = &node.asset else { continue };
+        if matches!(asset, world_layout::AssetRef::Builtin(name) if crate::builtin_assets::editor_only(name))
+        {
+            // Gameplay markers only show in Build Mode.
+            continue;
+        }
         let visible = layout.effective_visible(node.id);
         let solid = layout.effective_collision(node.id);
         if !visible && !solid {

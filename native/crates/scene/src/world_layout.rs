@@ -14,6 +14,7 @@
 //! partly. Fields this version does not know are kept in `extra` and written
 //! back unchanged, so nothing a newer tool or a hand edit added is lost.
 //! See docs/build-mode.md.
+use crate::world_logic::{Component, Kept};
 use anyhow::{bail, ensure, Context, Result};
 use glam::{EulerRot, Mat3, Mat4, Quat, Vec3};
 use serde::{Deserialize, Serialize};
@@ -197,6 +198,10 @@ pub struct Node {
     /// Players and vehicles collide with the object's solid meshes.
     #[serde(default = "yes")]
     pub collision: bool,
+    /// Gameplay behaviour (spawn point, trigger, interaction, checkpoint);
+    /// see [`crate::world_logic`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gameplay: Option<Kept<Component>>,
     /// Fields from a newer SARE or a hand edit, written back unchanged.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -217,6 +222,7 @@ impl Node {
             visible: true,
             locked: false,
             collision: true,
+            gameplay: None,
             extra: Map::new(),
         }
     }
@@ -230,6 +236,7 @@ impl Node {
             visible: true,
             locked: false,
             collision: true,
+            gameplay: None,
             extra: Map::new(),
         }
     }
@@ -245,6 +252,10 @@ pub struct WorldSettings {
     /// the clock run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hour: Option<u8>,
+    /// Weather while playing (`clear`, `cloudy`, `rain`, `fog`; see
+    /// [`crate::world_logic::Weather`]), or None for the game's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weather: Option<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -252,9 +263,18 @@ impl Default for WorldSettings {
     fn default() -> Self {
         Self {
             hour: Some(12),
+            weather: None,
             extra: Map::new(),
         }
     }
+}
+
+/// A node's flags after its groups (see [`Layout::effective_all`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Effective {
+    pub visible: bool,
+    pub locked: bool,
+    pub collision: bool,
 }
 
 /// A whole Build Mode layout.
@@ -430,6 +450,30 @@ impl Layout {
     /// Collides in game: the node and every group above it have collision on.
     pub fn effective_collision(&self, id: NodeId) -> bool {
         self.ancestry(id).all(|n| n.collision)
+    }
+    /// Visible, locked and collision after groups, for every node at once:
+    /// one pass with an id index instead of a search per node.
+    pub fn effective_all(&self) -> HashMap<NodeId, Effective> {
+        let by_id: HashMap<NodeId, &Node> = self.nodes.iter().map(|n| (n.id, n)).collect();
+        self.nodes
+            .iter()
+            .map(|node| {
+                let mut flags = Effective {
+                    visible: true,
+                    locked: false,
+                    collision: true,
+                };
+                let mut at = Some(node);
+                for _ in 0..64 {
+                    let Some(step) = at else { break };
+                    flags.visible &= step.visible;
+                    flags.locked |= step.locked;
+                    flags.collision &= step.collision;
+                    at = step.parent.and_then(|p| by_id.get(&p).copied());
+                }
+                (node.id, flags)
+            })
+            .collect()
     }
     /// The node, then its group, then that group's group, and so on.
     pub fn ancestry(&self, id: NodeId) -> impl Iterator<Item = &Node> + '_ {
@@ -632,6 +676,18 @@ mod tests {
         assert!(!layout.effective_collision(child));
         assert!(layout.effective_visible(other));
         assert_eq!(layout.descendants(group), vec![child]);
+        let all = layout.effective_all();
+        for node in &layout.nodes {
+            let id = node.id;
+            assert_eq!(
+                all[&id],
+                Effective {
+                    visible: layout.effective_visible(id),
+                    locked: layout.effective_locked(id),
+                    collision: layout.effective_collision(id),
+                }
+            );
+        }
     }
 
     #[test]

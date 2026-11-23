@@ -1,3 +1,14 @@
+**SARE 0.54: gameplay in Build Mode 🚪 (pending release)**
+
+🚪 **Doors that open with E**, doors and pads that teleport you somewhere else, and trigger zones that show messages or change the time and weather.
+🏁 **Checkpoint courses** with a timer: drop the checkpoints in and they number themselves.
+🧭 Give any object a behaviour in the Inspector, and see every zone and teleport link in the viewport.
+🎮 Try it all in **Gameplay Sample** with F6 Playtest. No GTA needed.
+
+✅ Tested on Windows with an automatic Build Mode playtest run. Opening doors in worlds played from the launcher, and server sync, are coming later.
+
+---
+
 **SARE 0.45 + 0.46: make your own stuff, no GTA needed 🛠️**
 
 🌍 **Your own worlds.** Build a map in Blender, export it as `.glb`, drop it in the new `content/` folder, and it gets its own Play button in the launcher. It runs **without GTA San Andreas installed**, so anyone can play it.

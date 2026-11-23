@@ -414,6 +414,27 @@ fn fallback() -> [Palette; 8] {
     ]
 }
 
+/// A world's own weather (Build Mode world settings or a gameplay action),
+/// over whatever the cycle chose. Strengths follow the cycle's own kinds.
+pub fn apply_weather(lighting: &mut Lighting, weather: sa_scene::world_logic::Weather, hour: f32) {
+    use sa_scene::world_logic::Weather;
+    let (fog, sun, rain) = match weather {
+        Weather::Clear => (1.0, 1.0, 0.0),
+        Weather::Cloudy => (1.6, 0.45, 0.0),
+        Weather::Rain => (3.0, 0.15, 1.0),
+        Weather::Fog => (8.0, 0.3, 0.0),
+    };
+    // By day the sun's colour carries the weather's dimming: undo the
+    // cycle's and apply this one's. The moon is not dimmed.
+    if (SUNRISE..SUNSET).contains(&hour.rem_euclid(24.0)) {
+        let base = 0.55 + 0.45 * lighting.shadow.clamp(0.0, 1.0);
+        lighting.sun_color *= (0.55 + 0.45 * sun) / base;
+    }
+    lighting.fog = fog;
+    lighting.shadow = sun;
+    lighting.rain = rain;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -523,5 +544,25 @@ mod tests {
         };
         cycle.advance(2.0);
         assert_eq!(cycle.clock(), (0, 1));
+    }
+
+    #[test]
+    fn a_world_weather_overrides_the_cycle() {
+        use sa_scene::world_logic::Weather;
+        let cycle = DayCycle::default();
+        let clear = cycle.lighting(12.0);
+        let mut rain = clear;
+        apply_weather(&mut rain, Weather::Rain, 12.0);
+        assert_eq!((rain.rain, rain.fog), (1.0, 3.0));
+        assert!(rain.sun_color.x < clear.sun_color.x, "rain dims the sun");
+        let mut back = rain;
+        apply_weather(&mut back, Weather::Clear, 12.0);
+        assert!((back.sun_color - clear.sun_color).length() < 1e-4);
+        assert_eq!((back.rain, back.shadow), (0.0, 1.0));
+        // The moon keeps its colour, also at the exact moment of sunset.
+        let moon = cycle.lighting(SUNSET);
+        let mut wet = moon;
+        apply_weather(&mut wet, Weather::Rain, SUNSET);
+        assert_eq!(wet.sun_color, moon.sun_color);
     }
 }

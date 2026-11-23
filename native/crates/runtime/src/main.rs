@@ -25,6 +25,7 @@ mod mipmaps;
 mod multiplayer;
 mod pack_actors;
 mod pickups;
+mod play_logic;
 mod police;
 mod postprocess;
 mod progress;
@@ -392,6 +393,9 @@ struct State {
     pack: pack_actors::PackActors,
     /// Build Mode, when SARE was started with `--build`.
     build: Option<build_mode::BuildMode>,
+    /// The world's Build Mode gameplay while it is played (playtest, or a
+    /// content pack with a layout).
+    play_logic: Option<play_logic::PlayLogic>,
 }
 impl State {
     fn play_menu_sound(&mut self, kind: sa_audio::MenuSound) {
@@ -1267,6 +1271,7 @@ impl State {
             ped_yaw: 0.0,
             pack: Default::default(),
             build: None,
+            play_logic: None,
         };
         if !first_model && state.animation.is_none() {
             if let Some(world) = &state.collision {
@@ -1729,6 +1734,7 @@ impl State {
             self.daycycle.advance_weather(dt);
         }
         self.daycycle.fixed_weather = self.menu.settings.fixed_weather.map(usize::from);
+        self.play_logic_update();
         self.daycycle
             .set_position(ORIGIN[0] + self.position.x, ORIGIN[1] - self.position.z);
         let right = Vec3::new(self.yaw.cos(), 0.0, -self.yaw.sin());
@@ -2267,6 +2273,9 @@ impl State {
             .fixed_hour
             .map_or(self.daycycle.minutes / 60.0, f32::from);
         let mut lighting = self.daycycle.lighting(hour);
+        if let Some(weather) = self.world_weather() {
+            daycycle::apply_weather(&mut lighting, weather, hour);
+        }
         if self.interior != 0 {
             // Interiors keep their own baked lighting at every hour.
             lighting.ambient = Vec3::ONE;
@@ -2420,8 +2429,15 @@ impl State {
                     .objects
                     .iter()
                     .filter(|(id, object)| {
-                        build.doc.layout.effective_visible(**id)
-                            && !(build.playtesting && object.placeholder)
+                        if !build.playtesting {
+                            return build.doc.layout.effective_visible(**id);
+                        }
+                        // Playtest: what the gameplay shows; no markers or
+                        // stand-ins for missing models.
+                        self.play_logic_visible(**id)
+                            .unwrap_or_else(|| build.doc.layout.effective_visible(**id))
+                            && !object.placeholder
+                            && !object.editor_only()
                     })
                     .flat_map(|(_, object)| &object.batches)
                     .chain(build.gpu.ghost.iter().flat_map(|ghost| &ghost.batches))
@@ -2888,6 +2904,8 @@ impl State {
                 // Build Mode draws the whole interface itself.
                 return;
             }
+            let scale = (ui.ctx().content_rect().height() / 900.0).clamp(0.65, 1.5);
+            self.play_logic_ui(ui.ctx(), scale);
             if let Some(text) = &debug {
                 egui::Area::new("performance".into())
                     .anchor(egui::Align2::RIGHT_TOP, [-12., 12.])
@@ -2922,7 +2940,6 @@ impl State {
                 std::f32::consts::PI - self.yaw,
                 &self.radar_tiles,
             );
-            let scale = (ui.ctx().content_rect().height() / 900.0).clamp(0.65, 1.5);
             if self.menu.page.is_none() {
                 script_actions = script_ui::draw(ui.ctx(), &self.scripts, scale);
             }
@@ -3226,6 +3243,8 @@ struct App {
     world_name: String,
     /// Where a content pack asks the player to start, in runtime space.
     spawn_eye: Option<Vec3>,
+    /// The pack's Build Mode layout, for its gameplay (not in Build Mode).
+    pack_layout: Option<sa_scene::world_layout::Layout>,
     /// `--build`: the world folder Build Mode edits.
     build_folder: Option<PathBuf>,
     smoke: bool,
@@ -3276,6 +3295,8 @@ struct App {
     smoke_ped: bool,
     smoke_wardrobe: bool,
     smoke_interiors: bool,
+    /// `--smoke-build`: edit, playtest the gameplay and return (Build Mode).
+    smoke_build: bool,
     trailer: Option<trailer::Director>,
     car_start: Vec3,
     smoke_returning: bool,
@@ -3509,6 +3530,18 @@ impl ApplicationHandler for App {
                 state.standalone = self.standalone;
                 state.pack_id = self.pack_id.clone();
                 state.world_name = self.world_name.clone();
+                if let Some(layout) = &self.pack_layout {
+                    let play = play_logic::PlayLogic::new(layout, false);
+                    if let Some(pose) = play.logic.spawn() {
+                        // A Spawn point object wins over content.json's spawn.
+                        self.spawn_eye = Some(play_logic::spawn_eye(&pose));
+                        state.yaw = play_logic::yaw_for(pose.heading);
+                    }
+                    if play.logic.has_gameplay() {
+                        runtime_log::line("World gameplay: on");
+                    }
+                    state.play_logic = Some(play);
+                }
                 if let (Some(eye), Some(world)) = (self.spawn_eye, &state.collision) {
                     let player = Player::spawn(world, eye);
                     state.position = player.eye();
@@ -3978,7 +4011,7 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => state.resize(size),
             WindowEvent::RedrawRequested => {
-                if !self.smoke && state.build_mode_editing() {
+                if !self.smoke && !self.smoke_build && state.build_mode_editing() {
                     // Build Mode paces itself after each frame (see below).
                     if Instant::now() < state.next_frame {
                         event_loop.set_control_flow(ControlFlow::WaitUntil(state.next_frame));
@@ -4261,7 +4294,22 @@ impl ApplicationHandler for App {
                 }
                 let previous_position = state.position;
                 let rendered = state.render();
-                if !self.smoke {
+                if self.smoke_build && rendered {
+                    assert!(
+                        self.smoke_started.elapsed().as_secs() < 120,
+                        "Build Mode smoke timed out"
+                    );
+                    if !state.loading() {
+                        self.smoke_frames += 1;
+                        if state.build_mode_smoke(self.smoke_frames, self.capture_dir.as_deref()) {
+                            println!("Build Mode smoke passed: edit, playtest gameplay, return");
+                            event_loop.exit();
+                        }
+                    }
+                    state.window.request_redraw();
+                    return;
+                }
+                if !self.smoke && !self.smoke_build {
                     if let Some(next) = state.build_mode_frame_drawn() {
                         state.next_frame = next;
                         event_loop.set_control_flow(ControlFlow::WaitUntil(next));
@@ -4996,7 +5044,9 @@ impl ApplicationHandler for App {
                             KeyCode::KeyQ | KeyCode::KeyE
                                 if !event.repeat && state.walking && !state.driving =>
                             {
-                                if code != KeyCode::KeyE || !state.interact_map_door() {
+                                if code != KeyCode::KeyE
+                                    || !(state.interact_play_logic() || state.interact_map_door())
+                                {
                                     state.arsenal.cycle(code == KeyCode::KeyE);
                                 }
                             }
@@ -6413,6 +6463,12 @@ fn run() -> Result<()> {
         pack_id,
         world_name,
         spawn_eye: spawn_eye.filter(|_| build_folder.is_none()),
+        pack_layout: match (&standalone_source, &build_folder) {
+            (Some(sa_scene::content::ContentSource::Pack(folder)), None) => {
+                play_logic::load_pack(folder)
+            }
+            _ => None,
+        },
         build_folder,
         smoke: args.iter().any(|a| {
             a == "--smoke-save"
@@ -6500,6 +6556,7 @@ fn run() -> Result<()> {
             .any(|a| a == "--smoke-ped" || a == "--smoke-wardrobe"),
         smoke_wardrobe: args.iter().any(|a| a == "--smoke-wardrobe"),
         smoke_interiors: args.iter().any(|a| a == "--smoke-interiors"),
+        smoke_build: args.iter().any(|a| a == "--smoke-build"),
         trailer: trailer::Director::from_args(&args)?,
         car_start: Vec3::ZERO,
         smoke_returning: false,

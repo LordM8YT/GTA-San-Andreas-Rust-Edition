@@ -1,0 +1,750 @@
+{
+  "format": "sare-world-layout",
+  "version": 1,
+  "next_id": 30,
+  "settings": {
+    "hour": 12,
+    "weather": "clear"
+  },
+  "nodes": [
+    {
+      "id": 1,
+      "name": "Town square"
+    },
+    {
+      "id": 2,
+      "name": "Ground",
+      "parent": 1,
+      "asset": "builtin:ground",
+      "transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 3,
+      "name": "Course ground",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          0,
+          -32,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 4,
+      "name": "House",
+      "parent": 1,
+      "asset": "builtin:house",
+      "transform": {
+        "position": [
+          0,
+          8,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 5,
+      "name": "Tree",
+      "parent": 1,
+      "asset": "builtin:tree",
+      "transform": {
+        "position": [
+          -6,
+          12,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 6,
+      "name": "Tree",
+      "parent": 1,
+      "asset": "builtin:tree",
+      "transform": {
+        "position": [
+          6,
+          12,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 7,
+      "name": "Bench",
+      "parent": 1,
+      "asset": "builtin:bench",
+      "transform": {
+        "position": [
+          4,
+          -2,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          180
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 8,
+      "name": "Lamp post",
+      "parent": 1,
+      "asset": "builtin:lamp-post",
+      "transform": {
+        "position": [
+          -4,
+          -2,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 9,
+      "name": "Wall north",
+      "parent": 1,
+      "asset": "builtin:wall",
+      "transform": {
+        "position": [
+          -10,
+          3,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          90
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 10,
+      "name": "Wall south",
+      "parent": 1,
+      "asset": "builtin:wall",
+      "transform": {
+        "position": [
+          -10,
+          -3,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          90
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 11,
+      "name": "Gameplay"
+    },
+    {
+      "id": 12,
+      "name": "Start",
+      "parent": 11,
+      "asset": "builtin:marker-spawn",
+      "transform": {
+        "position": [
+          0,
+          -6,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "spawn"
+      }
+    },
+    {
+      "id": 13,
+      "name": "Outside the house",
+      "parent": 11,
+      "asset": "builtin:marker-target",
+      "transform": {
+        "position": [
+          0,
+          2,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          180
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 14,
+      "name": "Inside the house",
+      "parent": 11,
+      "asset": "builtin:marker-target",
+      "transform": {
+        "position": [
+          60,
+          -2,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 15,
+      "name": "Front door",
+      "parent": 11,
+      "asset": "builtin:door-teleport",
+      "transform": {
+        "position": [
+          0,
+          4.9,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "interact",
+        "size": [
+          2.4,
+          3.0,
+          2.6
+        ],
+        "prompt": "Go inside",
+        "actions": [
+          {
+            "do": "teleport",
+            "target": 14
+          },
+          {
+            "do": "message",
+            "text": "Inside the house",
+            "seconds": 4
+          }
+        ]
+      }
+    },
+    {
+      "id": 16,
+      "name": "Garden gate",
+      "parent": 11,
+      "asset": "builtin:door",
+      "transform": {
+        "position": [
+          -10,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          90
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "interact",
+        "size": [
+          2.4,
+          3.0,
+          2.6
+        ],
+        "prompt": "Open / close the gate",
+        "actions": [
+          {
+            "do": "toggle"
+          }
+        ]
+      }
+    },
+    {
+      "id": 17,
+      "name": "Welcome sign",
+      "parent": 11,
+      "asset": "builtin:marker-interact",
+      "transform": {
+        "position": [
+          6,
+          -6,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "interact",
+        "size": [
+          2.0,
+          2.0,
+          2.5
+        ],
+        "prompt": "Read the sign",
+        "actions": [
+          {
+            "do": "message",
+            "text": "Welcome! Walk into the orange zones, open the gate, enter the house and run the checkpoint course to the south.",
+            "seconds": 8
+          }
+        ]
+      }
+    },
+    {
+      "id": 18,
+      "name": "Night zone",
+      "parent": 11,
+      "asset": "builtin:marker-trigger",
+      "transform": {
+        "position": [
+          10,
+          -10,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "trigger",
+        "size": [
+          5,
+          5,
+          3
+        ],
+        "on_enter": [
+          {
+            "do": "set_time",
+            "hour": 22
+          },
+          {
+            "do": "message",
+            "text": "Night falls",
+            "seconds": 4
+          }
+        ],
+        "on_leave": [
+          {
+            "do": "set_time",
+            "hour": 12
+          }
+        ]
+      }
+    },
+    {
+      "id": 19,
+      "name": "Rain zone",
+      "parent": 11,
+      "asset": "builtin:marker-trigger",
+      "transform": {
+        "position": [
+          -10,
+          -10,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "trigger",
+        "size": [
+          5,
+          5,
+          3
+        ],
+        "on_enter": [
+          {
+            "do": "set_weather",
+            "weather": "rain"
+          },
+          {
+            "do": "message",
+            "text": "Here comes the rain",
+            "seconds": 4
+          }
+        ],
+        "on_leave": [
+          {
+            "do": "set_weather",
+            "weather": "clear"
+          }
+        ]
+      }
+    },
+    {
+      "id": 20,
+      "name": "Checkpoint course",
+      "parent": 11
+    },
+    {
+      "id": 21,
+      "name": "Checkpoint 1",
+      "parent": 20,
+      "asset": "builtin:marker-checkpoint",
+      "transform": {
+        "position": [
+          -8,
+          -22,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "checkpoint",
+        "size": [
+          6,
+          6,
+          4
+        ],
+        "race": "main",
+        "order": 1
+      }
+    },
+    {
+      "id": 22,
+      "name": "Checkpoint 2",
+      "parent": 20,
+      "asset": "builtin:marker-checkpoint",
+      "transform": {
+        "position": [
+          8,
+          -32,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "checkpoint",
+        "size": [
+          6,
+          6,
+          4
+        ],
+        "race": "main",
+        "order": 2
+      }
+    },
+    {
+      "id": 23,
+      "name": "Checkpoint 3",
+      "parent": 20,
+      "asset": "builtin:marker-checkpoint",
+      "transform": {
+        "position": [
+          -8,
+          -42,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "checkpoint",
+        "size": [
+          6,
+          6,
+          4
+        ],
+        "race": "main",
+        "order": 3
+      }
+    },
+    {
+      "id": 24,
+      "name": "Inside"
+    },
+    {
+      "id": 25,
+      "name": "Floor",
+      "parent": 24,
+      "asset": "builtin:ground",
+      "transform": {
+        "position": [
+          60,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 26,
+      "name": "Crate",
+      "parent": 24,
+      "asset": "builtin:crate",
+      "transform": {
+        "position": [
+          57,
+          6,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 27,
+      "name": "Crate",
+      "parent": 24,
+      "asset": "builtin:crate",
+      "transform": {
+        "position": [
+          60,
+          6,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          20
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 28,
+      "name": "Crate",
+      "parent": 24,
+      "asset": "builtin:crate",
+      "transform": {
+        "position": [
+          63,
+          6,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          40
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 29,
+      "name": "Way out",
+      "parent": 24,
+      "asset": "builtin:marker-teleport",
+      "transform": {
+        "position": [
+          60,
+          -8,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "trigger",
+        "size": [
+          1.5,
+          1.5,
+          2.5
+        ],
+        "on_enter": [
+          {
+            "do": "teleport",
+            "target": 13
+          }
+        ]
+      }
+    }
+  ]
+}

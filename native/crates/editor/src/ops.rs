@@ -4,6 +4,7 @@
 use crate::history::{Command, Document};
 use anyhow::{ensure, Context, Result};
 use sa_scene::world_layout::{AssetRef, Node, NodeId, Transform};
+use sa_scene::world_logic;
 use std::collections::{HashMap, HashSet};
 
 /// Place a new object at the end of the tree (or of `parent`'s children).
@@ -22,8 +23,16 @@ pub fn place(
         );
     }
     let id = doc.layout.allocate_id();
+    // Gameplay assets (a door, a checkpoint) come with their behaviour.
+    let gameplay = match &asset {
+        AssetRef::Builtin(builtin) => {
+            world_logic::preset(builtin, world_logic::next_checkpoint(&doc.layout))
+        }
+        _ => None,
+    };
     let mut node = Node::object(id, unique_name(doc, name), asset, transform);
     node.parent = parent;
+    node.gameplay = gameplay.map(world_logic::Kept::Known);
     Ok((Command::Insert(vec![(doc.layout.nodes.len(), node)]), id))
 }
 
@@ -100,6 +109,48 @@ pub fn duplicate(
             copy.transform.position[axis] += delta;
         }
         nodes.push(copy);
+    }
+    // Gameplay of the copies: actions point at the copies of objects copied
+    // along with them, and checkpoints take the next free numbers.
+    let mut next_order: HashMap<String, u32> = HashMap::new();
+    for node in &mut nodes {
+        let Some(world_logic::Kept::Known(component)) = &mut node.gameplay else {
+            continue;
+        };
+        if let world_logic::Component::Checkpoint(checkpoint) = component {
+            let next = next_order
+                .entry(checkpoint.race.clone())
+                .or_insert_with(|| {
+                    doc.layout
+                        .nodes
+                        .iter()
+                        .filter_map(|n| match n.gameplay.as_ref()?.known()? {
+                            world_logic::Component::Checkpoint(c) if c.race == checkpoint.race => {
+                                Some(c.order)
+                            }
+                            _ => None,
+                        })
+                        .max()
+                        .unwrap_or(0)
+                        + 1
+                });
+            checkpoint.order = *next;
+            *next += 1;
+        }
+        for list in component.action_lists_mut() {
+            for action in list.iter_mut().filter_map(world_logic::Kept::known_mut) {
+                let target = match action {
+                    world_logic::Action::Teleport { target } => target,
+                    world_logic::Action::Show { node }
+                    | world_logic::Action::Hide { node }
+                    | world_logic::Action::Toggle { node } => node,
+                    _ => continue,
+                };
+                if let Some(copied) = target.and_then(|t| remap.get(&t)) {
+                    *target = Some(*copied);
+                }
+            }
+        }
     }
     let start = doc.layout.nodes.len();
     let inserted = nodes
