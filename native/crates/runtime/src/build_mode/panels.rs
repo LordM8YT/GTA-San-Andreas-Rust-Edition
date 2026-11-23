@@ -6,6 +6,7 @@
 use super::{viewport, BuildMode, Level, Placing, Request, Tool};
 use crate::ui_theme::{ACCENT, BACKGROUND, MUTED, SUCCESS, SURFACE, SURFACE_HIGH, TEXT};
 use egui::{Color32, Key, KeyboardShortcut, Modifiers, RichText, Ui};
+use sa_client::settings::EditorPerformance;
 use sa_editor::catalog::AssetStatus;
 use sa_editor::history::{Command, WorldInfo};
 use sa_editor::ops;
@@ -59,6 +60,11 @@ pub struct UiState {
     clipboard_cut: bool,
     /// Copies pasted from this clipboard so far; each lands one step on.
     pastes: u32,
+    /// How heavily the editor draws (the player's setting, written back
+    /// when changed here).
+    pub performance: EditorPerformance,
+    /// The editor draws light right now (for the status line).
+    pub light: bool,
     bottom: BottomTab,
     bottom_open: bool,
     asset_search: String,
@@ -1241,6 +1247,38 @@ fn view_groups(build: &mut BuildMode, ui: &mut Ui) {
                     .logarithmic(true)
                     .suffix(" m/s"),
             );
+        });
+    });
+    ribbon_group(ui, "Performance", |ui| {
+        ui.vertical(|ui| {
+            ui.label(RichText::new("Editor graphics").color(MUTED));
+            egui::ComboBox::from_id_salt("build-performance")
+                .selected_text(build.ui.performance.name())
+                .show_ui(ui, |ui| {
+                    for mode in EditorPerformance::ALL {
+                        let hover = match mode {
+                            EditorPerformance::Auto => {
+                                "Light on integrated graphics, Full on a graphics card"
+                            }
+                            EditorPerformance::Full => "Draw with your own graphics settings",
+                            EditorPerformance::Light => {
+                                "For slower computers: no shadows, reflections or bloom, \
+                                 two thirds resolution and at most 30 FPS"
+                            }
+                        };
+                        ui.selectable_value(&mut build.ui.performance, mode, mode.name())
+                            .on_hover_text(hover);
+                    }
+                })
+                .response
+                .on_hover_text("How heavily the editor draws the world. Playtesting uses your own graphics settings.");
+            let (now, hover) = if build.ui.light {
+                ("Drawing light", "Lighter drawing that slower computers can keep up with")
+            } else {
+                ("Drawing full", "Drawing with your own graphics settings")
+            };
+            ui.label(RichText::new(now).color(MUTED).size(11.0))
+                .on_hover_text(hover);
         });
     });
     ribbon_group(ui, "Help", |ui| {

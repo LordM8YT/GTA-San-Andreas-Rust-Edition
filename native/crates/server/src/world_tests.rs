@@ -205,6 +205,8 @@ fn players_share_one_authoritative_world() {
     // The front door teleports Anna, and only her.
     stand(&mut anna, [0.0, 4.9, 0.0]);
     server.settle(&mut anna);
+    // Her last use (the gate) may be too recent on a fast machine.
+    thread::sleep(world::USE_INTERVAL);
     use_object(&anna, door);
     server.until(&mut [&mut anna, &mut ben], "the teleport", |_, p| {
         personal(p[0])

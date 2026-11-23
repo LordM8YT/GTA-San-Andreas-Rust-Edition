@@ -63,6 +63,15 @@ that lead to them and checkpoint numbers still work; a paste into a group
 that is now locked or hidden goes to the top level instead. Every dock has a ✕ to close it; the View
 tab brings it back.
 
+Slower computer? *View → Performance → Editor graphics* has three choices.
+*Light* draws the editor without sun shadows, wet reflections or bloom, at
+two thirds of the window's resolution, and at most 30 frames a second.
+*Full* uses your own graphics settings. *Automatic*, the default, picks Light
+on integrated graphics and Full on a graphics card. Playtest always uses your
+own graphics settings, so you see the world the way players will. Traffic and
+pedestrians stay away while you edit. The choice is saved with your other
+settings.
+
 Camera: right mouse + WASD/QE flies (Shift faster, wheel changes speed),
 middle mouse pans, Alt + left mouse orbits, the wheel zooms, F or a
 double-click focuses the selection, Home resets. *Help → Controls* lists
@@ -292,7 +301,12 @@ Frame pacing (`build_mode/pacing.rs`): while editing, Build Mode draws only
 when something changes. Input, egui animations, flying the camera, dragging
 and loading draw at up to 60 FPS (lower if the frame rate limit is lower);
 with nothing going on it draws 2 frames a second, and 1 in the background or
-minimised. Playtest is paced like the game.
+minimised. Frames are scheduled from when they were due, so timers that
+wake late (Windows rounds to about 16 ms) do not lower the rate. The light
+editor graphics (`Settings::light_editor`, picked by
+`EditorPerformance`) apply only while editing: `State::draw_settings` is what
+the frame is drawn with, and the post-processing targets follow its render
+size. Playtest is paced like the game.
 
 Undo/redo: every change is an `sa_editor::history::Command` (insert, remove,
 modify nodes, world info, settings, or a batch). A gizmo drag or an

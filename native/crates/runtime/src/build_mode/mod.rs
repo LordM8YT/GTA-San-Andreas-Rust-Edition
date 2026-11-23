@@ -585,6 +585,25 @@ impl State {
     pub(crate) fn build_mode_editing(&self) -> bool {
         self.build.as_ref().is_some_and(|b| !b.playtesting)
     }
+    /// Editing, with the light editor graphics on (picked, or automatic on
+    /// integrated graphics).
+    pub(crate) fn build_mode_light(&self) -> bool {
+        self.build_mode_editing()
+            && self
+                .menu
+                .settings
+                .editor_performance
+                .light(self.integrated_gpu)
+    }
+    /// The graphics settings this frame is drawn with: the player's own,
+    /// made lighter while editing in the light editor mode.
+    pub(crate) fn draw_settings(&self) -> std::borrow::Cow<'_, sa_client::settings::Settings> {
+        if self.build_mode_light() {
+            std::borrow::Cow::Owned(self.menu.settings.light_editor())
+        } else {
+            std::borrow::Cow::Borrowed(&self.menu.settings)
+        }
+    }
     /// While editing: a window event arrived. Returns when the next frame
     /// may be drawn (None: not editing, the game paces itself).
     pub(crate) fn build_mode_event(
@@ -592,7 +611,7 @@ impl State {
         event: &winit::event::WindowEvent,
     ) -> Option<Instant> {
         use winit::event::WindowEvent;
-        let fps_limit = self.menu.settings.fps_limit;
+        let fps_limit = self.draw_settings().fps_limit;
         let build = self.build.as_mut().filter(|b| !b.playtesting)?;
         let pacing = &mut build.pacing;
         match event {
@@ -614,7 +633,7 @@ impl State {
     /// While editing: a frame was drawn; when the next one is due (None:
     /// not editing).
     pub(crate) fn build_mode_frame_drawn(&mut self) -> Option<Instant> {
-        let fps_limit = self.menu.settings.fps_limit;
+        let fps_limit = self.draw_settings().fps_limit;
         let loading = self.loading();
         let build = self.build.as_mut().filter(|b| !b.playtesting)?;
         let busy = loading
@@ -635,6 +654,12 @@ impl State {
             self.daycycle.minutes = f32::from(hour.min(23)) * 60.0;
         }
         build.autosave_if_due();
+        build.ui.performance = self.menu.settings.editor_performance;
+        build.ui.light = self
+            .menu
+            .settings
+            .editor_performance
+            .light(self.integrated_gpu);
         let eye = build.camera.eye();
         self.position = Vec3::new(eye.x, eye.y.max(-90.0), eye.z);
         self.yaw = build.camera.yaw;
@@ -675,6 +700,16 @@ impl State {
         // while editing (only playtesting captures it).
         if !build.playtesting && self.captured {
             self.capture(false);
+        }
+        let performance_changed = build.ui.performance != self.menu.settings.editor_performance;
+        if performance_changed {
+            self.menu.settings.editor_performance = build.ui.performance;
+            let light = build.ui.performance.light(self.integrated_gpu);
+            build.info(format!(
+                "Editor graphics: {} (drawing {})",
+                build.ui.performance.name(),
+                if light { "light" } else { "full" }
+            ));
         }
         let mut problems = Vec::new();
         build
@@ -718,6 +753,20 @@ impl State {
                 Request::Playtest => self.toggle_playtest(),
                 Request::Quit => self.quit_requested = true,
             }
+        }
+        // With Build Mode back in place (draw_settings asks whether it is
+        // editing) and any playtest switch made: save a new editor graphics
+        // choice, and size the frame for light or full drawing.
+        if performance_changed {
+            self.apply_settings();
+        }
+        if self.size.width > 0 && self.size.height > 0 {
+            self.postprocess.resize(
+                &self.device,
+                self.draw_settings()
+                    .render_size(self.size.width, self.size.height),
+                [self.size.width, self.size.height],
+            );
         }
     }
 

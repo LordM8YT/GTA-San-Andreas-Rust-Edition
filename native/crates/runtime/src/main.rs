@@ -259,6 +259,9 @@ struct State {
     gps: gps::Gps,
     menu: menu::Menu,
     applied_settings: settings::Settings,
+    /// The graphics adapter is integrated, virtual or a software renderer: the
+    /// editor draws light there unless the player picks otherwise.
+    integrated_gpu: bool,
     persist_settings: bool,
     progress_path: Option<PathBuf>,
     last_progress: Option<progress::Save>,
@@ -1035,6 +1038,10 @@ impl State {
         let mut menu = menu::Menu::new(&gui_context, Vec::new());
         menu.settings = startup_settings;
         let gpu = adapter.get_info();
+        let integrated_gpu = matches!(
+            gpu.device_type,
+            wgpu::DeviceType::IntegratedGpu | wgpu::DeviceType::VirtualGpu | wgpu::DeviceType::Cpu
+        );
         menu.graphics_device = format!("{} / {:?}", gpu.name, gpu.backend);
         runtime_log::line(format!("Renderer: {}", menu.graphics_device));
         if !args
@@ -1173,6 +1180,7 @@ impl State {
             gps: gps::Gps::default(),
             menu,
             applied_settings,
+            integrated_gpu,
             persist_settings: true,
             progress_path: None,
             last_progress: None,
@@ -1627,7 +1635,7 @@ impl State {
         if size.width > 0 && size.height > 0 {
             self.postprocess.resize(
                 &self.device,
-                self.menu.settings.render_size(size.width, size.height),
+                self.draw_settings().render_size(size.width, size.height),
                 [size.width.max(1), size.height.max(1)],
             );
             self.configure();
@@ -2255,7 +2263,7 @@ impl State {
         );
         let camera_matrix = projection * view;
         self.frustum = culling::Frustum::new(camera_matrix);
-        let jittered = self.menu.settings.temporal_aa.then(|| {
+        let jittered = self.draw_settings().temporal_aa.then(|| {
             temporal::jittered(
                 camera_matrix,
                 self.postprocess.temporal.jitter(),
@@ -2286,7 +2294,7 @@ impl State {
         }
         self.lighting = lighting;
         self.wetness = dampen(self.wetness, lighting.rain, dt);
-        let enhanced = self.menu.settings.enhanced_lighting;
+        let enhanced = self.draw_settings().enhanced_lighting;
         self.queue.write_buffer(
             &self.camera,
             64,
@@ -2446,7 +2454,7 @@ impl State {
             }))
     }
     fn shadows_active(&self) -> bool {
-        self.interior == 0 && self.menu.settings.sun_shadows
+        self.interior == 0 && self.draw_settings().sun_shadows
     }
     fn respawn(&mut self) {
         self.leave_passenger();
@@ -2794,8 +2802,7 @@ impl State {
         }
         self.postprocess.resize(
             &self.device,
-            self.menu
-                .settings
+            self.draw_settings()
                 .render_size(self.size.width, self.size.height),
             [self.size.width.max(1), self.size.height.max(1)],
         );
@@ -3153,11 +3160,12 @@ impl State {
                 pass.draw(0..b.count, 0..1);
             }
         }
+        let settings = self.draw_settings().into_owned();
         self.postprocess.draw(
             &mut encoder,
             &self.queue,
             &view,
-            &self.menu.settings,
+            &settings,
             [self.size.width, self.size.height],
             &self.reflections,
         );

@@ -443,7 +443,8 @@ impl State {
         let Some(paths) = self.ped_paths.as_ref() else {
             return;
         };
-        let limit = if self.interior == 0 {
+        // No pedestrians while editing: they would walk through the work.
+        let limit = if self.interior == 0 && !self.build_mode_editing() {
             self.menu.settings.pedestrians as usize
         } else {
             0
