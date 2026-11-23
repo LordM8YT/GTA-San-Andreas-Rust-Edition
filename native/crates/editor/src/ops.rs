@@ -259,6 +259,107 @@ pub fn ungroup(doc: &Document, group: NodeId) -> Result<Command> {
 }
 
 /// Move `ids` into `parent` (a group) or to the top level.
+/// Where dragged objects land in the World Outliner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Drop {
+    /// Just before this object, in its group.
+    Before(NodeId),
+    /// Just after this object, in its group.
+    After(NodeId),
+    /// Last inside this group.
+    Into(NodeId),
+    /// Last at the top level.
+    End,
+}
+
+/// Move objects (groups with their contents) to a new place in the tree:
+/// reorder, or move between groups. One undo step. None when nothing would
+/// change.
+pub fn move_nodes(doc: &Document, ids: &[NodeId], to: Drop) -> Result<Option<Command>> {
+    let moving = with_descendants(doc, ids);
+    ensure!(!moving.is_empty(), "nothing selected");
+    let moving_set: HashSet<NodeId> = moving.iter().copied().collect();
+    let target = match to {
+        Drop::Before(t) | Drop::After(t) | Drop::Into(t) => Some(t),
+        Drop::End => None,
+    };
+    if let Some(t) = target {
+        let node = doc.layout.node(t).context("that object no longer exists")?;
+        ensure!(
+            !moving_set.contains(&t),
+            "objects cannot be moved next to or into themselves"
+        );
+        if matches!(to, Drop::Into(_)) {
+            ensure!(node.is_group(), "objects can only go inside a group");
+        }
+    }
+    let parent = match to {
+        Drop::Before(t) | Drop::After(t) => doc.layout.node(t).and_then(|n| n.parent),
+        Drop::Into(g) => Some(g),
+        Drop::End => None,
+    };
+    let remaining: Vec<&Node> = doc
+        .layout
+        .nodes
+        .iter()
+        .filter(|n| !moving_set.contains(&n.id))
+        .collect();
+    let position_of = |id: NodeId| remaining.iter().position(|n| n.id == id);
+    let at = match to {
+        Drop::Before(t) => position_of(t).context("target vanished")?,
+        Drop::After(t) => position_of(t).context("target vanished")? + 1,
+        Drop::Into(g) => {
+            // After the group's last member still in place, else after it.
+            let inside: HashSet<NodeId> = doc.layout.descendants(g).into_iter().collect();
+            remaining
+                .iter()
+                .rposition(|n| inside.contains(&n.id) || n.id == g)
+                .context("target vanished")?
+                + 1
+        }
+        Drop::End => remaining.len(),
+    };
+    // Roots of the moved trees take the new parent; their contents keep theirs.
+    let moved: Vec<Node> = moving
+        .iter()
+        .filter_map(|id| doc.layout.node(*id))
+        .map(|node| {
+            let mut node = node.clone();
+            if !node.parent.is_some_and(|p| moving_set.contains(&p)) {
+                node.parent = parent;
+            }
+            node
+        })
+        .collect();
+    let mut after: Vec<Node> = remaining[..at].iter().map(|n| (*n).clone()).collect();
+    after.extend(moved);
+    after.extend(remaining[at..].iter().map(|n| (*n).clone()));
+    if after == doc.layout.nodes {
+        return Ok(None);
+    }
+    let removed = moving
+        .iter()
+        .map(|id| {
+            let index = doc.layout.index_of(*id).context("object vanished")?;
+            Ok((index, doc.layout.nodes[index].clone()))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let inserted = after
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| moving_set.contains(&n.id))
+        .map(|(index, n)| (index, n.clone()))
+        .collect();
+    Ok(Some(Command::Batch {
+        label: if moving.len() == 1 {
+            "Move object".into()
+        } else {
+            format!("Move {} objects", moving.len())
+        },
+        commands: vec![Command::Remove(removed), Command::Insert(inserted)],
+    }))
+}
+
 pub fn reparent(doc: &Document, ids: &[NodeId], parent: Option<NodeId>) -> Result<Command> {
     if let Some(group) = parent {
         ensure!(

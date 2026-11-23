@@ -89,11 +89,17 @@ pub fn inspector(build: &mut BuildMode, ui: &mut Ui, id: NodeId, node: &Node) {
             });
             let mut edited = component.clone();
             let targets = targets(build, id);
-            ui.add_enabled_ui(!locked, |ui| fields(ui, &mut edited, &targets, id));
+            let mut wants_destination = false;
+            ui.add_enabled_ui(!locked, |ui| {
+                fields(ui, &mut edited, &targets, id, &mut wants_destination)
+            });
             if edited != *component {
                 build.preview("Edit gameplay", &[id], |n| {
                     n.gameplay = Some(Kept::Known(edited.clone()));
                 });
+            }
+            if wants_destination {
+                new_destination(build, id);
             }
         }
     }
@@ -130,7 +136,63 @@ fn targets(build: &BuildMode, id: NodeId) -> Vec<(NodeId, String)> {
         .collect()
 }
 
-fn fields(ui: &mut Ui, component: &mut Component, targets: &[(NodeId, String)], id: NodeId) {
+/// Place a Destination point 4 m in front of object `id` and make its
+/// teleports without a destination lead there. One undo step.
+fn new_destination(build: &mut BuildMode, id: NodeId) {
+    build.commit_preview();
+    let Some(node) = build.doc.layout.node(id).cloned() else {
+        return;
+    };
+    let mut at = node.transform;
+    let ahead = at.rotation_quat() * glam::Vec3::Y * 4.0;
+    at.position = (glam::Vec3::from_array(at.position) + ahead).to_array();
+    at.scale = [1.0; 3];
+    let placed = ops::place(
+        &mut build.doc,
+        sa_scene::world_layout::AssetRef::Builtin("marker-target".into()),
+        &format!("{} destination", node.name),
+        at,
+        node.parent,
+    );
+    let (place, target) = match placed {
+        Ok(done) => done,
+        Err(error) => return build.error(format!("{error:#}")),
+    };
+    let link = ops::modify(&build.doc, "Link destination", &[id], |n| {
+        if let Some(Kept::Known(component)) = &mut n.gameplay {
+            for list in component.action_lists_mut() {
+                for action in list.iter_mut().filter_map(Kept::known_mut) {
+                    if let Action::Teleport {
+                        target: slot @ None,
+                    } = action
+                    {
+                        *slot = Some(target);
+                    }
+                }
+            }
+        }
+    });
+    match link {
+        Ok(link) => {
+            build.execute(sa_editor::history::Command::Batch {
+                label: "New destination".into(),
+                commands: vec![place, link],
+            });
+            build.info(
+                "Placed a destination point 4 m ahead: move it where the teleport should lead.",
+            );
+        }
+        Err(error) => build.error(format!("{error:#}")),
+    }
+}
+
+fn fields(
+    ui: &mut Ui,
+    component: &mut Component,
+    targets: &[(NodeId, String)],
+    id: NodeId,
+    wants_destination: &mut bool,
+) {
     if let Some(size) = component.size_mut() {
         let mut value = *size;
         if axis_row(ui, "Zone size", &mut value, 0.05, " m") {
@@ -160,6 +222,7 @@ fn fields(ui: &mut Ui, component: &mut Component, targets: &[(NodeId, String)], 
                 &mut trigger.on_enter,
                 targets,
                 (id, 0),
+                wants_destination,
             );
             actions(
                 ui,
@@ -167,6 +230,7 @@ fn fields(ui: &mut Ui, component: &mut Component, targets: &[(NodeId, String)], 
                 &mut trigger.on_leave,
                 targets,
                 (id, 1),
+                wants_destination,
             );
         }
         Component::Interact(interact) => {
@@ -184,6 +248,7 @@ fn fields(ui: &mut Ui, component: &mut Component, targets: &[(NodeId, String)], 
                 &mut interact.actions,
                 targets,
                 (id, 0),
+                wants_destination,
             );
         }
         Component::Checkpoint(checkpoint) => {
@@ -210,6 +275,7 @@ fn actions(
     list: &mut Vec<Kept<Action>>,
     targets: &[(NodeId, String)],
     salt: (NodeId, usize),
+    wants_destination: &mut bool,
 ) {
     ui.add_space(2.0);
     ui.label(RichText::new(title).strong());
@@ -242,6 +308,14 @@ fn actions(
                 }
                 Kept::Known(Action::Teleport { target }) => {
                     pick(ui, id, target, targets, false);
+                    if target.is_none()
+                        && ui
+                            .small_button("+ New destination here")
+                            .on_hover_text("Place a Destination point 4 m ahead and lead there")
+                            .clicked()
+                    {
+                        *wants_destination = true;
+                    }
                 }
                 Kept::Known(
                     Action::Show { node } | Action::Hide { node } | Action::Toggle { node },

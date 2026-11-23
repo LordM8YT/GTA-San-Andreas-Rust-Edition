@@ -976,6 +976,23 @@ fn outliner(build: &mut BuildMode, ui: &mut Ui) {
                 for id in roots {
                     row(build, ui, id, 0, &mut actions);
                 }
+                // Below the list: drop here to move to the top level, last.
+                let (rect, response) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), 28.0),
+                    egui::Sense::hover(),
+                );
+                if response.dnd_hover_payload::<Vec<NodeId>>().is_some() {
+                    ui.painter().text(
+                        rect.left_center() + egui::vec2(6.0, 0.0),
+                        egui::Align2::LEFT_CENTER,
+                        "Drop here: top level, last",
+                        egui::FontId::proportional(12.0),
+                        ACCENT,
+                    );
+                }
+                if let Some(dragged) = response.dnd_release_payload::<Vec<NodeId>>() {
+                    actions.push(OutlinerAction::Drop((*dragged).clone(), ops::Drop::End));
+                }
             } else {
                 let matches: Vec<NodeId> = build
                     .doc
@@ -1004,6 +1021,8 @@ enum OutlinerAction {
     Group,
     Ungroup(NodeId),
     MoveTo(NodeId, Option<NodeId>),
+    /// Dragged objects dropped in the outliner.
+    Drop(Vec<NodeId>, ops::Drop),
     Focus(NodeId),
     PlaceInto(Option<NodeId>),
 }
@@ -1116,7 +1135,53 @@ fn row_single(
         } else if missing {
             text = text.color(ERROR);
         }
-        let response = ui.selectable_label(selected, text);
+        let response = ui
+            .selectable_label(selected, text)
+            .interact(egui::Sense::drag())
+            .on_hover_text("Drag to reorder, or onto a group to move it there");
+        // Drag and drop: dragging a selected row takes the whole selection.
+        if response.dragged() {
+            let ids = if selected {
+                build.selection.clone()
+            } else {
+                vec![id]
+            };
+            response.dnd_set_drag_payload(ids);
+        }
+        let drop_at = |pointer: egui::Pos2| {
+            let rect = response.rect;
+            let along = ((pointer.y - rect.top()) / rect.height().max(1.0)).clamp(0.0, 1.0);
+            match (node.is_group(), along) {
+                (true, a) if (0.25..=0.75).contains(&a) => ops::Drop::Into(id),
+                (_, a) if a < 0.5 => ops::Drop::Before(id),
+                _ => ops::Drop::After(id),
+            }
+        };
+        if let (Some(_), Some(pointer)) = (
+            response.dnd_hover_payload::<Vec<NodeId>>(),
+            ui.input(|i| i.pointer.hover_pos()),
+        ) {
+            let rect = response.rect;
+            let stroke = egui::Stroke::new(2.0, ACCENT);
+            match drop_at(pointer) {
+                ops::Drop::Into(_) => {
+                    ui.painter()
+                        .rect_stroke(rect, 3.0, stroke, egui::StrokeKind::Outside);
+                }
+                ops::Drop::Before(_) => {
+                    ui.painter().hline(rect.x_range(), rect.top(), stroke);
+                }
+                _ => {
+                    ui.painter().hline(rect.x_range(), rect.bottom(), stroke);
+                }
+            }
+        }
+        if let (Some(dragged), Some(pointer)) = (
+            response.dnd_release_payload::<Vec<NodeId>>(),
+            ui.input(|i| i.pointer.interact_pos()),
+        ) {
+            actions.push(OutlinerAction::Drop((*dragged).clone(), drop_at(pointer)));
+        }
         if response.clicked() {
             actions.push(OutlinerAction::Select(
                 id,
@@ -1180,6 +1245,11 @@ fn row_single(
 
 fn apply_outliner(build: &mut BuildMode, action: OutlinerAction) {
     match action {
+        OutlinerAction::Drop(ids, to) => match ops::move_nodes(&build.doc, &ids, to) {
+            Ok(Some(command)) => build.execute(command),
+            Ok(None) => {}
+            Err(error) => build.warn(format!("{error:#}")),
+        },
         OutlinerAction::Select(id, add) => {
             if add {
                 if let Some(i) = build.selection.iter().position(|s| *s == id) {
@@ -1316,12 +1386,85 @@ fn inspector(build: &mut BuildMode, ui: &mut Ui) {
                     delete(build);
                 }
             });
+            batch_edit(build, ui);
         }
     }
     // A finished drag or typed value becomes one undo step.
     let busy = ui.ctx().egui_is_using_pointer() || ui.ctx().memory(|m| m.focused().is_some());
     if !busy && build.drag_free() && build.editing_live() {
         build.commit_preview();
+    }
+}
+
+/// A change applied to every selected object.
+type NodeEdit = fn(&mut Node);
+
+/// Several objects selected: change them all at once (one undo step each).
+fn batch_edit(build: &mut BuildMode, ui: &mut Ui) {
+    let ids = build.selection.clone();
+    let count = |get: fn(&Node) -> bool| {
+        ids.iter()
+            .filter_map(|id| build.doc.layout.node(*id))
+            .filter(|n| get(n))
+            .count()
+    };
+    let (visible, locked, solid) = (
+        count(|n| n.visible),
+        count(|n| n.locked),
+        count(|n| n.collision),
+    );
+    section(ui, "All selected");
+    let mut edit: Option<(&str, NodeEdit)> = None;
+    let row = |ui: &mut Ui, label: &str, on: usize| {
+        ui.label(format!("{label}: {on} of {}", ids.len()));
+    };
+    ui.horizontal(|ui| {
+        row(ui, "Visible", visible);
+        if ui.small_button("Show all").clicked() {
+            edit = Some(("Show objects", |n| n.visible = true));
+        }
+        if ui.small_button("Hide all").clicked() {
+            edit = Some(("Hide objects", |n| n.visible = false));
+        }
+    });
+    ui.horizontal(|ui| {
+        row(ui, "Locked", locked);
+        if ui.small_button("Lock all").clicked() {
+            edit = Some(("Lock objects", |n| n.locked = true));
+        }
+        if ui.small_button("Unlock all").clicked() {
+            edit = Some(("Unlock objects", |n| n.locked = false));
+        }
+    });
+    ui.horizontal(|ui| {
+        row(ui, "Collision", solid);
+        if ui.small_button("On").clicked() {
+            edit = Some(("Collision on", |n| n.collision = true));
+        }
+        if ui.small_button("Off").clicked() {
+            edit = Some(("Collision off", |n| n.collision = false));
+        }
+    });
+    ui.horizontal(|ui| {
+        if ui.small_button("Reset rotation").clicked() {
+            edit = Some(("Reset rotation", |n| n.transform.rotation = [0.0; 3]));
+        }
+        if ui.small_button("Reset scale").clicked() {
+            edit = Some(("Reset scale", |n| n.transform.scale = [1.0; 3]));
+        }
+        if ui.small_button("Drop to ground").clicked() {
+            edit = Some(("Drop to ground", |n| n.transform.position[2] = 0.0));
+        }
+    });
+    if let Some((label, change)) = edit {
+        // Locked objects keep their transform; flags apply to all.
+        let transform = label.starts_with("Reset") || label.starts_with("Drop");
+        let targets: Vec<NodeId> = ids
+            .iter()
+            .copied()
+            .filter(|id| !transform || !build.doc.layout.effective_locked(*id))
+            .collect();
+        run(build, ops::modify(&build.doc, label, &targets, change));
     }
 }
 

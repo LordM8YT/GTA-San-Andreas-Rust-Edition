@@ -191,6 +191,79 @@ mod tests {
     }
 
     #[test]
+    fn outliner_drag_and_drop_reorders_and_regroups_with_undo() {
+        use crate::ops::Drop;
+        let mut doc = doc();
+        let mut history = History::default();
+        let mut add = |doc: &mut Document, name: &str| {
+            let (command, id) =
+                ops::place(doc, crate_asset(), name, Transform::default(), None).unwrap();
+            history.execute(doc, command).unwrap();
+            id
+        };
+        let a = add(&mut doc, "A");
+        let b = add(&mut doc, "B");
+        let c = add(&mut doc, "C");
+        let names = |doc: &Document| {
+            doc.layout
+                .nodes
+                .iter()
+                .map(|n| n.name.clone())
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        let run = |doc: &mut Document, history: &mut History, ids: &[u64], to: Drop| {
+            let command = ops::move_nodes(doc, ids, to).unwrap().unwrap();
+            history.execute(doc, command).unwrap();
+        };
+        run(&mut doc, &mut history, &[c], Drop::Before(a));
+        assert_eq!(names(&doc), "C,A,B");
+        history.undo(&mut doc).unwrap();
+        assert_eq!(names(&doc), "A,B,C", "one undo step");
+        history.redo(&mut doc).unwrap();
+        // A group, and B dragged into it, then A after B inside it.
+        let (group, g) = ops::group(&mut doc, &[c], "G").unwrap();
+        history.execute(&mut doc, group).unwrap();
+        run(&mut doc, &mut history, &[b], Drop::Into(g));
+        run(&mut doc, &mut history, &[a], Drop::After(b));
+        let parent = |doc: &Document, id| doc.layout.node(id).unwrap().parent;
+        assert_eq!((parent(&doc, a), parent(&doc, b)), (Some(g), Some(g)));
+        let inside: Vec<_> = doc
+            .layout
+            .nodes
+            .iter()
+            .filter(|n| n.parent == Some(g))
+            .map(|n| n.name.as_str())
+            .collect();
+        assert_eq!(inside, ["C", "B", "A"]);
+        // The whole group moves to the end with its contents, past D.
+        let (place, d) =
+            ops::place(&mut doc, crate_asset(), "D", Transform::default(), None).unwrap();
+        history.execute(&mut doc, place).unwrap();
+        assert!(
+            ops::move_nodes(&doc, &[d], Drop::End).unwrap().is_none(),
+            "already last"
+        );
+        run(&mut doc, &mut history, &[g], Drop::End);
+        assert_eq!(names(&doc), "D,G,C,B,A", "contents follow in order");
+        assert_eq!(parent(&doc, a), Some(g));
+        doc.layout.validate().unwrap();
+        // A group cannot go into itself; a no-op is None.
+        assert!(ops::move_nodes(&doc, &[g], Drop::Into(g)).is_err());
+        assert!(ops::move_nodes(&doc, &[g], Drop::Before(a)).is_err());
+        assert!(ops::move_nodes(&doc, &[a], Drop::After(b))
+            .unwrap()
+            .is_none());
+        // Out to the top level.
+        run(&mut doc, &mut history, &[a], Drop::End);
+        assert_eq!(parent(&doc, a), None);
+        while history.can_undo() {
+            history.undo(&mut doc).unwrap();
+        }
+        assert!(doc.layout.nodes.is_empty());
+    }
+
+    #[test]
     fn projects_save_reopen_and_play_without_game_files() {
         let root = temp("project");
         let folder = root.join("my-world");
