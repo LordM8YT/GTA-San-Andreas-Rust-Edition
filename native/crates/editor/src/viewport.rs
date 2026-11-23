@@ -352,7 +352,9 @@ mod tests {
                 ..Transform::default()
             }
             .rotation_quat();
-            assert!(qa.angle_between(qb) < 1e-3, "axis {i}: {a:?} vs {b:?}");
+            // The same turn (q and -q are one): acos near 1 is too noisy
+            // in f32 to compare angles, so compare the quaternions.
+            assert!(qa.dot(qb).abs() > 1.0 - 1e-5, "axis {i}: {a:?} vs {b:?}");
         }
         // Scaling spreads objects out from the pivot: along one axis, or all.
         let p = pivot + Vec3::new(1.0, 2.0, 3.0);
