@@ -484,6 +484,7 @@ fn world_scripts_run_once_per_instance_on_the_server() {
     use_object(&anna, 911);
     server.until(&mut [&mut anna, &mut ben], "the bell's script", |_, p| {
         messages(p[1]).contains(&"Ding from Tester".to_string())
+            && messages(p[0]).contains(&"You rang".to_string())
             && snapshot(p[1]).is_some_and(|s| s.hidden.contains(&lamp))
     });
     assert!(snapshot(&ben).unwrap().revision > revision);

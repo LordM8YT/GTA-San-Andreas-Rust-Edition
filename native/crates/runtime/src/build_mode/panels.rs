@@ -33,6 +33,8 @@ pub enum WorldPage {
     #[default]
     Workspace,
     Lighting,
+    /// Every script in the world.
+    Scripts,
 }
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum BottomTab {
@@ -47,6 +49,8 @@ pub enum BottomTab {
 pub struct UiState {
     ribbon: RibbonTab,
     pub world_page: WorldPage,
+    /// The script open in the script editor.
+    pub script: Option<super::script_ui::Editor>,
     /// Docks closed with their close button (the View tab opens them again).
     hide_toolbox: bool,
     hide_explorer: bool,
@@ -954,6 +958,26 @@ fn insert_group(build: &mut BuildMode, ui: &mut Ui) {
         .clicked()
         {
             build.ui.hide_toolbox = !build.ui.hide_toolbox;
+        }
+        let owner = match build.selection.as_slice() {
+            [id] => build
+                .doc
+                .layout
+                .node(*id)
+                .filter(|n| !n.is_group())
+                .map(|n| (n.id, n.name.clone())),
+            _ => None,
+        };
+        let hover = match &owner {
+            Some((_, name)) => format!("Add a Lua script to {name} and open it"),
+            None => "Add a script for the whole world and open it (select an object first to put it on that object)".to_string(),
+        };
+        if big_button(ui, "📜", "Script", false, true, &hover).clicked() {
+            super::script_ui::add(
+                build,
+                owner.map(|(id, _)| id),
+                &super::script_ui::EXAMPLES[0],
+            );
         }
         if big_button(
             ui,
@@ -1907,6 +1931,21 @@ fn explorer(build: &mut BuildMode, ui: &mut Ui) {
                         build.ui.world_page = WorldPage::Lighting;
                     }
                 });
+                let count = build.doc.layout.all_scripts().len();
+                ui.horizontal(|ui| {
+                    ui.add_space(22.0);
+                    if ui
+                        .selectable_label(
+                            page == Some(WorldPage::Scripts),
+                            format!("📜 Scripts  ({count})"),
+                        )
+                        .on_hover_text("Every script in the world, and scripts for the whole world")
+                        .clicked()
+                    {
+                        build.selection.clear();
+                        build.ui.world_page = WorldPage::Scripts;
+                    }
+                });
             }
         });
     for action in actions {
@@ -1937,6 +1976,15 @@ fn row(
     actions: &mut Vec<OutlinerAction>,
 ) {
     row_single(build, ui, id, depth, actions);
+    if let Some(node) = build
+        .doc
+        .layout
+        .node(id)
+        .filter(|n| !n.scripts.is_empty())
+        .cloned()
+    {
+        super::script_ui::explorer_rows(build, ui, &node, depth + 1);
+    }
     let is_group = build.doc.layout.node(id).is_some_and(Node::is_group);
     if is_group && !build.ui.collapsed.contains(&id) {
         let children: Vec<NodeId> = build
@@ -2279,6 +2327,7 @@ fn properties(build: &mut BuildMode, ui: &mut Ui) {
         [] => match build.ui.world_page {
             WorldPage::Workspace => "Workspace".to_owned(),
             WorldPage::Lighting => "Lighting".to_owned(),
+            WorldPage::Scripts => "Scripts".to_owned(),
         },
         [id] => build
             .doc
@@ -2304,6 +2353,7 @@ fn inspector(build: &mut BuildMode, ui: &mut Ui) {
         0 => match build.ui.world_page {
             WorldPage::Workspace => world_settings(build, ui),
             WorldPage::Lighting => lighting(build, ui),
+            WorldPage::Scripts => super::script_ui::world_page(build, ui),
         },
         1 => object(build, ui, build.selection[0]),
         n => {
@@ -2808,6 +2858,7 @@ fn object(build: &mut BuildMode, ui: &mut Ui, id: NodeId) {
         light_section(build, ui, id, &node);
         terrain_section(build, ui, id, &node);
         road_section(build, ui, id, &node);
+        super::script_ui::object_section(build, ui, id, &node);
     }
     if let Some(asset) = &node.asset {
         section(ui, "Asset");
@@ -3214,6 +3265,7 @@ fn world_dialogs(build: &mut BuildMode, ctx: &egui::Context) {
 }
 
 fn dialogs(build: &mut BuildMode, root: &mut Ui) {
+    super::script_ui::window(build, &root.ctx().clone());
     let ctx = root.ctx().clone();
     world_dialogs(build, &ctx);
     if let Some(recovery) = &build.recovery {

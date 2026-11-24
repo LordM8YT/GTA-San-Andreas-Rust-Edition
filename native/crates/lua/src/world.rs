@@ -725,6 +725,24 @@ fn create_state(
     Ok(lua)
 }
 
+/// Compile `source` without running it, as the editor does while a
+/// creator types: None when it is valid Lua, or the error with its line
+/// (`name:3: ...`).
+pub fn check(name: &str, source: &str) -> Option<String> {
+    let lua = Lua::new_with(StdLib::NONE, LuaOptions::new()).ok()?;
+    lua.load(source)
+        .set_name(format!("={name}"))
+        .into_function()
+        .err()
+        .map(|e| clean(&e))
+}
+
+/// The line an error text points at (`name:3: ...` gives 3).
+pub fn error_line(name: &str, text: &str) -> Option<usize> {
+    let rest = text.strip_prefix(name)?.strip_prefix(':')?;
+    rest.split(':').next()?.parse().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -893,6 +911,20 @@ mod tests {
         );
         host.tick(frame(0.6), vec![]);
         assert_eq!(texts(&mut host), ["Later: tick"]);
+    }
+
+    #[test]
+    fn the_editor_checks_scripts_without_running_them() {
+        assert_eq!(check("Ok", "while true do end"), None);
+        let error = check(
+            "Door",
+            "local x = 
+print(x",
+        )
+        .unwrap();
+        assert!(error.starts_with("Door:2:"), "{error}");
+        assert_eq!(error_line("Door", &error), Some(2));
+        assert_eq!(error_line("Door", "other: no"), None);
     }
 
     #[test]

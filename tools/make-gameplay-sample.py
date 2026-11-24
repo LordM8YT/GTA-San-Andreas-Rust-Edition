@@ -164,11 +164,49 @@ add(
     },
 )
 
+# World scripts: a bell whose script makes a crate vanish for a moment, and
+# a world script that announces race times.
+RING = """-- Press E at the bell: the signal crate vanishes for 3 seconds.
+local crate = world.find("Signal crate")
+
+script.object:on('use', function(player)
+  crate:hide()
+  world.message(player.name .. ' rang the bell')
+  wait(3)
+  crate:show()
+end)
+"""
+RACE = """-- Tells everyone each finish time of the checkpoint course.
+local best
+
+world.on('finish', function(player, race, seconds)
+  local text = string.format('%s ran the course in %.1f s', player.name, seconds)
+  if not best or seconds < best then
+    best = seconds
+    text = text .. ' - a new best!'
+  end
+  world.message(text, 6)
+end)
+"""
+add(
+    "Bell",
+    "marker-interact",
+    (-4, -8, 0),
+    parent=play,
+    gameplay={"kind": "interact", "size": [2.0, 2.0, 2.5], "prompt": "Ring the bell"},
+)
+nodes[-1]["scripts"] = [{"name": "Ring", "source": RING}]
+add("Signal crate", "crate", (-6, -8, 0), parent=play)
+
 layout = {
     "format": "sare-world-layout",
     "version": 1,
     "next_id": len(nodes) + 1,
-    "settings": {"hour": 12, "weather": "clear"},
+    "settings": {
+        "hour": 12,
+        "weather": "clear",
+        "scripts": [{"name": "Race results", "source": RACE}],
+    },
     "nodes": nodes,
 }
 manifest = {
@@ -178,7 +216,8 @@ manifest = {
     "license": "CC0-1.0",
     "author": "SARE contributors",
     "description": "Every Build Mode gameplay behaviour in one small world: doors, teleports, "
-    "trigger zones, time and weather, and a checkpoint course. Made by tools/make-gameplay-sample.py.",
+    "trigger zones, time and weather, a checkpoint course and world scripts. Made by "
+    "tools/make-gameplay-sample.py.",
     "world": {"layout": "layout.json", "spawn": [0, -6, 0]},
 }
 OUT.mkdir(parents=True, exist_ok=True)

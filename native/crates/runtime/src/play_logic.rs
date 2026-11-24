@@ -415,7 +415,17 @@ impl State {
             .as_ref()
             .expect("--smoke-build needs a content pack with gameplay");
         let SmokeTargets { gate, door, .. } = smoke_targets(&play.layout);
-        let drawn = |state: &State| state.play_logic.as_ref().unwrap().batches().count();
+        // The gate's own batches (scripted objects are drawn one by one too).
+        let drawn = |state: &State| {
+            let play = state.play_logic.as_ref().unwrap();
+            play.objects.as_ref().map_or(0, |o| {
+                o.gpu
+                    .objects
+                    .get(&gate.0)
+                    .filter(|_| play.logic.visible(gate.0))
+                    .map_or(0, |object| object.batches.len())
+            })
+        };
         let capture = |state: &mut State, name: &str| {
             if let Some(dir) = captures {
                 state.capture_next = Some(dir.join(name));

@@ -1,10 +1,16 @@
 {
   "format": "sare-world-layout",
   "version": 1,
-  "next_id": 33,
+  "next_id": 35,
   "settings": {
     "hour": 12,
-    "weather": "clear"
+    "weather": "clear",
+    "scripts": [
+      {
+        "name": "Race results",
+        "source": "-- Tells everyone each finish time of the checkpoint course.\nlocal best\n\nworld.on('finish', function(player, race, seconds)\n  local text = string.format('%s ran the course in %.1f s', player.name, seconds)\n  if not best or seconds < best then\n    best = seconds\n    text = text .. ' - a new best!'\n  end\n  world.message(text, 6)\nend)\n"
+      }
+    ]
   },
   "nodes": [
     {
@@ -1490,6 +1496,67 @@
             "do": "teleport",
             "target": 16
           }
+        ]
+      }
+    },
+    {
+      "id": 33,
+      "name": "Bell",
+      "parent": 14,
+      "asset": "builtin:marker-interact",
+      "transform": {
+        "position": [
+          -4,
+          -8,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "interact",
+        "size": [
+          2.0,
+          2.0,
+          2.5
+        ],
+        "prompt": "Ring the bell"
+      },
+      "scripts": [
+        {
+          "name": "Ring",
+          "source": "-- Press E at the bell: the signal crate vanishes for 3 seconds.\nlocal crate = world.find(\"Signal crate\")\n\nscript.object:on('use', function(player)\n  crate:hide()\n  world.message(player.name .. ' rang the bell')\n  wait(3)\n  crate:show()\nend)\n"
+        }
+      ]
+    },
+    {
+      "id": 34,
+      "name": "Signal crate",
+      "parent": 14,
+      "asset": "builtin:crate",
+      "transform": {
+        "position": [
+          -6,
+          -8,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
         ]
       }
     }

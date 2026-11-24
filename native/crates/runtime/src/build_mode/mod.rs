@@ -13,6 +13,7 @@ mod gameplay_ui;
 pub mod gpu;
 mod pacing;
 mod panels;
+mod script_ui;
 mod viewport;
 
 use crate::State;
@@ -362,6 +363,7 @@ impl BuildMode {
             .retain(|id| self.doc.layout.node(*id).is_some());
     }
     pub fn undo(&mut self) {
+        script_ui::flush(self);
         self.commit_preview();
         match self.history.undo(&mut self.doc) {
             Ok(Some(label)) => self.info(format!("Undo: {label}")),
@@ -372,6 +374,7 @@ impl BuildMode {
             .retain(|id| self.doc.layout.node(*id).is_some());
     }
     pub fn redo(&mut self) {
+        script_ui::flush(self);
         self.commit_preview();
         match self.history.redo(&mut self.doc) {
             Ok(Some(label)) => self.info(format!("Redo: {label}")),
@@ -420,6 +423,7 @@ impl BuildMode {
     }
 
     pub fn save(&mut self) {
+        script_ui::flush(self);
         self.commit_preview();
         match self.project.save(&self.doc) {
             Ok(()) => {
@@ -823,6 +827,7 @@ impl State {
             return;
         }
         let Some(build) = &mut self.build else { return };
+        script_ui::flush(build);
         build.commit_preview();
         build.placing = None;
         build.drag = None;
@@ -898,6 +903,16 @@ pub fn restart_on(args: &[String], folder: &Path) -> Result<()> {
     Ok(())
 }
 
+/// An object of the smoke world by name: (id, position).
+fn smoke_node(state: &State, name: &str) -> (NodeId, [f32; 3]) {
+    state
+        .build
+        .as_ref()
+        .and_then(|b| b.doc.layout.nodes.iter().find(|n| n.name == name))
+        .map(|n| (n.id, n.transform.position))
+        .unwrap_or_else(|| panic!("the smoke world has no {name} (use content/gameplay-sample)"))
+}
+
 /// `--smoke-build`: drive Build Mode through editing, a playtest of the
 /// world's gameplay and back, with screenshots when `--capture-dir` is set.
 /// Meant for `content/gameplay-sample`.
@@ -957,6 +972,35 @@ impl State {
                 assert_eq!(play.hour(), Some(22), "the night zone did not set the time");
                 assert!(play.message().is_some(), "no message from the night zone");
                 capture(self, "playtest-night-zone.png");
+            }
+            // World scripts: E at the bell, and its script hides the
+            // signal crate and tells everyone.
+            54 => {
+                let bell = smoke_node(self, "Bell");
+                self.smoke_stand_at(bell.1);
+            }
+            56 => assert!(self.interact_play_logic(), "E did nothing at the bell"),
+            58 => {
+                let crate_id = smoke_node(self, "Signal crate").0;
+                let play = self.play_logic.as_ref().unwrap();
+                assert!(
+                    !play.logic.visible(crate_id),
+                    "the bell's script did not hide the signal crate"
+                );
+                assert!(
+                    play.message().is_some_and(|m| m.ends_with("rang the bell")),
+                    "the bell's script sent no message: {:?}",
+                    play.message()
+                );
+                let build = self.build.as_ref().unwrap();
+                let errors: Vec<&str> = build
+                    .log
+                    .iter()
+                    .map(|l| l.text.as_str())
+                    .filter(|t| t.starts_with("Script error"))
+                    .collect();
+                assert!(errors.is_empty(), "script errors: {errors:?}");
+                capture(self, "playtest-script-bell.png");
             }
             60 => self.smoke_stand_at(door.1),
             64 => {
@@ -1116,7 +1160,20 @@ impl State {
                 );
                 capture(self, "build-terrain-paint.png");
             }
-            108 => return true,
+            // The script editor: the bell's script, checked as it is typed.
+            108 => {
+                let bell = smoke_node(self, "Bell").0;
+                let build = self.build.as_mut().unwrap();
+                build.selection = vec![bell];
+                build.focus_selection();
+                script_ui::open(build, script_ui::ScriptAt::Object(bell, 0));
+            }
+            114 => {
+                let build = self.build.as_ref().unwrap();
+                assert!(build.ui.script.is_some(), "the script editor did not open");
+                capture(self, "build-script-editor.png");
+            }
+            118 => return true,
             _ => {}
         }
         false

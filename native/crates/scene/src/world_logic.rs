@@ -1431,6 +1431,7 @@ pub fn check(layout: &Layout) -> Vec<Problem> {
         .map(|n| n.id)
         .collect();
     let exists = |id: NodeId| objects.contains(&id);
+    let scripted = !script_sources(layout).is_empty();
     let mut orders: HashMap<(&str, u32), NodeId> = HashMap::new();
     for node in &layout.nodes {
         let mut say = |text: String| {
@@ -1471,14 +1472,15 @@ pub fn check(layout: &Layout) -> Vec<Problem> {
                 ));
             }
         }
+        // Without actions, only a script can react to it.
         if let Component::Interact(i) = component {
-            if i.actions.is_empty() {
-                say("the interaction has no actions".into());
+            if i.actions.is_empty() && !scripted {
+                say("the interaction has no actions and no script reacts to it".into());
             }
         }
         if let Component::Trigger(t) = component {
-            if t.on_enter.is_empty() && t.on_leave.is_empty() {
-                say("the trigger has no actions".into());
+            if t.on_enter.is_empty() && t.on_leave.is_empty() && !scripted {
+                say("the trigger has no actions and no script reacts to it".into());
             }
         }
         for action in component.action_lists().into_iter().flatten() {
