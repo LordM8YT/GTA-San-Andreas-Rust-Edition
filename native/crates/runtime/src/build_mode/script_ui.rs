@@ -162,6 +162,21 @@ end
 "#,
     },
     Example {
+        name: "Traffic light",
+        about: "Turns this object green, yellow and red in turn",
+        source: r#"local light = script.object
+
+while true do
+  light.color = rgb(0.2, 1, 0.3)
+  wait(6)
+  light.color = rgb(1, 0.85, 0.1)
+  wait(2)
+  light.color = rgb(1, 0.15, 0.1)
+  wait(6)
+end
+"#,
+    },
+    Example {
         name: "Race results",
         about: "Tells everyone each finish time of the world's checkpoint races",
         source: r#"local best = {}
@@ -209,7 +224,8 @@ end)
 const HELP: &str = "\
 script.object        the object this script is on (nil for world scripts)
 world.find(name)     an object by name;  world.objects(), world.players()
-object.name  .visible  .position  .heading  (set visible, position or heading)
+object.name  .visible  .position  .heading  .color  (all can be set)
+object.color = rgb(1, 0.5, 0)  (nil: its own colour again)
 object:show()  :hide()  :toggle()  :on(event, function)
 object:moveTo(vector(x, y, z), seconds, heading)  object:turnTo(heading, seconds)
 player.name  .id  .position  .driving

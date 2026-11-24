@@ -99,6 +99,7 @@ impl Scripts {
                 .motions()
                 .map(|(id, m)| (id, m.to.position, m.to.heading))
                 .collect(),
+            colors: shared.colors().iter().map(|(k, v)| (*k, *v)).collect(),
         };
         self.host
             .tick(frame, events)
@@ -143,6 +144,9 @@ impl Scripts {
                     key,
                     text,
                 } => (Who::Player(player), ScriptChange::Hud(key, text)),
+                host::Request::Color { object, color } => {
+                    (Who::World, ScriptChange::Color(object, color))
+                }
                 host::Request::Hour(hour) => (Who::World, ScriptChange::Hour(hour)),
                 host::Request::Weather(weather) => (Who::World, ScriptChange::Weather(weather)),
             })

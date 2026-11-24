@@ -263,6 +263,7 @@ impl State {
         // Objects scripts move go on moving, here as on the server.
         play.logic.advance(dt);
         self.sync_moved_objects();
+        self.sync_object_colors();
         let Some(play) = &mut self.play_logic else {
             return;
         };
@@ -397,6 +398,28 @@ impl State {
                 true
             }
             _ => false,
+        }
+    }
+
+    /// Objects scripts coloured are drawn in their colour.
+    fn sync_object_colors(&mut self) {
+        let Some(play) = &mut self.play_logic else {
+            return;
+        };
+        let colors: HashMap<NodeId, [f32; 3]> = play
+            .logic
+            .shared()
+            .colors()
+            .iter()
+            .map(|(id, c)| (*id, *c))
+            .collect();
+        let tints = match (&mut play.objects, &mut self.build) {
+            (Some(objects), _) => &mut objects.gpu.tints,
+            (None, Some(build)) => &mut build.gpu.tints,
+            (None, None) => return,
+        };
+        if *tints != colors {
+            *tints = colors;
         }
     }
 

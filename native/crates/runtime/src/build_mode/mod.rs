@@ -749,8 +749,10 @@ impl State {
         }
         let mut problems = Vec::new();
         if !build.playtesting {
-            // However the playtest ended, objects are drawn where placed.
+            // However the playtest ended, objects are drawn where placed,
+            // in their own colours.
             build.gpu.moved.clear();
+            build.gpu.tints.clear();
         }
         build
             .gpu
@@ -1002,6 +1004,12 @@ impl State {
                     play.logic.shared().hud().get("bell").map(String::as_str),
                     Some("Bell rung 1 time"),
                     "the bell's script put no text on screen"
+                );
+                let bell = smoke_node(self, "Bell").0;
+                assert!(
+                    play.logic.shared().colors().contains_key(&bell)
+                        && self.build.as_ref().unwrap().gpu.tints.contains_key(&bell),
+                    "the bell's script did not colour it"
                 );
                 let build = self.build.as_ref().unwrap();
                 let errors: Vec<&str> = build

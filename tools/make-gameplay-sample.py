@@ -174,6 +174,7 @@ local rings = 0
 script.object:on('use', function(player)
   rings = rings + 1
   world.hud('bell', 'Bell rung ' .. rings .. (rings == 1 and ' time' or ' times'))
+  script.object.color = rgb(1, 0.8, 0.2)
   crate:hide()
   world.message(player.name .. ' rang the bell')
   wait(3)

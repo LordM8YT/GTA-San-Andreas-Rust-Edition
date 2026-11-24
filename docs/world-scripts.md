@@ -43,7 +43,7 @@ there, with as much logic as you like.
   attempt to index a nil value`.
 
 The examples are Door that opens on E, Welcome message, Blinking object,
-Zone messages, Lift, Sliding door, Spinner, Race results, Day and night
+Zone messages, Lift, Sliding door, Spinner, Traffic light, Race results, Day and night
 switch and Score counter.
 
 Scripts are saved in the world's `layout.json`, as `scripts` on an object
@@ -69,6 +69,7 @@ east, y north, z up. Headings are degrees, and 0 faces north.
 | `object.id`, `.name` | |
 | `object.visible` | Read it, or set it to show or hide the object. |
 | `object.position`, `.heading` | Where the object is now. Set them to move it at once. |
+| `object.color` | Set it to `rgb(red, green, blue)` (0 to 1, up to 2 brightens) to colour the object, or `nil` for its own colours. Works on models, not on terrain or roads. |
 | `object:show()`, `:hide()`, `:toggle()` | |
 | `object:moveTo(vector, seconds, [heading])` | Glide there, easing in and out. |
 | `object:turnTo(heading, seconds)` | Turn, the short way round. A new move replaces the one on its way and keeps the half it does not change: `moveTo` keeps where it was turning to, `turnTo` where it was going. |
@@ -78,6 +79,7 @@ east, y north, z up. Headings are degrees, and 0 faces north.
 | `player:teleport(object or vector, [heading])` | Onto an object (facing its way), or to a spot. |
 | `player:hud(name, text)`, `world.hud(name, text)` | A line of on-screen text for this player, or for everyone, until it changes. Set it again under the same name to change it; `nil` or `''` removes it. At most 12 lines for everyone and 12 per player, of up to 120 characters each; everyone's lines come first. A player's own lines go when the scripts start again (`world_reset`) or the player changes instance; for a player who left, it does nothing. |
 | `vector(x, y, z)` | Add, subtract, multiply by a number, `:length()`, `:distance(v)`. |
+| `rgb(r, g, b)` | A colour for `object.color`. |
 | `wait(seconds)` | Pause this script or handler. Other scripts go on. |
 | `spawn(fn)`, `delay(seconds, fn)`, `every(seconds, fn)` | Run something now, later, or again and again. `every` returns a handle with `:stop()`. |
 | `print(...)` | Writes to Output, or to the server console. |
@@ -99,7 +101,7 @@ a script on it or naming it.
 
 ### Objects scripts can change
 
-Scripts may show, hide and move:
+Scripts may show, hide, move and colour:
 
 - the object a script is on;
 - objects whose name a script writes in quotes, such as
@@ -163,4 +165,4 @@ join halfway.
 - Tilting objects: scripts set the heading only.
 - Scripts on the player's own game (UI, input); see
   [client scripts](client-scripts.md) for server resources.
-- Spawning new objects, sounds, and changing colours or sizes from scripts.
+- Spawning new objects, sounds, and changing sizes from scripts.

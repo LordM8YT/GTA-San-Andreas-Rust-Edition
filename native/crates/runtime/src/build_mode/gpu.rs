@@ -35,6 +35,8 @@ pub struct ObjectMesh {
     pub local_bounds: (Vec3, Vec3),
     pub matrix: Mat4,
     pub placeholder: bool,
+    /// Colour multiplier a script set (white: as modelled).
+    pub tint: [f32; 3],
 }
 
 #[derive(Default)]
@@ -53,6 +55,8 @@ pub struct Gpu {
     /// Model-space meshes of moving terrain and roads, re-placed as they
     /// move instead of rebuilt.
     moving_meshes: HashMap<NodeId, AssetMesh>,
+    /// Colours scripts gave objects while playtesting (models only).
+    pub tints: HashMap<NodeId, [f32; 3]>,
 }
 
 /// What a terrain or road object's own mesh is made from.
@@ -221,16 +225,22 @@ impl Gpu {
                 }
                 continue;
             }
+            let tint = self.tints.get(&node.id).copied().unwrap_or([1.0; 3]);
             match self.objects.get_mut(&node.id) {
-                Some(object) if object.transform == transform => {}
+                Some(object) if object.transform == transform && object.tint == tint => {}
                 Some(object) => {
                     object.transform = transform;
+                    object.tint = tint;
                     let mesh = &self.assets[asset];
                     place(state, mesh, object);
                 }
                 None => {
                     let mesh = self.asset(state, resolver, asset, problems);
-                    let object = instance(state, mesh, asset.clone(), transform);
+                    let mut object = instance(state, mesh, asset.clone(), transform);
+                    if tint != [1.0; 3] {
+                        object.tint = tint;
+                        place(state, mesh, &mut object);
+                    }
                     self.objects.insert(node.id, object);
                 }
             }
@@ -382,7 +392,7 @@ fn instance(state: &State, mesh: &AssetMesh, asset: AssetRef, transform: Transfo
         .parts
         .iter()
         .map(|part| {
-            let raw = transformed(&part.base, matrix);
+            let raw = transformed(&part.base, matrix, [1.0; 3]);
             let buffer = state
                 .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -414,6 +424,7 @@ fn instance(state: &State, mesh: &AssetMesh, asset: AssetRef, transform: Transfo
         local_bounds: mesh.bounds,
         matrix,
         placeholder: mesh.placeholder,
+        tint: [1.0; 3],
     };
     pick_data(mesh, &mut object);
     object
@@ -423,7 +434,7 @@ fn instance(state: &State, mesh: &AssetMesh, asset: AssetRef, transform: Transfo
 fn place(state: &State, mesh: &AssetMesh, object: &mut ObjectMesh) {
     object.matrix = render_matrix(&object.transform);
     for (part, batch) in mesh.parts.iter().zip(&object.batches) {
-        let raw = transformed(&part.base, object.matrix);
+        let raw = transformed(&part.base, object.matrix, object.tint);
         state
             .queue
             .write_buffer(&batch.buffer, 0, bytemuck::cast_slice(&raw));
@@ -441,11 +452,18 @@ fn pick_data(mesh: &AssetMesh, object: &mut ObjectMesh) {
     object.bounds = editor_bounds(&object.triangles);
 }
 
-fn transformed(base: &[f32], matrix: Mat4) -> Vec<f32> {
+fn transformed(base: &[f32], matrix: Mat4, tint: [f32; 3]) -> Vec<f32> {
     let mut raw = base.to_vec();
+    let tinted = tint != [1.0; 3];
     for vertex in raw.as_chunks_mut::<STRIDE>().0 {
         let p = matrix.transform_point3(Vec3::new(vertex[0], vertex[1], vertex[2]));
         vertex[..3].copy_from_slice(&p.to_array());
+        if tinted {
+            // Position 3, uv 2, then the colour.
+            for (c, t) in vertex[5..8].iter_mut().zip(tint) {
+                *c *= t;
+            }
+        }
     }
     if matrix.determinant() < 0.0 {
         // Mirrored: swap two corners so faces keep pointing outwards.

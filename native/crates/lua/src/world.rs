@@ -151,6 +151,11 @@ pub enum Request {
         heading: f32,
         seconds: f32,
     },
+    /// An object's colour, a multiplier per channel (None: its own again).
+    Color {
+        object: u64,
+        color: Option<[f32; 3]>,
+    },
     /// A line of on-screen text for one player, or everyone (None); text
     /// None removes it.
     Hud {
@@ -187,6 +192,8 @@ pub struct Frame {
     pub poses: Vec<(u64, [f32; 3], f32)>,
     /// ...and where their move is taking them.
     pub targets: Vec<(u64, [f32; 3], f32)>,
+    /// Colours scripts gave objects.
+    pub colors: Vec<(u64, [f32; 3])>,
 }
 
 struct Inner {
@@ -212,6 +219,8 @@ struct Inner {
     /// Where their latest move takes them: a move that changes only the
     /// position (or heading) keeps the other half of it.
     targets: HashMap<u64, ([f32; 3], f32)>,
+    /// Colours scripts gave objects.
+    colors: HashMap<u64, [f32; 3]>,
     /// On-screen line names in use: everyone's (None) and each player's.
     hud: HashMap<Option<u32>, std::collections::HashSet<String>>,
 }
@@ -292,6 +301,7 @@ impl WorldScripts {
             known: HashMap::new(),
             poses: HashMap::new(),
             targets: HashMap::new(),
+            colors: HashMap::new(),
             hud: HashMap::new(),
         }));
         let mut host = Self {
@@ -379,6 +389,7 @@ impl WorldScripts {
                 .into_iter()
                 .map(|(id, position, heading)| (id, (position, heading)))
                 .collect();
+            inner.colors = frame.colors.into_iter().collect();
             inner.targets = frame
                 .targets
                 .into_iter()
@@ -649,6 +660,53 @@ fn create_state(shared: &Shared, source: &Source, limit: &Rc<Limit>) -> mlua::Re
             None => inner.objects.get(&id).map_or(0.0, |o| o.heading),
         }
     ));
+    func!("color", |_lua, inner, id: u64| Ok(
+        match inner.colors.get(&id) {
+            Some(c) => (Some(c[0]), Some(c[1]), Some(c[2])),
+            None => (None, None, None),
+        }
+    ));
+    func!("set_color", |_lua,
+                        inner,
+                        (id, r, g, b): (
+        u64,
+        Option<f32>,
+        Option<f32>,
+        Option<f32>
+    )| {
+        let color = match (r, g, b) {
+            (Some(r), Some(g), Some(b)) => Some((r, g, b)),
+            _ => None,
+        };
+        let Some(object) = inner.objects.get(&id) else {
+            return Ok((false, Some("that object is not in the world".to_string())));
+        };
+        if !object.changeable {
+            return Ok((
+                    false,
+                    Some(format!(
+                        "{} cannot be changed by scripts: tick \"Scripts can change it\" in its Properties",
+                        object.name
+                    )),
+                ));
+        }
+        let color = color.map(|(r, g, b)| [r, g, b]);
+        if color.is_some_and(|c| !c.iter().all(|v| v.is_finite())) {
+            return Ok((
+                false,
+                Some("a colour is rgb(red, green, blue) from 0 to 1".to_string()),
+            ));
+        }
+        let color = color.map(|c| c.map(|v| v.clamp(0.0, 2.0)));
+        match color {
+            Some(c) => inner.colors.insert(id, c),
+            None => inner.colors.remove(&id),
+        };
+        Ok(match inner.request(Request::Color { object: id, color }) {
+            Ok(()) => (true, None),
+            Err(e) => (false, Some(e)),
+        })
+    });
     func!("target", |_lua, inner, id: u64| {
         let (p, h) = match inner.targets.get(&id) {
             Some(target) => *target,
@@ -1390,6 +1448,46 @@ print(x",
         assert!(
             out[0].contains("Typo:1: a heading is a number of degrees"),
             "{out:?}"
+        );
+    }
+
+    #[test]
+    fn scripts_colour_objects_they_may_change() {
+        let mut host = host_with(
+            "Paint",
+            r#"
+            local door = world.find('Door')
+            door.color = rgb(1, 0, 0)
+            print(door.color, door.color == rgb(1, 0, 0))
+            door.color = nil
+            print(door.color)
+            print(pcall(function() door.color = 'red' end))
+            print(pcall(function() world.find('Pad').color = rgb(0, 1, 0) end))
+            "#,
+        );
+        let out = texts(&mut host);
+        assert_eq!(out[0], "Paint: rgb(1.00, 0.00, 0.00)  true");
+        assert_eq!(out[1], "Paint: nil");
+        assert!(
+            out[2].contains("a colour is rgb(red, green, blue)"),
+            "{out:?}"
+        );
+        assert!(
+            out[3].contains("Pad cannot be changed by scripts"),
+            "{out:?}"
+        );
+        assert_eq!(
+            host.tick(frame(0.1), vec![]),
+            [
+                Request::Color {
+                    object: 1,
+                    color: Some([1.0, 0.0, 0.0])
+                },
+                Request::Color {
+                    object: 1,
+                    color: None
+                },
+            ]
         );
     }
 

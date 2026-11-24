@@ -499,6 +499,8 @@ pub struct Shared {
     motions: BTreeMap<NodeId, Motion>,
     /// On-screen text scripts show every player (`world.hud`), by name.
     hud: BTreeMap<String, String>,
+    /// Colours scripts gave objects: a multiplier per colour channel.
+    colors: BTreeMap<NodeId, [f32; 3]>,
     revision: u64,
 }
 
@@ -687,6 +689,29 @@ impl Shared {
     pub fn hud(&self) -> &BTreeMap<String, String> {
         &self.hud
     }
+    /// Colours scripts gave objects (multipliers, 1 is as modelled).
+    pub fn colors(&self) -> &BTreeMap<NodeId, [f32; 3]> {
+        &self.colors
+    }
+    /// Give `node` a colour, or (None) its own back. False when scripts
+    /// may not change it.
+    pub fn set_color(&mut self, world: &World, node: NodeId, color: Option<[f32; 3]>) -> bool {
+        if !world.switchable.contains(&node) {
+            return false;
+        }
+        let color = color
+            .filter(|c| c.iter().all(|v| v.is_finite()))
+            .map(|c| c.map(|v| v.clamp(0.0, 2.0)))
+            .filter(|c| *c != [1.0; 3]);
+        let changed = match color {
+            Some(c) => self.colors.insert(node, c) != Some(c),
+            None => self.colors.remove(&node).is_some(),
+        };
+        if changed {
+            self.revision += 1;
+        }
+        true
+    }
     /// The objects scripts moved, where they are now.
     pub fn moved(&self) -> impl Iterator<Item = (NodeId, Pose)> + '_ {
         self.motions.iter().map(|(id, m)| (*id, m.now()))
@@ -774,6 +799,7 @@ impl Shared {
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
+            colors: self.colors.iter().map(|(k, v)| (*k, *v)).collect(),
             moved: self
                 .motions
                 .iter()
@@ -837,10 +863,17 @@ impl Shared {
         for (key, text) in &snapshot.hud {
             set_hud(&mut hud, key, Some(text));
         }
+        let colors = snapshot
+            .colors
+            .iter()
+            .filter(|(node, c)| world.switchable.contains(node) && c.iter().all(|v| v.is_finite()))
+            .map(|(node, c)| (*node, c.map(|v| v.clamp(0.0, 2.0))))
+            .collect();
         Self {
             visibility,
             motions,
             hud,
+            colors,
             hour: snapshot.hour.map(|h| h.min(23)),
             weather: snapshot.weather.as_deref().and_then(Weather::parse),
             jump: snapshot.jump.map(|(n, h)| (n, h.min(23))),
@@ -944,6 +977,11 @@ impl World {
             }
             ScriptChange::Hud(key, text) => {
                 return vec![Effect::Hud { key, text }];
+            }
+            ScriptChange::Color(node, color) => {
+                // Shared: everyone sees it with the next snapshot.
+                shared.set_color(self, node, color);
+                return Vec::new();
             }
         };
         let mut out = Vec::new();
@@ -1484,6 +1522,9 @@ pub struct Snapshot {
     /// On-screen text for everyone: (name, text).
     #[serde(rename = "u", default, skip_serializing_if = "Vec::is_empty")]
     pub hud: Vec<(String, String)>,
+    /// Colours scripts gave objects.
+    #[serde(rename = "c", default, skip_serializing_if = "Vec::is_empty")]
+    pub colors: Vec<(NodeId, [f32; 3])>,
 }
 
 /// A [`Motion`] in a [`Snapshot`]: poses as x, y, z, heading.
@@ -1650,6 +1691,8 @@ pub enum ScriptChange {
     WorldHud(String, Option<String>),
     /// A line of on-screen text for the player (None removes it).
     Hud(String, Option<String>),
+    /// An object's colour (None: its own again).
+    Color(NodeId, Option<[f32; 3]>),
 }
 
 impl Happened {
@@ -2149,6 +2192,38 @@ mod tests {
         assert_eq!(shared.jump(), None);
         shared.jump_to(6);
         assert_eq!(shared.jump(), Some((2, 6)));
+    }
+
+    #[test]
+    fn script_colours_are_shared_and_reset() {
+        use crate::world_layout::Script;
+        let mut layout = Layout::default();
+        let lamp = object(&mut layout, "Lamp", [0.0; 3], None);
+        let crate_ = object(&mut layout, "Crate", [5.0, 0.0, 0.0], None);
+        layout
+            .node_mut(lamp)
+            .unwrap()
+            .scripts
+            .push(Script::new("Glow", ""));
+        let mut logic = Logic::new(&layout);
+        let before = logic.shared().revision();
+        logic.apply_script(ScriptChange::Color(lamp, Some([1.0, 0.2, 9.0])));
+        logic.apply_script(ScriptChange::Color(crate_, Some([0.0; 3])));
+        assert_eq!(
+            logic.shared().colors().iter().collect::<Vec<_>>(),
+            [(&lamp, &[1.0, 0.2, 2.0])],
+            "clamped, and only objects scripts may change"
+        );
+        assert!(logic.shared().revision() > before);
+        let copy = Shared::from_snapshot(logic.world(), &logic.shared().snapshot());
+        assert_eq!(copy.colors(), logic.shared().colors());
+        // White is the object's own colour: nothing to keep.
+        logic.apply_script(ScriptChange::Color(lamp, Some([1.0; 3])));
+        assert!(logic.shared().colors().is_empty());
+        logic.apply_script(ScriptChange::Color(lamp, Some([0.5; 3])));
+        let mut shared = logic.shared().clone();
+        shared.reset(logic.world());
+        assert!(shared.colors().is_empty());
     }
 
     #[test]

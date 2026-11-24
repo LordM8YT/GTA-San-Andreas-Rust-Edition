@@ -217,6 +217,19 @@ function Vector:distance(other)
   return (self - other):length()
 end
 
+-- Colours: red, green and blue from 0 to 1 (up to 2 brightens).
+local Color = {}
+Color.__index = Color
+Color.__tostring = function(c)
+  return string.format('rgb(%.2f, %.2f, %.2f)', c.r, c.g, c.b)
+end
+Color.__eq = function(a, b)
+  return a.r == b.r and a.g == b.g and a.b == b.b
+end
+function rgb(r, g, b)
+  return setmetatable({ r = tonumber(r) or 0, g = tonumber(g) or 0, b = tonumber(b) or 0 }, Color)
+end
+
 -- Objects of the world, by id. Their fields read the world as it is now.
 local Object, objects = {}, {}
 local ObjectMeta = {}
@@ -243,6 +256,9 @@ ObjectMeta.__index = function(o, key)
     return vector(native.position(id))
   elseif key == 'heading' then
     return native.heading(id)
+  elseif key == 'color' then
+    local r, g, b = native.color(id)
+    return r and rgb(r, g, b) or nil
   end
   return Object[key]
 end
@@ -264,6 +280,23 @@ end
 ObjectMeta.__newindex = function(o, key, value)
   if key == 'visible' then
     local ok, message = native.set_visible(rawget(o, '__object'), value and true or false)
+    if not ok then
+      error(message, 2)
+    end
+  elseif key == 'color' then
+    local color = nil
+    if value ~= nil then
+      if type(value) ~= 'table' or type(value.r) ~= 'number' or type(value.g) ~= 'number' or type(value.b) ~= 'number' then
+        error('a colour is rgb(red, green, blue) from 0 to 1, or nil for its own', 2)
+      end
+      color = { value.r, value.g, value.b }
+    end
+    local ok, message
+    if color then
+      ok, message = native.set_color(rawget(o, '__object'), color[1], color[2], color[3])
+    else
+      ok, message = native.set_color(rawget(o, '__object'))
+    end
     if not ok then
       error(message, 2)
     end

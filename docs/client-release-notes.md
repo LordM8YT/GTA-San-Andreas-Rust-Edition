@@ -3,6 +3,7 @@ SARE free-roam test client, built and tested from the linked commit.
 Version 0.55.0:
 - Build Mode: world scripts. Give any object (or the whole world) a Lua script and make your world do what you want: doors with timers, lifts, sliding doors, spinning things, scores, welcome messages, race results, day and night switches. Scripts react to trigger zones, E, checkpoints, finishes and players joining or leaving, and they show, hide and move objects, send messages, teleport players and set the time and weather.
 - Moving objects carry their collision along, and players standing on one ride with it.
+- Scripts can colour objects (`object.color = rgb(1, 0.2, 0.1)`): traffic lights, team colours, a button that lights up. Everyone sees the same colours.
 - Scripts can put text on screen for one player or everyone (`player:hud`, `world.hud`): scores, timers, rounds. Everyone's lines reach players who join later too.
 - *Script* on the Home ribbon adds a script and opens the new script editor: Lua is coloured and checked as you type (the line with an error is underlined), with examples to start from and a short API help. The Explorer lists scripts under their objects and on its Scripts page; print and errors show in Output while you play.
 - Scripts run the same in Play (F5), from the launcher and on servers. A server runs them once per world instance, so every player sees the same doors and lifts, also players who join later; messages and teleports stay personal.
