@@ -133,6 +133,16 @@ impl Scripts {
                     Who::World,
                     ScriptChange::Move(object, Pose { position, heading }, seconds),
                 ),
+                host::Request::Hud {
+                    player: None,
+                    key,
+                    text,
+                } => (Who::World, ScriptChange::WorldHud(key, text)),
+                host::Request::Hud {
+                    player: Some(player),
+                    key,
+                    text,
+                } => (Who::Player(player), ScriptChange::Hud(key, text)),
                 host::Request::Hour(hour) => (Who::World, ScriptChange::Hour(hour)),
                 host::Request::Weather(weather) => (Who::World, ScriptChange::Weather(weather)),
             })

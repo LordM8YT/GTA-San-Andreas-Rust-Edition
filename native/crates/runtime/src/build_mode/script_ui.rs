@@ -196,7 +196,7 @@ local points = {}
 
 script.object:on('use', function(player)
   points[player.id] = (points[player.id] or 0) + 1
-  player:message('Points: ' .. points[player.id])
+  player:hud('points', 'Points: ' .. points[player.id])
   world.emit('scored', player.name, points[player.id])
 end)
 
@@ -214,6 +214,7 @@ object:show()  :hide()  :toggle()  :on(event, function)
 object:moveTo(vector(x, y, z), seconds, heading)  object:turnTo(heading, seconds)
 player.name  .id  .position  .driving
 player:message(text, seconds)  player:teleport(object or vector(x, y, z), heading)
+player:hud(name, text)  world.hud(name, text)   on-screen text (nil removes it)
 world.message(text, seconds)   world.setHour(0-23)   world.setWeather('rain')
 world.on('enter' | 'leave' | 'use', [object,] function(player, object) end)
 world.on('checkpoint', function(player, race, number, total) end)

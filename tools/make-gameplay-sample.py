@@ -166,10 +166,14 @@ add(
 
 # World scripts: a bell whose script makes a crate vanish for a moment, and
 # a world script that announces race times.
-RING = """-- Press E at the bell: the signal crate vanishes for 3 seconds.
+RING = """-- Press E at the bell: the signal crate vanishes for 3 seconds, and
+-- everyone sees how often the bell has rung.
 local crate = world.find("Signal crate")
+local rings = 0
 
 script.object:on('use', function(player)
+  rings = rings + 1
+  world.hud('bell', 'Bell rung ' .. rings .. (rings == 1 and ' time' or ' times'))
   crate:hide()
   world.message(player.name .. ' rang the bell')
   wait(3)

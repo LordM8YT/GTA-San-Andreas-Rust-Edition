@@ -406,6 +406,9 @@ pub enum Effect {
     Time(u8),
     /// Shared: the weather.
     Weather(Weather),
+    /// For the player: a line of a script's on-screen text (None removes
+    /// it).
+    Hud { key: String, text: Option<String> },
 }
 impl Effect {
     /// Changes the world everyone in it shares, not only the one player.
@@ -491,7 +494,33 @@ pub struct Shared {
     jumps: u32,
     /// Objects scripts moved, and how far along each move is.
     motions: BTreeMap<NodeId, Motion>,
+    /// On-screen text scripts show every player (`world.hud`), by name.
+    hud: BTreeMap<String, String>,
     revision: u64,
+}
+
+/// Most on-screen text lines a world, or a player, can have.
+pub const HUD_LINES: usize = 12;
+/// Longest on-screen text name and line, characters.
+pub const HUD_KEY: usize = 32;
+pub const HUD_TEXT: usize = 120;
+
+/// Set (or with None remove) line `key` of `lines`: false when it is full.
+pub fn set_hud(lines: &mut BTreeMap<String, String>, key: &str, text: Option<&str>) -> bool {
+    let key: String = key.chars().take(HUD_KEY).collect();
+    match text.filter(|t| !t.is_empty()) {
+        None => {
+            lines.remove(&key);
+            true
+        }
+        Some(text) => {
+            if !lines.contains_key(&key) && lines.len() >= HUD_LINES {
+                return false;
+            }
+            lines.insert(key, text.chars().take(HUD_TEXT).collect());
+            true
+        }
+    }
 }
 
 /// A move a script made: an object going from one pose to another over
@@ -651,6 +680,10 @@ impl Shared {
             None => world.poses.get(&node).copied(),
         }
     }
+    /// On-screen text every player of the world sees, by name.
+    pub fn hud(&self) -> &BTreeMap<String, String> {
+        &self.hud
+    }
     /// The objects scripts moved, where they are now.
     pub fn moved(&self) -> impl Iterator<Item = (NodeId, Pose)> + '_ {
         self.motions.iter().map(|(id, m)| (*id, m.now()))
@@ -733,6 +766,11 @@ impl Shared {
             hour: self.hour,
             weather: self.weather.map(|w| w.as_str().to_owned()),
             jump: self.jump,
+            hud: self
+                .hud
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
             moved: self
                 .motions
                 .iter()
@@ -792,9 +830,14 @@ impl Shared {
                 )
             })
             .collect();
+        let mut hud = BTreeMap::new();
+        for (key, text) in &snapshot.hud {
+            set_hud(&mut hud, key, Some(text));
+        }
         Self {
             visibility,
             motions,
+            hud,
             hour: snapshot.hour.map(|h| h.min(23)),
             weather: snapshot.weather.as_deref().and_then(Weather::parse),
             jump: snapshot.jump.map(|(n, h)| (n, h.min(23))),
@@ -887,6 +930,17 @@ impl World {
                 // Shared: everyone sees it with the next snapshot.
                 shared.place(self, node, pose, seconds);
                 return Vec::new();
+            }
+            ScriptChange::WorldHud(key, text) => {
+                let before = shared.hud.clone();
+                set_hud(&mut shared.hud, &key, text.as_deref());
+                if shared.hud != before {
+                    shared.revision += 1;
+                }
+                return Vec::new();
+            }
+            ScriptChange::Hud(key, text) => {
+                return vec![Effect::Hud { key, text }];
             }
         };
         let mut out = Vec::new();
@@ -1343,6 +1397,7 @@ pub mod wire {
     pub enum Personal {
         Message { text: String, seconds: f32 },
         Teleport { position: [f32; 3], heading: f32 },
+        Hud { key: String, text: Option<String> },
     }
     impl Personal {
         /// The personal part of an effect; shared ones travel in snapshots.
@@ -1355,6 +1410,10 @@ pub mod wire {
                 Effect::Teleport(pose) => Some(Self::Teleport {
                     position: pose.position,
                     heading: pose.heading,
+                }),
+                Effect::Hud { key, text } => Some(Self::Hud {
+                    key: key.clone(),
+                    text: text.clone(),
                 }),
                 _ => None,
             }
@@ -1377,6 +1436,12 @@ pub mod wire {
                         heading: *heading,
                     }))
                 }
+                Self::Hud { key, text } => Some(Effect::Hud {
+                    key: key.chars().take(super::HUD_KEY).collect(),
+                    text: text
+                        .as_ref()
+                        .map(|t| t.chars().take(super::HUD_TEXT).collect()),
+                }),
                 _ => None,
             }
         }
@@ -1410,6 +1475,9 @@ pub struct Snapshot {
     /// Objects scripts moved.
     #[serde(rename = "m", default, skip_serializing_if = "Vec::is_empty")]
     pub moved: Vec<SnapshotMotion>,
+    /// On-screen text for everyone: (name, text).
+    #[serde(rename = "u", default, skip_serializing_if = "Vec::is_empty")]
+    pub hud: Vec<(String, String)>,
 }
 
 /// A [`Motion`] in a [`Snapshot`]: poses as x, y, z, heading.
@@ -1572,6 +1640,10 @@ pub enum ScriptChange {
     Weather(String),
     /// Move an object to a pose over some seconds (0: at once).
     Move(NodeId, Pose, f32),
+    /// A line of on-screen text for everyone (None removes it).
+    WorldHud(String, Option<String>),
+    /// A line of on-screen text for the player (None removes it).
+    Hud(String, Option<String>),
 }
 
 impl Happened {
@@ -2071,6 +2143,38 @@ mod tests {
         assert_eq!(shared.jump(), None);
         shared.jump_to(6);
         assert_eq!(shared.jump(), Some((2, 6)));
+    }
+
+    #[test]
+    fn on_screen_text_is_shared_or_personal_and_bounded() {
+        let layout = Layout::default();
+        let mut logic = Logic::new(&layout);
+        let before = logic.shared().revision();
+        assert!(logic
+            .apply_script(ScriptChange::WorldHud(
+                "round".into(),
+                Some("Round 2".into())
+            ))
+            .is_empty());
+        assert!(logic.shared().revision() > before);
+        let copy = Shared::from_snapshot(logic.world(), &logic.shared().snapshot());
+        assert_eq!(copy.hud().get("round").map(String::as_str), Some("Round 2"));
+        // Personal text travels as an effect, also over the wire.
+        let effects = logic.apply_script(ScriptChange::Hud("score".into(), Some("3".into())));
+        let wire = wire::Personal::of(&effects[0]).unwrap();
+        assert_eq!(wire.effect(), Some(effects[0].clone()));
+        // At most HUD_LINES lines; removing frees one.
+        let mut lines = BTreeMap::new();
+        for i in 0..HUD_LINES {
+            assert!(set_hud(&mut lines, &i.to_string(), Some("x")));
+        }
+        assert!(!set_hud(&mut lines, "one more", Some("x")));
+        assert!(set_hud(&mut lines, "0", None));
+        assert!(set_hud(&mut lines, "one more", Some(&"y".repeat(500))));
+        assert_eq!(lines["one more"].len(), HUD_TEXT);
+        let mut shared = logic.shared().clone();
+        shared.reset(logic.world());
+        assert!(shared.hud().is_empty());
     }
 
     #[test]

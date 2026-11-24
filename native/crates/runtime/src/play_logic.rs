@@ -47,6 +47,8 @@ pub struct PlayLogic {
     joined: bool,
     /// Where objects scripts moved are drawn and solid right now.
     placed: HashMap<NodeId, Transform>,
+    /// Scripts' on-screen text for this player alone, by name.
+    hud: std::collections::BTreeMap<String, String>,
 }
 
 /// The pack's merged scene leaves out objects gameplay can show or hide
@@ -113,6 +115,7 @@ impl PlayLogic {
             scripts_started: false,
             joined: false,
             placed: HashMap::new(),
+            hud: Default::default(),
             layout: layout.clone(),
             objects,
             message: None,
@@ -759,6 +762,11 @@ impl State {
                 // the logic every frame.
                 Effect::Time(hour) => self.daycycle.minutes = f32::from(hour) * 60.0,
                 Effect::Weather(_) => {}
+                Effect::Hud { key, text } => {
+                    if let Some(play) = &mut self.play_logic {
+                        world_logic::set_hud(&mut play.hud, &key, text.as_deref());
+                    }
+                }
             }
         }
         // Hidden objects (an opened door) let the player through.
@@ -873,6 +881,44 @@ impl State {
                     )
                 });
             ctx.request_repaint_after(Duration::from_millis(250));
+        }
+        // Scripts' on-screen text: the world's lines, then the player's own.
+        let lines: Vec<(&String, &String)> = play
+            .logic
+            .shared()
+            .hud()
+            .iter()
+            .chain(
+                play.hud
+                    .iter()
+                    .filter(|(k, _)| !play.logic.shared().hud().contains_key(*k)),
+            )
+            .collect();
+        if !lines.is_empty() {
+            egui::Area::new("world-hud".into())
+                .anchor(egui::Align2::LEFT_CENTER, [24.0 * scale, -60.0 * scale])
+                .interactable(false)
+                .fade_in(false)
+                .show(ctx, |ui| {
+                    egui::Frame::new()
+                        .fill(ui_theme::BACKGROUND.gamma_multiply(0.75))
+                        .stroke(egui::Stroke::new(1.0, ui_theme::ACCENT.gamma_multiply(0.4)))
+                        .corner_radius(6.0)
+                        .inner_margin(egui::Margin::symmetric(14, 10))
+                        .show(ui, |ui| {
+                            ui.set_max_width(420.0 * scale);
+                            for (_, text) in lines {
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(text.as_str())
+                                            .size(17.0 * scale)
+                                            .color(ui_theme::TEXT),
+                                    )
+                                    .wrap_mode(egui::TextWrapMode::Wrap),
+                                );
+                            }
+                        });
+                });
         }
         if let Some(prompt) = &play.prompt {
             egui::Area::new("world-prompt".into())

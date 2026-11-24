@@ -151,6 +151,13 @@ pub enum Request {
         heading: f32,
         seconds: f32,
     },
+    /// A line of on-screen text for one player, or everyone (None); text
+    /// None removes it.
+    Hud {
+        player: Option<u32>,
+        key: String,
+        text: Option<String>,
+    },
     /// Set the hour (a running clock jumps there and keeps running).
     Hour(u8),
     Weather(String),
@@ -819,6 +826,30 @@ fn create_state(shared: &Shared, source: &Source, limit: &Rc<Limit>) -> mlua::Re
             },
         )
     });
+    func!("hud", |_lua,
+                  inner,
+                  (player, key, text): (
+        Option<u32>,
+        String,
+        Option<String>
+    )| {
+        if key.is_empty() || key.chars().count() > 32 {
+            return Ok((
+                false,
+                Some("hud needs a name of 1 to 32 characters".to_string()),
+            ));
+        }
+        if player.is_some_and(|id| !inner.players.iter().any(|p| p.id == id)) {
+            return Ok((true, None));
+        }
+        let text = text
+            .filter(|t| !t.is_empty())
+            .map(|t| t.chars().take(120).collect());
+        Ok(match inner.request(Request::Hud { player, key, text }) {
+            Ok(()) => (true, None),
+            Err(e) => (false, Some(e)),
+        })
+    });
     func!("hour", |_lua, inner, (): ()| Ok(inner.hour));
     func!("weather", |_lua, inner, (): ()| Ok(inner.weather.clone()));
     func!("set_hour", |_lua, inner, hour: Option<f64>| {
@@ -1336,6 +1367,35 @@ print(x",
         assert!(
             out[0].contains("Typo:1: a heading is a number of degrees"),
             "{out:?}"
+        );
+    }
+
+    #[test]
+    fn scripts_put_text_on_screen_for_one_or_all() {
+        let mut host = host_with(
+            "Score",
+            "world.on('join', function(p) world.hud('round', 'Round 1') p:hud('score', 0) p:hud('old', nil) end)",
+        );
+        let requests = host.tick(frame(0.1), vec![Event::Join { player: 7 }]);
+        assert_eq!(
+            requests,
+            [
+                Request::Hud {
+                    player: None,
+                    key: "round".into(),
+                    text: Some("Round 1".into())
+                },
+                Request::Hud {
+                    player: Some(7),
+                    key: "score".into(),
+                    text: Some("0".into())
+                },
+                Request::Hud {
+                    player: Some(7),
+                    key: "old".into(),
+                    text: None
+                },
+            ]
         );
     }
 

@@ -449,6 +449,8 @@ fn world_scripts_run_once_per_instance_on_the_server() {
                 script.object:on('use', function(p)
                   lamp:hide()
                   lamp:moveTo(lamp.position + vector(0, 0, 3), 1)
+                  world.hud('bell', 'The bell rang')
+                  p:hud('mine', 'You rang it')
                   world.message('Ding from ' .. p.name)
                   p:message('You rang')
                   print('SCRIPTTEST rang by ' .. p.name)
@@ -489,6 +491,18 @@ fn world_scripts_run_once_per_instance_on_the_server() {
             && snapshot(p[1]).is_some_and(|s| s.hidden.contains(&lamp))
     });
     assert!(snapshot(&ben).unwrap().revision > revision);
+    // On-screen text: the world's line for both, the ringer's own for her.
+    assert_eq!(
+        snapshot(&ben).unwrap().hud,
+        [("bell".to_string(), "The bell rang".to_string())]
+    );
+    let hud = |p: &Player| {
+        personal(p)
+            .into_iter()
+            .filter(|e| matches!(e, wire::Personal::Hud { .. }))
+            .count()
+    };
+    assert_eq!((hud(&anna), hud(&ben)), (1, 0));
     // The lamp's move reaches everyone, to be moved along by each game.
     let moved = snapshot(&ben).unwrap().moved;
     assert!(

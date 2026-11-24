@@ -998,6 +998,11 @@ impl State {
                     "the bell's script sent no message: {:?}",
                     play.message()
                 );
+                assert_eq!(
+                    play.logic.shared().hud().get("bell").map(String::as_str),
+                    Some("Bell rung 1 time"),
+                    "the bell's script put no text on screen"
+                );
                 let build = self.build.as_ref().unwrap();
                 let errors: Vec<&str> = build
                     .log

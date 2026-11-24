@@ -1533,7 +1533,7 @@
       "scripts": [
         {
           "name": "Ring",
-          "source": "-- Press E at the bell: the signal crate vanishes for 3 seconds.\nlocal crate = world.find(\"Signal crate\")\n\nscript.object:on('use', function(player)\n  crate:hide()\n  world.message(player.name .. ' rang the bell')\n  wait(3)\n  crate:show()\nend)\n"
+          "source": "-- Press E at the bell: the signal crate vanishes for 3 seconds, and\n-- everyone sees how often the bell has rung.\nlocal crate = world.find(\"Signal crate\")\nlocal rings = 0\n\nscript.object:on('use', function(player)\n  rings = rings + 1\n  world.hud('bell', 'Bell rung ' .. rings .. (rings == 1 and ' time' or ' times'))\n  crate:hide()\n  world.message(player.name .. ' rang the bell')\n  wait(3)\n  crate:show()\nend)\n"
         }
       ]
     },

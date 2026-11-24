@@ -344,6 +344,14 @@ end
 PlayerMeta.__tostring = function(p)
   return 'player ' .. tostring(p.name)
 end
+-- A line of on-screen text for this player, by name: hud('score', 'Score: 3').
+-- nil or '' removes it.
+function Player:hud(name, text)
+  local ok, message = native.hud(rawget(self, '__player'), tostring(name), text ~= nil and tostring(text) or nil)
+  if not ok then
+    error(message, 2)
+  end
+end
 function Player:message(text, seconds)
   native.message(rawget(self, '__player'), tostring(text), tonumber(seconds) or 4)
 end
@@ -383,6 +391,13 @@ function world.players()
 end
 function world.message(text, seconds)
   native.message(nil, tostring(text), tonumber(seconds) or 4)
+end
+-- A line of on-screen text for everyone in the world.
+function world.hud(name, text)
+  local ok, message = native.hud(nil, tostring(name), text ~= nil and tostring(text) or nil)
+  if not ok then
+    error(message, 2)
+  end
 end
 function world.hour()
   return native.hour()
