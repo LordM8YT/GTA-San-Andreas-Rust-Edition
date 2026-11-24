@@ -423,7 +423,9 @@ fn teleports_leading_into_each_other_do_not_bounce() {
         teleports(&anna)
     );
     // Stepping off and on again is a new visit: back to pad A.
+    // (Wait until the server has seen her off the pad: CI machines can be slow.)
     stand(&mut anna, [150.0, 40.0, 0.0]);
+    server.settle(&mut anna);
     server.idle(&mut [&mut anna], 10);
     stand(&mut anna, [140.0, 40.0, 0.0]);
     server.until(&mut [&mut anna], "the teleport back to pad A", |_, p| {
