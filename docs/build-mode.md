@@ -152,7 +152,10 @@ Only what SARE's renderer really draws is offered:
   to dawn, softly fading out a little past its *ground light radius*.
   Colour, glow size (m), ground light radius (m) and where the lamp sits on
   the object. Lamp posts from the Toolbox come with one. The 32 lamps
-  nearest the camera light the scene; lamps do not cast shadows. Players who
+  nearest the camera light the scene (others show their painted pool), and
+  lamps do not cast shadows. Played from the launcher, lamps on objects that
+  nothing shows, hides or moves are part of the world's merged scene and
+  keep the painted pool. Players who
   turn off *Lamp lighting* in their graphics settings (and the light editor
   graphics) see a painted pool of light on the ground instead. Set a fixed
   time after 20:00 to see them while editing.
