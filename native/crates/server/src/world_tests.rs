@@ -448,6 +448,7 @@ fn world_scripts_run_once_per_instance_on_the_server() {
                 world.on('join', function(p) print('SCRIPTTEST join ' .. p.name) end)
                 script.object:on('use', function(p)
                   lamp:hide()
+                  lamp:moveTo(lamp.position + vector(0, 0, 3), 1)
                   world.message('Ding from ' .. p.name)
                   p:message('You rang')
                   print('SCRIPTTEST rang by ' .. p.name)
@@ -488,6 +489,14 @@ fn world_scripts_run_once_per_instance_on_the_server() {
             && snapshot(p[1]).is_some_and(|s| s.hidden.contains(&lamp))
     });
     assert!(snapshot(&ben).unwrap().revision > revision);
+    // The lamp's move reaches everyone, to be moved along by each game.
+    let moved = snapshot(&ben).unwrap().moved;
+    assert!(
+        moved
+            .iter()
+            .any(|m| m.node == lamp && m.to[2] == 3.0 && m.seconds == 1.0),
+        "{moved:?}"
+    );
     assert!(messages(&anna).contains(&"You rang".to_string()));
     assert!(messages(&anna).contains(&"Ding from Tester".to_string()));
     assert!(!messages(&ben).contains(&"You rang".to_string()));

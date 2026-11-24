@@ -116,6 +116,52 @@ end)
 "#,
     },
     Example {
+        name: "Lift",
+        about: "Moves this object up and down; players standing on it ride along",
+        source: r#"local lift = script.object
+local bottom = lift.position
+
+while true do
+  lift:moveTo(bottom + vector(0, 0, 4), 3)
+  wait(5)
+  lift:moveTo(bottom, 3)
+  wait(5)
+end
+"#,
+    },
+    Example {
+        name: "Sliding door",
+        about: "Give the object an Interaction behaviour: E slides it aside and back",
+        source: r#"-- Give this object an Interaction behaviour (Gameplay in its Properties).
+local door = script.object
+local closed = door.position
+local busy = false
+
+door:on('use', function(player)
+  if busy then return end
+  busy = true
+  door:moveTo(closed + vector(2.5, 0, 0), 1)
+  wait(4)
+  door:moveTo(closed, 1)
+  wait(1)
+  busy = false
+end)
+"#,
+    },
+    Example {
+        name: "Spinner",
+        about: "Turns this object round and round",
+        source: r#"local spinner = script.object
+local heading = spinner.heading
+
+while true do
+  heading = heading + 90
+  spinner:turnTo(heading, 1)
+  wait(1)
+end
+"#,
+    },
+    Example {
         name: "Race results",
         about: "Tells everyone each finish time of the world's checkpoint races",
         source: r#"local best = {}
@@ -163,8 +209,9 @@ end)
 const HELP: &str = "\
 script.object        the object this script is on (nil for world scripts)
 world.find(name)     an object by name;  world.objects(), world.players()
-object.name  .position  .heading  .visible (set it to show or hide)
+object.name  .visible  .position  .heading  (set visible, position or heading)
 object:show()  :hide()  :toggle()  :on(event, function)
+object:moveTo(vector(x, y, z), seconds, heading)  object:turnTo(heading, seconds)
 player.name  .id  .position  .driving
 player:message(text, seconds)  player:teleport(object or vector(x, y, z), heading)
 world.message(text, seconds)   world.setHour(0-23)   world.setWeather('rain')
@@ -175,8 +222,9 @@ world.on('join' | 'quit', function(player) end)
 world.emit(name, ...)  /  world.on(name, function(...) end)   between scripts
 wait(seconds)  spawn(function)  delay(seconds, function)  every(seconds, function)
 print(...)  shows in Output.   vector(x, y, z) + - * , :length(), :distance(v)
-Objects that scripts show or hide: the script's own object, objects named in
-quotes, and objects ticked \"Scripts can change it\".";
+Objects that scripts show, hide or move: the script's own object, objects named
+in quotes, and objects ticked \"Scripts can change it\". Moved objects carry
+players standing on them; their zones stay where they were placed.";
 
 pub fn script(layout: &Layout, at: ScriptAt) -> Option<&Script> {
     match at {

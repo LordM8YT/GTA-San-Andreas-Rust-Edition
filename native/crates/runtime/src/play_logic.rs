@@ -14,6 +14,7 @@ use sa_scene::collision::Player;
 use sa_scene::content_pack::AssetResolver;
 use sa_scene::world_layout::{blender_to_gltf, gltf_to_blender, Layout, NodeId, Transform};
 use sa_scene::world_logic::{self, Effect, Logic, Pose, Weather};
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 pub struct PlayLogic {
@@ -44,6 +45,8 @@ pub struct PlayLogic {
     scripts_started: bool,
     /// The scripts were told the player joined.
     joined: bool,
+    /// Where objects scripts moved are drawn and solid right now.
+    placed: HashMap<NodeId, Transform>,
 }
 
 /// The pack's merged scene leaves out objects gameplay can show or hide
@@ -109,6 +112,7 @@ impl PlayLogic {
             scripts: None,
             scripts_started: false,
             joined: false,
+            placed: HashMap::new(),
             layout: layout.clone(),
             objects,
             message: None,
@@ -253,6 +257,12 @@ impl State {
         if let Some(hour) = play.hour() {
             self.daycycle.minutes = f32::from(hour.min(23)) * 60.0;
         }
+        // Objects scripts move go on moving, here as on the server.
+        play.logic.advance(dt);
+        self.sync_moved_objects();
+        let Some(play) = &mut self.play_logic else {
+            return;
+        };
         play.prompt = None;
         // Zones and checkpoints follow the player on foot or in a car;
         // interactions (E) too, when they work from vehicles.
@@ -376,6 +386,87 @@ impl State {
                 true
             }
             _ => false,
+        }
+    }
+
+    /// Objects scripts moved: drawn and solid where they are now. A player
+    /// standing on one rides along.
+    pub(crate) fn sync_moved_objects(&mut self) {
+        let Some(play) = &mut self.play_logic else {
+            return;
+        };
+        let now: HashMap<NodeId, Pose> = play.logic.shared().moved().collect();
+        if now.is_empty() && play.placed.is_empty() {
+            return;
+        }
+        // (object, as placed in the layout, where it was drawn, where it is now)
+        let mut changes = Vec::new();
+        for (id, pose) in &now {
+            let Some(node) = play.layout.node(*id) else {
+                continue;
+            };
+            let mut to = node.transform;
+            to.position = pose.position;
+            to.rotation[2] = pose.heading;
+            let from = play.placed.get(id).copied().unwrap_or(node.transform);
+            if from != to {
+                changes.push((*id, node.transform, from, to));
+                play.placed.insert(*id, to);
+            }
+        }
+        // Back where they were placed (the world was reset).
+        let returned: Vec<NodeId> = play
+            .placed
+            .keys()
+            .filter(|id| !now.contains_key(id))
+            .copied()
+            .collect();
+        for id in returned {
+            if let (Some(from), Some(node)) = (play.placed.remove(&id), play.layout.node(id)) {
+                changes.push((id, node.transform, from, node.transform));
+            }
+        }
+        if changes.is_empty() {
+            return;
+        }
+        match (&mut play.objects, &mut self.build) {
+            (Some(objects), _) => {
+                for (id, _, _, to) in &changes {
+                    if let Some(node) = objects.layout.node_mut(*id) {
+                        node.transform = *to;
+                    }
+                }
+            }
+            (None, Some(build)) => {
+                for (id, base, _, to) in &changes {
+                    if to == base {
+                        build.gpu.moved.remove(id);
+                    } else {
+                        build.gpu.moved.insert(*id, *to);
+                    }
+                }
+            }
+            (None, None) => {}
+        }
+        let Some(collision) = &mut self.collision else {
+            return;
+        };
+        let feet = self
+            .player
+            .as_ref()
+            .filter(|_| self.walking)
+            .map(|p| p.feet);
+        let mut carried = None;
+        for (id, base, from, to) in &changes {
+            let (base, from, to) = (render_matrix(base), render_matrix(from), render_matrix(to));
+            if feet.is_some_and(|feet| collision.standing_on(feet) == Some(*id)) {
+                carried = Some(to * from.inverse());
+            }
+            collision.move_switchable(*id, to * base.inverse());
+        }
+        if let (Some(carry), Some(player)) = (carried, self.player.as_mut()) {
+            player.feet = carry.transform_point3(player.feet);
+            self.position = player.eye();
         }
     }
 

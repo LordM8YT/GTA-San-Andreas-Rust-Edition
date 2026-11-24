@@ -1,7 +1,7 @@
 {
   "format": "sare-world-layout",
   "version": 1,
-  "next_id": 35,
+  "next_id": 36,
   "settings": {
     "hour": 12,
     "weather": "clear",
@@ -1559,6 +1559,35 @@
           1
         ]
       }
+    },
+    {
+      "id": 35,
+      "name": "Lift",
+      "parent": 14,
+      "asset": "builtin:platform",
+      "transform": {
+        "position": [
+          16,
+          6,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "scripts": [
+        {
+          "name": "Up and down",
+          "source": "-- The lift rises 4 m and comes back down, again and again.\n-- Stand on it to ride along.\nlocal lift = script.object\nlocal bottom = lift.position\n\nwhile true do\n  lift:moveTo(bottom + vector(0, 0, 4), 3)\n  wait(5)\n  lift:moveTo(bottom, 3)\n  wait(5)\nend\n"
+        }
+      ]
     }
   ]
 }

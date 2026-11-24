@@ -246,14 +246,27 @@ ObjectMeta.__index = function(o, key)
   end
   return Object[key]
 end
+local function move(o, position, heading, seconds, level)
+  if not is_vector(position) then
+    error('a position is a vector(x, y, z)', level + 1)
+  end
+  local ok, message = native.move(rawget(o, '__object'), position.x, position.y, position.z, tonumber(heading) or 0, tonumber(seconds) or 0)
+  if not ok then
+    error(message, level + 1)
+  end
+end
 ObjectMeta.__newindex = function(o, key, value)
   if key == 'visible' then
     local ok, message = native.set_visible(rawget(o, '__object'), value and true or false)
     if not ok then
       error(message, 2)
     end
+  elseif key == 'position' then
+    move(o, value, o.heading, 0, 2)
+  elseif key == 'heading' then
+    move(o, o.position, value, 0, 2)
   else
-    error('objects have no field ' .. tostring(key) .. ' to set (visible can be set)', 2)
+    error('objects have no field ' .. tostring(key) .. ' to set (visible, position and heading can be set)', 2)
   end
 end
 ObjectMeta.__tostring = function(o)
@@ -270,6 +283,14 @@ function Object:toggle()
 end
 function Object:on(event, fn)
   return world.on(event, self, fn)
+end
+-- Glide to a position (and heading) over some seconds; wait(seconds) to
+-- let it arrive.
+function Object:moveTo(position, seconds, heading)
+  move(self, position, heading or self.heading, seconds, 2)
+end
+function Object:turnTo(heading, seconds)
+  move(self, self.position, heading, seconds, 2)
 end
 
 -- Players in the world, by id.

@@ -91,6 +91,10 @@ impl Scripts {
                 .iter()
                 .map(|id| (*id, world.visible(shared, *id)))
                 .collect(),
+            poses: shared
+                .moved()
+                .map(|(id, pose)| (id, pose.position, pose.heading))
+                .collect(),
         };
         self.host
             .tick(frame, events)
@@ -115,6 +119,15 @@ impl Scripts {
                             ScriptChange::TeleportAt(Pose { position, heading })
                         }
                     },
+                ),
+                host::Request::Move {
+                    object,
+                    position,
+                    heading,
+                    seconds,
+                } => (
+                    Who::World,
+                    ScriptChange::Move(object, Pose { position, heading }, seconds),
                 ),
                 host::Request::Hour(hour) => (Who::World, ScriptChange::Hour(hour)),
                 host::Request::Weather(weather) => (Who::World, ScriptChange::Weather(weather)),

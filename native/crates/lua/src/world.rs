@@ -53,7 +53,8 @@ pub struct ObjectInfo {
     pub position: [f32; 3],
     /// Degrees, 0 faces north.
     pub heading: f32,
-    /// Scripts may show or hide it (it is drawn and solid on its own).
+    /// Scripts may show, hide and move it (it is drawn and solid on its
+    /// own).
     pub changeable: bool,
     /// Shown as the world starts.
     pub visible: bool,
@@ -142,6 +143,14 @@ pub enum Request {
         player: u32,
         to: Target,
     },
+    /// Move an object to `position` (world metres) facing `heading`
+    /// (degrees), smoothly over `seconds` (0: at once).
+    Move {
+        object: u64,
+        position: [f32; 3],
+        heading: f32,
+        seconds: f32,
+    },
     /// Set the hour (a running clock jumps there and keeps running).
     Hour(u8),
     Weather(String),
@@ -166,6 +175,9 @@ pub struct Frame {
     /// Changeable objects whose visibility differs from the start (a door
     /// a trigger opened).
     pub visible: Vec<(u64, bool)>,
+    /// Objects moved from where they were placed: where they are now
+    /// (position, heading).
+    pub poses: Vec<(u64, [f32; 3], f32)>,
 }
 
 struct Inner {
@@ -186,6 +198,8 @@ struct Inner {
     current: String,
     /// Players as last seen, so `quit` handlers still know who left.
     known: HashMap<u32, PlayerInfo>,
+    /// Where moved objects are now.
+    poses: HashMap<u64, ([f32; 3], f32)>,
 }
 impl Inner {
     fn line(&mut self, text: String, error: bool) {
@@ -262,6 +276,7 @@ impl WorldScripts {
             emits: Vec::new(),
             current: String::new(),
             known: HashMap::new(),
+            poses: HashMap::new(),
         }));
         let mut host = Self {
             shared,
@@ -343,6 +358,11 @@ impl WorldScripts {
             for (id, visible) in frame.visible {
                 inner.visible.insert(id, visible);
             }
+            inner.poses = frame
+                .poses
+                .into_iter()
+                .map(|(id, position, heading)| (id, (position, heading)))
+                .collect();
             inner.flooded = false;
         }
         let emits = std::mem::take(&mut self.shared.borrow_mut().emits);
@@ -596,13 +616,61 @@ fn create_state(shared: &Shared, source: &Source, limit: &Rc<Limit>) -> mlua::Re
         .copied()
         .unwrap_or(false)));
     func!("position", |_lua, inner, id: u64| {
-        let p = inner.objects.get(&id).map_or([0.0; 3], |o| o.position);
+        let p = match inner.poses.get(&id) {
+            Some((p, _)) => *p,
+            None => inner.objects.get(&id).map_or([0.0; 3], |o| o.position),
+        };
         Ok((p[0], p[1], p[2]))
     });
-    func!("heading", |_lua, inner, id: u64| Ok(inner
-        .objects
-        .get(&id)
-        .map_or(0.0, |o| o.heading)));
+    func!("heading", |_lua, inner, id: u64| Ok(
+        match inner.poses.get(&id) {
+            Some((_, h)) => *h,
+            None => inner.objects.get(&id).map_or(0.0, |o| o.heading),
+        }
+    ));
+    func!("move", |_lua,
+                   inner,
+                   (id, x, y, z, heading, seconds): (
+        u64,
+        f32,
+        f32,
+        f32,
+        f32,
+        f32
+    )| {
+        let Some(object) = inner.objects.get(&id) else {
+            return Ok((false, Some("that object is not in the world".to_string())));
+        };
+        if !object.changeable {
+            return Ok((
+                    false,
+                    Some(format!(
+                        "{} cannot be changed by scripts: tick \"Scripts can change it\" in its Properties",
+                        object.name
+                    )),
+                ));
+        }
+        if ![x, y, z, heading, seconds].iter().all(|v| v.is_finite())
+            || [x, y, z].iter().any(|v| v.abs() > 100_000.0)
+        {
+            return Ok((false, Some("moves need real, nearby numbers".to_string())));
+        }
+        let seconds = seconds.clamp(0.0, 600.0);
+        if seconds == 0.0 {
+            inner.poses.insert(id, ([x, y, z], heading));
+        }
+        Ok(
+            match inner.request(Request::Move {
+                object: id,
+                position: [x, y, z],
+                heading,
+                seconds,
+            }) {
+                Ok(()) => (true, None),
+                Err(e) => (false, Some(e)),
+            },
+        )
+    });
     func!("set_visible", |_lua, inner, (id, visible): (u64, bool)| {
         let Some(object) = inner.objects.get(&id) else {
             return Ok((false, Some("that object is not in the world".to_string())));
@@ -1180,6 +1248,59 @@ print(x",
         assert_eq!(
             texts(&mut host),
             ["World: 21  rain  vector(10.00, 0.00, 0.00)  90.0"]
+        );
+    }
+
+    #[test]
+    fn scripts_move_objects_at_once_or_smoothly() {
+        let mut host = host(&[(
+            "Lift",
+            r#"
+            local door = world.find('Door')
+            door.position = vector(1, 2, 3)
+            print(door.position, door.heading)
+            door.heading = 90
+            door:moveTo(door.position + vector(0, 0, 5), 2)
+            door:turnTo(180, 1)
+            print(pcall(function() world.find('Pad').position = vector(0, 0, 0) end))
+            "#,
+            None,
+        )]);
+        let out = texts(&mut host);
+        assert_eq!(out[0], "Lift: vector(1.00, 2.00, 3.00)  0.0");
+        assert!(
+            out[1].starts_with("Lift: false") && out[1].contains("Pad cannot be changed"),
+            "{out:?}"
+        );
+        let moves = host.tick(frame(0.1), vec![]);
+        assert_eq!(
+            moves,
+            [
+                Request::Move {
+                    object: 1,
+                    position: [1.0, 2.0, 3.0],
+                    heading: 0.0,
+                    seconds: 0.0
+                },
+                Request::Move {
+                    object: 1,
+                    position: [1.0, 2.0, 3.0],
+                    heading: 90.0,
+                    seconds: 0.0
+                },
+                Request::Move {
+                    object: 1,
+                    position: [1.0, 2.0, 8.0],
+                    heading: 90.0,
+                    seconds: 2.0
+                },
+                Request::Move {
+                    object: 1,
+                    position: [1.0, 2.0, 3.0],
+                    heading: 180.0,
+                    seconds: 1.0
+                },
+            ]
         );
     }
 

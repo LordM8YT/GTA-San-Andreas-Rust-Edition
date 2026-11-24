@@ -822,6 +822,8 @@ impl State {
             self.keys.clear();
             if let Some(build) = &mut self.build {
                 build.playtesting = false;
+                // Objects scripts moved are back where they were placed.
+                build.gpu.moved.clear();
                 build.info("Back in Build Mode. Your edits are as you left them.");
             }
             return;
@@ -1000,6 +1002,35 @@ impl State {
                     .filter(|t| t.starts_with("Script error"))
                     .collect();
                 assert!(errors.is_empty(), "script errors: {errors:?}");
+                // The lift's script has been moving it since the playtest
+                // began: drawn and solid higher up.
+                let lift = smoke_node(self, "Lift");
+                let risen = play
+                    .logic
+                    .shared()
+                    .moved()
+                    .find(|(id, _)| *id == lift.0)
+                    .map(|(_, pose)| pose.position[2]);
+                assert!(
+                    risen.is_some_and(|z| z > 0.0),
+                    "the lift's script did not move it: {risen:?}"
+                );
+                assert!(
+                    build.gpu.moved.contains_key(&lift.0),
+                    "the moved lift is not drawn where it is"
+                );
+                let top = crate::play_logic::blender_to_render([lift.1[0], lift.1[1], 10.0]);
+                let ground = self
+                    .collision
+                    .as_ref()
+                    .unwrap()
+                    .ground_below(top, top.y)
+                    .unwrap_or(0.0);
+                let base = crate::play_logic::blender_to_render([lift.1[0], lift.1[1], 1.0]).y;
+                assert!(
+                    ground > base + 0.001,
+                    "the moved lift is not solid where it is ({ground} vs {base})"
+                );
                 capture(self, "playtest-script-bell.png");
             }
             60 => self.smoke_stand_at(door.1),
@@ -1013,6 +1044,41 @@ impl State {
                 );
             }
             72 => capture(self, "playtest-inside.png"),
+            // A player standing on the lift rides along when it moves.
+            74 => {
+                let lift = smoke_node(self, "Lift").0;
+                let play = self.play_logic.as_ref().unwrap();
+                let pose = play.logic.shared().pose(play.logic.world(), lift).unwrap();
+                let [x, y, z] = pose.position;
+                self.smoke_stand_at([x, y, z + 1.0]);
+            }
+            76 => {
+                use sa_scene::world_logic::{Pose, ScriptChange};
+                let lift = smoke_node(self, "Lift").0;
+                let feet = self.player.as_ref().unwrap().feet;
+                assert_eq!(
+                    self.collision.as_ref().unwrap().standing_on(feet),
+                    Some(lift),
+                    "the player is not standing on the lift"
+                );
+                let play = self.play_logic.as_mut().unwrap();
+                let pose = play.logic.shared().pose(play.logic.world(), lift).unwrap();
+                let [x, y, z] = pose.position;
+                play.logic.apply_script(ScriptChange::Move(
+                    lift,
+                    Pose {
+                        position: [x, y, z + 2.0],
+                        heading: pose.heading,
+                    },
+                    0.0,
+                ));
+                self.sync_moved_objects();
+                let risen = self.player.as_ref().unwrap().feet.y - feet.y;
+                assert!(
+                    (risen - 2.0).abs() < 0.05,
+                    "the lift did not carry the player up 2 m ({risen})"
+                );
+            }
             80 => {
                 let revision = self.build.as_ref().unwrap().history.revision;
                 self.toggle_playtest();

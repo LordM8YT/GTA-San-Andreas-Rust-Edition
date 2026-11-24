@@ -47,6 +47,9 @@ pub struct Gpu {
     pub lights: HashMap<NodeId, LightMesh>,
     /// The terrain or road each generated object's mesh was built from.
     generated: HashMap<NodeId, Generated>,
+    /// Where objects a script moved are drawn while playtesting, instead
+    /// of their place in the layout.
+    pub moved: HashMap<NodeId, Transform>,
 }
 
 /// What a terrain or road object's own mesh is made from.
@@ -168,6 +171,7 @@ impl Gpu {
         });
         for node in &layout.nodes {
             let Some(asset) = &node.asset else { continue };
+            let transform = self.moved.get(&node.id).copied().unwrap_or(node.transform);
             if node.terrain.is_some() || node.road.is_some() {
                 // Its own mesh, rebuilt when sculpted, its points change or
                 // it moves.
@@ -178,14 +182,14 @@ impl Gpu {
                     && self
                         .objects
                         .get(&node.id)
-                        .is_some_and(|o| o.transform == node.transform);
+                        .is_some_and(|o| o.transform == transform);
                 if !fresh {
                     let Some(generated) = Generated::of(node) else {
                         continue;
                     };
                     match upload(state, &generated.model(), false) {
                         Ok(mesh) => {
-                            let object = instance(state, &mesh, asset.clone(), node.transform);
+                            let object = instance(state, &mesh, asset.clone(), transform);
                             self.objects.insert(node.id, object);
                             self.generated.insert(node.id, generated);
                         }
@@ -195,15 +199,15 @@ impl Gpu {
                 continue;
             }
             match self.objects.get_mut(&node.id) {
-                Some(object) if object.transform == node.transform => {}
+                Some(object) if object.transform == transform => {}
                 Some(object) => {
-                    object.transform = node.transform;
+                    object.transform = transform;
                     let mesh = &self.assets[asset];
                     place(state, mesh, object);
                 }
                 None => {
                     let mesh = self.asset(state, resolver, asset, problems);
-                    let object = instance(state, mesh, asset.clone(), node.transform);
+                    let object = instance(state, mesh, asset.clone(), transform);
                     self.objects.insert(node.id, object);
                 }
             }

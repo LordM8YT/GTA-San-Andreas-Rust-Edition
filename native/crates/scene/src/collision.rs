@@ -1,6 +1,6 @@
 //! Player collision over original COL geometry and visual fallback meshes.
 use crate::Batch;
-use glam::Vec3;
+use glam::{Mat4, Vec3};
 use std::collections::{HashMap, HashSet};
 
 const CELL: f32 = 8.0;
@@ -18,6 +18,29 @@ struct Triangle {
     owner: u32,
 }
 
+/// The grid cells a triangle touches (None when it spans too many to index).
+fn cells_of(a: Vec3, b: Vec3, c: Vec3) -> Option<Vec<(i32, i32)>> {
+    let min = a.min(b).min(c);
+    let max = a.max(b).max(c);
+    let (x0, x1, z0, z1) = (
+        (min.x / CELL).floor() as i32,
+        (max.x / CELL).floor() as i32,
+        (min.z / CELL).floor() as i32,
+        (max.z / CELL).floor() as i32,
+    );
+    if (x1 as i64 - x0 as i64 + 1) * (z1 as i64 - z0 as i64 + 1) > 4096 {
+        return None;
+    }
+    Some(
+        (x0..=x1)
+            .flat_map(|x| (z0..=z1).map(move |z| (x, z)))
+            .collect(),
+    )
+}
+
+/// Switchable objects' triangles as added, by owner: (index, corners).
+type Placed = HashMap<u32, Vec<(usize, [Vec3; 3])>>;
+
 pub struct CollisionWorld {
     triangles: Vec<Triangle>,
     cells: HashMap<(i32, i32), Vec<usize>>,
@@ -28,6 +51,9 @@ pub struct CollisionWorld {
     switchable: Vec<u64>,
     /// Owners whose triangles are ignored right now.
     hidden: HashSet<u32>,
+    /// Switchable objects' triangles as they were added, by owner, so a
+    /// script can move the object ([`Self::move_switchable`]).
+    placed: Box<Placed>,
 }
 impl CollisionWorld {
     pub fn from_batches(batches: &[Batch]) -> Self {
@@ -37,6 +63,7 @@ impl CollisionWorld {
             open_door_bounds: Vec::new(),
             switchable: Vec::new(),
             hidden: HashSet::new(),
+            placed: Box::default(),
         };
         world.add(batches, 0);
         world
@@ -69,8 +96,51 @@ impl CollisionWorld {
             .map(|(index, _)| index as u32 + 1)
             .collect();
     }
+    /// Move switchable object `id`: `matrix` takes its triangles from where
+    /// they were added to where they are now. False when it was not added.
+    pub fn move_switchable(&mut self, id: u64, matrix: Mat4) -> bool {
+        let Some(owner) = self.switchable.iter().position(|s| *s == id) else {
+            return false;
+        };
+        let owner = owner as u32 + 1;
+        let Some(placed) = self.placed.get(&owner) else {
+            return true;
+        };
+        for (index, [a, b, c]) in placed {
+            let old = self.triangles[*index];
+            for key in cells_of(old.a, old.b, old.c).into_iter().flatten() {
+                if let Some(list) = self.cells.get_mut(&key) {
+                    list.retain(|i| i != index);
+                }
+            }
+            let (a, b, c) = (
+                matrix.transform_point3(*a),
+                matrix.transform_point3(*b),
+                matrix.transform_point3(*c),
+            );
+            let cross = (b - a).cross(c - a);
+            let normal = cross.try_normalize().unwrap_or(old.normal);
+            self.triangles[*index] = Triangle {
+                a,
+                b,
+                c,
+                normal,
+                owner,
+            };
+            if !(a.is_finite() && b.is_finite() && c.is_finite()) {
+                continue;
+            }
+            for key in cells_of(a, b, c).into_iter().flatten() {
+                let list = self.cells.entry(key).or_default();
+                // Queries sort what they find, so order does not matter.
+                list.push(*index);
+            }
+        }
+        true
+    }
     fn add(&mut self, batches: &[Batch], owner: u32) {
         let (triangles, cells) = (&mut self.triangles, &mut self.cells);
+        let placed = &mut self.placed;
         for batch in batches {
             if batch.alpha {
                 continue;
@@ -110,6 +180,9 @@ impl CollisionWorld {
                     normal,
                     owner,
                 });
+                if owner != 0 {
+                    placed.entry(owner).or_default().push((index, [a, b, c]));
+                }
                 for x in x0..=x1 {
                     for z in z0..=z1 {
                         cells.entry((x, z)).or_default().push(index);
@@ -240,7 +313,20 @@ impl CollisionWorld {
         indices
     }
     pub fn ground_below(&self, pos: Vec3, max_y: f32) -> Option<f32> {
-        let mut best = None;
+        self.ground_hit(pos, max_y).map(|(y, _)| y)
+    }
+    /// The switchable object the feet stand on (within a few centimetres),
+    /// if any: a script's moving platform carries what stands on it.
+    pub fn standing_on(&self, feet: Vec3) -> Option<u64> {
+        let (y, owner) = self.ground_hit(feet, feet.y + 0.25)?;
+        if owner == 0 || y < feet.y - 0.25 {
+            return None;
+        }
+        self.switchable.get(owner as usize - 1).copied()
+    }
+    /// The highest walkable surface under `pos` up to `max_y`, and its owner.
+    fn ground_hit(&self, pos: Vec3, max_y: f32) -> Option<(f32, u32)> {
+        let mut best: Option<(f32, u32)> = None;
         for i in self.nearby(pos, RADIUS) {
             let t = self.triangles[i];
             if t.normal.y.abs() < 0.55 {
@@ -263,8 +349,8 @@ impl CollisionWorld {
                 continue;
             }
             let y = t.a.y + u * (t.b.y - t.a.y) + v * (t.c.y - t.a.y);
-            if y <= max_y + 0.001 && best.is_none_or(|old| y > old) {
-                best = Some(y);
+            if y <= max_y + 0.001 && best.is_none_or(|(old, _)| y > old) {
+                best = Some((y, t.owner));
             }
         }
         best
@@ -670,6 +756,33 @@ mod tests {
         );
         world.set_hidden([]);
         assert_eq!(world.ground_below(top, 5.0), Some(3.0));
+
+        // A script moves the floor 20 m east and 1 m up: solid there, gone here.
+        assert!(world.move_switchable(7, Mat4::from_translation(Vec3::new(20.0, 1.0, 0.0))));
+        assert_eq!(world.ground_below(top, 5.0), Some(0.0));
+        let there = Vec3::new(20.0, 6.0, 0.0);
+        assert_eq!(world.ground_below(there, 5.0), Some(4.0));
+        // Moves are from where it was added, not from the last move.
+        assert!(world.move_switchable(7, Mat4::from_translation(Vec3::new(20.0, 2.0, 0.0))));
+        assert_eq!(world.ground_below(there, 5.0), Some(5.0));
+        assert_eq!(world.standing_on(Vec3::new(20.0, 5.0, 0.0)), Some(7));
+        assert_eq!(
+            world.standing_on(Vec3::new(20.0, 5.6, 0.0)),
+            None,
+            "in the air"
+        );
+        assert_eq!(
+            world.standing_on(Vec3::new(0.0, 0.0, 0.0)),
+            None,
+            "static floor"
+        );
+        world.set_hidden([7]);
+        assert_eq!(
+            world.ground_below(there, 6.0),
+            None,
+            "hidden where it moved"
+        );
+        assert!(!world.move_switchable(8, Mat4::IDENTITY));
     }
     #[test]
     fn floor_and_wall() {

@@ -32,7 +32,7 @@ use glam::{Quat, Vec3};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Largest zone side, in metres.
 pub const MAX_ZONE: f32 = 500.0;
@@ -489,7 +489,44 @@ pub struct Shared {
     /// Jumps made so far, kept through a reset: players compare jump
     /// numbers, so a number must never come round again.
     jumps: u32,
+    /// Objects scripts moved, and how far along each move is.
+    motions: BTreeMap<NodeId, Motion>,
     revision: u64,
+}
+
+/// A move a script made: an object going from one pose to another over
+/// `seconds` (0: at once), `elapsed` seconds in. Its zones stay where the
+/// object was placed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Motion {
+    pub from: Pose,
+    pub to: Pose,
+    pub seconds: f32,
+    pub elapsed: f32,
+}
+impl Motion {
+    /// Longest move, seconds.
+    pub const MAX_SECONDS: f32 = 600.0;
+    /// Where the object is now: eased in and out along the way, turning the
+    /// short way round.
+    pub fn now(&self) -> Pose {
+        let t = if self.seconds <= 0.0 {
+            1.0
+        } else {
+            (self.elapsed / self.seconds).clamp(0.0, 1.0)
+        };
+        let t = t * t * (3.0 - 2.0 * t);
+        let from = Vec3::from_array(self.from.position);
+        let to = Vec3::from_array(self.to.position);
+        let turn = (self.to.heading - self.from.heading + 180.0).rem_euclid(360.0) - 180.0;
+        Pose {
+            position: from.lerp(to, t).to_array(),
+            heading: self.from.heading + turn * t,
+        }
+    }
+    pub fn done(&self) -> bool {
+        self.elapsed >= self.seconds
+    }
 }
 
 /// One player's progress: the zones they stand in, the once-triggers they
@@ -570,6 +607,59 @@ impl Shared {
         };
     }
     /// Objects actions hid.
+    /// Time passes for moving objects (no new revision: everyone moves them
+    /// along by themselves).
+    pub fn advance(&mut self, dt: f32) {
+        for motion in self.motions.values_mut() {
+            if !motion.done() {
+                motion.elapsed = (motion.elapsed + dt.max(0.0)).min(motion.seconds);
+            }
+        }
+    }
+    /// Start moving `node` from where it is now to `to` over `seconds`.
+    /// False when scripts may not move it.
+    pub fn place(&mut self, world: &World, node: NodeId, to: Pose, seconds: f32) -> bool {
+        if !world.switchable.contains(&node)
+            || !to.position.iter().all(|v| v.is_finite())
+            || !to.heading.is_finite()
+        {
+            return false;
+        }
+        let Some(from) = self.pose(world, node) else {
+            return false;
+        };
+        let seconds = if seconds.is_finite() {
+            seconds.clamp(0.0, Motion::MAX_SECONDS)
+        } else {
+            0.0
+        };
+        self.motions.insert(
+            node,
+            Motion {
+                from,
+                to,
+                seconds,
+                elapsed: 0.0,
+            },
+        );
+        self.revision += 1;
+        true
+    }
+    /// Where `node` is now: moved by a script, or as placed.
+    pub fn pose(&self, world: &World, node: NodeId) -> Option<Pose> {
+        match self.motions.get(&node) {
+            Some(motion) => Some(motion.now()),
+            None => world.poses.get(&node).copied(),
+        }
+    }
+    /// The objects scripts moved, where they are now.
+    pub fn moved(&self) -> impl Iterator<Item = (NodeId, Pose)> + '_ {
+        self.motions.iter().map(|(id, m)| (*id, m.now()))
+    }
+    /// Whether some move is still on its way.
+    pub fn moving(&self) -> bool {
+        self.motions.values().any(|m| !m.done())
+    }
     pub fn hidden_ids(&self) -> impl Iterator<Item = NodeId> + '_ {
         self.visibility
             .iter()
@@ -639,6 +729,27 @@ impl Shared {
             hour: self.hour,
             weather: self.weather.map(|w| w.as_str().to_owned()),
             jump: self.jump,
+            moved: self
+                .motions
+                .iter()
+                .map(|(node, m)| SnapshotMotion {
+                    node: *node,
+                    from: [
+                        m.from.position[0],
+                        m.from.position[1],
+                        m.from.position[2],
+                        m.from.heading,
+                    ],
+                    to: [
+                        m.to.position[0],
+                        m.to.position[1],
+                        m.to.position[2],
+                        m.to.heading,
+                    ],
+                    seconds: m.seconds,
+                    elapsed: m.elapsed,
+                })
+                .collect(),
         }
     }
     /// The state a server sent; objects `world` does not have are ignored.
@@ -651,8 +762,35 @@ impl Shared {
                 }
             }
         }
+        let pose = |v: [f32; 4]| Pose {
+            position: [v[0], v[1], v[2]],
+            heading: v[3],
+        };
+        let motions = snapshot
+            .moved
+            .iter()
+            .filter(|m| {
+                world.switchable.contains(&m.node)
+                    && m.from.iter().chain(&m.to).all(|v| v.is_finite())
+                    && m.seconds.is_finite()
+                    && m.elapsed.is_finite()
+            })
+            .map(|m| {
+                let seconds = m.seconds.clamp(0.0, Motion::MAX_SECONDS);
+                (
+                    m.node,
+                    Motion {
+                        from: pose(m.from),
+                        to: pose(m.to),
+                        seconds,
+                        elapsed: m.elapsed.clamp(0.0, seconds),
+                    },
+                )
+            })
+            .collect();
         Self {
             visibility,
+            motions,
             hour: snapshot.hour.map(|h| h.min(23)),
             weather: snapshot.weather.as_deref().and_then(Weather::parse),
             jump: snapshot.jump.map(|(n, h)| (n, h.min(23))),
@@ -741,6 +879,11 @@ impl World {
             }
             ScriptChange::Hour(hour) => Action::SetTime { hour },
             ScriptChange::Weather(weather) => Action::SetWeather { weather },
+            ScriptChange::Move(node, pose, seconds) => {
+                // Shared: everyone sees it with the next snapshot.
+                shared.place(self, node, pose, seconds);
+                return Vec::new();
+            }
         };
         let mut out = Vec::new();
         self.run(shared, player, 0, &[Kept::Known(action)], &mut out);
@@ -1041,8 +1184,8 @@ impl World {
                     seconds: seconds.clamp(0.5, 60.0),
                 }),
                 Action::Teleport { target } => {
-                    if let Some(pose) = target.and_then(|t| self.poses.get(&t)) {
-                        out.push(Effect::Teleport(*pose));
+                    if let Some(pose) = target.and_then(|t| shared.pose(self, t)) {
+                        out.push(Effect::Teleport(pose));
                         player.settle = true;
                     }
                 }
@@ -1109,6 +1252,10 @@ impl Logic {
     /// Take the shared state a server decided.
     pub fn set_shared(&mut self, shared: Shared) {
         self.shared = shared;
+    }
+    /// Time passes for objects scripts are moving.
+    pub fn advance(&mut self, dt: f32) {
+        self.shared.advance(dt);
     }
     /// [`World::apply_script`] for the one player.
     pub fn apply_script(&mut self, change: ScriptChange) -> Vec<Effect> {
@@ -1256,6 +1403,24 @@ pub struct Snapshot {
     /// The latest jump of a running clock: (number, hour).
     #[serde(rename = "j", default, skip_serializing_if = "Option::is_none")]
     pub jump: Option<(u32, u8)>,
+    /// Objects scripts moved.
+    #[serde(rename = "m", default, skip_serializing_if = "Vec::is_empty")]
+    pub moved: Vec<SnapshotMotion>,
+}
+
+/// A [`Motion`] in a [`Snapshot`]: poses as x, y, z, heading.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SnapshotMotion {
+    #[serde(rename = "n")]
+    pub node: NodeId,
+    #[serde(rename = "f")]
+    pub from: [f32; 4],
+    #[serde(rename = "t")]
+    pub to: [f32; 4],
+    #[serde(rename = "s")]
+    pub seconds: f32,
+    #[serde(rename = "e")]
+    pub elapsed: f32,
 }
 
 /// Objects an action or a script can show or hide. Played worlds keep them
@@ -1401,6 +1566,8 @@ pub enum ScriptChange {
     TeleportAt(Pose),
     Hour(u8),
     Weather(String),
+    /// Move an object to a pose over some seconds (0: at once).
+    Move(NodeId, Pose, f32),
 }
 
 impl Happened {
@@ -1900,6 +2067,60 @@ mod tests {
         assert_eq!(shared.jump(), None);
         shared.jump_to(6);
         assert_eq!(shared.jump(), Some((2, 6)));
+    }
+
+    #[test]
+    fn moved_objects_glide_share_and_reset() {
+        use crate::world_layout::Script;
+        let mut layout = Layout::default();
+        let lift = object(&mut layout, "Lift", [10.0, 0.0, 0.0], None);
+        let fixed = object(&mut layout, "Fixed", [20.0, 0.0, 0.0], None);
+        layout
+            .node_mut(lift)
+            .unwrap()
+            .scripts
+            .push(Script::new("Up", ""));
+        let mut logic = Logic::new(&layout);
+        let up = Pose {
+            position: [10.0, 0.0, 4.0],
+            heading: 90.0,
+        };
+        logic.apply_script(ScriptChange::Move(lift, up, 2.0));
+        logic.apply_script(ScriptChange::Move(fixed, up, 2.0));
+        let world = logic.world().clone();
+        let at = |logic: &Logic| logic.shared().pose(&world, lift).unwrap();
+        assert_eq!(at(&logic).position, [10.0, 0.0, 0.0], "starts where it is");
+        logic.advance(1.0);
+        let half = at(&logic);
+        assert!((half.position[2] - 2.0).abs() < 1e-4 && (half.heading - 45.0).abs() < 1e-3);
+        // Only objects scripts may change move.
+        assert_eq!(
+            logic.shared().pose(&world, fixed).unwrap().position,
+            [20.0, 0.0, 0.0]
+        );
+        // A game that joins halfway gets the move halfway.
+        let copy = Shared::from_snapshot(&world, &logic.shared().snapshot());
+        assert_eq!(copy.pose(&world, lift), Some(half));
+        logic.advance(5.0);
+        assert_eq!(at(&logic), up);
+        assert!(!logic.shared().moving());
+        // Turning goes the short way round.
+        logic.apply_script(ScriptChange::Move(
+            lift,
+            Pose {
+                heading: 720.0,
+                ..up
+            },
+            1.0,
+        ));
+        logic.advance(0.5);
+        assert!((at(&logic).heading - 45.0).abs() < 1e-3, "{:?}", at(&logic));
+        let mut shared = logic.shared().clone();
+        shared.reset(&world);
+        assert_eq!(
+            shared.pose(&world, lift).unwrap().position,
+            [10.0, 0.0, 0.0]
+        );
     }
 
     #[test]

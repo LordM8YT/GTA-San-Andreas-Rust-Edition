@@ -197,6 +197,20 @@ add(
 )
 nodes[-1]["scripts"] = [{"name": "Ring", "source": RING}]
 add("Signal crate", "crate", (-6, -8, 0), parent=play)
+LIFT = """-- The lift rises 4 m and comes back down, again and again.
+-- Stand on it to ride along.
+local lift = script.object
+local bottom = lift.position
+
+while true do
+  lift:moveTo(bottom + vector(0, 0, 4), 3)
+  wait(5)
+  lift:moveTo(bottom, 3)
+  wait(5)
+end
+"""
+add("Lift", "platform", (16, 6, 0), parent=play)
+nodes[-1]["scripts"] = [{"name": "Up and down", "source": LIFT}]
 
 layout = {
     "format": "sare-world-layout",

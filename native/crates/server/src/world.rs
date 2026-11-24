@@ -513,6 +513,10 @@ fn run_scripts(
         .last_scripts
         .replace(now)
         .map_or(0.0, |last| (now - last).as_secs_f32().min(1.0));
+    // Objects scripts move go on moving (clients move them the same way).
+    for state in game.buckets.values_mut() {
+        state.advance(dt);
+    }
     // Instances nobody has been in for a while stop their scripts (the
     // state stays); they start again when someone comes.
     let occupied: std::collections::BTreeSet<u32> =
