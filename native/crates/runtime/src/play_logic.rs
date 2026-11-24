@@ -47,6 +47,8 @@ pub struct PlayLogic {
     joined: bool,
     /// Where objects scripts moved are drawn and solid right now.
     placed: HashMap<NodeId, Transform>,
+    /// The shared state revision the object colours were last drawn from.
+    colors_drawn: Option<u64>,
     /// Scripts' on-screen text for this player alone, by name.
     hud: std::collections::BTreeMap<String, String>,
 }
@@ -116,6 +118,7 @@ impl PlayLogic {
             joined: false,
             placed: HashMap::new(),
             hud: Default::default(),
+            colors_drawn: None,
             layout: layout.clone(),
             objects,
             message: None,
@@ -406,6 +409,12 @@ impl State {
         let Some(play) = &mut self.play_logic else {
             return;
         };
+        // Only when the shared state changed.
+        let revision = play.logic.shared().revision();
+        if play.colors_drawn == Some(revision) {
+            return;
+        }
+        play.colors_drawn = Some(revision);
         let colors: HashMap<NodeId, [f32; 3]> = play
             .logic
             .shared()

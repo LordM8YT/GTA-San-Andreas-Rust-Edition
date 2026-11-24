@@ -224,7 +224,7 @@ end)
 const HELP: &str = "\
 script.object        the object this script is on (nil for world scripts)
 world.find(name)     an object by name;  world.objects(), world.players()
-object.name  .visible  .position  .heading  .color  (all can be set)
+object.name  .visible  .position  .heading  .color  (set any but name)
 object.color = rgb(1, 0.5, 0)  (nil: its own colour again)
 object:show()  :hide()  :toggle()  :on(event, function)
 object:moveTo(vector(x, y, z), seconds, heading)  object:turnTo(heading, seconds)

@@ -1654,6 +1654,9 @@ pub struct ScriptObject {
     pub heading: f32,
     /// Scripts may show or hide it ([`switchable`]).
     pub changeable: bool,
+    /// Scripts may colour it: a model (terrain and roads are not drawn
+    /// tinted).
+    pub paintable: bool,
     pub visible: bool,
 }
 /// Every object of the layout (not groups), in layout order.
@@ -1670,6 +1673,7 @@ pub fn script_objects(layout: &Layout) -> Vec<ScriptObject> {
             position: n.transform.position,
             heading: n.transform.rotation[2],
             changeable: changeable.contains(&n.id),
+            paintable: n.terrain.is_none() && n.road.is_none(),
             visible: flags.get(&n.id).is_none_or(|f| f.visible),
         })
         .collect()

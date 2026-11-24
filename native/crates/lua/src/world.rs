@@ -56,6 +56,8 @@ pub struct ObjectInfo {
     /// Scripts may show, hide and move it (it is drawn and solid on its
     /// own).
     pub changeable: bool,
+    /// Scripts may colour it (a model, not terrain or a road).
+    pub paintable: bool,
     /// Shown as the world starts.
     pub visible: bool,
 }
@@ -670,12 +672,20 @@ fn create_state(shared: &Shared, source: &Source, limit: &Rc<Limit>) -> mlua::Re
                         inner,
                         (id, r, g, b): (
         u64,
-        Option<f32>,
-        Option<f32>,
-        Option<f32>
+        Option<f64>,
+        Option<f64>,
+        Option<f64>
     )| {
+        // Clamped as f64, so huge values become 2 instead of failing.
+        let channel = |v: f64| {
+            if v.is_nan() {
+                v as f32
+            } else {
+                v.clamp(0.0, 2.0) as f32
+            }
+        };
         let color = match (r, g, b) {
-            (Some(r), Some(g), Some(b)) => Some((r, g, b)),
+            (Some(r), Some(g), Some(b)) => Some((channel(r), channel(g), channel(b))),
             _ => None,
         };
         let Some(object) = inner.objects.get(&id) else {
@@ -690,6 +700,15 @@ fn create_state(shared: &Shared, source: &Source, limit: &Rc<Limit>) -> mlua::Re
                     )),
                 ));
         }
+        if !object.paintable {
+            return Ok((
+                false,
+                Some(format!(
+                    "{} cannot be coloured: colours work on models, not terrain or roads",
+                    object.name
+                )),
+            ));
+        }
         let color = color.map(|(r, g, b)| [r, g, b]);
         if color.is_some_and(|c| !c.iter().all(|v| v.is_finite())) {
             return Ok((
@@ -697,7 +716,8 @@ fn create_state(shared: &Shared, source: &Source, limit: &Rc<Limit>) -> mlua::Re
                 Some("a colour is rgb(red, green, blue) from 0 to 1".to_string()),
             ));
         }
-        let color = color.map(|c| c.map(|v| v.clamp(0.0, 2.0)));
+        // White is the object's own colour, as the world keeps it.
+        let color = color.filter(|c| *c != [1.0; 3]);
         match color {
             Some(c) => inner.colors.insert(id, c),
             None => inner.colors.remove(&id),
@@ -1028,6 +1048,7 @@ mod tests {
                 position: [0.0, 0.0, 0.0],
                 heading: 0.0,
                 changeable: true,
+                paintable: true,
                 visible: true,
             },
             ObjectInfo {
@@ -1036,6 +1057,7 @@ mod tests {
                 position: [10.0, 0.0, 0.0],
                 heading: 90.0,
                 changeable: false,
+                paintable: true,
                 visible: true,
             },
         ]
@@ -1459,6 +1481,9 @@ print(x",
             local door = world.find('Door')
             door.color = rgb(1, 0, 0)
             print(door.color, door.color == rgb(1, 0, 0))
+            door.color = rgb(1, 0.85, 0.1)
+            print(door.color == rgb(1, 0.85, 0.1))
+            print(pcall(rgb, 1, 0.5))
             door.color = nil
             print(door.color)
             print(pcall(function() door.color = 'red' end))
@@ -1467,13 +1492,15 @@ print(x",
         );
         let out = texts(&mut host);
         assert_eq!(out[0], "Paint: rgb(1.00, 0.00, 0.00)  true");
-        assert_eq!(out[1], "Paint: nil");
+        assert_eq!(out[1], "Paint: true", "colours compare as written");
+        assert!(out[2].contains("rgb needs three numbers"), "{out:?}");
+        assert_eq!(out[3], "Paint: nil");
         assert!(
-            out[2].contains("a colour is rgb(red, green, blue)"),
+            out[4].contains("a colour is rgb(red, green, blue)"),
             "{out:?}"
         );
         assert!(
-            out[3].contains("Pad cannot be changed by scripts"),
+            out[5].contains("Pad cannot be changed by scripts"),
             "{out:?}"
         );
         assert_eq!(
@@ -1482,6 +1509,10 @@ print(x",
                 Request::Color {
                     object: 1,
                     color: Some([1.0, 0.0, 0.0])
+                },
+                Request::Color {
+                    object: 1,
+                    color: Some([1.0, 0.85, 0.1])
                 },
                 Request::Color {
                     object: 1,

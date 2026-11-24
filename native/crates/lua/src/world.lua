@@ -223,11 +223,18 @@ Color.__index = Color
 Color.__tostring = function(c)
   return string.format('rgb(%.2f, %.2f, %.2f)', c.r, c.g, c.b)
 end
+-- Colours come back from the game a little rounded: compare closely.
 Color.__eq = function(a, b)
-  return a.r == b.r and a.g == b.g and a.b == b.b
+  local close = function(x, y)
+    return math.abs(x - y) < 1e-4
+  end
+  return close(a.r, b.r) and close(a.g, b.g) and close(a.b, b.b)
 end
 function rgb(r, g, b)
-  return setmetatable({ r = tonumber(r) or 0, g = tonumber(g) or 0, b = tonumber(b) or 0 }, Color)
+  if type(r) ~= 'number' or type(g) ~= 'number' or type(b) ~= 'number' then
+    error('rgb needs three numbers: red, green and blue from 0 to 1', 2)
+  end
+  return setmetatable({ r = r, g = g, b = b }, Color)
 end
 
 -- Objects of the world, by id. Their fields read the world as it is now.
@@ -307,7 +314,7 @@ ObjectMeta.__newindex = function(o, key, value)
     local x, y, z = native.target(rawget(o, '__object'))
     move(o, vector(x, y, z), value, 0, 2)
   else
-    error('objects have no field ' .. tostring(key) .. ' to set (visible, position and heading can be set)', 2)
+    error('objects have no field ' .. tostring(key) .. ' to set (visible, position, heading and color can be set)', 2)
   end
 end
 ObjectMeta.__tostring = function(o)

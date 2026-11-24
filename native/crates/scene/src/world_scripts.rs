@@ -47,6 +47,7 @@ impl Scripts {
                 position: o.position,
                 heading: o.heading,
                 changeable: o.changeable,
+                paintable: o.paintable,
                 visible: o.visible,
             })
             .collect();
