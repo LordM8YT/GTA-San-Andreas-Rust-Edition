@@ -1,5 +1,13 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.55.0:
+- Build Mode: world scripts. Give any object (or the whole world) a Lua script and make your world do what you want: doors with timers, lifts, sliding doors, spinning things, scores, welcome messages, race results, day and night switches. Scripts react to trigger zones, E, checkpoints, finishes and players joining or leaving, and they show, hide and move objects, send messages, teleport players and set the time and weather.
+- Moving objects carry their collision along, and players standing on one ride with it.
+- *Script* on the Home ribbon adds a script and opens the new script editor: Lua is coloured and checked as you type (the line with an error is underlined), with examples to start from and a short API help. The Explorer lists scripts under their objects and on its Scripts page; print and errors show in Output while you play.
+- Scripts run the same in Play (F5), from the launcher and on servers. A server runs them once per world instance, so every player sees the same doors and lifts, also players who join later; messages and teleports stay personal.
+- Scripts are sandboxed: no files or programs, 16 MiB of memory, and a script that runs too long without wait() is stopped (even if it tries to catch that), so a broken script cannot freeze the game or a server.
+- Gameplay Sample has a bell that hides a crate for a moment, a lift that goes up and down, and race results for the checkpoint course.
+
 Version 0.54.0:
 - Build Mode has a new layout that works like the building editors many creators already know: a ribbon with Home, Model, Test and View tabs, the Toolbox on the left, the Explorer (with Workspace and Lighting) above the Properties on the right, and Output at the bottom. Insert a Part with one click, copy, cut and paste objects, and use Ctrl+1 to Ctrl+4 for the tools and F5 to play. Docks can be closed and opened again from the View tab.
 - Servers: `world_reset [instance]` in the console (and `ResetWorldInstance` for scripts) puts a Build Mode world instance back as it starts: doors, hour and weather.

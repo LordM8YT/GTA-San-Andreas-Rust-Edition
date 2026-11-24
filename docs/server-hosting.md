@@ -196,6 +196,12 @@ decisions, per routing bucket. The console says `World gameplay: <id> ...
 runs on the server`. Without the pack on the server, each player's game runs
 the gameplay alone, unsynchronised.
 
+The world's own [scripts](world-scripts.md) run on the server too, once per
+instance, in their sandbox: what they change is shared like a door, and
+their `print` and errors go to the console (`[Bell/Ring] ...`,
+`Script error in Bell/Ring: ...`). An instance's scripts stop 30 seconds
+after its last player leaves and start again when someone comes back.
+
 Events (`source` is the player): `sare:zoneEnter` and `sare:zoneLeave`
 (`node`, `name`), `sare:objectUsed` (`node`, `name`), `sare:checkpoint`
 (`race`, `number`, `total`) and `sare:raceFinished` (`race`, `seconds`).
@@ -205,12 +211,12 @@ such object), `IsWorldObjectVisible(object, bucket)`,
 `GetWorldObjectByName(name)`, `SetWorldHour(hour or nil, bucket)`,
 `SetWorldWeather('clear'|'cloudy'|'rain'|'fog' or nil, bucket)` and
 `ResetWorldInstance(bucket)` (every object as placed, the world's own hour
-and weather, and "only the first time" triggers usable again; true when the
-instance had state).
+and weather, "only the first time" triggers usable again and its world
+scripts started again; true when the instance had state).
 
 The console command `world_reset [instance]` does the same: `world_reset 0`
-puts the main world back as it starts, `world_reset` resets every instance
-that has state. Players there get the new state at once and can use "only
+puts the main world back as it starts (its world scripts start again),
+`world_reset` resets every instance that has state. Players there get the new state at once and can use "only
 the first time" triggers again; their course progress and times are kept.
 
 ```lua

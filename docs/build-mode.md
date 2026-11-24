@@ -131,6 +131,18 @@ several courses; give each its own *Course* name.
 fog). Both show while you edit and apply when the world is played, and
 actions can change them while playing.
 
+### Scripts
+
+For more than the actions above, give an object a **script**: Lua that runs
+while the world is played, here, from the launcher and on servers. *Script*
+on the Home ribbon adds one to the selected object (or to the whole world)
+and opens the script editor; *+ Add script* in an object's Properties starts
+from an example (a door that opens on E, a lift, a sliding door, race
+results and more). Scripts can react to zones, E, checkpoints and players
+joining, show, hide and move objects (a moving object carries players
+standing on it), send messages, teleport players and set the time and
+weather. See [World scripts](world-scripts.md).
+
 ## Lights and environment
 
 Only what SARE's renderer really draws is offered:
@@ -405,8 +417,9 @@ Milestone 1 and part of milestone 2 are in. Still to come, roughly in order:
   middle of its contents, and has no position or rotation you can type in.
 - Multiplayer: server checks of teleport destinations against the player's
   later position.
-- More actions (sounds, items, script events) and Lua hooks so server
-  resources can react to zones.
+- More actions (sounds, items). World scripts react to zones and move
+  objects today; see [World scripts](world-scripts.md) for what they cannot
+  do yet.
 - A wireframe view of the exact collision triangles (the Collision view
   outlines object bounds).
 - Real per-pixel point and spot lights (needs renderer work; today lights
@@ -415,4 +428,4 @@ Milestone 1 and part of milestone 2 are in. Still to come, roughly in order:
   textured materials (today: colours).
 - Roads: junctions where roads meet, and road surfaces that follow the
   terrain under them by themselves (today: set the points' heights).
-- Visual scripting, publishing worlds to servers.
+- Visual scripting (blocks instead of Lua), publishing worlds to servers.

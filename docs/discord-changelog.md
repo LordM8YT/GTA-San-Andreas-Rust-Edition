@@ -1,3 +1,14 @@
+**SARE 0.55: world scripts 📜 (pending release)**
+
+📜 **Scripts in your world:** give any object a Lua script in Build Mode and make it do what you want: timed doors, lifts, sliding doors, scores, welcome messages.
+🛗 **Moving objects:** scripts move and turn objects smoothly, and players standing on them ride along.
+✍️ **Script editor** with colours, error checks as you type, examples and help.
+🌐 Works the same in Play, from the launcher and on servers, where everyone sees the same lifts and doors.
+
+✅ Tested on Windows with automatic runs in Build Mode and from the launcher, plus server tests with several players.
+
+---
+
 **SARE 0.54: gameplay in Build Mode 🚪 (pending release)**
 
 🚪 **Doors that open with E**, doors and pads that teleport you somewhere else, and trigger zones that show messages or change the time and weather.

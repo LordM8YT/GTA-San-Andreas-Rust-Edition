@@ -41,6 +41,7 @@ files at all.
 | Different car handling | **Mod** with `original_vehicle_handling` | Yes | [vehicle dynamics](vehicle-dynamics.md) |
 | A race or stunt map from MTA | Drop the MTA folder into `mods/` | Yes | [native mods → MTA maps](native-mods.md#mtasa-maps) |
 | Commands, game modes, chat, instances | **Server resource** in Lua | Players: depends on the world | [Tutorial 6](#6-tutorial-a-server-command-in-lua), [server guide](server-guide.md) |
+| Logic inside your world: doors, lifts, scores, events | **World script** in Lua, written in Build Mode | **No** | [world scripts](world-scripts.md) |
 | On-screen UI and client logic | **Client script** in Lua | Depends on the world | [client scripts](client-scripts.md) |
 
 **Mods** and **content packs** are data: models, textures and JSON. They never
