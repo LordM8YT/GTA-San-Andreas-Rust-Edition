@@ -56,7 +56,8 @@ pub struct ObjectInfo {
     /// Scripts may show, hide and move it (it is drawn and solid on its
     /// own).
     pub changeable: bool,
-    /// Scripts may colour it (a model, not terrain or a road).
+    /// Scripts may colour and copy it (a model, not terrain, a road or an
+    /// object without a model).
     pub paintable: bool,
     /// Shown as the world starts.
     pub visible: bool,
@@ -859,7 +860,7 @@ fn create_state(shared: &Shared, source: &Source, limit: &Rc<Limit>) -> mlua::Re
             return Ok((
                 None,
                 Some(format!(
-                    "{} cannot be copied: copies work on models, not terrain or roads",
+                    "{} cannot be copied: copies work on models, not terrain, roads or objects without a model",
                     object.name
                 )),
             ));

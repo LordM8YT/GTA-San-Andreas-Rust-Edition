@@ -444,6 +444,9 @@ impl State {
             return;
         };
         let now = play.logic.shared().copies();
+        if now.is_empty() && play.copies.is_empty() {
+            return;
+        }
         let missing_collision = self.collision.as_ref().is_some_and(|collision| {
             now.iter().any(|(copy, source)| {
                 collision.has_switchable(*source) && !collision.has_switchable(*copy)
@@ -477,9 +480,11 @@ impl State {
             if !play.copies.contains_key(copy) {
                 match (&mut play.objects, &mut self.build) {
                     (Some(objects), _) => {
-                        if let Some(node) = objects.layout.node(*source) {
+                        // As placed: where it is goes by its pose.
+                        if let Some(node) = play.layout.node(*source) {
                             let mut node = node.clone();
                             node.id = *copy;
+                            node.parent = None;
                             node.scripts.clear();
                             node.gameplay = None;
                             node.light = None;

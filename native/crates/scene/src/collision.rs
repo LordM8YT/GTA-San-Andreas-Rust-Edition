@@ -60,6 +60,8 @@ pub struct CollisionWorld {
 #[derive(Default)]
 struct Owned {
     placed: Placed,
+    /// Each switchable id's place in `switchable`.
+    slots: HashMap<u64, usize>,
     /// Triangles and owners of removed copies, for the next copy to reuse.
     free: Free,
 }
@@ -89,10 +91,11 @@ impl CollisionWorld {
     /// Add an object whose collision [`Self::set_hidden`] can switch off.
     /// Adding the same id again adds to that object.
     pub fn add_switchable(&mut self, id: u64, batches: &[Batch]) {
-        let owner = match self.switchable.iter().position(|s| *s == id) {
-            Some(index) => index,
+        let owner = match self.owned.slots.get(&id) {
+            Some(index) => *index,
             None => {
                 self.switchable.push(id);
+                self.owned.slots.insert(id, self.switchable.len() - 1);
                 self.switchable.len() - 1
             }
         };
@@ -100,7 +103,7 @@ impl CollisionWorld {
     }
     /// Whether switchable object `id` was added.
     pub fn has_switchable(&self, id: u64) -> bool {
-        self.switchable.contains(&id)
+        self.owned.slots.contains_key(&id)
     }
     /// Switch off the collision of these switchable objects (and on for
     /// every other one).
@@ -117,7 +120,7 @@ impl CollisionWorld {
     /// Move switchable object `id`: `matrix` takes its triangles from where
     /// they were added to where they are now. False when it was not added.
     pub fn move_switchable(&mut self, id: u64, matrix: Mat4) -> bool {
-        let Some(owner) = self.switchable.iter().position(|s| *s == id) else {
+        let Some(owner) = self.owned.slots.get(&id).copied() else {
             return false;
         };
         let owner = owner as u32 + 1;
@@ -167,10 +170,10 @@ impl CollisionWorld {
     /// was added (put it in its place with [`Self::move_switchable`]). False
     /// when `source` was not added or `id` already was.
     pub fn copy_switchable(&mut self, source: u64, id: u64) -> bool {
-        if id == REMOVED || self.switchable.contains(&id) {
+        if id == REMOVED || self.owned.slots.contains_key(&id) {
             return false;
         }
-        let Some(from) = self.switchable.iter().position(|s| *s == source) else {
+        let Some(from) = self.owned.slots.get(&source).copied() else {
             return false;
         };
         let corners: Vec<[Vec3; 3]> = self
@@ -189,6 +192,7 @@ impl CollisionWorld {
                 self.switchable.len() as u32
             }
         };
+        self.owned.slots.insert(id, owner as usize - 1);
         self.hidden.remove(&owner);
         let mut placed = Vec::with_capacity(corners.len());
         for [a, b, c] in corners {
@@ -224,7 +228,7 @@ impl CollisionWorld {
         if id == REMOVED {
             return false;
         }
-        let Some(slot) = self.switchable.iter().position(|s| *s == id) else {
+        let Some(slot) = self.owned.slots.remove(&id) else {
             return false;
         };
         let owner = slot as u32 + 1;

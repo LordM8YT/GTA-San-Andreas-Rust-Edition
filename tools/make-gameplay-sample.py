@@ -179,7 +179,10 @@ script.object:on('use', function(player)
   script.object.color = rgb(1, 0.8, 0.2)
   copies[#copies + 1] = crate:clone(crate.position + vector(0, 2 * (1 + (rings - 1) % 3), 0))
   if #copies > 3 then
-    table.remove(copies, 1):destroy()
+    local oldest = table.remove(copies, 1)
+    if oldest.exists then
+      oldest:destroy()
+    end
   end
   crate:hide()
   world.message(player.name .. ' rang the bell')

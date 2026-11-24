@@ -1640,27 +1640,27 @@ pub struct SnapshotMotion {
     pub elapsed: f32,
 }
 
-/// Objects an action or a script can show or hide. Played worlds keep them
-/// out of the merged scene and draw them, and switch their collision, one
-/// by one. Scripts get the objects they are on, the objects their text names
-/// in quotes (`world.find("Lamp")`), and the ones ticked *Scripts can change
-/// it*.
 /// Switchable objects scripts may copy: models, not terrain or roads.
 pub fn copyable(layout: &Layout) -> HashSet<NodeId> {
     let switchable = switchable(layout);
     layout
         .nodes
         .iter()
-        .filter(|n| {
-            switchable.contains(&n.id)
-                && n.asset.is_some()
-                && n.terrain.is_none()
-                && n.road.is_none()
-        })
+        .filter(|n| switchable.contains(&n.id) && is_model(n))
         .map(|n| n.id)
         .collect()
 }
 
+/// A model: not terrain, a road or an object without a model.
+fn is_model(n: &crate::world_layout::Node) -> bool {
+    n.asset.is_some() && n.terrain.is_none() && n.road.is_none()
+}
+
+/// Objects an action or a script can show or hide. Played worlds keep them
+/// out of the merged scene and draw them, and switch their collision, one
+/// by one. Scripts get the objects they are on, the objects their text names
+/// in quotes (`world.find("Lamp")`), and the ones ticked *Scripts can change
+/// it*.
 pub fn switchable(layout: &Layout) -> HashSet<NodeId> {
     let objects: HashSet<NodeId> = layout
         .nodes
@@ -1768,8 +1768,8 @@ pub struct ScriptObject {
     pub heading: f32,
     /// Scripts may show or hide it ([`switchable`]).
     pub changeable: bool,
-    /// Scripts may colour it: a model (terrain and roads are not drawn
-    /// tinted).
+    /// Scripts may colour and copy it: a model (not terrain, a road or an
+    /// object without a model).
     pub paintable: bool,
     pub visible: bool,
 }
@@ -1787,7 +1787,7 @@ pub fn script_objects(layout: &Layout) -> Vec<ScriptObject> {
             position: n.transform.position,
             heading: n.transform.rotation[2],
             changeable: changeable.contains(&n.id),
-            paintable: n.terrain.is_none() && n.road.is_none(),
+            paintable: is_model(n),
             visible: flags.get(&n.id).is_none_or(|f| f.visible),
         })
         .collect()
