@@ -213,6 +213,15 @@ pub struct Node {
     /// instead of its asset's model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub road: Option<Road>,
+    /// Lua scripts on this object (`script.object` in them); see
+    /// `docs/world-scripts.md`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scripts: Vec<Script>,
+    /// Scripts may show, hide or move the object while the world is played
+    /// (it is then drawn and made solid on its own, like a door). Objects
+    /// with scripts of their own, or named in a script, are always.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub scriptable: bool,
     /// Fields from a newer SARE or a hand edit, written back unchanged.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -237,6 +246,8 @@ impl Node {
             light: None,
             terrain: None,
             road: None,
+            scripts: Vec::new(),
+            scriptable: false,
             extra: Map::new(),
         }
     }
@@ -254,6 +265,8 @@ impl Node {
             light: None,
             terrain: None,
             road: None,
+            scripts: Vec::new(),
+            scriptable: false,
             extra: Map::new(),
         }
     }
@@ -480,6 +493,9 @@ pub struct WorldSettings {
     /// Brightness multiplier of the scene's ambient light, 0.3-1.5.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub brightness: Option<f32>,
+    /// Lua scripts for the whole world (no `script.object`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scripts: Vec<Script>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -491,6 +507,37 @@ impl Default for WorldSettings {
             fog: None,
             sky: None,
             brightness: None,
+            scripts: Vec::new(),
+            extra: Map::new(),
+        }
+    }
+}
+
+/// A Lua script in a world: on an object, or for the whole world in its
+/// [`WorldSettings`]. See `docs/world-scripts.md` for what scripts can do and
+/// `sa_lua::world` for how they run.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Script {
+    pub name: String,
+    /// Lua source text.
+    #[serde(default)]
+    pub source: String,
+    /// Off: kept, but not run.
+    #[serde(default = "yes", skip_serializing_if = "Clone::clone")]
+    pub enabled: bool,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+impl Script {
+    /// Longest source, bytes.
+    pub const MAX_SOURCE: usize = 64 * 1024;
+    /// Most scripts in one world.
+    pub const MAX_SCRIPTS: usize = 64;
+    pub fn new(name: impl Into<String>, source: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            source: source.into(),
+            enabled: true,
             extra: Map::new(),
         }
     }
@@ -591,6 +638,20 @@ impl Layout {
     pub fn write(&self, path: &std::path::Path) -> Result<()> {
         write_atomic(path, self.to_json()?.as_bytes())
     }
+    /// Every script in the world, in order: the world's own first (None),
+    /// then each object's (its id).
+    pub fn all_scripts(&self) -> Vec<(Option<NodeId>, &Script)> {
+        self.settings
+            .scripts
+            .iter()
+            .map(|s| (None, s))
+            .chain(
+                self.nodes
+                    .iter()
+                    .flat_map(|n| n.scripts.iter().map(move |s| (Some(n.id), s))),
+            )
+            .collect()
+    }
     pub fn validate(&self) -> Result<()> {
         ensure!(self.format == FORMAT, "not a SARE world layout");
         let s = &self.settings;
@@ -650,6 +711,20 @@ impl Layout {
                 "object {} ({}) has a light with an invalid colour, size, radius or position",
                 node.id,
                 node.name
+            );
+        }
+        let scripts = self.all_scripts();
+        ensure!(
+            scripts.len() <= Script::MAX_SCRIPTS,
+            "a world may hold at most {} scripts",
+            Script::MAX_SCRIPTS
+        );
+        for (_, script) in &scripts {
+            ensure!(
+                script.name.len() <= 256 && script.source.len() <= Script::MAX_SOURCE,
+                "script {} is longer than {} KiB or has a very long name",
+                script.name,
+                Script::MAX_SOURCE / 1024
             );
         }
         let groups: HashMap<NodeId, Option<NodeId>> = self

@@ -722,6 +722,30 @@ impl World {
     pub fn has_object(&self, node: NodeId) -> bool {
         self.poses.contains_key(&node)
     }
+    /// Carry out what a world script asked for, for `player` (who gets
+    /// messages and teleports). Shared changes go to `shared` as actions do.
+    pub fn apply_script(
+        &self,
+        shared: &mut Shared,
+        player: &mut PlayerState,
+        change: ScriptChange,
+    ) -> Vec<Effect> {
+        let action = match change {
+            ScriptChange::Visible(node, true) => Action::Show { node: Some(node) },
+            ScriptChange::Visible(node, false) => Action::Hide { node: Some(node) },
+            ScriptChange::Message(text, seconds) => Action::Message { text, seconds },
+            ScriptChange::TeleportTo(node) => Action::Teleport { target: Some(node) },
+            ScriptChange::TeleportAt(pose) => {
+                player.settle = true;
+                return vec![Effect::Teleport(pose)];
+            }
+            ScriptChange::Hour(hour) => Action::SetTime { hour },
+            ScriptChange::Weather(weather) => Action::SetWeather { weather },
+        };
+        let mut out = Vec::new();
+        self.run(shared, player, 0, &[Kept::Known(action)], &mut out);
+        out
+    }
     /// A fresh shared state: the world's own hour and weather, nothing
     /// shown or hidden yet.
     pub fn shared(&self) -> Shared {
@@ -1086,6 +1110,11 @@ impl Logic {
     pub fn set_shared(&mut self, shared: Shared) {
         self.shared = shared;
     }
+    /// [`World::apply_script`] for the one player.
+    pub fn apply_script(&mut self, change: ScriptChange) -> Vec<Effect> {
+        self.world
+            .apply_script(&mut self.shared, &mut self.player, change)
+    }
     pub fn player_mut(&mut self) -> &mut PlayerState {
         &mut self.player
     }
@@ -1229,8 +1258,11 @@ pub struct Snapshot {
     pub jump: Option<(u32, u8)>,
 }
 
-/// Objects an action can show or hide. Played worlds keep them out of the
-/// merged scene and draw them, and switch their collision, one by one.
+/// Objects an action or a script can show or hide. Played worlds keep them
+/// out of the merged scene and draw them, and switch their collision, one
+/// by one. Scripts get the objects they are on, the objects their text names
+/// in quotes (`world.find("Lamp")`), and the ones ticked *Scripts can change
+/// it*.
 pub fn switchable(layout: &Layout) -> HashSet<NodeId> {
     let objects: HashSet<NodeId> = layout
         .nodes
@@ -1238,7 +1270,18 @@ pub fn switchable(layout: &Layout) -> HashSet<NodeId> {
         .filter(|n| !n.is_group())
         .map(|n| n.id)
         .collect();
-    let mut out = HashSet::new();
+    let named = quoted_names(layout);
+    let mut out: HashSet<NodeId> = layout
+        .nodes
+        .iter()
+        .filter(|n| {
+            objects.contains(&n.id)
+                && (n.scriptable
+                    || n.scripts.iter().any(|s| s.enabled)
+                    || named.contains(n.name.as_str()))
+        })
+        .map(|n| n.id)
+        .collect();
     for node in &layout.nodes {
         let Some(component) = node.gameplay.as_ref().and_then(Kept::known) else {
             continue;
@@ -1258,6 +1301,116 @@ pub fn switchable(layout: &Layout) -> HashSet<NodeId> {
         }
     }
     out
+}
+
+/// Text in quotes in the world's enabled scripts: the object names they may
+/// look up.
+fn quoted_names(layout: &Layout) -> HashSet<&str> {
+    let mut names = HashSet::new();
+    for (_, script) in layout.all_scripts() {
+        if !script.enabled {
+            continue;
+        }
+        let text = script.source.as_str();
+        let bytes = text.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            let quote = bytes[i];
+            if quote == b'"' || quote == b'\'' {
+                let start = i + 1;
+                let mut end = start;
+                while end < bytes.len() && bytes[end] != quote && bytes[end] != b'\n' {
+                    end += if bytes[end] == b'\\' { 2 } else { 1 };
+                }
+                if end < bytes.len() && bytes[end] == quote {
+                    if let Some(name) = text.get(start..end) {
+                        names.insert(name);
+                    }
+                }
+                i = end + 1;
+            } else {
+                i += 1;
+            }
+        }
+    }
+    names
+}
+
+/// A script of the world, ready to run: enabled scripts only, world scripts
+/// first. Object scripts are named `Object/Script` so errors say where they
+/// are.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScriptSource {
+    pub name: String,
+    pub source: String,
+    pub object: Option<NodeId>,
+}
+pub fn script_sources(layout: &Layout) -> Vec<ScriptSource> {
+    layout
+        .all_scripts()
+        .into_iter()
+        .filter(|(_, s)| s.enabled)
+        .map(|(object, s)| ScriptSource {
+            name: match object.and_then(|id| layout.node(id)) {
+                Some(node) => format!("{}/{}", node.name, s.name),
+                None => s.name.clone(),
+            },
+            source: s.source.clone(),
+            object,
+        })
+        .collect()
+}
+
+/// An object as world scripts see it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScriptObject {
+    pub id: NodeId,
+    pub name: String,
+    pub position: [f32; 3],
+    pub heading: f32,
+    /// Scripts may show or hide it ([`switchable`]).
+    pub changeable: bool,
+    pub visible: bool,
+}
+/// Every object of the layout (not groups), in layout order.
+pub fn script_objects(layout: &Layout) -> Vec<ScriptObject> {
+    let changeable = switchable(layout);
+    let flags = layout.effective_all();
+    layout
+        .nodes
+        .iter()
+        .filter(|n| !n.is_group())
+        .map(|n| ScriptObject {
+            id: n.id,
+            name: n.name.clone(),
+            position: n.transform.position,
+            heading: n.transform.rotation[2],
+            changeable: changeable.contains(&n.id),
+            visible: flags.get(&n.id).is_none_or(|f| f.visible),
+        })
+        .collect()
+}
+
+/// What a world script asked for, for [`World::apply_script`]. Which
+/// players it is for is the host's business.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ScriptChange {
+    Visible(NodeId, bool),
+    Message(String, f32),
+    TeleportTo(NodeId),
+    TeleportAt(Pose),
+    Hour(u8),
+    Weather(String),
+}
+
+impl Happened {
+    /// The object this happened at, if any.
+    pub fn node(&self) -> Option<NodeId> {
+        match self {
+            Self::Entered(n) | Self::Left(n) | Self::Used(n) => Some(*n),
+            _ => None,
+        }
+    }
 }
 
 /// A problem in a layout's gameplay, shown in the editor.
@@ -1742,6 +1895,67 @@ mod tests {
         assert_eq!(shared.jump(), None);
         shared.jump_to(6);
         assert_eq!(shared.jump(), Some((2, 6)));
+    }
+
+    #[test]
+    fn scripts_switch_their_objects_and_the_names_they_quote() {
+        use crate::world_layout::Script;
+        let mut layout = Layout::default();
+        let door = object(&mut layout, "Door", [0.0; 3], None);
+        let lamp = object(&mut layout, "Lamp", [5.0, 0.0, 0.0], None);
+        let sign = object(&mut layout, "Sign", [9.0, 0.0, 0.0], None);
+        object(&mut layout, "Crate", [12.0, 0.0, 0.0], None);
+        layout
+            .node_mut(door)
+            .unwrap()
+            .scripts
+            .push(Script::new("Timer", "print('hi')"));
+        layout.settings.scripts.push(Script::new(
+            "Lights",
+            "world.find(\"Lamp\"):hide() -- \"Crate
+is not closed",
+        ));
+        layout.node_mut(sign).unwrap().scriptable = true;
+        assert_eq!(switchable(&layout), HashSet::from([door, lamp, sign]));
+        let sources = script_sources(&layout);
+        assert_eq!(
+            sources
+                .iter()
+                .map(|s| (s.name.as_str(), s.object))
+                .collect::<Vec<_>>(),
+            [("Lights", None), ("Door/Timer", Some(door))]
+        );
+        let seen = script_objects(&layout);
+        assert_eq!(seen.len(), 4);
+        assert!(seen[1].changeable && !seen[3].changeable && seen[1].visible);
+
+        // A script hides the lamp and sends the player to the sign.
+        let mut logic = Logic::new(&layout);
+        let effects = logic.apply_script(ScriptChange::Visible(lamp, false));
+        assert_eq!(
+            effects,
+            [Effect::Visibility {
+                node: lamp,
+                visible: false
+            }]
+        );
+        assert!(!logic.visible(lamp));
+        assert!(matches!(
+            logic.apply_script(ScriptChange::TeleportTo(sign))[..],
+            [Effect::Teleport(Pose {
+                position: [9.0, 0.0, 0.0],
+                ..
+            })]
+        ));
+        assert_eq!(
+            logic.apply_script(ScriptChange::Hour(30)),
+            [Effect::Time(23)]
+        );
+
+        // A disabled script neither runs nor names objects.
+        layout.settings.scripts[0].enabled = false;
+        assert!(!switchable(&layout).contains(&lamp));
+        assert_eq!(script_sources(&layout).len(), 1);
     }
 
     #[test]

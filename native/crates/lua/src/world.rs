@@ -1,0 +1,1011 @@
+//! World scripts: the Lua creators put in a Build Mode world, on its objects
+//! or for the whole world. The same host runs them in Build Mode's playtest,
+//! in worlds played from the launcher and on servers (once per world
+//! instance), so a world behaves the same everywhere.
+//!
+//! The host knows nothing of the game: it is given the world's objects and
+//! players, gameplay [`Event`]s and time, and returns [`Request`]s (show an
+//! object, message or teleport a player, set the hour or weather) for the
+//! game or server to carry out. Each script runs in its own sandboxed Lua
+//! state: no files, processes or debug library, a memory limit, and every
+//! call stopped after [`CALL_LIMIT`] so an endless loop cannot freeze a
+//! game or a server. See `docs/world-scripts.md` for the script API.
+use mlua::{Function, HookTriggers, Lua, LuaOptions, StdLib, Table, Value, VmState};
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::rc::Rc;
+use std::time::{Duration, Instant};
+
+const PRELUDE: &str = include_str!("world.lua");
+/// Longest any one call into a script may run.
+pub const CALL_LIMIT: Duration = Duration::from_millis(250);
+/// Memory per script.
+const MEMORY_LIMIT: usize = 16 * 1024 * 1024;
+/// Requests one frame may make, all scripts together.
+const MAX_REQUESTS: usize = 2_000;
+/// Output lines kept between two [`WorldScripts::take_output`] calls.
+const MAX_OUTPUT: usize = 500;
+/// Longest message text, characters.
+const MAX_MESSAGE: usize = 500;
+/// Largest `world.emit` payload, bytes of JSON.
+const MAX_EMIT: usize = 4096;
+/// `world.emit` calls per frame.
+const MAX_EMITS: usize = 200;
+
+/// One script to run.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Source {
+    pub name: String,
+    pub source: String,
+    /// The object it is on (`script.object`), or None for a world script.
+    pub object: Option<u64>,
+}
+
+/// An object of the world as scripts see it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ObjectInfo {
+    pub id: u64,
+    pub name: String,
+    /// World metres: x east, y north, z up.
+    pub position: [f32; 3],
+    /// Degrees, 0 faces north.
+    pub heading: f32,
+    /// Scripts may show or hide it (it is drawn and solid on its own).
+    pub changeable: bool,
+    /// Shown as the world starts.
+    pub visible: bool,
+}
+
+/// A player in the world.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlayerInfo {
+    pub id: u32,
+    pub name: String,
+    /// Feet, world metres.
+    pub position: [f32; 3],
+    pub driving: bool,
+}
+
+/// What the host is started with.
+#[derive(Clone, Debug, Default)]
+pub struct Config {
+    pub scripts: Vec<Source>,
+    pub objects: Vec<ObjectInfo>,
+    /// Weather names `world.setWeather` accepts.
+    pub weathers: Vec<String>,
+    pub hour: Option<u8>,
+    pub weather: Option<String>,
+}
+
+/// Something that happened in the world, for `world.on`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Event {
+    /// A player walked or drove into an object's trigger zone.
+    Enter {
+        player: u32,
+        object: u64,
+    },
+    Leave {
+        player: u32,
+        object: u64,
+    },
+    /// A player pressed E at an object's interaction.
+    Use {
+        player: u32,
+        object: u64,
+    },
+    /// Reached checkpoint `index` (1 is the start) of `total`.
+    Checkpoint {
+        player: u32,
+        race: String,
+        index: usize,
+        total: usize,
+    },
+    Finish {
+        player: u32,
+        race: String,
+        seconds: f32,
+    },
+    Join {
+        player: u32,
+    },
+    Quit {
+        player: u32,
+    },
+}
+
+/// Where a teleport goes.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Target {
+    Object(u64),
+    /// A spot in world metres, with a heading in degrees.
+    Point([f32; 3], f32),
+}
+
+/// What scripts ask the game to do.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Request {
+    Visible {
+        object: u64,
+        visible: bool,
+    },
+    /// For one player, or everyone in the world (None).
+    Message {
+        player: Option<u32>,
+        text: String,
+        seconds: f32,
+    },
+    Teleport {
+        player: u32,
+        to: Target,
+    },
+    /// Set the hour (a running clock jumps there and keeps running).
+    Hour(u8),
+    Weather(String),
+}
+
+/// A line a script printed, or an error in it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Line {
+    pub script: String,
+    pub text: String,
+    pub error: bool,
+}
+
+/// The world right now, as the game sees it.
+#[derive(Clone, Debug, Default)]
+pub struct Frame {
+    /// Seconds since the last frame.
+    pub dt: f32,
+    pub players: Vec<PlayerInfo>,
+    pub hour: Option<u8>,
+    pub weather: Option<String>,
+    /// Changeable objects whose visibility differs from the start (a door
+    /// a trigger opened).
+    pub visible: Vec<(u64, bool)>,
+}
+
+struct Inner {
+    objects: HashMap<u64, ObjectInfo>,
+    order: Vec<u64>,
+    names: HashMap<String, u64>,
+    visible: HashMap<u64, bool>,
+    weathers: Vec<String>,
+    players: Vec<PlayerInfo>,
+    hour: Option<u8>,
+    weather: Option<String>,
+    requests: Vec<Request>,
+    flooded: bool,
+    output: Vec<Line>,
+    dropped: usize,
+    emits: Vec<(String, serde_json::Value)>,
+    /// The script running now, for print and errors.
+    current: String,
+}
+impl Inner {
+    fn line(&mut self, text: String, error: bool) {
+        if self.output.len() >= MAX_OUTPUT {
+            self.dropped += 1;
+            return;
+        }
+        self.output.push(Line {
+            script: self.current.clone(),
+            text,
+            error,
+        });
+    }
+    fn request(&mut self, request: Request) -> Result<(), String> {
+        if self.requests.len() >= MAX_REQUESTS {
+            self.flooded = true;
+            return Err(format!(
+                "scripts asked for more than {MAX_REQUESTS} changes in one frame"
+            ));
+        }
+        self.requests.push(request);
+        Ok(())
+    }
+}
+type Shared = Rc<RefCell<Inner>>;
+
+struct Script {
+    name: String,
+    lua: Lua,
+    /// False after its body failed to load: it is not called again.
+    running: bool,
+}
+
+/// The scripts of one world (or one world instance on a server).
+pub struct WorldScripts {
+    shared: Shared,
+    scripts: Vec<Script>,
+    deadline: Rc<Cell<Option<Instant>>>,
+    time: f64,
+}
+
+impl WorldScripts {
+    /// Load and start every script: each body runs once now (until its
+    /// first `wait`). Problems show in [`Self::take_output`].
+    pub fn new(config: Config) -> Self {
+        let names = config
+            .objects
+            .iter()
+            .rev()
+            .map(|o| (o.name.clone(), o.id))
+            .collect();
+        let shared = Rc::new(RefCell::new(Inner {
+            order: config.objects.iter().map(|o| o.id).collect(),
+            visible: config.objects.iter().map(|o| (o.id, o.visible)).collect(),
+            objects: config.objects.into_iter().map(|o| (o.id, o)).collect(),
+            names,
+            weathers: config.weathers,
+            players: Vec::new(),
+            hour: config.hour,
+            weather: config.weather,
+            requests: Vec::new(),
+            flooded: false,
+            output: Vec::new(),
+            dropped: 0,
+            emits: Vec::new(),
+            current: String::new(),
+        }));
+        let mut host = Self {
+            shared,
+            scripts: Vec::new(),
+            deadline: Rc::new(Cell::new(None)),
+            time: 0.0,
+        };
+        for source in config.scripts {
+            host.shared.borrow_mut().current = source.name.clone();
+            match create_state(&host.shared, &source, &host.deadline) {
+                Ok(lua) => {
+                    let mut script = Script {
+                        name: source.name.clone(),
+                        lua,
+                        running: true,
+                    };
+                    let loaded = script
+                        .lua
+                        .load(&source.source)
+                        .set_name(format!("={}", source.name))
+                        .into_function();
+                    match loaded {
+                        Ok(body) => {
+                            host.call(&mut script, |lua| {
+                                let start: Function = lua.globals().get("__world_start")?;
+                                start.call::<()>(body.clone())
+                            });
+                        }
+                        Err(error) => {
+                            script.running = false;
+                            host.shared.borrow_mut().line(clean(&error), true);
+                        }
+                    }
+                    host.scripts.push(script);
+                }
+                Err(error) => host
+                    .shared
+                    .borrow_mut()
+                    .line(format!("could not start: {error}"), true),
+            }
+        }
+        host
+    }
+
+    /// How many scripts were started (some may have failed to load).
+    pub fn len(&self) -> usize {
+        self.scripts.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.scripts.is_empty()
+    }
+
+    /// One frame: pass on what happened, wake scripts whose wait is over,
+    /// and return what they ask for, oldest first.
+    pub fn tick(&mut self, frame: Frame, events: Vec<Event>) -> Vec<Request> {
+        self.time += f64::from(frame.dt.clamp(0.0, 1.0));
+        {
+            let mut inner = self.shared.borrow_mut();
+            inner.players = frame.players;
+            inner.hour = frame.hour;
+            inner.weather = frame.weather;
+            for (id, object) in &inner.objects.clone() {
+                inner.visible.insert(*id, object.visible);
+            }
+            for (id, visible) in frame.visible {
+                inner.visible.insert(id, visible);
+            }
+            inner.flooded = false;
+        }
+        let emits = std::mem::take(&mut self.shared.borrow_mut().emits);
+        let time = self.time;
+        let mut scripts = std::mem::take(&mut self.scripts);
+        for script in scripts.iter_mut().filter(|s| s.running) {
+            for event in &events {
+                self.call(script, |lua| dispatch(lua, event));
+            }
+            for (name, values) in &emits {
+                self.call(script, |lua| {
+                    let f: Function = lua.globals().get("__world_event")?;
+                    let mut args = vec![
+                        Value::String(lua.create_string(name)?),
+                        Value::Nil,
+                        Value::Nil,
+                    ];
+                    if let serde_json::Value::Array(values) = values {
+                        for value in values {
+                            args.push(mlua::LuaSerdeExt::to_value(lua, value)?);
+                        }
+                    }
+                    f.call::<()>(mlua::MultiValue::from_iter(args))
+                });
+            }
+            self.call(script, |lua| {
+                let f: Function = lua.globals().get("__world_tick")?;
+                f.call::<()>(time)
+            });
+        }
+        self.scripts = scripts;
+        let mut inner = self.shared.borrow_mut();
+        if inner.flooded {
+            inner.current = String::new();
+            inner.line(
+                format!("more than {MAX_REQUESTS} changes in one frame: the rest were dropped"),
+                true,
+            );
+        }
+        std::mem::take(&mut inner.requests)
+    }
+
+    /// What scripts printed and the errors in them since the last call.
+    pub fn take_output(&mut self) -> Vec<Line> {
+        let mut inner = self.shared.borrow_mut();
+        let dropped = std::mem::take(&mut inner.dropped);
+        let mut lines = std::mem::take(&mut inner.output);
+        if dropped > 0 {
+            lines.push(Line {
+                script: String::new(),
+                text: format!("{dropped} more lines were not shown"),
+                error: false,
+            });
+        }
+        lines
+    }
+
+    fn call(&self, script: &mut Script, body: impl FnOnce(&Lua) -> mlua::Result<()>) {
+        self.shared.borrow_mut().current = script.name.clone();
+        self.deadline.set(Some(Instant::now() + CALL_LIMIT));
+        let result = body(&script.lua);
+        self.deadline.set(None);
+        if let Err(error) = result {
+            self.shared.borrow_mut().line(clean(&error), true);
+        }
+    }
+}
+
+fn dispatch(lua: &Lua, event: &Event) -> mlua::Result<()> {
+    let f: Function = lua.globals().get("__world_event")?;
+    match event {
+        Event::Enter { player, object } => f.call(("enter", *object, *player)),
+        Event::Leave { player, object } => f.call(("leave", *object, *player)),
+        Event::Use { player, object } => f.call(("use", *object, *player)),
+        Event::Checkpoint {
+            player,
+            race,
+            index,
+            total,
+        } => f.call((
+            "checkpoint",
+            Value::Nil,
+            *player,
+            race.as_str(),
+            *index,
+            *total,
+        )),
+        Event::Finish {
+            player,
+            race,
+            seconds,
+        } => f.call(("finish", Value::Nil, *player, race.as_str(), *seconds)),
+        Event::Join { player } => f.call(("join", Value::Nil, *player)),
+        Event::Quit { player } => f.call(("quit", Value::Nil, *player)),
+    }
+}
+
+/// An error as a creator wants to read it: `Script name:12: what went
+/// wrong`, without mlua's wrapping and Rust tracebacks.
+fn clean(error: &mlua::Error) -> String {
+    let text = match error {
+        mlua::Error::CallbackError { cause, .. } => return clean(cause),
+        mlua::Error::SyntaxError { message, .. } => message.clone(),
+        mlua::Error::RuntimeError(message) => message.clone(),
+        mlua::Error::MemoryError(_) => "the script used too much memory and was stopped".into(),
+        other => other.to_string(),
+    };
+    clean_text(&text)
+}
+
+/// [`clean`] for an error that reached Lua as text (from a handler or a
+/// script body that failed after it started).
+fn clean_text(text: &str) -> String {
+    let text = text
+        .lines()
+        .take_while(|l| !l.trim_start().starts_with("stack traceback"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let text = text.trim();
+    let text = text.strip_prefix("runtime error: ").unwrap_or(text);
+    if text == "not enough memory" {
+        return "the script used too much memory and was stopped".into();
+    }
+    text.to_string()
+}
+
+fn create_state(
+    shared: &Shared,
+    source: &Source,
+    deadline: &Rc<Cell<Option<Instant>>>,
+) -> mlua::Result<Lua> {
+    let lua = Lua::new_with(
+        StdLib::TABLE | StdLib::STRING | StdLib::MATH | StdLib::UTF8 | StdLib::COROUTINE,
+        LuaOptions::new(),
+    )?;
+    lua.set_memory_limit(MEMORY_LIMIT)?;
+    {
+        let deadline = deadline.clone();
+        lua.set_global_hook(
+            HookTriggers::new().every_nth_instruction(10_000),
+            move |_, _| match deadline.get() {
+                Some(limit) if Instant::now() > limit => Err(mlua::Error::runtime(
+                    "the script ran too long without wait() and was stopped",
+                )),
+                _ => Ok(VmState::Continue),
+            },
+        )?;
+    }
+    let g = lua.globals();
+    // Text chunks only: binary chunks could crash the game.
+    let raw_load: Function = g.get("load")?;
+    g.set(
+        "load",
+        lua.create_function(move |lua, args: mlua::MultiValue| {
+            let mut args: Vec<Value> = args.into_iter().collect();
+            args.resize(args.len().max(3), Value::Nil);
+            args[2] = Value::String(lua.create_string("t")?);
+            raw_load.call::<mlua::MultiValue>(mlua::MultiValue::from_iter(args))
+        })?,
+    )?;
+    g.set("dofile", Value::Nil)?;
+    g.set("loadfile", Value::Nil)?;
+    let os = lua.create_table()?;
+    let started = Instant::now();
+    os.set(
+        "clock",
+        lua.create_function(move |_, ()| Ok(started.elapsed().as_secs_f64()))?,
+    )?;
+    g.set("os", os)?;
+
+    let native: Table = lua.create_table()?;
+    macro_rules! func {
+        ($key:expr, |$lua:ident, $inner:ident, $args:tt : $ty:ty| $body:expr) => {{
+            let shared = shared.clone();
+            native.set(
+                $key,
+                lua.create_function(move |$lua, $args: $ty| {
+                    #[allow(unused_mut)]
+                    let mut $inner = shared.borrow_mut();
+                    $body
+                })?,
+            )?;
+        }};
+    }
+    let name = source.name.clone();
+    native.set(
+        "script_name",
+        lua.create_function(move |_, ()| Ok(name.clone()))?,
+    )?;
+    let object = source.object;
+    native.set(
+        "script_object",
+        lua.create_function(move |_, ()| Ok(object))?,
+    )?;
+    func!("print", |_lua, inner, text: String| {
+        inner.line(text, false);
+        Ok(())
+    });
+    func!("error", |_lua, inner, text: String| {
+        inner.line(clean_text(&text), true);
+        Ok(())
+    });
+    func!("find", |_lua, inner, name: String| Ok(inner
+        .names
+        .get(&name)
+        .copied()));
+    func!("objects", |_lua, inner, (): ()| Ok(inner.order.clone()));
+    func!("object_name", |_lua, inner, id: u64| Ok(inner
+        .objects
+        .get(&id)
+        .map(|o| o.name.clone())));
+    func!("visible", |_lua, inner, id: u64| Ok(inner
+        .visible
+        .get(&id)
+        .copied()
+        .unwrap_or(false)));
+    func!("position", |_lua, inner, id: u64| {
+        let p = inner.objects.get(&id).map_or([0.0; 3], |o| o.position);
+        Ok((p[0], p[1], p[2]))
+    });
+    func!("heading", |_lua, inner, id: u64| Ok(inner
+        .objects
+        .get(&id)
+        .map_or(0.0, |o| o.heading)));
+    func!("set_visible", |_lua, inner, (id, visible): (u64, bool)| {
+        let Some(object) = inner.objects.get(&id) else {
+            return Ok((false, Some("that object is not in the world".to_string())));
+        };
+        if !object.changeable {
+            return Ok((
+                false,
+                Some(format!(
+                    "{} cannot be changed by scripts: tick \"Scripts can change it\" in its Properties",
+                    object.name
+                )),
+            ));
+        }
+        if inner.visible.get(&id) == Some(&visible) {
+            return Ok((true, None));
+        }
+        inner.visible.insert(id, visible);
+        match inner.request(Request::Visible {
+            object: id,
+            visible,
+        }) {
+            Ok(()) => Ok((true, None)),
+            Err(e) => Ok((false, Some(e))),
+        }
+    });
+    func!("players", |_lua, inner, (): ()| Ok(inner
+        .players
+        .iter()
+        .map(|p| p.id)
+        .collect::<Vec<_>>()));
+    func!("player_name", |_lua, inner, id: u32| Ok(inner
+        .players
+        .iter()
+        .find(|p| p.id == id)
+        .map(|p| p.name.clone())));
+    func!("player_position", |_lua, inner, id: u32| {
+        Ok(match inner.players.iter().find(|p| p.id == id) {
+            Some(p) => (
+                Some(p.position[0]),
+                Some(p.position[1]),
+                Some(p.position[2]),
+            ),
+            None => (None, None, None),
+        })
+    });
+    func!("player_driving", |_lua, inner, id: u32| Ok(inner
+        .players
+        .iter()
+        .any(|p| p.id == id && p.driving)));
+    func!("message", |_lua,
+                      inner,
+                      (player, text, seconds): (
+        Option<u32>,
+        String,
+        f32
+    )| {
+        let text: String = text.chars().take(MAX_MESSAGE).collect();
+        let seconds = if seconds.is_finite() {
+            seconds.clamp(0.5, 60.0)
+        } else {
+            4.0
+        };
+        // A message for someone who left goes nowhere.
+        if player.is_some_and(|id| !inner.players.iter().any(|p| p.id == id)) {
+            return Ok(());
+        }
+        let _ = inner.request(Request::Message {
+            player,
+            text,
+            seconds,
+        });
+        Ok(())
+    });
+    func!("teleport", |_lua, inner, (player, object): (u32, u64)| {
+        if !inner.objects.contains_key(&object) {
+            return Ok((false, Some("that object is not in the world".to_string())));
+        }
+        if !inner.players.iter().any(|p| p.id == player) {
+            return Ok((true, None));
+        }
+        Ok(
+            match inner.request(Request::Teleport {
+                player,
+                to: Target::Object(object),
+            }) {
+                Ok(()) => (true, None),
+                Err(e) => (false, Some(e)),
+            },
+        )
+    });
+    func!("teleport_to", |_lua,
+                          inner,
+                          (player, x, y, z, heading): (
+        u32,
+        f32,
+        f32,
+        f32,
+        f32
+    )| {
+        if ![x, y, z, heading].iter().all(|v| v.is_finite())
+            || [x, y, z].iter().any(|v| v.abs() > 100_000.0)
+        {
+            return Ok((
+                false,
+                Some("teleport needs a vector of real, nearby numbers".to_string()),
+            ));
+        }
+        if !inner.players.iter().any(|p| p.id == player) {
+            return Ok((true, None));
+        }
+        Ok(
+            match inner.request(Request::Teleport {
+                player,
+                to: Target::Point([x, y, z], heading),
+            }) {
+                Ok(()) => (true, None),
+                Err(e) => (false, Some(e)),
+            },
+        )
+    });
+    func!("hour", |_lua, inner, (): ()| Ok(inner.hour));
+    func!("weather", |_lua, inner, (): ()| Ok(inner.weather.clone()));
+    func!("set_hour", |_lua, inner, hour: Option<f64>| {
+        let Some(hour) = hour.filter(|h| h.is_finite() && (0.0..24.0).contains(h)) else {
+            return Ok((
+                false,
+                Some("setHour needs an hour from 0 to 23".to_string()),
+            ));
+        };
+        let hour = hour as u8;
+        inner.hour = Some(hour);
+        Ok(match inner.request(Request::Hour(hour)) {
+            Ok(()) => (true, None),
+            Err(e) => (false, Some(e)),
+        })
+    });
+    func!("set_weather", |_lua, inner, weather: String| {
+        if !inner.weathers.contains(&weather) {
+            return Ok((
+                false,
+                Some(format!(
+                    "setWeather needs one of: {}",
+                    inner.weathers.join(", ")
+                )),
+            ));
+        }
+        inner.weather = Some(weather.clone());
+        Ok(match inner.request(Request::Weather(weather)) {
+            Ok(()) => (true, None),
+            Err(e) => (false, Some(e)),
+        })
+    });
+    func!("emit", |lua, inner, (name, values): (String, Value)| {
+        if inner.emits.len() >= MAX_EMITS {
+            return Ok((
+                false,
+                Some(format!(
+                    "more than {MAX_EMITS} world.emit calls in one frame"
+                )),
+            ));
+        }
+        let json: serde_json::Value = match mlua::LuaSerdeExt::from_value(lua, values) {
+            Ok(json) => json,
+            Err(_) => {
+                return Ok((
+                    false,
+                    Some(
+                        "world.emit can send numbers, text, true/false and tables of them"
+                            .to_string(),
+                    ),
+                ))
+            }
+        };
+        if serde_json::to_string(&json).map_or(usize::MAX, |s| s.len()) > MAX_EMIT {
+            return Ok((
+                false,
+                Some(format!("world.emit can send at most {MAX_EMIT} bytes")),
+            ));
+        }
+        inner.emits.push((name, json));
+        Ok((true, None))
+    });
+    g.set("__world", native)?;
+    lua.load(PRELUDE).set_name("=world").exec()?;
+    Ok(lua)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn objects() -> Vec<ObjectInfo> {
+        vec![
+            ObjectInfo {
+                id: 1,
+                name: "Door".into(),
+                position: [0.0, 0.0, 0.0],
+                heading: 0.0,
+                changeable: true,
+                visible: true,
+            },
+            ObjectInfo {
+                id: 2,
+                name: "Pad".into(),
+                position: [10.0, 0.0, 0.0],
+                heading: 90.0,
+                changeable: false,
+                visible: true,
+            },
+        ]
+    }
+    fn host(scripts: &[(&str, &str, Option<u64>)]) -> WorldScripts {
+        WorldScripts::new(Config {
+            scripts: scripts
+                .iter()
+                .map(|(name, source, object)| Source {
+                    name: name.to_string(),
+                    source: source.to_string(),
+                    object: *object,
+                })
+                .collect(),
+            objects: objects(),
+            weathers: vec!["clear".into(), "rain".into()],
+            hour: Some(12),
+            weather: None,
+        })
+    }
+    fn alice() -> Vec<PlayerInfo> {
+        vec![PlayerInfo {
+            id: 7,
+            name: "Alice".into(),
+            position: [1.0, 2.0, 3.0],
+            driving: false,
+        }]
+    }
+    fn frame(dt: f32) -> Frame {
+        Frame {
+            dt,
+            players: alice(),
+            hour: Some(12),
+            ..Frame::default()
+        }
+    }
+    fn texts(host: &mut WorldScripts) -> Vec<String> {
+        host.take_output()
+            .into_iter()
+            .map(|l| format!("{}{}: {}", if l.error { "!" } else { "" }, l.script, l.text))
+            .collect()
+    }
+
+    #[test]
+    fn a_door_script_opens_on_use_and_closes_after_a_wait() {
+        let mut host = host(&[(
+            "Door timer",
+            r#"
+            local door = script.object
+            print('ready', door.name, door.visible)
+            door:on('use', function(player)
+              door:hide()
+              player:message('Open for 2 seconds')
+              wait(2)
+              door:show()
+            end)
+            "#,
+            Some(1),
+        )]);
+        assert_eq!(texts(&mut host), ["Door timer: ready  Door  true"]);
+        assert!(host.tick(frame(0.1), vec![]).is_empty());
+        let used = host.tick(
+            frame(0.1),
+            vec![Event::Use {
+                player: 7,
+                object: 1,
+            }],
+        );
+        assert_eq!(
+            used,
+            [
+                Request::Visible {
+                    object: 1,
+                    visible: false
+                },
+                Request::Message {
+                    player: Some(7),
+                    text: "Open for 2 seconds".into(),
+                    seconds: 4.0
+                },
+            ]
+        );
+        // Another object's use is not the door's.
+        assert!(host
+            .tick(
+                frame(1.0),
+                vec![Event::Use {
+                    player: 7,
+                    object: 2
+                }]
+            )
+            .is_empty());
+        let later = host.tick(
+            Frame {
+                visible: vec![(1, false)],
+                ..frame(1.0)
+            },
+            vec![],
+        );
+        assert_eq!(
+            later,
+            [Request::Visible {
+                object: 1,
+                visible: true
+            }]
+        );
+        assert!(texts(&mut host).is_empty());
+    }
+
+    #[test]
+    fn errors_name_the_script_and_line_and_others_keep_running() {
+        let mut host = host(&[
+            ("Broken", "local x = 1\nx.y.z = 2", None),
+            ("Typo", "this is not lua", None),
+            (
+                "Fine",
+                "world.on('join', function(p) print('hi ' .. p.name) end)",
+                None,
+            ),
+        ]);
+        let out = texts(&mut host);
+        assert!(out[0].starts_with("!Broken: Broken:2:"), "{out:?}");
+        assert!(out[1].starts_with("!Typo: Typo:1:"), "{out:?}");
+        host.tick(frame(0.1), vec![Event::Join { player: 7 }]);
+        assert_eq!(texts(&mut host), ["Fine: hi Alice"]);
+    }
+
+    #[test]
+    fn endless_loops_and_memory_hogs_are_stopped() {
+        let started = Instant::now();
+        let mut host = host(&[
+            ("Loop", "while true do end", None),
+            (
+                "Hog",
+                "local t = {} for i = 1, 1e9 do t[i] = string.rep('x', 1000) end",
+                None,
+            ),
+            ("Later", "every(0.5, function() print('tick') end)", None),
+        ]);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        let out = texts(&mut host);
+        assert!(out[0].contains("ran too long"), "{out:?}");
+        assert!(
+            out[1].contains("too much memory") || out[1].contains("ran too long"),
+            "{out:?}"
+        );
+        host.tick(frame(0.6), vec![]);
+        assert_eq!(texts(&mut host), ["Later: tick"]);
+    }
+
+    #[test]
+    fn the_sandbox_has_no_files_processes_or_debug() {
+        let mut host = host(&[(
+            "Probe",
+            "print(io, os.execute, require, debug, dofile, loadfile, package, os.getenv)",
+            None,
+        )]);
+        assert_eq!(
+            texts(&mut host),
+            ["Probe: nil  nil  nil  nil  nil  nil  nil  nil"]
+        );
+    }
+
+    #[test]
+    fn objects_that_scripts_cannot_change_say_how_to_allow_it() {
+        let mut host = host(&[("Pad", "world.find('Pad').visible = false", None)]);
+        let out = texts(&mut host);
+        assert!(
+            out[0].contains(
+                "Pad:1: Pad cannot be changed by scripts: tick \"Scripts can change it\""
+            ),
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn world_time_weather_teleports_and_messages() {
+        let mut host = host(&[(
+            "World",
+            r#"
+            world.on('enter', 'Pad', function(player, pad)
+              player:teleport(world.find('Door'))
+              player:teleport(vector(1, 2, 3) + vector(0, 0, 1), 90)
+              world.setHour(21)
+              world.setWeather('rain')
+              world.message('Night falls', 3)
+              print(world.hour(), world.weather(), pad.position, pad.heading)
+            end)
+            local ok, err = pcall(world.setWeather, 'snowstorm')
+            print(ok, err)
+            "#,
+            None,
+        )]);
+        let out = texts(&mut host);
+        assert!(
+            out[0].contains("false") && out[0].contains("clear, rain"),
+            "{out:?}"
+        );
+        let requests = host.tick(
+            frame(0.1),
+            vec![Event::Enter {
+                player: 7,
+                object: 2,
+            }],
+        );
+        assert_eq!(
+            requests,
+            [
+                Request::Teleport {
+                    player: 7,
+                    to: Target::Object(1)
+                },
+                Request::Teleport {
+                    player: 7,
+                    to: Target::Point([1.0, 2.0, 4.0], 90.0)
+                },
+                Request::Hour(21),
+                Request::Weather("rain".into()),
+                Request::Message {
+                    player: None,
+                    text: "Night falls".into(),
+                    seconds: 3.0
+                },
+            ]
+        );
+        assert_eq!(
+            texts(&mut host),
+            ["World: 21  rain  vector(10.00, 0.00, 0.00)  90.0"]
+        );
+    }
+
+    #[test]
+    fn scripts_talk_to_each_other_with_emit() {
+        let mut host = host(&[
+            (
+                "Score",
+                r#"
+                local points = 0
+                world.on('scored', function(who, n)
+                  points = points + n
+                  print(who .. ' scored, total ' .. points)
+                end)
+                "#,
+                None,
+            ),
+            (
+                "Goal",
+                "world.on('finish', function(p, race, s) world.emit('scored', p.name, 3) print(race, s) end)",
+                None,
+            ),
+        ]);
+        host.tick(
+            frame(0.1),
+            vec![Event::Finish {
+                player: 7,
+                race: "Lap".into(),
+                seconds: 12.5,
+            }],
+        );
+        assert_eq!(texts(&mut host), ["Goal: Lap  12.5"]);
+        host.tick(frame(0.1), vec![]);
+        assert_eq!(texts(&mut host), ["Score: Alice scored, total 3"]);
+    }
+}

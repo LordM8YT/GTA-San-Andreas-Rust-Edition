@@ -12,7 +12,7 @@ pollster.workspace = true
 wgpu.workspace = true
 winit.workspace = true
 sa-assets = { path = "../assets" }
-sa-scene = { path = "../scene" }
+sa-scene = { path = "../scene", features = ["scripts"] }
 sa-script = { path = "../script" }
 png = "0.18"
 egui = "0.36.2"

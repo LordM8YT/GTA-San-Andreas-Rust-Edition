@@ -1,11 +1,13 @@
 //! Lua scripting shared by the server and the game client: CfxLua translation,
 //! the common FiveM-style prelude, client script bundles, the sandboxed client
-//! script host and the UI model it drives.
+//! script host and the UI model it drives, and the host of Build Mode's
+//! world scripts.
 pub mod bundle;
 pub mod cfxlua;
 pub mod client;
 pub mod json;
 pub mod ui;
+pub mod world;
 
 /// Scheduler, events, exports, function references, vectors, json and the
 /// CfxLua library. Each side appends its own prelude to this chunk.

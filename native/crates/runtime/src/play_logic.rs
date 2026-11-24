@@ -37,6 +37,11 @@ pub struct PlayLogic {
     smoke_remote_since: Option<usize>,
     /// ...and the frame the gate opened (a screenshot is taken after it).
     smoke_opened: Option<usize>,
+    /// The world's scripts, when it has some and plays alone (a server runs
+    /// them for worlds played on it).
+    scripts: Option<sa_scene::world_scripts::Scripts>,
+    /// The scripts were told the player joined.
+    joined: bool,
 }
 
 /// The pack's merged scene leaves out objects gameplay can show or hide
@@ -97,8 +102,12 @@ impl PlayLogic {
         )
     }
     fn with(layout: &Layout, objects: Option<PackObjects>) -> Self {
+        let logic = Logic::new(layout);
+        let scripts = sa_scene::world_scripts::Scripts::start(layout, logic.shared());
         Self {
-            logic: Logic::new(layout),
+            logic,
+            scripts,
+            joined: false,
             layout: layout.clone(),
             objects,
             message: None,
@@ -267,8 +276,51 @@ impl State {
             }
             return;
         }
-        let effects = play.logic.step(feet, dt);
+        let mut effects = play.logic.step(feet, dt);
+        // What happened goes to the world's scripts, and what they ask for
+        // is carried out like an action's effects.
+        let happened = play.logic.player_mut().take_events();
+        let mut lines = Vec::new();
+        if let Some(scripts) = &mut play.scripts {
+            use sa_scene::world_scripts::{self as ws, PlayerInfo};
+            let mut events: Vec<_> = happened.into_iter().map(|h| ws::event(1, h)).collect();
+            if !play.joined {
+                play.joined = true;
+                events.insert(0, ws::joined(1));
+            }
+            let name = match self.menu.player_name.trim() {
+                "" => "Player".to_string(),
+                name => name.to_string(),
+            };
+            let players = vec![PlayerInfo {
+                id: 1,
+                name,
+                position: feet,
+                driving: self.driving,
+            }];
+            let hour = (self.daycycle.minutes / 60.0).rem_euclid(24.0) as u8;
+            let changes = scripts.tick(
+                play.logic.world(),
+                play.logic.shared(),
+                dt,
+                Some(hour),
+                players,
+                events,
+            );
+            for (_, change) in changes {
+                effects.extend(play.logic.apply_script(change));
+            }
+            lines = scripts.take_output();
+        }
         self.apply_play_effects(effects);
+        for line in lines {
+            let text = sa_scene::world_scripts::describe(&line);
+            match &mut self.build {
+                Some(build) if line.error => build.error(text),
+                Some(build) => build.info(text),
+                None => crate::runtime_log::line(text),
+            }
+        }
     }
 
     /// World gameplay events from a server: its shared state for this
@@ -285,6 +337,8 @@ impl State {
                         crate::runtime_log::line("World gameplay: the server runs it");
                     }
                     play.remote = true;
+                    // The server runs the world's scripts too.
+                    play.scripts = None;
                     let shared = Shared::from_snapshot(play.logic.world(), &snapshot);
                     // A running clock that an action made jump.
                     if let Some((number, hour)) = shared.jump() {

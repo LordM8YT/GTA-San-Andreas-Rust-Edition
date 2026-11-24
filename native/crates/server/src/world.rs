@@ -16,9 +16,15 @@
 //! the player), and change the world with the natives in `natives.rs`
 //! (`SetWorldObjectVisible`, `SetWorldHour`, `SetWorldWeather`, ...).
 //! The rules themselves are `sa_scene::world_logic`, shared with the game.
+//!
+//! The world's own Lua scripts (Build Mode's world scripts) run here too,
+//! once per instance, in the sandbox of `sa_lua::world`: they get the same
+//! moments, and what they change is shared or sent like an action's
+//! effects. Their output goes to the console.
 use crate::script::{self, out, Shared};
 use sa_scene::world_layout::{Layout, NodeId};
 use sa_scene::world_logic::{wire, Happened, PlayerState, Shared as WorldState, World};
+use sa_scene::world_scripts::{self as ws, Scripts, Who};
 use serde_json::Value as Json;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -40,6 +46,13 @@ pub struct Game {
     pub buckets: BTreeMap<u32, WorldState>,
     players: BTreeMap<u32, Player>,
     warned_size: bool,
+    /// The layout, for starting an instance's scripts.
+    layout: Layout,
+    /// Scripts per instance, started with the instance (None: it has none).
+    scripts: BTreeMap<u32, Option<Scripts>>,
+    /// What happened per instance since the scripts last ran.
+    script_events: BTreeMap<u32, Vec<sa_lua::world::Event>>,
+    last_scripts: Option<Instant>,
 }
 
 struct Player {
@@ -67,7 +80,21 @@ impl Game {
             buckets: BTreeMap::new(),
             players: BTreeMap::new(),
             warned_size: false,
+            layout: layout.clone(),
+            scripts: BTreeMap::new(),
+            script_events: BTreeMap::new(),
+            last_scripts: None,
         }
+    }
+    /// Whether the world has scripts to run.
+    pub fn has_scripts(&self) -> bool {
+        !sa_scene::world_logic::script_sources(&self.layout).is_empty()
+    }
+    fn queue(&mut self, bucket: u32, event: sa_lua::world::Event) {
+        if self.scripts.get(&bucket).is_some_and(Option::is_none) {
+            return;
+        }
+        self.script_events.entry(bucket).or_default().push(event);
     }
     /// The shared state of `bucket`, created from the world on first use.
     pub fn bucket(&mut self, bucket: u32) -> &mut WorldState {
@@ -99,6 +126,18 @@ impl Game {
         for (_, state) in self.buckets.iter_mut().filter(|(b, _)| chosen(**b)) {
             state.reset(world);
             count += 1;
+        }
+        // Scripts start again too; the players there join them anew.
+        self.scripts.retain(|b, _| !chosen(*b));
+        self.script_events.retain(|b, _| !chosen(*b));
+        let rejoin: Vec<(u32, u32)> = self
+            .players
+            .iter()
+            .filter(|(_, p)| chosen(p.bucket))
+            .map(|(id, p)| (p.bucket, *id))
+            .collect();
+        for (bucket, id) in rejoin {
+            self.queue(bucket, ws::joined(id));
         }
         // Their once-only triggers work again for the players there.
         for player in self.players.values_mut().filter(|p| chosen(p.bucket)) {
@@ -173,10 +212,10 @@ pub fn load(shared: &Shared, server_root: &Path, id: &str) {
                     "World gameplay: {} from {} runs on the server{}",
                     id,
                     folder.display(),
-                    if game.world.has_gameplay() {
-                        ""
-                    } else {
-                        " (it has no gameplay objects yet)"
+                    match (game.world.has_gameplay(), game.has_scripts()) {
+                        (_, true) => " with its scripts",
+                        (true, false) => "",
+                        (false, false) => " (it has no gameplay objects yet)",
                     }
                 ),
             );
@@ -258,11 +297,23 @@ pub fn tick(shared: &Shared) {
         (state.peers.clone(), state.session.clone())
     };
     let now = Instant::now();
+    let gone: Vec<(u32, u32)> = game
+        .players
+        .iter()
+        .filter(|(id, _)| !peers.iter().any(|peer| peer.id == **id))
+        .map(|(id, p)| (p.bucket, *id))
+        .collect();
+    for (bucket, id) in gone {
+        game.queue(bucket, ws::left(id));
+    }
     game.players
         .retain(|id, _| peers.iter().any(|peer| peer.id == *id));
     let mut deliveries = Vec::new();
     for peer in &peers {
         let bucket = session.as_ref().map_or(0, |s| s.routing_bucket(peer.id));
+        if !game.players.contains_key(&peer.id) {
+            game.queue(bucket, ws::joined(peer.id));
+        }
         let player = game.players.entry(peer.id).or_insert_with(|| Player {
             state: PlayerState::new(),
             bucket,
@@ -274,11 +325,16 @@ pub fn tick(shared: &Shared) {
         });
         if player.bucket != bucket {
             // Another instance: its zones are new, its state is another.
-            player.bucket = bucket;
+            let old = std::mem::replace(&mut player.bucket, bucket);
             player.state = PlayerState::new();
             player.sent = None;
             player.arriving = None;
+            game.queue(old, ws::left(peer.id));
+            game.queue(bucket, ws::joined(peer.id));
         }
+        let Some(player) = game.players.get_mut(&peer.id) else {
+            continue;
+        };
         let dt = (now - player.last_step).as_secs_f32().min(1.0);
         player.last_step = now;
         // Not spawned yet: the pose is still the default one.
@@ -304,8 +360,14 @@ pub fn tick(shared: &Shared) {
         if let Some(to) = teleport(&effects) {
             player.arriving = Some((to, now));
         }
-        deliveries.push((peer.id, effects, player.state.take_events()));
+        let events = player.state.take_events();
+        for event in &events {
+            game.queue(bucket, ws::event(peer.id, event.clone()));
+        }
+        deliveries.push((peer.id, effects, events));
     }
+    let mut lines = Vec::new();
+    run_scripts(&mut game, &peers, now, &mut deliveries, &mut lines);
     // Snapshots for whoever has not seen their bucket's latest state.
     let mut snapshots = Vec::new();
     let mut too_big = None;
@@ -330,6 +392,9 @@ pub fn tick(shared: &Shared) {
     let names = game.names.clone();
     // Handlers may call the world natives: give the game back first.
     shared.borrow_mut().world = Some(game);
+    for line in lines {
+        out(shared, line);
+    }
     if let Some(size) = too_big {
         out(
             shared,
@@ -399,7 +464,7 @@ pub fn handle_event(shared: &Shared, source: u32, name: &str, args: &[Json]) -> 
                     if let Some(to) = teleport(&effects) {
                         player.arriving = Some((to, now));
                     }
-                    result = Some((effects, player.state.take_events()))
+                    result = Some((effects, player.state.take_events(), player.bucket))
                 }
                 None => refusal = Some("not standing in it"),
             }
@@ -414,10 +479,120 @@ pub fn handle_event(shared: &Shared, source: u32, name: &str, args: &[Json]) -> 
             }
         }
     }
+    if let Some((_, events, bucket)) = &result {
+        for event in events {
+            game.queue(*bucket, ws::event(source, event.clone()));
+        }
+    }
     let names = game.names.clone();
     shared.borrow_mut().world = Some(game);
-    if let Some((effects, events)) = result {
+    if let Some((effects, events, _)) = result {
         deliver(shared, source, &effects, events, &names);
     }
     true
+}
+
+/// Run each instance's scripts once: start them with the instance, pass on
+/// what happened, and carry out what they ask (shared changes in the
+/// instance's state, personal ones as deliveries). Console lines go to
+/// `lines`.
+fn run_scripts(
+    game: &mut Game,
+    peers: &[sa_net::Peer],
+    now: Instant,
+    deliveries: &mut Vec<(u32, Vec<sa_scene::world_logic::Effect>, Vec<Happened>)>,
+    lines: &mut Vec<String>,
+) {
+    let dt = game
+        .last_scripts
+        .replace(now)
+        .map_or(0.0, |last| (now - last).as_secs_f32().min(1.0));
+    // Instances with players or state start their scripts.
+    let buckets: Vec<u32> = game
+        .buckets
+        .keys()
+        .copied()
+        .chain(game.players.values().map(|p| p.bucket))
+        .collect();
+    for bucket in buckets {
+        if game.scripts.contains_key(&bucket) {
+            continue;
+        }
+        let state = game.bucket(bucket).clone();
+        let started = Scripts::start(&game.layout, &state);
+        if started.is_none() {
+            game.script_events.remove(&bucket);
+        }
+        game.scripts.insert(bucket, started);
+    }
+    let mut scripts = std::mem::take(&mut game.scripts);
+    for (bucket, scripts) in scripts.iter_mut() {
+        let Some(scripts) = scripts else { continue };
+        let players: Vec<ws::PlayerInfo> = peers
+            .iter()
+            .filter(|peer| {
+                game.players
+                    .get(&peer.id)
+                    .is_some_and(|p| p.bucket == *bucket)
+                    && peer.pose != sa_net::Pose::default()
+            })
+            .map(|peer| ws::PlayerInfo {
+                id: peer.id,
+                name: peer.name.clone(),
+                position: feet(&peer.pose),
+                driving: peer.pose.driving,
+            })
+            .collect();
+        let events = game.script_events.remove(bucket).unwrap_or_default();
+        let world = &game.world;
+        let state = game
+            .buckets
+            .entry(*bucket)
+            .or_insert_with(|| world.shared());
+        let hour = state.hour().or(state.jump().map(|(_, h)| h));
+        let changes = scripts.tick(world, state, dt, hour, players.clone(), events);
+        let mut personal: BTreeMap<u32, Vec<sa_scene::world_logic::Effect>> = BTreeMap::new();
+        for (who, change) in changes {
+            match who {
+                Who::World => {
+                    // Shared: everyone gets it with the next snapshot.
+                    world.apply_script(state, &mut PlayerState::new(), change);
+                }
+                Who::Everyone => {
+                    for player in &players {
+                        if let Some(p) = game.players.get_mut(&player.id) {
+                            personal
+                                .entry(player.id)
+                                .or_default()
+                                .extend(world.apply_script(state, &mut p.state, change.clone()));
+                        }
+                    }
+                }
+                Who::Player(id) => {
+                    if let Some(p) = game.players.get_mut(&id).filter(|p| p.bucket == *bucket) {
+                        let effects = world.apply_script(state, &mut p.state, change);
+                        if let Some(to) = teleport(&effects) {
+                            p.arriving = Some((to, now));
+                        }
+                        personal.entry(id).or_default().extend(effects);
+                    }
+                }
+            }
+        }
+        for (id, effects) in personal {
+            deliveries.push((id, effects, Vec::new()));
+        }
+        let prefix = if *bucket == 0 {
+            String::new()
+        } else {
+            format!("[instance {bucket}] ")
+        };
+        for line in scripts.take_output() {
+            lines.push(format!("{prefix}{}", ws::describe(&line)));
+        }
+    }
+    // Instances reset meanwhile were dropped from the map; keep the rest.
+    for (bucket, running) in scripts {
+        game.scripts.entry(bucket).or_insert(running);
+    }
 }

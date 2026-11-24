@@ -3454,6 +3454,7 @@ dependencies = [
  "png",
  "quick-xml",
  "sa-assets",
+ "sa-lua",
  "sa-net",
  "sa-script",
  "serde",

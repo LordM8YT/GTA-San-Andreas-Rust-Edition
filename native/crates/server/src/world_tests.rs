@@ -431,3 +431,82 @@ fn teleports_leading_into_each_other_do_not_bounce() {
     });
     assert!((teleports(&anna)[1][0] - 100.0).abs() < 0.5);
 }
+
+#[test]
+fn world_scripts_run_once_per_instance_on_the_server() {
+    // A bell anyone can ring with E: its script hides a lamp for everyone,
+    // tells everyone, and thanks the ringer alone. A broken world script
+    // shows its error on the console and harms nothing else.
+    let mut server = server_with(|layout| {
+        let nodes = layout["nodes"].as_array_mut().unwrap();
+        nodes.push(serde_json::json!({
+            "id": 911, "name": "Bell", "asset": "builtin:marker-target",
+            "transform": { "position": [100.0, 40.0, 0.0] },
+            "gameplay": { "kind": "interact", "size": [3.0, 3.0, 2.5], "prompt": "Ring" },
+            "scripts": [ { "name": "Ring", "source": r#"
+                local lamp = world.find("Street lamp Z")
+                world.on('join', function(p) print('SCRIPTTEST join ' .. p.name) end)
+                script.object:on('use', function(p)
+                  lamp:hide()
+                  world.message('Ding from ' .. p.name)
+                  p:message('You rang')
+                  print('SCRIPTTEST rang by ' .. p.name)
+                end)
+            "# } ]
+        }));
+        nodes.push(serde_json::json!({
+            "id": 912, "name": "Street lamp Z", "asset": "builtin:marker-target",
+            "transform": { "position": [110.0, 40.0, 0.0] }
+        }));
+        layout["next_id"] = 913.into();
+        layout["settings"]["scripts"] = serde_json::json!([
+            { "name": "Broken", "source": "local x = nil\nprint(x.y)" }
+        ]);
+    });
+    let mut anna = join(&mut server);
+    let mut ben = join(&mut server);
+    server.idle(&mut [&mut anna, &mut ben], 5);
+    let output = server.output();
+    assert!(
+        output.contains("Script error in Broken: Broken:2:"),
+        "{output}"
+    );
+    assert_eq!(
+        output.matches("[Bell/Ring] SCRIPTTEST join Tester").count(),
+        2,
+        "{output}"
+    );
+    let lamp = node(&server, "Street lamp Z");
+    let revision = snapshot(&ben).unwrap().revision;
+
+    stand(&mut anna, [100.0, 40.0, 0.0]);
+    server.settle(&mut anna);
+    use_object(&anna, 911);
+    server.until(&mut [&mut anna, &mut ben], "the bell's script", |_, p| {
+        messages(p[1]).contains(&"Ding from Tester".to_string())
+            && snapshot(p[1]).is_some_and(|s| s.hidden.contains(&lamp))
+    });
+    assert!(snapshot(&ben).unwrap().revision > revision);
+    assert!(messages(&anna).contains(&"You rang".to_string()));
+    assert!(messages(&anna).contains(&"Ding from Tester".to_string()));
+    assert!(!messages(&ben).contains(&"You rang".to_string()));
+    assert!(server
+        .output()
+        .contains("[Bell/Ring] SCRIPTTEST rang by Tester"));
+
+    // A reset puts the lamp back and starts the scripts again: the players
+    // there join them anew (output() returns what is new since last time).
+    server.output();
+    server.run("world_reset 0");
+    server.until(&mut [&mut anna, &mut ben], "the reset", |_, p| {
+        snapshot(p[1]).is_some_and(|s| !s.hidden.contains(&lamp))
+    });
+    server.idle(&mut [&mut anna, &mut ben], 3);
+    assert_eq!(
+        server
+            .output()
+            .matches("[Bell/Ring] SCRIPTTEST join Tester")
+            .count(),
+        2
+    );
+}
