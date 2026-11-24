@@ -606,7 +606,6 @@ impl Shared {
             ..world.shared()
         };
     }
-    /// Objects actions hid.
     /// Time passes for moving objects (no new revision: everyone moves them
     /// along by themselves).
     pub fn advance(&mut self, dt: f32) {
@@ -660,6 +659,11 @@ impl Shared {
     pub fn moving(&self) -> bool {
         self.motions.values().any(|m| !m.done())
     }
+    /// The moves scripts made, and how far along they are.
+    pub fn motions(&self) -> impl Iterator<Item = (NodeId, &Motion)> + '_ {
+        self.motions.iter().map(|(id, m)| (*id, m))
+    }
+    /// Objects actions hid.
     pub fn hidden_ids(&self) -> impl Iterator<Item = NodeId> + '_ {
         self.visibility
             .iter()

@@ -499,6 +499,14 @@ impl State {
                 }
                 if added {
                     collision.set_hidden(play.logic.hidden_by_actions());
+                    // Objects scripts moved are solid where they are now.
+                    for (id, at) in &play.placed {
+                        if let Some(node) = play.layout.node(*id) {
+                            let matrix =
+                                render_matrix(at) * render_matrix(&node.transform).inverse();
+                            collision.move_switchable(*id, matrix);
+                        }
+                    }
                 }
             }
         }
@@ -619,6 +627,19 @@ impl State {
                     return frame >= opened + 3;
                 }
                 if !play.logic.visible(gate.0) {
+                    // The world's scripts run on the server: its lift
+                    // reaches this game as a move.
+                    if let Some(lift) = play.layout.nodes.iter().find(|n| n.name == "Lift") {
+                        assert!(
+                            play.logic.shared().moved().any(|(id, _)| id == lift.id),
+                            "the server's lift script did not reach this game"
+                        );
+                        assert!(
+                            play.placed.contains_key(&lift.id),
+                            "the lift is not drawn where it is"
+                        );
+                        println!("Remote smoke: the server's lift script moves the lift here too");
+                    }
                     play.smoke_opened = Some(frame);
                     println!(
                         "Remote smoke: the server opened the gate {} frames after E",

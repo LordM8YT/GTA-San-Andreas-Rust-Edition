@@ -106,13 +106,20 @@ impl CollisionWorld {
         let Some(placed) = self.placed.get(&owner) else {
             return true;
         };
+        // Take the object out of the cells it was in, one pass per cell.
+        let mut was: HashSet<(i32, i32)> = HashSet::new();
+        for (index, _) in placed {
+            let old = self.triangles[*index];
+            was.extend(cells_of(old.a, old.b, old.c).into_iter().flatten());
+        }
+        let triangles = &self.triangles;
+        for key in was {
+            if let Some(list) = self.cells.get_mut(&key) {
+                list.retain(|i| triangles[*i].owner != owner);
+            }
+        }
         for (index, [a, b, c]) in placed {
             let old = self.triangles[*index];
-            for key in cells_of(old.a, old.b, old.c).into_iter().flatten() {
-                if let Some(list) = self.cells.get_mut(&key) {
-                    list.retain(|i| i != index);
-                }
-            }
             let (a, b, c) = (
                 matrix.transform_point3(*a),
                 matrix.transform_point3(*b),

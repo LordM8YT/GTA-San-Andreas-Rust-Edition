@@ -748,6 +748,10 @@ impl State {
             ));
         }
         let mut problems = Vec::new();
+        if !build.playtesting {
+            // However the playtest ended, objects are drawn where placed.
+            build.gpu.moved.clear();
+        }
         build
             .gpu
             .sync(self, &mut build.resolver, &build.doc.layout, &mut problems);

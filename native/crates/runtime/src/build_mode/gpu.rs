@@ -50,6 +50,9 @@ pub struct Gpu {
     /// Where objects a script moved are drawn while playtesting, instead
     /// of their place in the layout.
     pub moved: HashMap<NodeId, Transform>,
+    /// Model-space meshes of moving terrain and roads, re-placed as they
+    /// move instead of rebuilt.
+    moving_meshes: HashMap<NodeId, AssetMesh>,
 }
 
 /// What a terrain or road object's own mesh is made from.
@@ -169,10 +172,27 @@ impl Gpu {
                 .node(*id)
                 .is_some_and(|n| n.terrain.is_some() || n.road.is_some())
         });
+        let moved = &self.moved;
+        self.moving_meshes.retain(|id, _| moved.contains_key(id));
         for node in &layout.nodes {
             let Some(asset) = &node.asset else { continue };
             let transform = self.moved.get(&node.id).copied().unwrap_or(node.transform);
             if node.terrain.is_some() || node.road.is_some() {
+                let same_shape = self
+                    .generated
+                    .get(&node.id)
+                    .is_some_and(|g| g.matches(node));
+                if let (true, Some(mesh), Some(object)) = (
+                    same_shape,
+                    self.moving_meshes.get(&node.id),
+                    self.objects.get_mut(&node.id),
+                ) {
+                    if object.transform != transform {
+                        object.transform = transform;
+                        place(state, mesh, object);
+                    }
+                    continue;
+                }
                 // Its own mesh, rebuilt when sculpted, its points change or
                 // it moves.
                 let fresh = self
@@ -192,6 +212,9 @@ impl Gpu {
                             let object = instance(state, &mesh, asset.clone(), transform);
                             self.objects.insert(node.id, object);
                             self.generated.insert(node.id, generated);
+                            if self.moved.contains_key(&node.id) {
+                                self.moving_meshes.insert(node.id, mesh);
+                            }
                         }
                         Err(error) => problems.push(format!("{asset}: {error:#}")),
                     }

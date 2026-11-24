@@ -250,7 +250,13 @@ local function move(o, position, heading, seconds, level)
   if not is_vector(position) then
     error('a position is a vector(x, y, z)', level + 1)
   end
-  local ok, message = native.move(rawget(o, '__object'), position.x, position.y, position.z, tonumber(heading) or 0, tonumber(seconds) or 0)
+  if type(heading) ~= 'number' then
+    error('a heading is a number of degrees', level + 1)
+  end
+  if seconds ~= nil and type(seconds) ~= 'number' then
+    error('seconds must be a number', level + 1)
+  end
+  local ok, message = native.move(rawget(o, '__object'), position.x, position.y, position.z, heading, seconds or 0)
   if not ok then
     error(message, level + 1)
   end
@@ -262,9 +268,11 @@ ObjectMeta.__newindex = function(o, key, value)
       error(message, 2)
     end
   elseif key == 'position' then
-    move(o, value, o.heading, 0, 2)
+    local _, _, _, heading = native.target(rawget(o, '__object'))
+    move(o, value, heading, 0, 2)
   elseif key == 'heading' then
-    move(o, o.position, value, 0, 2)
+    local x, y, z = native.target(rawget(o, '__object'))
+    move(o, vector(x, y, z), value, 0, 2)
   else
     error('objects have no field ' .. tostring(key) .. ' to set (visible, position and heading can be set)', 2)
   end
@@ -286,11 +294,18 @@ function Object:on(event, fn)
 end
 -- Glide to a position (and heading) over some seconds; wait(seconds) to
 -- let it arrive.
+-- A new move replaces the one on its way, keeping the half it does not
+-- change: moveTo keeps the heading it was turning to, turnTo the place.
 function Object:moveTo(position, seconds, heading)
-  move(self, position, heading or self.heading, seconds, 2)
+  if heading == nil then
+    local _, _, _, h = native.target(rawget(self, '__object'))
+    heading = h
+  end
+  move(self, position, heading, seconds, 2)
 end
 function Object:turnTo(heading, seconds)
-  move(self, self.position, heading, seconds, 2)
+  local x, y, z = native.target(rawget(self, '__object'))
+  move(self, vector(x, y, z), heading, seconds, 2)
 end
 
 -- Players in the world, by id.

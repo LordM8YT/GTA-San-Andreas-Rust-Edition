@@ -178,6 +178,8 @@ pub struct Frame {
     /// Objects moved from where they were placed: where they are now
     /// (position, heading).
     pub poses: Vec<(u64, [f32; 3], f32)>,
+    /// ...and where their move is taking them.
+    pub targets: Vec<(u64, [f32; 3], f32)>,
 }
 
 struct Inner {
@@ -200,6 +202,9 @@ struct Inner {
     known: HashMap<u32, PlayerInfo>,
     /// Where moved objects are now.
     poses: HashMap<u64, ([f32; 3], f32)>,
+    /// Where their latest move takes them: a move that changes only the
+    /// position (or heading) keeps the other half of it.
+    targets: HashMap<u64, ([f32; 3], f32)>,
 }
 impl Inner {
     fn line(&mut self, text: String, error: bool) {
@@ -277,6 +282,7 @@ impl WorldScripts {
             current: String::new(),
             known: HashMap::new(),
             poses: HashMap::new(),
+            targets: HashMap::new(),
         }));
         let mut host = Self {
             shared,
@@ -360,6 +366,11 @@ impl WorldScripts {
             }
             inner.poses = frame
                 .poses
+                .into_iter()
+                .map(|(id, position, heading)| (id, (position, heading)))
+                .collect();
+            inner.targets = frame
+                .targets
                 .into_iter()
                 .map(|(id, position, heading)| (id, (position, heading)))
                 .collect();
@@ -628,6 +639,19 @@ fn create_state(shared: &Shared, source: &Source, limit: &Rc<Limit>) -> mlua::Re
             None => inner.objects.get(&id).map_or(0.0, |o| o.heading),
         }
     ));
+    func!("target", |_lua, inner, id: u64| {
+        let (p, h) = match inner.targets.get(&id) {
+            Some(target) => *target,
+            None => match inner.poses.get(&id) {
+                Some(now) => *now,
+                None => inner
+                    .objects
+                    .get(&id)
+                    .map_or(([0.0; 3], 0.0), |o| (o.position, o.heading)),
+            },
+        };
+        Ok((p[0], p[1], p[2], h))
+    });
     func!("move", |_lua,
                    inner,
                    (id, x, y, z, heading, seconds): (
@@ -659,6 +683,7 @@ fn create_state(shared: &Shared, source: &Source, limit: &Rc<Limit>) -> mlua::Re
         if seconds == 0.0 {
             inner.poses.insert(id, ([x, y, z], heading));
         }
+        inner.targets.insert(id, ([x, y, z], heading));
         Ok(
             match inner.request(Request::Move {
                 object: id,
@@ -1296,11 +1321,21 @@ print(x",
                 },
                 Request::Move {
                     object: 1,
-                    position: [1.0, 2.0, 3.0],
+                    position: [1.0, 2.0, 8.0],
                     heading: 180.0,
                     seconds: 1.0
                 },
             ]
+        );
+        // A heading that is not a number is an error, not north.
+        let mut host = host_with(
+            "Typo",
+            "world.find('Door').heading = world.find('Door').headng",
+        );
+        let out = texts(&mut host);
+        assert!(
+            out[0].contains("Typo:1: a heading is a number of degrees"),
+            "{out:?}"
         );
     }
 

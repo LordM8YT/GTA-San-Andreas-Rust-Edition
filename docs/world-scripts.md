@@ -71,7 +71,7 @@ east, y north, z up. Headings are degrees, and 0 faces north.
 | `object.position`, `.heading` | Where the object is now. Set them to move it at once. |
 | `object:show()`, `:hide()`, `:toggle()` | |
 | `object:moveTo(vector, seconds, [heading])` | Glide there, easing in and out. |
-| `object:turnTo(heading, seconds)` | Turn, the short way round. |
+| `object:turnTo(heading, seconds)` | Turn, the short way round. A new move replaces the one on its way and keeps the half it does not change: `moveTo` keeps where it was turning to, `turnTo` where it was going. |
 | `object:on(event, fn)` | `world.on(event, object, fn)`. |
 | `player.id`, `.name`, `.position`, `.driving` | `position` is nil until the player has spawned. |
 | `player:message(text, seconds)` | A message for this player only. |

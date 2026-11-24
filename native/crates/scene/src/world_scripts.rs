@@ -95,6 +95,10 @@ impl Scripts {
                 .moved()
                 .map(|(id, pose)| (id, pose.position, pose.heading))
                 .collect(),
+            targets: shared
+                .motions()
+                .map(|(id, m)| (id, m.to.position, m.to.heading))
+                .collect(),
         };
         self.host
             .tick(frame, events)
