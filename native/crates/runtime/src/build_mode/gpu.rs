@@ -57,6 +57,9 @@ pub struct Gpu {
     moving_meshes: HashMap<NodeId, AssetMesh>,
     /// Colours scripts gave objects while playtesting (models only).
     pub tints: HashMap<NodeId, [f32; 3]>,
+    /// Copies scripts made while playtesting: copy to the object it copies.
+    /// Drawn like it, where `moved` says (or where it was placed).
+    pub copies: HashMap<NodeId, NodeId>,
 }
 
 /// What a terrain or road object's own mesh is made from.
@@ -166,9 +169,10 @@ impl Gpu {
         layout: &Layout,
         problems: &mut Vec<String>,
     ) {
+        let copies = &self.copies;
         self.objects.retain(|id, object| {
             layout
-                .node(*id)
+                .node(copies.get(id).copied().unwrap_or(*id))
                 .is_some_and(|n| n.asset.as_ref() == Some(&object.asset))
         });
         self.generated.retain(|id, _| {
@@ -225,24 +229,48 @@ impl Gpu {
                 }
                 continue;
             }
-            let tint = self.tints.get(&node.id).copied().unwrap_or([1.0; 3]);
-            match self.objects.get_mut(&node.id) {
-                Some(object) if object.transform == transform && object.tint == tint => {}
-                Some(object) => {
-                    object.transform = transform;
+            self.sync_model(state, resolver, node.id, asset, transform, problems);
+        }
+        let copies: Vec<(NodeId, NodeId)> = self.copies.iter().map(|(c, s)| (*c, *s)).collect();
+        for (copy, source) in copies {
+            let Some(node) = layout.node(source) else {
+                continue;
+            };
+            // Only models are copied (not terrain or roads).
+            let (Some(asset), None, None) = (&node.asset, &node.terrain, &node.road) else {
+                continue;
+            };
+            let transform = self.moved.get(&copy).copied().unwrap_or(node.transform);
+            self.sync_model(state, resolver, copy, asset, transform, problems);
+        }
+    }
+    /// Draw model object `id` with `transform`, in its colour.
+    fn sync_model(
+        &mut self,
+        state: &State,
+        resolver: &mut AssetResolver,
+        id: NodeId,
+        asset: &AssetRef,
+        transform: Transform,
+        problems: &mut Vec<String>,
+    ) {
+        let tint = self.tints.get(&id).copied().unwrap_or([1.0; 3]);
+        match self.objects.get_mut(&id) {
+            Some(object) if object.transform == transform && object.tint == tint => {}
+            Some(object) => {
+                object.transform = transform;
+                object.tint = tint;
+                let mesh = &self.assets[asset];
+                place(state, mesh, object);
+            }
+            None => {
+                let mesh = self.asset(state, resolver, asset, problems);
+                let mut object = instance(state, mesh, asset.clone(), transform);
+                if tint != [1.0; 3] {
                     object.tint = tint;
-                    let mesh = &self.assets[asset];
-                    place(state, mesh, object);
+                    place(state, mesh, &mut object);
                 }
-                None => {
-                    let mesh = self.asset(state, resolver, asset, problems);
-                    let mut object = instance(state, mesh, asset.clone(), transform);
-                    if tint != [1.0; 3] {
-                        object.tint = tint;
-                        place(state, mesh, &mut object);
-                    }
-                    self.objects.insert(node.id, object);
-                }
+                self.objects.insert(id, object);
             }
         }
     }

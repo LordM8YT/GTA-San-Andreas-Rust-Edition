@@ -177,6 +177,23 @@ end
 "#,
     },
     Example {
+        name: "Crate dropper",
+        about: "Give the object an Interaction behaviour: E drops a copy of it that falls away after 10 seconds",
+        source: r#"-- Give this object an Interaction behaviour (Gameplay in its Properties).
+local box = script.object
+
+box:on('use', function(player)
+  local copy = box:clone(box.position + vector(0, 0, 3))
+  copy.color = rgb(math.random(), math.random(), math.random())
+  copy:moveTo(box.position + vector(math.random(-4, 4), math.random(-4, 4), 0), 1)
+  wait(10)
+  if copy.exists then
+    copy:destroy()
+  end
+end)
+"#,
+    },
+    Example {
         name: "Race results",
         about: "Tells everyone each finish time of the world's checkpoint races",
         source: r#"local best = {}
@@ -228,6 +245,7 @@ object.name  .visible  .position  .heading  .color  (set any but name)
 object.color = rgb(1, 0.5, 0)  (nil: its own colour again)
 object:show()  :hide()  :toggle()  :on(event, function)
 object:moveTo(vector(x, y, z), seconds, heading)  object:turnTo(heading, seconds)
+object:clone(vector(x, y, z), heading) a copy (not saved)   copy:destroy()
 player.name  .id  .position  .driving
 player:message(text, seconds)  player:teleport(object or vector(x, y, z), heading)
 player:hud(name, text)  world.hud(name, text)   on-screen text (nil removes it)

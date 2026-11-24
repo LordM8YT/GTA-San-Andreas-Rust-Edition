@@ -81,6 +81,14 @@ pub struct Config {
     pub weathers: Vec<String>,
     pub hour: Option<u8>,
     pub weather: Option<String>,
+    /// The id the first copy a script makes gets (later ones count up).
+    pub first_copy: u64,
+    /// Most copies the world can have at once (0: scripts cannot copy).
+    pub max_copies: usize,
+    /// Copies the world has already, made by these scripts before they
+    /// last stopped: (copy, the placed object it copies). Their objects
+    /// are in `objects`.
+    pub copies: Vec<(u64, u64)>,
 }
 
 /// Something that happened in the world, for `world.on`.
@@ -158,6 +166,18 @@ pub enum Request {
         object: u64,
         color: Option<[f32; 3]>,
     },
+    /// Make copy `id` of object `source` at `position` facing `heading`:
+    /// shown, in the source's colour, changeable like it.
+    Copy {
+        source: u64,
+        id: u64,
+        position: [f32; 3],
+        heading: f32,
+    },
+    /// Remove a copy for good.
+    Destroy {
+        object: u64,
+    },
     /// A line of on-screen text for one player, or everyone (None); text
     /// None removes it.
     Hud {
@@ -196,6 +216,18 @@ pub struct Frame {
     pub targets: Vec<(u64, [f32; 3], f32)>,
     /// Colours scripts gave objects.
     pub colors: Vec<(u64, [f32; 3])>,
+    /// The copies scripts made that the world has now: (copy, the placed
+    /// object it copies).
+    pub copies: Vec<(u64, u64)>,
+}
+
+/// A copy made since the world last heard from the scripts: kept until the
+/// world has it (or turned it down).
+#[derive(Clone, Copy)]
+struct Pending {
+    position: [f32; 3],
+    heading: f32,
+    color: Option<[f32; 3]>,
 }
 
 struct Inner {
@@ -225,6 +257,12 @@ struct Inner {
     colors: HashMap<u64, [f32; 3]>,
     /// On-screen line names in use: everyone's (None) and each player's.
     hud: HashMap<Option<u32>, std::collections::HashSet<String>>,
+    /// Copies scripts made, and the placed object each copies.
+    copies: HashMap<u64, u64>,
+    /// Copies made since the requests were last taken.
+    pending: HashMap<u64, Pending>,
+    next_copy: u64,
+    max_copies: usize,
 }
 impl Inner {
     fn line(&mut self, text: String, error: bool) {
@@ -237,6 +275,17 @@ impl Inner {
             text,
             error,
         });
+    }
+    /// Drop copy `id` from what scripts see.
+    fn forget(&mut self, id: u64) {
+        self.copies.remove(&id);
+        self.pending.remove(&id);
+        self.objects.remove(&id);
+        self.order.retain(|o| *o != id);
+        self.visible.remove(&id);
+        self.poses.remove(&id);
+        self.targets.remove(&id);
+        self.colors.remove(&id);
     }
     fn request(&mut self, request: Request) -> Result<(), String> {
         if self.requests.len() >= MAX_REQUESTS {
@@ -305,6 +354,10 @@ impl WorldScripts {
             targets: HashMap::new(),
             colors: HashMap::new(),
             hud: HashMap::new(),
+            copies: config.copies.into_iter().collect(),
+            pending: HashMap::new(),
+            next_copy: config.first_copy,
+            max_copies: config.max_copies,
         }));
         let mut host = Self {
             shared,
@@ -397,6 +450,55 @@ impl WorldScripts {
                 .into_iter()
                 .map(|(id, position, heading)| (id, (position, heading)))
                 .collect();
+            // Copies the world no longer has (a reset, or one it turned
+            // down) are gone; ones made since the last frame are on their way.
+            let alive: std::collections::HashSet<u64> =
+                frame.copies.iter().map(|(copy, _)| *copy).collect();
+            // Copies made before (scripts that stopped and started again,
+            // or ran on a server before): theirs to change too.
+            for (copy, source) in frame.copies {
+                if inner.copies.contains_key(&copy) {
+                    continue;
+                }
+                let Some(name) = inner.objects.get(&source).map(|o| o.name.clone()) else {
+                    continue;
+                };
+                let (position, heading) =
+                    inner.poses.get(&copy).copied().unwrap_or(([0.0; 3], 0.0));
+                inner.objects.insert(
+                    copy,
+                    ObjectInfo {
+                        id: copy,
+                        name,
+                        position,
+                        heading,
+                        changeable: true,
+                        paintable: true,
+                        visible: true,
+                    },
+                );
+                inner.order.push(copy);
+                inner.copies.insert(copy, source);
+            }
+            let gone: Vec<u64> = inner
+                .copies
+                .keys()
+                .filter(|id| !alive.contains(id) && !inner.pending.contains_key(id))
+                .copied()
+                .collect();
+            for id in gone {
+                inner.forget(id);
+            }
+            for (id, pending) in inner.pending.clone() {
+                if !alive.contains(&id) {
+                    let pose = (pending.position, pending.heading);
+                    inner.poses.insert(id, pose);
+                    inner.targets.insert(id, pose);
+                    if let Some(color) = pending.color {
+                        inner.colors.insert(id, color);
+                    }
+                }
+            }
             inner.flooded = false;
         }
         let emits = std::mem::take(&mut self.shared.borrow_mut().emits);
@@ -439,6 +541,7 @@ impl WorldScripts {
                 true,
             );
         }
+        inner.pending.clear();
         std::mem::take(&mut inner.requests)
     }
 
@@ -726,6 +829,115 @@ fn create_state(shared: &Shared, source: &Source, limit: &Rc<Limit>) -> mlua::Re
             Ok(()) => (true, None),
             Err(e) => (false, Some(e)),
         })
+    });
+    func!("original", |_lua, inner, id: u64| Ok(inner
+        .copies
+        .get(&id)
+        .copied()));
+    func!("clone", |_lua,
+                    inner,
+                    (id, x, y, z, heading): (
+        u64,
+        f32,
+        f32,
+        f32,
+        f32
+    )| {
+        let Some(object) = inner.objects.get(&id) else {
+            return Ok((None, Some("that object is not in the world".to_string())));
+        };
+        if !object.changeable {
+            return Ok((
+                None,
+                Some(format!(
+                    "{} cannot be copied by scripts: tick \"Scripts can change it\" in its Properties",
+                    object.name
+                )),
+            ));
+        }
+        if !object.paintable {
+            return Ok((
+                None,
+                Some(format!(
+                    "{} cannot be copied: copies work on models, not terrain or roads",
+                    object.name
+                )),
+            ));
+        }
+        if inner.max_copies == 0 {
+            return Ok((None, Some("this world cannot make copies".to_string())));
+        }
+        if inner.copies.len() >= inner.max_copies {
+            return Ok((
+                None,
+                Some(format!(
+                    "a world can have at most {} copies at once: destroy() some first",
+                    inner.max_copies
+                )),
+            ));
+        }
+        if !(x.is_finite() && y.is_finite() && z.is_finite() && heading.is_finite()) {
+            return Ok((
+                None,
+                Some("a copy needs a position and a heading that are numbers".to_string()),
+            ));
+        }
+        let original = inner.copies.get(&id).copied().unwrap_or(id);
+        let copy = inner.next_copy;
+        let info = ObjectInfo {
+            id: copy,
+            name: object.name.clone(),
+            position: [x, y, z],
+            heading,
+            changeable: true,
+            paintable: true,
+            visible: true,
+        };
+        if let Err(e) = inner.request(Request::Copy {
+            source: id,
+            id: copy,
+            position: [x, y, z],
+            heading,
+        }) {
+            return Ok((None, Some(e)));
+        }
+        inner.next_copy += 1;
+        let color = inner.colors.get(&id).copied();
+        inner.objects.insert(copy, info);
+        inner.order.push(copy);
+        inner.visible.insert(copy, true);
+        inner.poses.insert(copy, ([x, y, z], heading));
+        inner.targets.insert(copy, ([x, y, z], heading));
+        if let Some(color) = color {
+            inner.colors.insert(copy, color);
+        }
+        inner.copies.insert(copy, original);
+        inner.pending.insert(
+            copy,
+            Pending {
+                position: [x, y, z],
+                heading,
+                color,
+            },
+        );
+        Ok((Some(copy), None))
+    });
+    func!("destroy", |_lua, inner, id: u64| {
+        if !inner.copies.contains_key(&id) {
+            let text = match inner.objects.get(&id) {
+                Some(object) => format!(
+                    "{} was placed in the world: only copies can be destroyed (hide() it instead)",
+                    object.name
+                ),
+                None => "that object is not in the world".to_string(),
+            };
+            return Ok((false, Some(text)));
+        }
+        if let Err(e) = inner.request(Request::Destroy { object: id }) {
+            return Ok((false, Some(e)));
+        }
+        inner.forget(id);
+        Ok((true, None))
     });
     func!("target", |_lua, inner, id: u64| {
         let (p, h) = match inner.targets.get(&id) {
@@ -1076,6 +1288,9 @@ mod tests {
             weathers: vec!["clear".into(), "rain".into()],
             hour: Some(12),
             weather: None,
+            first_copy: 1000,
+            max_copies: 3,
+            copies: Vec::new(),
         })
     }
     fn alice() -> Vec<PlayerInfo> {
@@ -1102,6 +1317,71 @@ mod tests {
             .into_iter()
             .map(|l| format!("{}{}: {}", if l.error { "!" } else { "" }, l.script, l.text))
             .collect()
+    }
+
+    #[test]
+    fn scripts_copy_objects_and_destroy_the_copies() {
+        let mut host = host_with(
+            "Spawner",
+            r#"
+            local door = world.find('Door')
+            door.color = rgb(1, 0, 0)
+            local a = door:clone(vector(5, 0, 0), 45)
+            print(a.id, a.name, a.position, a.heading, a.color, a.original == door, door.original)
+            local b = a:clone()
+            print(b.original == door, b.position, #world.objects())
+            print(pcall(function() world.find('Pad'):clone() end))
+            local c = door:clone()
+            print(pcall(function() door:clone() end))
+            print(pcall(function() door:destroy() end))
+            c:destroy()
+            print(c.exists, a.exists, #world.objects())
+            print(pcall(function() c.visible = false end))
+            wait(1)
+            print(a.position, a.exists, b.exists)
+            "#,
+        );
+        assert_eq!(
+            texts(&mut host),
+            [
+                "Spawner: 1000  Door  vector(5.00, 0.00, 0.00)  45.0  rgb(1.00, 0.00, 0.00)  true  nil",
+                "Spawner: true  vector(5.00, 0.00, 0.00)  4",
+                "Spawner: false  Spawner:8: Pad cannot be copied by scripts: tick \"Scripts can change it\" in its Properties",
+                "Spawner: false  Spawner:10: a world can have at most 3 copies at once: destroy() some first",
+                "Spawner: false  Spawner:11: Door was placed in the world: only copies can be destroyed (hide() it instead)",
+                "Spawner: false  true  4",
+                "Spawner: false  Spawner:14: that object is not in the world",
+            ]
+        );
+        let requests = host.tick(frame(0.1), vec![]);
+        assert_eq!(
+            requests[1],
+            Request::Copy {
+                source: 1,
+                id: 1000,
+                position: [5.0, 0.0, 0.0],
+                heading: 45.0
+            }
+        );
+        assert_eq!(
+            requests[2],
+            Request::Copy {
+                source: 1000,
+                id: 1001,
+                position: [5.0, 0.0, 0.0],
+                heading: 45.0
+            }
+        );
+        assert_eq!(requests.last(), Some(&Request::Destroy { object: 1002 }));
+        // The world has only the first copy (the second was turned down).
+        let mut next = frame(1.0);
+        next.copies = vec![(1000, 1)];
+        next.poses = vec![(1000, [5.0, 0.0, 0.0], 45.0)];
+        assert!(host.tick(next, vec![]).is_empty());
+        assert_eq!(
+            texts(&mut host),
+            ["Spawner: vector(5.00, 0.00, 0.00)  true  false"]
+        );
     }
 
     #[test]

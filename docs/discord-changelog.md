@@ -1,3 +1,9 @@
+**SARE 0.57: scripts make copies 📦 (pending release)**
+
+📦 **Copies from scripts:** `object:clone()` drops a copy of any object while your world plays, and `copy:destroy()` takes it away. Copies are solid, can move and change colour, and everyone on the server sees them.
+
+---
+
 **SARE 0.56: world looks and real lamp light 🌆 (pending release)**
 
 🎨 **A look for your world:** Natural, Vivid, Cinematic, Sunset, Cold night, Dreamy or Noir, or tune your own. Everyone sees your world that way.

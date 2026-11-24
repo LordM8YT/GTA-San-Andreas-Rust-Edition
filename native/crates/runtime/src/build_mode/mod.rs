@@ -753,6 +753,7 @@ impl State {
             // in their own colours.
             build.gpu.moved.clear();
             build.gpu.tints.clear();
+            build.gpu.copies.clear();
         }
         build
             .gpu
@@ -1015,6 +1016,32 @@ impl State {
                     play.logic.shared().colors().contains_key(&bell)
                         && self.build.as_ref().unwrap().gpu.tints.contains_key(&bell),
                     "the bell's script did not colour it"
+                );
+                // ...and left a copy of the crate 2 m north of it: drawn
+                // and solid there.
+                let signal = smoke_node(self, "Signal crate");
+                let copies: Vec<_> = play.logic.shared().copies().iter().collect();
+                assert_eq!(
+                    copies.len(),
+                    1,
+                    "the bell's script made no copy: {copies:?}"
+                );
+                let (copy, source) = (*copies[0].0, *copies[0].1);
+                assert_eq!(source, signal.0, "the copy is not of the signal crate");
+                assert!(play.logic.visible(copy), "the copy is hidden");
+                assert!(
+                    self.build.as_ref().unwrap().gpu.objects.contains_key(&copy),
+                    "the copy is not drawn"
+                );
+                let above =
+                    crate::play_logic::blender_to_render([signal.1[0], signal.1[1] + 2.0, 10.0]);
+                let collision = self.collision.as_ref().unwrap();
+                assert!(
+                    collision.has_switchable(copy)
+                        && collision
+                            .ground_below(above, above.y)
+                            .is_some_and(|y| y > 0.1),
+                    "the copy is not solid where it stands"
                 );
                 let build = self.build.as_ref().unwrap();
                 let errors: Vec<&str> = build

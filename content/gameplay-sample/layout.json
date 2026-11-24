@@ -1533,7 +1533,7 @@
       "scripts": [
         {
           "name": "Ring",
-          "source": "-- Press E at the bell: the signal crate vanishes for 3 seconds, and\n-- everyone sees how often the bell has rung.\nlocal crate = world.find(\"Signal crate\")\nlocal rings = 0\n\nscript.object:on('use', function(player)\n  rings = rings + 1\n  world.hud('bell', 'Bell rung ' .. rings .. (rings == 1 and ' time' or ' times'))\n  script.object.color = rgb(1, 0.8, 0.2)\n  crate:hide()\n  world.message(player.name .. ' rang the bell')\n  wait(3)\n  crate:show()\nend)\n"
+          "source": "-- Press E at the bell: the signal crate vanishes for 3 seconds and\n-- leaves a copy of itself beside it (the three newest stay), and\n-- everyone sees how often the bell has rung.\nlocal crate = world.find(\"Signal crate\")\nlocal rings = 0\nlocal copies = {}\n\nscript.object:on('use', function(player)\n  rings = rings + 1\n  world.hud('bell', 'Bell rung ' .. rings .. (rings == 1 and ' time' or ' times'))\n  script.object.color = rgb(1, 0.8, 0.2)\n  copies[#copies + 1] = crate:clone(crate.position + vector(0, 2 * (1 + (rings - 1) % 3), 0))\n  if #copies > 3 then\n    table.remove(copies, 1):destroy()\n  end\n  crate:hide()\n  world.message(player.name .. ' rang the bell')\n  wait(3)\n  crate:show()\nend)\n"
         }
       ]
     },

@@ -74,6 +74,9 @@ east, y north, z up. Headings are degrees, and 0 faces north.
 | `object:moveTo(vector, seconds, [heading])` | Glide there, easing in and out. |
 | `object:turnTo(heading, seconds)` | Turn, the short way round. A new move replaces the one on its way and keeps the half it does not change: `moveTo` keeps where it was turning to, `turnTo` where it was going. |
 | `object:on(event, fn)` | `world.on(event, object, fn)`. |
+| `object:clone([vector], [heading])` | A copy of the object, where it is now or at the given place and heading. It is shown, in the object's colour, and scripts can show, hide, move, colour and destroy it like the object itself. A copy has no zones, scripts or light of its own and is not saved: copies go when the world starts again. A world can have at most 200 copies at once. Works on models, not on terrain or roads. |
+| `object:destroy()` | Remove a copy for good. Objects placed in the world cannot be destroyed; hide them instead. |
+| `object.original`, `.exists` | The object a copy was made from (nil for placed objects), and whether the object is still in the world (false once destroyed). |
 | `player.id`, `.name`, `.position`, `.driving` | `position` is nil until the player has spawned. |
 | `player:message(text, seconds)` | A message for this player only. |
 | `player:teleport(object or vector, [heading])` | Onto an object (facing its way), or to a spot. |
@@ -101,7 +104,7 @@ a script on it or naming it.
 
 ### Objects scripts can change
 
-Scripts may show, hide, move and colour:
+Scripts may show, hide, move, colour and copy:
 
 - the object a script is on;
 - objects whose name a script writes in quotes, such as
@@ -154,6 +157,10 @@ join halfway.
   seconds after its last player leaves. The shared state stays, and they
   start again when someone comes back. `world_reset` starts them again
   from the beginning.
+- Copies scripts made stay in the shared state while the scripts are
+  stopped. When they start again, the copies are in `world.objects()`
+  (their `original` is set), so the scripts can change or destroy them.
+  `world_reset` removes every copy.
 - Server resources still get the `sare:*` events and world natives (see
   [server-hosting](server-hosting.md#build-mode-worlds)) beside the
   world's own scripts.

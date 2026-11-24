@@ -53,8 +53,26 @@ pub struct CollisionWorld {
     hidden: HashSet<u32>,
     /// Switchable objects' triangles as they were added, by owner, so a
     /// script can move the object ([`Self::move_switchable`]).
-    placed: Box<Placed>,
+    /// (Boxed with the room removed copies left, to keep the world small.)
+    owned: Box<Owned>,
 }
+
+#[derive(Default)]
+struct Owned {
+    placed: Placed,
+    /// Triangles and owners of removed copies, for the next copy to reuse.
+    free: Free,
+}
+
+/// Room removed copies left: triangle indices and owners.
+#[derive(Default)]
+struct Free {
+    triangles: Vec<usize>,
+    owners: Vec<u32>,
+}
+
+/// A removed switchable's place in `switchable`: never a real id.
+const REMOVED: u64 = u64::MAX;
 impl CollisionWorld {
     pub fn from_batches(batches: &[Batch]) -> Self {
         let mut world = Self {
@@ -63,7 +81,7 @@ impl CollisionWorld {
             open_door_bounds: Vec::new(),
             switchable: Vec::new(),
             hidden: HashSet::new(),
-            placed: Box::default(),
+            owned: Box::default(),
         };
         world.add(batches, 0);
         world
@@ -103,7 +121,7 @@ impl CollisionWorld {
             return false;
         };
         let owner = owner as u32 + 1;
-        let Some(placed) = self.placed.get(&owner) else {
+        let Some(placed) = self.owned.placed.get(&owner) else {
             return true;
         };
         // Take the object out of the cells it was in, one pass per cell.
@@ -145,9 +163,96 @@ impl CollisionWorld {
         }
         true
     }
+    /// Add switchable `id` as a copy of switchable `source`, where `source`
+    /// was added (put it in its place with [`Self::move_switchable`]). False
+    /// when `source` was not added or `id` already was.
+    pub fn copy_switchable(&mut self, source: u64, id: u64) -> bool {
+        if id == REMOVED || self.switchable.contains(&id) {
+            return false;
+        }
+        let Some(from) = self.switchable.iter().position(|s| *s == source) else {
+            return false;
+        };
+        let corners: Vec<[Vec3; 3]> = self
+            .owned
+            .placed
+            .get(&(from as u32 + 1))
+            .map(|list| list.iter().map(|(_, c)| *c).collect())
+            .unwrap_or_default();
+        let owner = match self.owned.free.owners.pop() {
+            Some(owner) => {
+                self.switchable[owner as usize - 1] = id;
+                owner
+            }
+            None => {
+                self.switchable.push(id);
+                self.switchable.len() as u32
+            }
+        };
+        self.hidden.remove(&owner);
+        let mut placed = Vec::with_capacity(corners.len());
+        for [a, b, c] in corners {
+            let normal = (b - a).cross(c - a).try_normalize().unwrap_or(Vec3::Y);
+            let triangle = Triangle {
+                a,
+                b,
+                c,
+                normal,
+                owner,
+            };
+            let index = match self.owned.free.triangles.pop() {
+                Some(index) => {
+                    self.triangles[index] = triangle;
+                    index
+                }
+                None => {
+                    self.triangles.push(triangle);
+                    self.triangles.len() - 1
+                }
+            };
+            for key in cells_of(a, b, c).into_iter().flatten() {
+                self.cells.entry(key).or_default().push(index);
+            }
+            placed.push((index, [a, b, c]));
+        }
+        self.owned.placed.insert(owner, placed);
+        true
+    }
+    /// Take switchable `id` out of the world for good; a later copy reuses
+    /// its room. False when it was not added.
+    pub fn remove_switchable(&mut self, id: u64) -> bool {
+        if id == REMOVED {
+            return false;
+        }
+        let Some(slot) = self.switchable.iter().position(|s| *s == id) else {
+            return false;
+        };
+        let owner = slot as u32 + 1;
+        let placed = self.owned.placed.remove(&owner).unwrap_or_default();
+        let mut was: HashSet<(i32, i32)> = HashSet::new();
+        for (index, _) in &placed {
+            let t = self.triangles[*index];
+            was.extend(cells_of(t.a, t.b, t.c).into_iter().flatten());
+        }
+        let triangles = &self.triangles;
+        for key in was {
+            if let Some(list) = self.cells.get_mut(&key) {
+                list.retain(|i| triangles[*i].owner != owner);
+            }
+        }
+        for (index, _) in placed {
+            // Out of every cell: nothing finds it until it is reused.
+            self.triangles[index].owner = 0;
+            self.owned.free.triangles.push(index);
+        }
+        self.switchable[slot] = REMOVED;
+        self.hidden.remove(&owner);
+        self.owned.free.owners.push(owner);
+        true
+    }
     fn add(&mut self, batches: &[Batch], owner: u32) {
         let (triangles, cells) = (&mut self.triangles, &mut self.cells);
-        let placed = &mut self.placed;
+        let placed = &mut self.owned.placed;
         for batch in batches {
             if batch.alpha {
                 continue;
@@ -753,6 +858,28 @@ mod tests {
         let mut world = CollisionWorld::from_batches(&[quad(0.0)]);
         world.add_switchable(7, &[quad(3.0)]);
         assert!(world.has_switchable(7) && !world.has_switchable(8));
+
+        // A script copies the floor 40 m west: solid there, then removed.
+        assert!(world.copy_switchable(7, 100));
+        assert!(!world.copy_switchable(7, 100), "already added");
+        assert!(!world.copy_switchable(9, 101), "no such source");
+        assert!(world.move_switchable(100, Mat4::from_translation(Vec3::new(-40.0, 0.0, 0.0))));
+        let west = Vec3::new(-40.0, 5.0, 0.0);
+        assert_eq!(world.ground_below(west, 5.0), Some(3.0));
+        assert_eq!(world.standing_on(Vec3::new(-40.0, 3.0, 0.0)), Some(100));
+        assert_eq!(
+            world.ground_below(Vec3::new(0.0, 5.0, 0.0), 5.0),
+            Some(3.0),
+            "the floor stays"
+        );
+        let count = world.triangle_count();
+        assert!(world.remove_switchable(100));
+        assert!(!world.remove_switchable(100) && !world.has_switchable(100));
+        assert_eq!(world.ground_below(west, 5.0), None, "the copy is gone");
+        // The next copy reuses the room the removed one had.
+        assert!(world.copy_switchable(7, 101));
+        assert_eq!(world.triangle_count(), count);
+        assert!(world.remove_switchable(101));
         let top = Vec3::new(0.0, 5.0, 0.0);
         assert_eq!(world.ground_below(top, 5.0), Some(3.0));
         world.set_hidden([7]);

@@ -1,5 +1,9 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.57.0:
+- Build Mode scripts can make copies of objects: `object:clone()` makes a copy where the object is, or at a position you give, and `copy:destroy()` removes it again. Drop crates, spawn targets, build a row of lamps or a pile of boxes while the world plays. Copies are solid, can be shown, hidden, moved and coloured like any object, and every player on a server sees the same ones. A world can have up to 200 copies at once, and they go away when the world starts again.
+- New script example: Crate dropper. In the sample world, the bell now leaves a copy of the signal crate each time it rings.
+
 Version 0.56.0:
 - Build Mode: give your world a look. Lighting → Look has Classic, Natural, Vivid, Cinematic, Sunset, Cold night, Dreamy and Noir, and *Adjust the look* fine-tunes exposure, contrast, colour, warmth, glow and dark corners. Every player sees the world in its look, on top of their own picture settings, so it costs nothing extra on slower PCs.
 - Lamps in Build Mode worlds now really light their surroundings at night: walls, ground, cars and people near a lamp catch its warm (or any colour's) light, softly fading out, instead of only a painted pool on the ground. Lamps on objects that scripts move or hide go along.

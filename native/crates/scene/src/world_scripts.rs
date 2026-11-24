@@ -39,7 +39,7 @@ impl Scripts {
         if scripts.is_empty() {
             return None;
         }
-        let objects: Vec<host::ObjectInfo> = world_logic::script_objects(layout)
+        let mut objects: Vec<host::ObjectInfo> = world_logic::script_objects(layout)
             .into_iter()
             .map(|o| host::ObjectInfo {
                 id: o.id,
@@ -56,6 +56,30 @@ impl Scripts {
             .filter(|o| o.changeable)
             .map(|o| o.id)
             .collect();
+        // Copies scripts made before they last stopped are theirs again.
+        let poses: std::collections::HashMap<_, _> = shared.moved().collect();
+        let mut copies = Vec::new();
+        for (copy, source) in shared.copies() {
+            let (Some(name), Some(pose)) = (
+                objects
+                    .iter()
+                    .find(|o| o.id == *source)
+                    .map(|o| o.name.clone()),
+                poses.get(copy),
+            ) else {
+                continue;
+            };
+            objects.push(host::ObjectInfo {
+                id: *copy,
+                name,
+                position: pose.position,
+                heading: pose.heading,
+                changeable: true,
+                paintable: true,
+                visible: true,
+            });
+            copies.push((*copy, *source));
+        }
         let host = host::WorldScripts::new(host::Config {
             scripts,
             objects,
@@ -65,6 +89,9 @@ impl Scripts {
                 .collect(),
             hour: shared.hour(),
             weather: shared.weather().map(|w| w.as_str().to_string()),
+            first_copy: shared.next_copy(),
+            max_copies: world_logic::MAX_COPIES,
+            copies,
         });
         Some(Self { host, changeable })
     }
@@ -90,6 +117,7 @@ impl Scripts {
             visible: self
                 .changeable
                 .iter()
+                .chain(shared.copies().keys())
                 .map(|id| (*id, world.visible(shared, *id)))
                 .collect(),
             poses: shared
@@ -101,6 +129,7 @@ impl Scripts {
                 .map(|(id, m)| (id, m.to.position, m.to.heading))
                 .collect(),
             colors: shared.colors().iter().map(|(k, v)| (*k, *v)).collect(),
+            copies: shared.copies().iter().map(|(c, s)| (*c, *s)).collect(),
         };
         self.host
             .tick(frame, events)
@@ -148,6 +177,20 @@ impl Scripts {
                 host::Request::Color { object, color } => {
                     (Who::World, ScriptChange::Color(object, color))
                 }
+                host::Request::Copy {
+                    source,
+                    id,
+                    position,
+                    heading,
+                } => (
+                    Who::World,
+                    ScriptChange::Copy {
+                        source,
+                        id,
+                        pose: Pose { position, heading },
+                    },
+                ),
+                host::Request::Destroy { object } => (Who::World, ScriptChange::Destroy(object)),
                 host::Request::Hour(hour) => (Who::World, ScriptChange::Hour(hour)),
                 host::Request::Weather(weather) => (Who::World, ScriptChange::Weather(weather)),
             })
@@ -278,6 +321,105 @@ mod tests {
             }]
         );
         assert!(scripts.take_output().is_empty());
+    }
+
+    #[test]
+    fn copies_scripts_make_are_shared_and_go_with_a_reset() {
+        let mut layout = Layout::default();
+        let id = layout.allocate_id();
+        let mut crate_ = Node::object(
+            id,
+            "Crate",
+            AssetRef::Builtin("cube".into()),
+            Transform::at([0.0; 3]),
+        );
+        crate_.scripts.push(Script::new(
+            "Spawner",
+            "local c = script.object:clone(vector(4, 0, 0)) c.color = rgb(0, 1, 0) wait(1) print(c.position, c.exists) c:destroy()",
+        ));
+        layout.nodes.push(crate_);
+        let mut logic = Logic::new(&layout);
+        let mut scripts = Scripts::start(&layout, logic.shared()).unwrap();
+        let mut tick = |logic: &mut Logic, dt: f32| {
+            let changes = scripts.tick(logic.world(), logic.shared(), dt, Some(12), vec![], vec![]);
+            for (_, change) in changes {
+                logic.apply_script(change);
+            }
+        };
+        tick(&mut logic, 0.1);
+        let copy = world_logic::COPY_BASE;
+        assert_eq!(logic.shared().copies().get(&copy), Some(&id));
+        assert_eq!(logic.shared().colors().get(&copy), Some(&[0.0, 1.0, 0.0]));
+        assert!(logic.visible(copy));
+        // Players get the copy with the world state.
+        let snapshot = logic.shared().snapshot();
+        let copied = Shared::from_snapshot(logic.world(), &snapshot);
+        assert_eq!(copied.copies(), logic.shared().copies());
+        assert_eq!(
+            copied.moved().collect::<Vec<_>>(),
+            logic.shared().moved().collect::<Vec<_>>()
+        );
+        tick(&mut logic, 1.0);
+        assert!(logic.shared().copies().is_empty(), "destroyed");
+        assert!(logic.shared().moved().next().is_none());
+        assert_eq!(
+            scripts.take_output()[0].text,
+            "vector(4.00, 0.00, 0.00)  true"
+        );
+        // A new copy after a reset never gets an old id.
+        let mut shared = logic.shared().clone();
+        shared.reset(logic.world());
+        assert!(shared.next_copy() > copy);
+        assert!(!shared.copy(
+            logic.world(),
+            id,
+            copy,
+            Pose {
+                position: [0.0; 3],
+                heading: 0.0
+            }
+        ));
+    }
+
+    #[test]
+    fn scripts_that_start_again_take_over_the_copies_made_before() {
+        let mut layout = Layout::default();
+        let id = layout.allocate_id();
+        let mut crate_ = Node::object(
+            id,
+            "Crate",
+            AssetRef::Builtin("cube".into()),
+            Transform::at([0.0; 3]),
+        );
+        crate_.scripts.push(Script::new(
+            "Spawner",
+            "local made = 0
+            for _, o in ipairs(world.objects()) do
+              if o.original then
+                print('found', o.name, o.position)
+                o:destroy()
+                made = made + 1
+              end
+            end
+            if made == 0 then script.object:clone(vector(0, 3, 0)) end",
+        ));
+        layout.nodes.push(crate_);
+        let mut logic = Logic::new(&layout);
+        let run = |logic: &mut Logic| {
+            let mut scripts = Scripts::start(&layout, logic.shared()).unwrap();
+            let changes =
+                scripts.tick(logic.world(), logic.shared(), 0.1, Some(12), vec![], vec![]);
+            for (_, change) in changes {
+                logic.apply_script(change);
+            }
+            scripts.take_output()
+        };
+        assert!(run(&mut logic).is_empty());
+        assert_eq!(logic.shared().copies().len(), 1);
+        // The scripts stop (a server with no players) and start again.
+        let output = run(&mut logic);
+        assert_eq!(output[0].text, "found  Crate  vector(0.00, 3.00, 0.00)");
+        assert!(logic.shared().copies().is_empty());
     }
 
     #[test]

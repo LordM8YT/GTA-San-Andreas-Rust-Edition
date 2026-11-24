@@ -166,15 +166,21 @@ add(
 
 # World scripts: a bell whose script makes a crate vanish for a moment, and
 # a world script that announces race times.
-RING = """-- Press E at the bell: the signal crate vanishes for 3 seconds, and
+RING = """-- Press E at the bell: the signal crate vanishes for 3 seconds and
+-- leaves a copy of itself beside it (the three newest stay), and
 -- everyone sees how often the bell has rung.
 local crate = world.find("Signal crate")
 local rings = 0
+local copies = {}
 
 script.object:on('use', function(player)
   rings = rings + 1
   world.hud('bell', 'Bell rung ' .. rings .. (rings == 1 and ' time' or ' times'))
   script.object.color = rgb(1, 0.8, 0.2)
+  copies[#copies + 1] = crate:clone(crate.position + vector(0, 2 * (1 + (rings - 1) % 3), 0))
+  if #copies > 3 then
+    table.remove(copies, 1):destroy()
+  end
   crate:hide()
   world.message(player.name .. ' rang the bell')
   wait(3)

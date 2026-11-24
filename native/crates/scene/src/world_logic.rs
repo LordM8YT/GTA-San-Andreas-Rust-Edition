@@ -477,9 +477,16 @@ pub struct World {
     base_visible: HashMap<NodeId, bool>,
     /// Objects actions show or hide: the only ones a played world can.
     switchable: HashSet<NodeId>,
+    /// Switchable models scripts may copy (not terrain or roads).
+    copyable: HashSet<NodeId>,
     hour: Option<u8>,
     weather: Option<Weather>,
 }
+
+/// Copies scripts make get ids from here up, far above any layout's own.
+pub const COPY_BASE: NodeId = 1 << 40;
+/// Most copies a world (instance) can have at once.
+pub const MAX_COPIES: usize = 200;
 
 /// What everyone in one world instance (a server's routing bucket) shares:
 /// objects shown or hidden by actions, the hour and the weather. `revision`
@@ -501,6 +508,12 @@ pub struct Shared {
     hud: BTreeMap<String, String>,
     /// Colours scripts gave objects: a multiplier per colour channel.
     colors: BTreeMap<NodeId, [f32; 3]>,
+    /// Copies scripts made (`obj:clone()`): copy id to the placed object it
+    /// copies. A copy's pose is always in `motions`.
+    copies: BTreeMap<NodeId, NodeId>,
+    /// The id the next copy may have at the least, kept through a reset so
+    /// an id never comes round again.
+    next_copy: NodeId,
     revision: u64,
 }
 
@@ -633,12 +646,68 @@ impl Shared {
     /// Back to how `world` starts: every object as placed, the world's own
     /// hour and weather. A new revision, so every player gets it.
     pub fn reset(&mut self, world: &World) {
-        let (revision, jumps) = (self.revision + 1, self.jumps);
+        let (revision, jumps, next_copy) = (self.revision + 1, self.jumps, self.next_copy);
         *self = Shared {
             revision,
             jumps,
+            next_copy,
             ..world.shared()
         };
+    }
+    /// Whether scripts may show, hide, move and colour `node`: an object
+    /// the world lets them change, or a copy they made.
+    pub fn changeable(&self, world: &World, node: NodeId) -> bool {
+        world.switchable.contains(&node) || self.copies.contains_key(&node)
+    }
+    /// Copies scripts made: copy id to the placed object it copies.
+    pub fn copies(&self) -> &BTreeMap<NodeId, NodeId> {
+        &self.copies
+    }
+    /// The smallest id a new copy may have.
+    pub fn next_copy(&self) -> NodeId {
+        self.next_copy.max(COPY_BASE)
+    }
+    /// Make copy `id` of `source` (a placed object, or a copy of one) at
+    /// `pose`, shown and in the source's colour. False when `source` cannot
+    /// be copied, `id` is taken or too low, or the world has
+    /// [`MAX_COPIES`] already.
+    pub fn copy(&mut self, world: &World, source: NodeId, id: NodeId, pose: Pose) -> bool {
+        let original = self.copies.get(&source).copied().unwrap_or(source);
+        if !world.copyable.contains(&original)
+            || id < self.next_copy()
+            || self.copies.len() >= MAX_COPIES
+            || !pose.position.iter().all(|v| v.is_finite())
+            || !pose.heading.is_finite()
+        {
+            return false;
+        }
+        self.copies.insert(id, original);
+        self.motions.insert(
+            id,
+            Motion {
+                from: pose,
+                to: pose,
+                seconds: 0.0,
+                elapsed: 0.0,
+            },
+        );
+        if let Some(color) = self.colors.get(&source).copied() {
+            self.colors.insert(id, color);
+        }
+        self.next_copy = id + 1;
+        self.revision += 1;
+        true
+    }
+    /// Remove copy `id` for good. False when it is not a copy.
+    pub fn destroy(&mut self, id: NodeId) -> bool {
+        if self.copies.remove(&id).is_none() {
+            return false;
+        }
+        self.motions.remove(&id);
+        self.colors.remove(&id);
+        self.visibility.remove(&id);
+        self.revision += 1;
+        true
     }
     /// Time passes for moving objects (no new revision: everyone moves them
     /// along by themselves).
@@ -652,7 +721,7 @@ impl Shared {
     /// Start moving `node` from where it is now to `to` over `seconds`.
     /// False when scripts may not move it.
     pub fn place(&mut self, world: &World, node: NodeId, to: Pose, seconds: f32) -> bool {
-        if !world.switchable.contains(&node)
+        if !self.changeable(world, node)
             || !to.position.iter().all(|v| v.is_finite())
             || !to.heading.is_finite()
         {
@@ -696,7 +765,7 @@ impl Shared {
     /// Give `node` a colour, or (None) its own back. False when scripts
     /// may not change it.
     pub fn set_color(&mut self, world: &World, node: NodeId, color: Option<[f32; 3]>) -> bool {
-        if !world.switchable.contains(&node) {
+        if !self.changeable(world, node) {
             return false;
         }
         let color = color
@@ -736,7 +805,7 @@ impl Shared {
     /// shows or hides can: the rest are part of the merged world).
     /// Nothing changes when it already is that way.
     pub fn set_visible(&mut self, world: &World, node: NodeId, visible: bool) -> bool {
-        if !world.switchable.contains(&node) {
+        if !self.changeable(world, node) {
             return false;
         }
         if world.visible(self, node) != visible {
@@ -800,6 +869,7 @@ impl Shared {
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
             colors: self.colors.iter().map(|(k, v)| (*k, *v)).collect(),
+            copies: self.copies.iter().map(|(k, v)| (*k, *v)).collect(),
             moved: self
                 .motions
                 .iter()
@@ -825,10 +895,19 @@ impl Shared {
     }
     /// The state a server sent; objects `world` does not have are ignored.
     pub fn from_snapshot(world: &World, snapshot: &Snapshot) -> Self {
+        let copies: BTreeMap<NodeId, NodeId> = snapshot
+            .copies
+            .iter()
+            .filter(|(id, source)| *id >= COPY_BASE && world.copyable.contains(source))
+            .take(MAX_COPIES)
+            .map(|(id, source)| (*id, *source))
+            .collect();
+        let changeable =
+            |node: &NodeId| world.switchable.contains(node) || copies.contains_key(node);
         let mut visibility = HashMap::new();
         for (list, visible) in [(&snapshot.shown, true), (&snapshot.hidden, false)] {
             for node in list {
-                if world.base_visible.contains_key(node) {
+                if world.base_visible.contains_key(node) || copies.contains_key(node) {
                     visibility.insert(*node, visible);
                 }
             }
@@ -837,11 +916,11 @@ impl Shared {
             position: [v[0], v[1], v[2]],
             heading: v[3],
         };
-        let motions = snapshot
+        let motions: BTreeMap<NodeId, Motion> = snapshot
             .moved
             .iter()
             .filter(|m| {
-                world.switchable.contains(&m.node)
+                changeable(&m.node)
                     && m.from.iter().chain(&m.to).all(|v| v.is_finite())
                     && m.seconds.is_finite()
                     && m.elapsed.is_finite()
@@ -866,10 +945,17 @@ impl Shared {
         let colors = snapshot
             .colors
             .iter()
-            .filter(|(node, c)| world.switchable.contains(node) && c.iter().all(|v| v.is_finite()))
+            .filter(|(node, c)| changeable(node) && c.iter().all(|v| v.is_finite()))
             .map(|(node, c)| (*node, c.map(|v| v.clamp(0.0, 2.0))))
             .collect();
+        // A copy without a pose would have nowhere to be.
+        let copies: BTreeMap<NodeId, NodeId> = copies
+            .into_iter()
+            .filter(|(id, _)| motions.contains_key(id))
+            .collect();
         Self {
+            next_copy: copies.keys().next_back().map_or(0, |id| id + 1),
+            copies,
             visibility,
             motions,
             hud,
@@ -934,6 +1020,7 @@ impl World {
                 .into_iter()
                 .map(|(id, flags)| (id, flags.visible))
                 .collect(),
+            copyable: copyable(layout),
             switchable: switchable(layout),
             hour: layout.settings.hour,
             weather: layout.settings.weather.as_deref().and_then(Weather::parse),
@@ -981,6 +1068,14 @@ impl World {
             ScriptChange::Color(node, color) => {
                 // Shared: everyone sees it with the next snapshot.
                 shared.set_color(self, node, color);
+                return Vec::new();
+            }
+            ScriptChange::Copy { source, id, pose } => {
+                shared.copy(self, source, id, pose);
+                return Vec::new();
+            }
+            ScriptChange::Destroy(id) => {
+                shared.destroy(id);
                 return Vec::new();
             }
         };
@@ -1525,6 +1620,9 @@ pub struct Snapshot {
     /// Colours scripts gave objects.
     #[serde(rename = "c", default, skip_serializing_if = "Vec::is_empty")]
     pub colors: Vec<(NodeId, [f32; 3])>,
+    /// Copies scripts made: (copy, the placed object it copies).
+    #[serde(rename = "k", default, skip_serializing_if = "Vec::is_empty")]
+    pub copies: Vec<(NodeId, NodeId)>,
 }
 
 /// A [`Motion`] in a [`Snapshot`]: poses as x, y, z, heading.
@@ -1547,6 +1645,22 @@ pub struct SnapshotMotion {
 /// by one. Scripts get the objects they are on, the objects their text names
 /// in quotes (`world.find("Lamp")`), and the ones ticked *Scripts can change
 /// it*.
+/// Switchable objects scripts may copy: models, not terrain or roads.
+pub fn copyable(layout: &Layout) -> HashSet<NodeId> {
+    let switchable = switchable(layout);
+    layout
+        .nodes
+        .iter()
+        .filter(|n| {
+            switchable.contains(&n.id)
+                && n.asset.is_some()
+                && n.terrain.is_none()
+                && n.road.is_none()
+        })
+        .map(|n| n.id)
+        .collect()
+}
+
 pub fn switchable(layout: &Layout) -> HashSet<NodeId> {
     let objects: HashSet<NodeId> = layout
         .nodes
@@ -1697,6 +1811,14 @@ pub enum ScriptChange {
     Hud(String, Option<String>),
     /// An object's colour (None: its own again).
     Color(NodeId, Option<[f32; 3]>),
+    /// Make copy `id` of object `source` at `pose`.
+    Copy {
+        source: NodeId,
+        id: NodeId,
+        pose: Pose,
+    },
+    /// Remove a copy.
+    Destroy(NodeId),
 }
 
 impl Happened {

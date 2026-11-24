@@ -49,6 +49,9 @@ pub struct PlayLogic {
     placed: HashMap<NodeId, Transform>,
     /// The shared state revision the object colours were last drawn from.
     colors_drawn: Option<u64>,
+    /// Copies scripts made that are drawn and solid: copy to the object it
+    /// copies.
+    copies: std::collections::BTreeMap<NodeId, NodeId>,
     /// Scripts' on-screen text for this player alone, by name.
     hud: std::collections::BTreeMap<String, String>,
 }
@@ -119,6 +122,7 @@ impl PlayLogic {
             placed: HashMap::new(),
             hud: Default::default(),
             colors_drawn: None,
+            copies: Default::default(),
             layout: layout.clone(),
             objects,
             message: None,
@@ -265,6 +269,7 @@ impl State {
         }
         // Objects scripts move go on moving, here as on the server.
         play.logic.advance(dt);
+        self.sync_copies();
         self.sync_moved_objects();
         self.sync_object_colors();
         let Some(play) = &mut self.play_logic else {
@@ -432,6 +437,79 @@ impl State {
         }
     }
 
+    /// Copies scripts made: drawn and solid like the object they copy (where
+    /// they are is up to [`Self::sync_moved_objects`]); destroyed ones go.
+    pub(crate) fn sync_copies(&mut self) {
+        let Some(play) = &mut self.play_logic else {
+            return;
+        };
+        let now = play.logic.shared().copies();
+        let missing_collision = self.collision.as_ref().is_some_and(|collision| {
+            now.iter().any(|(copy, source)| {
+                collision.has_switchable(*source) && !collision.has_switchable(*copy)
+            })
+        });
+        if *now == play.copies && !missing_collision {
+            return;
+        }
+        let now = now.clone();
+        let gone: Vec<NodeId> = play
+            .copies
+            .keys()
+            .filter(|id| !now.contains_key(id))
+            .copied()
+            .collect();
+        for id in &gone {
+            play.placed.remove(id);
+            if let Some(collision) = &mut self.collision {
+                collision.remove_switchable(*id);
+            }
+            match (&mut play.objects, &mut self.build) {
+                (Some(objects), _) => objects.layout.nodes.retain(|n| n.id != *id),
+                (None, Some(build)) => {
+                    build.gpu.copies.remove(id);
+                    build.gpu.moved.remove(id);
+                }
+                (None, None) => {}
+            }
+        }
+        for (copy, source) in &now {
+            if !play.copies.contains_key(copy) {
+                match (&mut play.objects, &mut self.build) {
+                    (Some(objects), _) => {
+                        if let Some(node) = objects.layout.node(*source) {
+                            let mut node = node.clone();
+                            node.id = *copy;
+                            node.scripts.clear();
+                            node.gameplay = None;
+                            node.light = None;
+                            objects.layout.nodes.push(node);
+                        }
+                    }
+                    (None, Some(build)) => {
+                        build.gpu.copies.insert(*copy, *source);
+                    }
+                    (None, None) => {}
+                }
+            }
+            // Solid like its source, moved to where it is drawn (a new
+            // collision world brings none of the copies).
+            let Some(collision) = &mut self.collision else {
+                continue;
+            };
+            if !collision.has_switchable(*copy) && collision.copy_switchable(*source, *copy) {
+                if let (Some(at), Some(node)) = (play.placed.get(copy), play.layout.node(*source)) {
+                    let matrix = render_matrix(at) * render_matrix(&node.transform).inverse();
+                    collision.move_switchable(*copy, matrix);
+                }
+            }
+        }
+        play.copies = now;
+        if let Some(collision) = &mut self.collision {
+            collision.set_hidden(play.logic.hidden_by_actions());
+        }
+    }
+
     /// Objects scripts moved: drawn and solid where they are now. A player
     /// standing on one rides along.
     pub(crate) fn sync_moved_objects(&mut self) {
@@ -445,7 +523,9 @@ impl State {
         // (object, as placed in the layout, where it was drawn, where it is now)
         let mut changes = Vec::new();
         for (id, pose) in &now {
-            let Some(node) = play.layout.node(*id) else {
+            // A copy is placed where the object it copies was.
+            let source = play.copies.get(id).copied().unwrap_or(*id);
+            let Some(node) = play.layout.node(source) else {
                 continue;
             };
             let mut to = node.transform;
@@ -617,6 +697,64 @@ impl State {
                     "the closed gate lets the player through"
                 );
                 capture(self, "pack-gate-closed.png");
+            }
+            // A script's copy of the gate, 6 m east: drawn on its own and
+            // solid; destroyed, it goes.
+            26 => {
+                let play = self.play_logic.as_mut().unwrap();
+                let id = play.logic.shared().next_copy();
+                play.logic.apply_script(world_logic::ScriptChange::Copy {
+                    source: gate.0,
+                    id,
+                    pose: Pose {
+                        position: [gate.1[0] + 6.0, gate.1[1], gate.1[2]],
+                        heading: 0.0,
+                    },
+                });
+                assert!(
+                    play.logic.shared().copies().contains_key(&id),
+                    "the gate could not be copied"
+                );
+            }
+            29 => {
+                let play = self.play_logic.as_ref().unwrap();
+                let id = *play.logic.shared().copies().keys().next().unwrap();
+                let objects = play.objects.as_ref().unwrap();
+                assert!(
+                    objects
+                        .gpu
+                        .objects
+                        .get(&id)
+                        .is_some_and(|o| !o.batches.is_empty()),
+                    "the gate's copy is not drawn"
+                );
+                assert!(
+                    self.collision.as_ref().unwrap().has_switchable(id),
+                    "the gate's copy is not solid"
+                );
+                capture(self, "pack-copy.png");
+                let play = self.play_logic.as_mut().unwrap();
+                play.logic
+                    .apply_script(world_logic::ScriptChange::Destroy(id));
+            }
+            32 => {
+                let play = self.play_logic.as_ref().unwrap();
+                let copy = world_logic::COPY_BASE;
+                assert!(play.logic.shared().copies().is_empty());
+                assert!(
+                    !play
+                        .objects
+                        .as_ref()
+                        .unwrap()
+                        .gpu
+                        .objects
+                        .contains_key(&copy),
+                    "the destroyed copy is still drawn"
+                );
+                assert!(
+                    !self.collision.as_ref().unwrap().has_switchable(copy),
+                    "the destroyed copy is still solid"
+                );
             }
             30 => self.smoke_stand_at(door.1),
             34 => {

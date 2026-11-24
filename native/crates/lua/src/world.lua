@@ -266,6 +266,10 @@ ObjectMeta.__index = function(o, key)
   elseif key == 'color' then
     local r, g, b = native.color(id)
     return r and rgb(r, g, b) or nil
+  elseif key == 'original' then
+    return object(native.original(id))
+  elseif key == 'exists' then
+    return native.object_name(id) ~= nil
   end
   return Object[key]
 end
@@ -346,6 +350,36 @@ end
 function Object:turnTo(heading, seconds)
   local x, y, z = native.target(rawget(self, '__object'))
   move(self, vector(x, y, z), heading, seconds, 2)
+end
+-- A copy of the object, shown and in its colour, at a position (and
+-- heading), or where the object is now. Copies have no zones or scripts
+-- of their own, and go away when the world starts again.
+function Object:clone(position, heading)
+  local id = rawget(self, '__object')
+  if position == nil then
+    position = vector(native.position(id))
+  elseif not is_vector(position) then
+    error('clone takes a position vector(x, y, z), or nothing for where it is', 2)
+  end
+  if heading == nil then
+    heading = native.heading(id)
+  elseif type(heading) ~= 'number' then
+    error('a heading is a number of degrees', 2)
+  end
+  local copy, message = native.clone(id, position.x, position.y, position.z, heading)
+  if not copy then
+    error(message, 2)
+  end
+  return object(copy)
+end
+-- Remove a copy for good (objects placed in the world can be hidden).
+function Object:destroy()
+  local id = rawget(self, '__object')
+  local ok, message = native.destroy(id)
+  if not ok then
+    error(message, 2)
+  end
+  objects[id] = nil
 end
 
 -- Players in the world, by id.

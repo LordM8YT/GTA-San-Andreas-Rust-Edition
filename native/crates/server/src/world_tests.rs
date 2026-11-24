@@ -450,6 +450,7 @@ fn world_scripts_run_once_per_instance_on_the_server() {
                 world.on('join', function(p) print('SCRIPTTEST join ' .. p.name) end)
                 script.object:on('use', function(p)
                   lamp:hide()
+                  lamp:clone(lamp.position + vector(0, 5, 0)).color = rgb(1, 0, 0)
                   lamp:moveTo(lamp.position + vector(0, 0, 3), 1)
                   world.hud('bell', 'The bell rang')
                   p:hud('mine', 'You rang it')
@@ -513,6 +514,16 @@ fn world_scripts_run_once_per_instance_on_the_server() {
             .any(|m| m.node == lamp && m.to[2] == 3.0 && m.seconds == 1.0),
         "{moved:?}"
     );
+    // So does the lamp's red copy, 5 m north of it, shown.
+    let copy = sa_scene::world_logic::COPY_BASE;
+    let state = snapshot(&ben).unwrap();
+    assert_eq!(state.copies, [(copy, lamp)]);
+    assert!(state.colors.contains(&(copy, [1.0, 0.0, 0.0])));
+    assert!(state
+        .moved
+        .iter()
+        .any(|m| m.node == copy && m.to[0] == 110.0 && m.to[1] == 45.0));
+    assert!(!state.hidden.contains(&copy));
     assert!(messages(&anna).contains(&"You rang".to_string()));
     assert!(messages(&anna).contains(&"Ding from Tester".to_string()));
     assert!(!messages(&ben).contains(&"You rang".to_string()));
@@ -525,7 +536,8 @@ fn world_scripts_run_once_per_instance_on_the_server() {
     server.output();
     server.run("world_reset 0");
     server.until(&mut [&mut anna, &mut ben], "the reset", |_, p| {
-        snapshot(p[1]).is_some_and(|s| !s.hidden.contains(&lamp) && s.hud.is_empty())
+        snapshot(p[1])
+            .is_some_and(|s| !s.hidden.contains(&lamp) && s.hud.is_empty() && s.copies.is_empty())
             && personal(p[0]).contains(&wire::Personal::HudClear)
     });
     server.idle(&mut [&mut anna, &mut ben], 3);
