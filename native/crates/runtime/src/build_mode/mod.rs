@@ -1256,7 +1256,23 @@ impl State {
                 assert!(build.ui.script.is_some(), "the script editor did not open");
                 capture(self, "build-script-editor.png");
             }
-            118 => return true,
+            // A world look: the same scene graded as a sunset.
+            118 => {
+                let build = self.build.as_mut().unwrap();
+                build.ui.script = None;
+                build.selection.clear();
+                build.reset_camera();
+                build.doc.layout.settings.look = sa_scene::world_layout::WorldLook::presets()
+                    .into_iter()
+                    .find(|(name, _)| *name == "Noir")
+                    .map(|(_, look)| look);
+            }
+            122 => {
+                assert!(self.world_look().is_some(), "the world look is not used");
+                capture(self, "build-look-noir.png");
+            }
+            124 => self.build.as_mut().unwrap().doc.layout.settings.look = None,
+            126 => return true,
             _ => {}
         }
         false

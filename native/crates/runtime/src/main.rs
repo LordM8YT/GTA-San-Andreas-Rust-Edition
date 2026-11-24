@@ -2331,6 +2331,7 @@ impl State {
             },
             sky: lighting.sky,
             jittered,
+            look: self.world_look(),
         };
         let light = shadow::light_matrix(self.position, lighting.sun);
         self.light_frustum = culling::Frustum::new(light);

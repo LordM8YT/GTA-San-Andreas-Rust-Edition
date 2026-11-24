@@ -850,6 +850,15 @@ impl State {
         build.chain(self.play_logic.iter().flat_map(PlayLogic::glows))
     }
 
+    /// The colour look of the world being built or played.
+    pub(crate) fn world_look(&self) -> Option<sa_scene::world_layout::WorldLook> {
+        match (&self.build, &self.play_logic) {
+            (Some(build), _) => build.doc.layout.settings.look,
+            (None, Some(play)) => play.settings().look,
+            (None, None) => None,
+        }
+    }
+
     /// The world's own fog, sky colour and brightness, over the time and
     /// weather's lighting.
     pub(crate) fn apply_world_environment(&self, lighting: &mut crate::daycycle::Lighting) {

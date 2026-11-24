@@ -2994,6 +2994,53 @@ fn world_settings(build: &mut BuildMode, ui: &mut Ui) {
     }
 }
 
+/// The world's colour look: a ready-made one, fine-tuned with sliders.
+fn look_section(
+    ui: &mut Ui,
+    look: Option<sa_scene::world_layout::WorldLook>,
+) -> Option<sa_scene::world_layout::WorldLook> {
+    use sa_scene::world_layout::WorldLook;
+    section(ui, "Look");
+    let mut value = look.unwrap_or_default();
+    let shown = value.preset_name().unwrap_or("Custom");
+    ui.horizontal(|ui| {
+        ui.label("Look");
+        egui::ComboBox::from_id_salt("world-look")
+            .selected_text(shown)
+            .show_ui(ui, |ui| {
+                for (name, preset) in WorldLook::presets() {
+                    ui.selectable_value(&mut value, preset, name);
+                }
+            })
+            .response
+            .on_hover_text("How the world's colours look on every player's screen");
+    });
+    egui::CollapsingHeader::new("Adjust the look")
+        .id_salt("world-look-adjust")
+        .show(ui, |ui| {
+            ui.add(egui::Slider::new(&mut value.exposure, 0.5..=2.0).text("exposure"));
+            ui.add(egui::Slider::new(&mut value.contrast, 0.5..=1.6).text("contrast"));
+            ui.add(egui::Slider::new(&mut value.saturation, 0.0..=2.0).text("colour"));
+            ui.add(
+                egui::Slider::new(&mut value.warmth, -1.0..=1.0)
+                    .text("warmth")
+                    .custom_formatter(|v, _| match v {
+                        v if v < -0.01 => format!("cold {:.2}", -v),
+                        v if v > 0.01 => format!("warm {v:.2}"),
+                        _ => "neutral".into(),
+                    }),
+            );
+            ui.add(egui::Slider::new(&mut value.bloom, 0.0..=3.0).text("× glow"));
+            ui.add(egui::Slider::new(&mut value.vignette, 0.0..=0.8).text("dark corners"));
+        });
+    ui.label(
+        RichText::new("Works on top of each player's own picture settings: a player who turned glow off keeps it off, so any look runs on any PC.")
+            .small()
+            .color(MUTED),
+    );
+    (value != WorldLook::default()).then_some(value)
+}
+
 /// The Explorer's Lighting row: the world's time, weather, fog, sky and
 /// brightness.
 fn lighting(build: &mut BuildMode, ui: &mut Ui) {
@@ -3060,12 +3107,14 @@ fn lighting(build: &mut BuildMode, ui: &mut Ui) {
         ui.add_enabled(own, egui::Slider::new(&mut value, 0.3..=1.5));
         brightness = own.then_some(value);
     });
+    let look = look_section(ui, settings.look);
     let after = WorldSettings {
         hour: fixed.then_some(hour),
         weather,
         fog,
         sky,
         brightness,
+        look,
         ..settings.clone()
     };
     let dragging = ui.ctx().egui_is_using_pointer();

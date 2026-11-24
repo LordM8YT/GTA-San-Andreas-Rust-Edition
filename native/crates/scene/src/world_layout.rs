@@ -496,6 +496,9 @@ pub struct WorldSettings {
     /// Lua scripts for the whole world (no `script.object`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scripts: Vec<Script>,
+    /// The world's colour look over each player's own picture settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub look: Option<WorldLook>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -508,8 +511,93 @@ impl Default for WorldSettings {
             sky: None,
             brightness: None,
             scripts: Vec::new(),
+            look: None,
             extra: Map::new(),
         }
+    }
+}
+
+/// A world's colour look: how its picture is graded on every player's
+/// screen. Each value works on top of the player's own settings (a player
+/// who turned bloom off keeps it off), so a look is cheap on any PC.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WorldLook {
+    /// Brightness multiplier, 0.5-2.
+    #[serde(default = "unit")]
+    pub exposure: f32,
+    /// Contrast around mid grey, 0.5-1.6 (1: as drawn).
+    #[serde(default = "unit")]
+    pub contrast: f32,
+    /// Colour strength, 0 (black and white) to 2.
+    #[serde(default = "unit")]
+    pub saturation: f32,
+    /// Colour temperature, -1 (cold blue) to 1 (warm orange).
+    #[serde(default)]
+    pub warmth: f32,
+    /// Glow around bright light, 0-3 (multiplies the player's bloom).
+    #[serde(default = "unit")]
+    pub bloom: f32,
+    /// Darker screen corners, 0-0.8 (added to the player's own).
+    #[serde(default)]
+    pub vignette: f32,
+}
+fn unit() -> f32 {
+    1.0
+}
+impl Default for WorldLook {
+    fn default() -> Self {
+        Self {
+            exposure: 1.0,
+            contrast: 1.0,
+            saturation: 1.0,
+            warmth: 0.0,
+            bloom: 1.0,
+            vignette: 0.0,
+        }
+    }
+}
+impl WorldLook {
+    /// Ready-made looks: (name, look). The first is the picture as drawn.
+    pub fn presets() -> [(&'static str, WorldLook); 8] {
+        let look = |exposure, contrast, saturation, warmth, bloom, vignette| WorldLook {
+            exposure,
+            contrast,
+            saturation,
+            warmth,
+            bloom,
+            vignette,
+        };
+        [
+            ("Classic", WorldLook::default()),
+            ("Natural", look(1.0, 1.06, 0.95, 0.06, 0.8, 0.1)),
+            ("Vivid", look(1.05, 1.15, 1.35, 0.0, 1.2, 0.1)),
+            ("Cinematic", look(0.95, 1.22, 0.85, 0.12, 1.3, 0.32)),
+            ("Sunset", look(1.05, 1.1, 1.15, 0.5, 1.6, 0.2)),
+            ("Cold night", look(0.9, 1.12, 0.8, -0.45, 1.0, 0.25)),
+            ("Dreamy", look(1.1, 0.85, 1.1, 0.15, 2.5, 0.15)),
+            ("Noir", look(0.95, 1.38, 0.0, 0.0, 0.8, 0.42)),
+        ]
+    }
+    /// The name of the preset this look is, if any.
+    pub fn preset_name(&self) -> Option<&'static str> {
+        Self::presets()
+            .into_iter()
+            .find(|(_, look)| look == self)
+            .map(|(name, _)| name)
+    }
+    pub fn is_valid(&self) -> bool {
+        let within = |v: f32, lo: f32, hi: f32| v.is_finite() && (lo..=hi).contains(&v);
+        within(self.exposure, 0.5, 2.0)
+            && within(self.contrast, 0.5, 1.6)
+            && within(self.saturation, 0.0, 2.0)
+            && within(self.warmth, -1.0, 1.0)
+            && within(self.bloom, 0.0, 3.0)
+            && within(self.vignette, 0.0, 0.8)
+    }
+    /// Red, green and blue multipliers for [`Self::warmth`].
+    pub fn tint(&self) -> [f32; 3] {
+        let w = self.warmth.clamp(-1.0, 1.0);
+        [1.0 + 0.14 * w, 1.0 + 0.02 * w, 1.0 - 0.16 * w]
     }
 }
 
@@ -661,8 +749,9 @@ impl Layout {
                 && s.brightness
                     .is_none_or(|b| b.is_finite() && (0.3..=1.5).contains(&b))
                 && s.sky
-                    .is_none_or(|c| c.iter().all(|v| v.is_finite() && (0.0..=1.0).contains(v))),
-            "the world's fog, sky colour or brightness is out of range"
+                    .is_none_or(|c| c.iter().all(|v| v.is_finite() && (0.0..=1.0).contains(v)))
+                && s.look.as_ref().is_none_or(WorldLook::is_valid),
+            "the world's fog, sky colour, brightness or look is out of range"
         );
         ensure!(
             self.version == VERSION,
@@ -853,6 +942,30 @@ pub fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn looks_are_valid_named_and_saved_only_when_set() {
+        let presets = WorldLook::presets();
+        assert_eq!(presets[0], ("Classic", WorldLook::default()));
+        for (name, look) in presets {
+            assert!(look.is_valid(), "{name}");
+            assert_eq!(look.preset_name(), Some(name));
+        }
+        let warm = WorldLook {
+            warmth: 1.0,
+            ..WorldLook::default()
+        };
+        let [r, _, b] = warm.tint();
+        assert!(r > 1.0 && b < 1.0);
+        assert_eq!(warm.preset_name(), None);
+        let mut layout = Layout::default();
+        assert!(!serde_json::to_string(&layout).unwrap().contains("look"));
+        layout.settings.look = Some(WorldLook {
+            contrast: 9.0,
+            ..WorldLook::default()
+        });
+        assert!(layout.validate().is_err());
+    }
 
     fn sample() -> Layout {
         let mut layout = Layout::default();
