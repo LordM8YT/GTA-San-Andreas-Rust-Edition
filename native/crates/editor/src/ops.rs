@@ -30,7 +30,10 @@ pub fn place(
         }
         _ => None,
     };
-    let mut node = Node::object(id, unique_name(doc, name), asset, transform);
+    // `transform` is where it goes in the world; inside a group it is kept
+    // relative to the group's pivot.
+    let local = doc.layout.local_in(parent, &transform);
+    let mut node = Node::object(id, unique_name(doc, name), asset, local);
     node.parent = parent;
     node.gameplay = gameplay.map(world_logic::Kept::Known);
     if matches!(node.asset.as_ref(), Some(AssetRef::Builtin(b)) if b == "terrain") {
@@ -121,8 +124,17 @@ pub fn duplicate(
 pub fn copy(doc: &Document, ids: &[NodeId]) -> Result<Vec<Node>> {
     let all = with_descendants(doc, ids);
     ensure!(!all.is_empty(), "nothing selected");
+    let copied: HashSet<NodeId> = all.iter().copied().collect();
     all.iter()
-        .map(|id| doc.layout.node(*id).cloned().context("object vanished"))
+        .map(|id| {
+            let mut node = doc.layout.node(*id).cloned().context("object vanished")?;
+            // The copied roots in world space: they may be pasted into
+            // another group (or none). Their contents stay relative to them.
+            if !node.parent.is_some_and(|p| copied.contains(&p)) {
+                node.transform = doc.layout.world_transform(*id);
+            }
+            Ok(node)
+        })
         .collect()
 }
 
@@ -157,6 +169,7 @@ pub fn paste_cut(doc: &Document, cut: &[Node]) -> Option<(Command, Vec<NodeId>)>
             if !node.parent.is_some_and(|p| ids.contains(&p)) {
                 roots.push(node.id);
                 node.parent = paste_parent(doc, node.parent);
+                node.transform = doc.layout.local_in(node.parent, &node.transform);
                 node.name = unique_name_besides(doc, &node.name, &names);
                 names.insert(node.name.clone());
             }
@@ -188,18 +201,51 @@ pub fn paste(
         copy.id = remap[&node.id];
         let parent_copied = copy.parent.and_then(|p| remap.get(&p).copied());
         match parent_copied {
+            // Inside a copied group: placed relative to it, as before.
             Some(parent) => copy.parent = Some(parent),
             None => {
                 roots.push(copy.id);
                 copy.name = unique_name_besides(doc, &copy.name, &names);
                 names.insert(copy.name.clone());
                 copy.parent = paste_parent(doc, copy.parent);
+                // A root (in world space from `copy`) moves by `offset`; a
+                // group without a pivot of its own moves its contents
+                // instead, so it stays without one.
+                if !(copy.is_group() && copy.transform.is_unmoved()) {
+                    for (axis, delta) in offset.iter().enumerate() {
+                        copy.transform.position[axis] += delta;
+                    }
+                }
+                copy.transform = doc.layout.local_in(copy.parent, &copy.transform);
             }
         }
-        for (axis, delta) in offset.iter().enumerate() {
-            copy.transform.position[axis] += delta;
-        }
         nodes.push(copy);
+    }
+    // Contents of a copied group without a pivot are in world space: move
+    // them by `offset` (nested such groups pass it on).
+    let unmoved_groups: HashSet<NodeId> = nodes
+        .iter()
+        .filter(|n| n.is_group() && n.transform.is_unmoved())
+        .map(|n| n.id)
+        .collect();
+    let new_ids: HashSet<NodeId> = nodes.iter().map(|n| n.id).collect();
+    let parents: HashMap<NodeId, Option<NodeId>> = nodes.iter().map(|n| (n.id, n.parent)).collect();
+    for node in &mut nodes {
+        // Every group between it and the pasted root has no pivot.
+        let mut at = node.parent.filter(|p| new_ids.contains(p));
+        let mut shifted = at.is_some();
+        while let Some(group) = at {
+            if !unmoved_groups.contains(&group) {
+                shifted = false;
+                break;
+            }
+            at = parents[&group].filter(|p| new_ids.contains(p));
+        }
+        if shifted {
+            for (axis, delta) in offset.iter().enumerate() {
+                node.transform.position[axis] += delta;
+            }
+        }
     }
     // Gameplay of the copies: actions point at the copies of objects copied
     // along with them, and checkpoints take the next free numbers.
@@ -311,10 +357,21 @@ pub fn group(doc: &mut Document, ids: &[NodeId], name: &str) -> Result<(Command,
     let id = doc.layout.allocate_id();
     let mut group = Node::group(id, unique_name(doc, name));
     group.parent = parent;
+    group.model = true;
+    // Its pivot: the middle of what it holds, at their lowest point.
+    let pivot = pivot_for(doc, &roots);
+    group.transform = doc.layout.local_in(parent, &pivot);
     let insert = Command::Insert(vec![(first, group)]);
     let mut probe = doc.clone();
     insert.apply(&mut probe)?;
-    let reparent = modify(&probe, "", &roots, |n| n.parent = Some(id))?;
+    let world: HashMap<NodeId, Transform> = roots
+        .iter()
+        .map(|r| (*r, doc.layout.world_transform(*r)))
+        .collect();
+    let reparent = modify(&probe, "", &roots, |n| {
+        n.parent = Some(id);
+        n.transform = pivot.local_of(&world[&n.id]);
+    })?;
     Ok((
         Command::Batch {
             label: format!("Group {} objects", roots.len()),
@@ -336,7 +393,14 @@ pub fn ungroup(doc: &Document, group: NodeId) -> Result<Command> {
         .filter(|n| n.parent == Some(group))
         .map(|n| n.id)
         .collect();
-    let lift = modify(doc, "", &children, |n| n.parent = parent)?;
+    let world: HashMap<NodeId, Transform> = children
+        .iter()
+        .map(|c| (*c, doc.layout.world_transform(*c)))
+        .collect();
+    let lift = modify(doc, "", &children, |n| {
+        n.parent = parent;
+        n.transform = doc.layout.local_in(parent, &world[&n.id]);
+    })?;
     let mut probe = doc.clone();
     lift.apply(&mut probe)?;
     let index = probe.layout.index_of(group).context("group vanished")?;
@@ -417,6 +481,11 @@ pub fn move_nodes(doc: &Document, ids: &[NodeId], to: Drop) -> Result<Option<Com
         .map(|node| {
             let mut node = node.clone();
             if !node.parent.is_some_and(|p| moving_set.contains(&p)) {
+                if node.parent != parent {
+                    // It stays where it is in the world.
+                    let world = doc.layout.world_transform(node.id);
+                    node.transform = doc.layout.local_in(parent, &world);
+                }
                 node.parent = parent;
             }
             node
@@ -464,5 +533,83 @@ pub fn reparent(doc: &Document, ids: &[NodeId], parent: Option<NodeId>) -> Resul
             );
         }
     }
-    modify(doc, "Move to group", ids, |n| n.parent = parent)
+    modify(doc, "Move to group", ids, |n| {
+        if n.parent != parent {
+            let world = doc.layout.world_transform(n.id);
+            n.transform = doc.layout.local_in(parent, &world);
+        }
+        n.parent = parent
+    })
+}
+
+/// Where a new pivot for `ids` goes: the middle of their positions, at the
+/// lowest of them, not turned (world space).
+pub fn pivot_for(doc: &Document, ids: &[NodeId]) -> Transform {
+    let points: Vec<[f32; 3]> = ids
+        .iter()
+        .flat_map(|id| {
+            let mut out = vec![doc.layout.world_transform(*id).position];
+            // A group's contents count, not its own (maybe unused) pivot.
+            if doc.layout.node(*id).is_some_and(Node::is_group) {
+                out = doc
+                    .layout
+                    .descendants(*id)
+                    .into_iter()
+                    .filter(|d| doc.layout.node(*d).is_some_and(|n| !n.is_group()))
+                    .map(|d| doc.layout.world_transform(d).position)
+                    .collect();
+            }
+            out
+        })
+        .collect();
+    if points.is_empty() {
+        return Transform::default();
+    }
+    let mut lo = [f32::MAX; 3];
+    let mut hi = [f32::MIN; 3];
+    for p in &points {
+        for axis in 0..3 {
+            lo[axis] = lo[axis].min(p[axis]);
+            hi[axis] = hi[axis].max(p[axis]);
+        }
+    }
+    Transform::at([(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0, lo[2]])
+}
+
+/// Move group `group`'s pivot to `pivot` (world space) without moving
+/// anything in it: its direct contents are placed again relative to it.
+pub fn set_pivot(doc: &Document, group: NodeId, pivot: Transform, label: &str) -> Result<Command> {
+    let node = doc.layout.node(group).context("group vanished")?;
+    ensure!(node.is_group(), "{} is not a group", node.name);
+    let children: Vec<NodeId> = doc
+        .layout
+        .nodes
+        .iter()
+        .filter(|n| n.parent == Some(group))
+        .map(|n| n.id)
+        .collect();
+    let world: HashMap<NodeId, Transform> = children
+        .iter()
+        .map(|c| (*c, doc.layout.world_transform(*c)))
+        .collect();
+    let mut pivot = pivot;
+    pivot.scale = [1.0; 3];
+    let local = doc.layout.local_in(node.parent, &pivot);
+    let mut ids = vec![group];
+    ids.extend(&children);
+    modify(doc, label, &ids, |n| {
+        if n.id == group {
+            n.transform = local;
+        } else {
+            n.transform = pivot.local_of(&world[&n.id]);
+        }
+    })
+}
+
+/// Put group `group`'s pivot in the middle of its contents (at their base),
+/// keeping its turn.
+pub fn center_pivot(doc: &Document, group: NodeId) -> Result<Command> {
+    let mut pivot = pivot_for(doc, &[group]);
+    pivot.rotation = doc.layout.world_transform(group).rotation;
+    set_pivot(doc, group, pivot, "Centre pivot")
 }

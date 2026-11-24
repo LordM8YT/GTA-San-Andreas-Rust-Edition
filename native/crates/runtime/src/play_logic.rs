@@ -240,7 +240,8 @@ pub fn load_pack(folder: &std::path::Path) -> Option<Layout> {
     let file = manifest.world.layout.as_ref()?;
     let path = sa_scene::content_pack::inside(folder, file).ok()?;
     match Layout::read(&path) {
-        Ok(layout) => Some(layout),
+        // Played with group pivots applied: world transforms only.
+        Ok(layout) => Some(layout.resolved()),
         Err(error) => {
             crate::runtime_log::line(format!("World gameplay not loaded: {error:#}"));
             None

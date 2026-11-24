@@ -218,7 +218,7 @@ pub fn load(shared: &Shared, server_root: &Path, id: &str) {
         let Some(file) = manifest.world.layout else {
             return Ok(None);
         };
-        Layout::read(&sa_scene::content_pack::inside(&folder, &file)?).map(Some)
+        Layout::read(&sa_scene::content_pack::inside(&folder, &file)?).map(|l| Some(l.resolved()))
     });
     match layout {
         Ok(Some(layout)) => {

@@ -586,6 +586,7 @@ impl BuildMode {
             })
             .collect();
         let mut problems = Vec::new();
+        let world = self.doc.layout.world_transforms();
         for node in &self.doc.layout.nodes {
             if node.asset.is_none() {
                 continue;
@@ -595,7 +596,7 @@ impl BuildMode {
             }
             match sa_scene::content_pack::node_model(node, &mut self.resolver) {
                 Ok(model) => {
-                    let (_, solid) = model.transformed(gpu::render_matrix(&node.transform));
+                    let (_, solid) = model.transformed(gpu::render_matrix(&world[&node.id]));
                     if switchable.contains(&node.id) {
                         switched.push((node.id, solid));
                     } else {
@@ -847,7 +848,7 @@ impl State {
         }
         let collision = build.playtest_collision();
         // Gameplay starts fresh from the layout as it is now.
-        let play = crate::play_logic::PlayLogic::playtest(&build.doc.layout);
+        let play = crate::play_logic::PlayLogic::playtest(&build.doc.layout.resolved());
         for problem in sa_scene::world_logic::check(&build.doc.layout) {
             build.warn(format!("Gameplay: {}", problem.text));
         }
@@ -1415,7 +1416,43 @@ impl State {
                 );
                 capture(self, "build-parts.png");
             }
-            134 => return true,
+            // The parts as one model: grouped, then turned a quarter about
+            // its pivot; everything in it turns along.
+            134 => {
+                let build = self.build.as_mut().unwrap();
+                let ids = build.ui.smoke_parts.clone();
+                let (command, model) =
+                    sa_editor::ops::group(&mut build.doc, &ids, "Parts model").expect("grouping");
+                build.execute(command);
+                let wall = build.gpu.objects[&ids[0]].bounds;
+                build.ui.smoke_model = Some((model, wall));
+                build.preview("Rotate", &[model], |n| n.transform.rotation[2] = 90.0);
+                build.commit_preview();
+                build.selection = vec![model];
+            }
+            138 => {
+                let build = self.build.as_mut().unwrap();
+                let (model, before) = build.ui.smoke_model.unwrap();
+                let ids = build.ui.smoke_parts.clone();
+                let after = build.gpu.objects[&ids[0]].bounds;
+                let (was, now) = (before.1 - before.0, after.1 - after.0);
+                // Render space: x east, z south. The 8 m wall now runs north.
+                assert!(
+                    (was.x - now.z).abs() < 0.1 && (was.z - now.x).abs() < 0.1,
+                    "the wall did not turn with its model: {was} -> {now}"
+                );
+                assert!(build.doc.layout.node(model).is_some_and(|n| n.model));
+                build.focus_selection();
+            }
+            142 => {
+                capture(self, "build-model.png");
+                // Played, the parts are where the model puts them.
+                let played = self.build.as_ref().unwrap().doc.layout.resolved();
+                let wall = self.build.as_ref().unwrap().ui.smoke_parts[0];
+                let at = played.node(wall).unwrap().transform;
+                assert_eq!(at.rotation[2].round(), 90.0, "the played wall is not turned: {at:?}");
+            }
+            144 => return true,
             _ => {}
         }
         false

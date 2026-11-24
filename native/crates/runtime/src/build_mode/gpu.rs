@@ -199,9 +199,11 @@ impl Gpu {
         });
         let moved = &self.moved;
         self.moving_meshes.retain(|id, _| moved.contains_key(id));
+        // Objects inside groups with a pivot are placed in the group.
+        let world = layout.world_transforms();
         for node in &layout.nodes {
             let Some(asset) = &node.asset else { continue };
-            let transform = self.moved.get(&node.id).copied().unwrap_or(node.transform);
+            let transform = self.moved.get(&node.id).copied().unwrap_or(world[&node.id]);
             if node.terrain.is_some() || node.road.is_some() {
                 let same_shape = self
                     .generated
@@ -263,7 +265,7 @@ impl Gpu {
             let asset = self
                 .part_mesh(state, node, problems)
                 .unwrap_or_else(|| asset.clone());
-            let transform = self.moved.get(&copy).copied().unwrap_or(node.transform);
+            let transform = self.moved.get(&copy).copied().unwrap_or(world[&source]);
             self.sync_model(state, resolver, copy, &asset, transform, problems);
         }
     }
@@ -357,29 +359,27 @@ impl Gpu {
                 .and_then(|n| n.light.as_ref())
                 .is_some_and(|light| *light == mesh.light)
         });
+        let world = layout.world_transforms();
         for node in &layout.nodes {
             let Some(light) = &node.light else { continue };
+            let transform = world[&node.id];
             if self
                 .lights
                 .get(&node.id)
-                .is_some_and(|mesh| mesh.transform == node.transform)
+                .is_some_and(|mesh| mesh.transform == transform)
             {
                 continue;
             }
             let model = sa_scene::lights::point_light_model(light);
             match upload(state, &model, false) {
                 Ok(mesh) => {
-                    let object = instance(
-                        state,
-                        &mesh,
-                        AssetRef::Builtin("light".into()),
-                        node.transform,
-                    );
+                    let object =
+                        instance(state, &mesh, AssetRef::Builtin("light".into()), transform);
                     self.lights.insert(
                         node.id,
                         LightMesh {
                             light: light.clone(),
-                            transform: node.transform,
+                            transform,
                             object,
                         },
                     );

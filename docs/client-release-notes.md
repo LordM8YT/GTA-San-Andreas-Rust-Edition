@@ -1,5 +1,8 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.59.0:
+- Build Mode: models. *Group* (Ctrl+G) now makes the selection a model with a pivot of its own: move or turn the model and everything in it comes along, turning about the pivot. A click on any part of a model selects the whole model, Alt+click the object inside. Properties show the pivot's position and rotation and *Centre pivot*; untick *Model* to make a group a plain folder again. Objects keep their place when they move into or out of a model, and copies of a model are models too. Worlds without models still open in older SARE versions.
+
 Version 0.58.0:
 - Build Mode: build with parts. *Part* on the Home ribbon (or the Toolbox's new Parts category) places a block, ball, cylinder, wedge or corner wedge. Give it a size in metres, any colour (or one of 16 quick swatches), a material (Plastic, Smooth, Concrete, Wood, Brick, Tiles, Metal or Glass) and transparency in Properties. The Scale tool resizes a part from one side, like pulling out a wall. Select several parts to colour them all at once. Parts are solid when played, also on servers, and scripts can colour, move and copy them.
 

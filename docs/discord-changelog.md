@@ -1,3 +1,9 @@
+**SARE 0.59: models with a pivot 📦 (pending release)**
+
+📦 **Models:** group anything into a model with Ctrl+G. Click it to pick it up whole, turn it about its own pivot and everything inside comes along. Alt+click to grab one piece inside.
+
+---
+
 **SARE 0.58: build with parts 🧱 (pending release)**
 
 🧱 **Parts:** blocks, balls, cylinders, wedges and corner wedges you size in metres, paint any colour and give a material: brick, wood, concrete, tiles, metal, glass and more. Pull a side to make a wall longer.

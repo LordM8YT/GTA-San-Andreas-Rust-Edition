@@ -143,7 +143,7 @@ fn new_destination(build: &mut BuildMode, id: NodeId) {
     let Some(node) = build.doc.layout.node(id).cloned() else {
         return;
     };
-    let mut at = node.transform;
+    let mut at = build.doc.layout.world_transform(id);
     let ahead = at.rotation_quat() * glam::Vec3::Y * 4.0;
     at.position = (glam::Vec3::from_array(at.position) + ahead).to_array();
     at.scale = [1.0; 3];

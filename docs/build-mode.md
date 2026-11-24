@@ -73,11 +73,29 @@ own graphics settings, so you see the world the way players will. Traffic and
 pedestrians stay away while you edit. The choice is saved with your other
 settings.
 
-Select a group (or several objects) and the gizmo moves, turns and scales
-them as one, about the middle of what is selected: a house turns with its
-doors and lamps in place. Scaling along one axis spreads the objects out
-along it; objects that are turned inside the group stretch along their own
-axes.
+**Models.** *Group* (Ctrl+G) makes the selection a model: one thing, like
+a car, a house or a market stall, with a **pivot** of its own (📦 in the
+Explorer). The pivot starts in the middle of the contents, at their base.
+Moving or turning a model moves and turns its pivot, and everything inside
+comes along; inside, objects keep their place relative to the pivot, so
+moving the model never disturbs them. A click on any part of a model in the
+world selects the whole model; **Alt+click** selects the object inside
+(hovering shows both names). Its Properties show the **Pivot** (position
+and rotation to type in), *Centre pivot* to put the pivot back in the middle
+of the contents without moving them, and *Model*: turn it off to make the
+group a plain folder, whose objects a click picks one by one. Groups from
+older worlds are folders without a pivot; the first time one is moved or
+turned it gets one in the middle of its contents.
+
+Objects keep their place in the world when they go into or out of a model
+(dragged in the Explorer, cut and pasted, ungrouped), and a copy of a model
+is a model with its own pivot. Scripts, players and servers see every
+object where it is in the world.
+
+Several objects selected (or a model with the Scale tool) move, turn and
+scale as one, about the middle of the selection. Scaling along one axis
+spreads the objects out along it; objects turned inside a group stretch
+along their own axes.
 
 Camera: right mouse + WASD/QE flies (Shift faster, wheel changes speed),
 middle mouse pans, Alt + left mouse orbits, the wheel zooms, F or a
@@ -343,9 +361,14 @@ content/my-town/
 
 - Coordinates are Blender's: X east, Y north, Z up, metres, around the pack
   origin. Rotation is Blender "XYZ Euler" in degrees.
-- A node without `asset` is a group (a folder in the outliner). Groups pass
-  Visible, Locked and Collision down to their contents; they have no
-  transform of their own yet.
+- A node without `asset` is a group. Groups pass Visible, Locked and
+  Collision down to their contents. A group's `transform` is its pivot:
+  its contents' transforms are relative to it (position and rotation; a
+  group has no scale of its own, so `scale` stays 1). A group without a
+  pivot has no position or rotation. `"model": true` makes a click select
+  the whole group. `Layout::world_transform` gives any object's place in the
+  world, and `Layout::resolved` the whole layout in world space, which is
+  what packs, playtests, servers and scripts play.
 - Ids are stable and never reused, even after undo.
 - An `interact` behaviour can have `"vehicles": true` to work for drivers
   too (left out: on foot only).
@@ -388,7 +411,9 @@ content/my-town/
 - Unknown fields, at any level, are kept and written back unchanged.
 - Versioning: `version` is checked on load. Older versions go through
   `world_layout::migrate`; a file from a newer SARE is refused with a clear
-  message instead of being half read.
+  message instead of being half read. Version 2 added group pivots; a world
+  that uses none is still written as version 1, so older SARE versions
+  open it.
 - Saves are atomic (write to a temporary file, then rename). Autosave runs
   15 seconds after a change and when SARE closes; after a crash Build Mode
   offers to recover the autosave.
@@ -467,8 +492,8 @@ collision without rebuilding the world (also used by Playtest).
 
 Milestone 1 and part of milestone 2 are in. Still to come, roughly in order:
 
-- A pivot of its own for a group: today a group turns and scales about the
-  middle of its contents, and has no position or rotation you can type in.
+- Dragging a model's pivot in the world (today: type it in, or Centre
+  pivot), and scaling a whole model to a size.
 - Multiplayer: server checks of teleport destinations against the player's
   later position.
 - More actions (sounds, items). World scripts react to zones and move

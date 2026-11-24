@@ -222,11 +222,17 @@ pub fn show(build: &mut BuildMode, ui: &mut Ui, frame: &Frame) {
     let active = build.drag.as_ref().map(|d| d.handle).or(handle_hover);
     draw_gizmo(build, &view, &painter, active);
 
-    // Click to select (Ctrl adds or removes).
-    if response.clicked_by(egui::PointerButton::Primary) && handle_hover.is_none() && !modifiers.alt
-    {
+    // Click to select (Ctrl adds or removes). A click on part of a model
+    // selects the model; Alt+click the object itself. (Alt+drag orbits.)
+    if response.clicked_by(egui::PointerButton::Primary) && handle_hover.is_none() {
         if let Some(pointer) = pointer {
-            let hit = pick_object(build, &view.ray(pointer));
+            let hit = pick_object(build, &view.ray(pointer)).map(|id| {
+                if modifiers.alt {
+                    id
+                } else {
+                    model_of(build, id)
+                }
+            });
             match (hit, modifiers.ctrl || modifiers.command) {
                 (Some(id), true) => {
                     if let Some(i) = build.selection.iter().position(|s| *s == id) {
@@ -251,8 +257,16 @@ pub fn show(build: &mut BuildMode, ui: &mut Ui, frame: &Frame) {
     draw_selection(build, &view, &painter);
     if let Some(pointer) = pointer {
         if let Some(id) = pick_object(build, &view.ray(pointer)) {
-            if let Some(node) = build.doc.layout.node(id) {
-                response.clone().on_hover_text_at_pointer(node.name.clone());
+            let model = model_of(build, id);
+            let name = |id| build.doc.layout.node(id).map(|n| n.name.clone());
+            let text = match (name(model), name(id)) {
+                (Some(m), Some(o)) if model != id => {
+                    Some(format!("{m} › {o}\nAlt+click selects {o}"))
+                }
+                (_, o) => o,
+            };
+            if let Some(text) = text {
+                response.clone().on_hover_text_at_pointer(text);
             }
         }
     }
@@ -337,6 +351,17 @@ fn surface_hit(build: &BuildMode, ray: &Ray) -> Option<Vec3> {
     pick(ray, objects.chain(base)).map(|(_, t)| ray.at(t))
 }
 
+/// The outermost model `id` is part of (unlocked), or `id` itself.
+fn model_of(build: &BuildMode, id: NodeId) -> NodeId {
+    let layout = &build.doc.layout;
+    layout
+        .ancestry(id)
+        .skip(1)
+        .filter(|n| n.model && !layout.effective_locked(n.id))
+        .last()
+        .map_or(id, |n| n.id)
+}
+
 fn pick_object(build: &BuildMode, ray: &Ray) -> Option<NodeId> {
     let layout = &build.doc.layout;
     let items = build.gpu.objects.iter().filter_map(|(id, o)| {
@@ -367,7 +392,7 @@ fn terrain_surface_hit(build: &BuildMode, ray: &Ray) -> Option<(NodeId, Vec3)> {
         })
         .filter_map(|n| {
             let terrain = n.terrain.as_ref()?;
-            let t = &n.transform;
+            let t = &layout.world_transform(n.id);
             let (turn, position) = (t.rotation_quat().inverse(), Vec3::from_array(t.position));
             let scale = Vec3::from_array(t.scale);
             // How far the ray at `along` is above the ground under it (None
@@ -468,7 +493,7 @@ fn sculpt(
     };
     // The brush in the terrain's own metres.
     let at = Vec3::from_array(crate::play_logic::render_to_blender(point));
-    let t = node.transform;
+    let t = build.doc.layout.world_transform(id);
     let local = t.rotation_quat().inverse() * (at - Vec3::from_array(t.position));
     let scale = ((t.scale[0].abs() + t.scale[1].abs()) * 0.5).max(0.001);
     let center = Vec2::new(local.x / t.scale[0], local.y / t.scale[1]);
@@ -541,16 +566,39 @@ fn place(build: &mut BuildMode, transform: Transform, keep_placing: bool) {
     }
 }
 
-/// The objects the gizmo moves: selected, unlocked, not groups' contents
-/// twice. Groups move everything inside them.
+/// The objects the gizmo moves: selected and unlocked. Moving or turning
+/// a group moves its pivot and everything inside comes along; scaling
+/// scales everything inside it (groups have no scale of their own).
 fn movable(build: &BuildMode) -> Vec<NodeId> {
     let layout = &build.doc.layout;
-    ops::with_descendants(&build.doc, &build.selection)
-        .into_iter()
+    if build.tool == Tool::Scale {
+        return ops::with_descendants(&build.doc, &build.selection)
+            .into_iter()
+            .filter(|id| {
+                layout.node(*id).is_some_and(|n| !n.is_group()) && !layout.effective_locked(*id)
+            })
+            .collect();
+    }
+    // The topmost selected: an object inside a selected group goes along
+    // with it already.
+    build
+        .selection
+        .iter()
+        .copied()
         .filter(|id| {
-            layout.node(*id).is_some_and(|n| !n.is_group()) && !layout.effective_locked(*id)
+            !layout
+                .ancestry(*id)
+                .skip(1)
+                .any(|a| build.selection.contains(&a.id))
+                && !layout.effective_locked(*id)
+                && layout.node(*id).is_some()
         })
         .collect()
+}
+
+/// The group's pivot is used: it has one, and the tool moves or turns it.
+fn uses_pivot(build: &BuildMode, node: &Node) -> bool {
+    node.is_group() && build.tool != Tool::Scale && !node.transform.is_unmoved()
 }
 
 /// Stop dragging a road point (keeping the move as one undo step) and
@@ -572,7 +620,7 @@ fn selected_road(build: &BuildMode) -> Option<(NodeId, Transform, Road)> {
     let road = node.road.clone()?;
     (layout.effective_visible(id) && !layout.effective_locked(id)).then_some((
         id,
-        node.transform,
+        layout.world_transform(id),
         road,
     ))
 }
@@ -757,7 +805,7 @@ fn road_points(
 fn gizmo_anchor(build: &BuildMode) -> Option<(Vec3, Transform)> {
     let primary = *build.selection.last()?;
     let node = build.doc.layout.node(primary)?;
-    if node.is_group() {
+    if node.is_group() && !uses_pivot(build, node) {
         let ids = movable(build);
         let points = ids
             .iter()
@@ -770,9 +818,10 @@ fn gizmo_anchor(build: &BuildMode) -> Option<(Vec3, Transform)> {
     if build.doc.layout.effective_locked(primary) {
         return None;
     }
+    let world = build.doc.layout.world_transform(primary);
     Some((
-        super::gpu::render_matrix(&node.transform).transform_point3(Vec3::ZERO),
-        node.transform,
+        super::gpu::render_matrix(&world).transform_point3(Vec3::ZERO),
+        world,
     ))
 }
 
@@ -917,6 +966,25 @@ fn draw_gizmo(build: &BuildMode, view: &View, painter: &egui::Painter, active: O
 }
 
 fn begin_drag(build: &mut BuildMode, view: &View, handle: Handle, pointer: Pos2) {
+    // A group without a pivot of its own gets one in the middle of its
+    // contents before it moves or turns, so it turns about itself.
+    if build.tool != Tool::Scale {
+        let unpivoted: Vec<NodeId> = movable(build)
+            .into_iter()
+            .filter(|id| {
+                build
+                    .doc
+                    .layout
+                    .node(*id)
+                    .is_some_and(|n| n.is_group() && n.transform.is_unmoved())
+            })
+            .collect();
+        for group in unpivoted {
+            if let Ok(command) = ops::center_pivot(&build.doc, group) {
+                build.execute(command);
+            }
+        }
+    }
     let Some((origin, transform)) = gizmo_anchor(build) else {
         return;
     };
@@ -948,9 +1016,11 @@ fn begin_drag(build: &mut BuildMode, view: &View, handle: Handle, pointer: Pos2)
         }
         Handle::ScaleAll => (Vec3::Y, 0.0, origin),
     };
+    // Dragged in world space; written back relative to each one's group.
     let starts = ids
         .iter()
-        .filter_map(|id| build.doc.layout.node(*id).map(|n| (*id, n.transform)))
+        .filter(|id| build.doc.layout.node(**id).is_some())
+        .map(|id| (*id, build.doc.layout.world_transform(*id)))
         .collect();
     let sizes = ids
         .iter()
@@ -1120,7 +1190,9 @@ fn continue_drag(build: &mut BuildMode, view: &View, pointer: Pos2, fine: bool) 
             }
         }
     }
-    for (id, transform) in updates {
+    for (id, world) in updates {
+        let parent = build.doc.layout.node(id).and_then(|n| n.parent);
+        let transform = build.doc.layout.local_in(parent, &world);
         if transform.is_valid() {
             build.preview(label, &[id], |n| n.transform = transform);
         }
@@ -1244,6 +1316,7 @@ fn gameplay_color(component: &Component) -> Color32 {
 fn draw_gameplay(build: &BuildMode, view: &View, painter: &egui::Painter) {
     let layout = &build.doc.layout;
     let flags = layout.effective_all();
+    let world = layout.world_transforms();
     let to_render = crate::play_logic::blender_to_render;
     let font = egui::FontId::proportional(12.0);
     for node in &layout.nodes {
@@ -1263,8 +1336,12 @@ fn draw_gameplay(build: &BuildMode, view: &View, painter: &egui::Painter) {
             Component::Interact(_) => format!("E: {}", node.name),
             Component::Checkpoint(c) => format!("Checkpoint {}", c.order),
         };
-        let mut top = to_render(node.transform.position) + Vec3::Y * 1.8;
-        if let Some(zone) = world_logic::zone_of(node) {
+        let at = world[&node.id];
+        let mut top = to_render(at.position) + Vec3::Y * 1.8;
+        let zone = component
+            .size()
+            .map(|size| world_logic::ZoneShape::of(&at, size));
+        if let Some(zone) = zone {
             let corners = zone.corners().map(|c| to_render(c.to_array()));
             draw_box(
                 view,
@@ -1295,7 +1372,7 @@ fn draw_gameplay(build: &BuildMode, view: &View, painter: &egui::Painter) {
             let Some(goal) = layout.node(target) else {
                 continue;
             };
-            let to = to_render(goal.transform.position) + Vec3::Y * 0.2;
+            let to = to_render(world[&goal.id].position) + Vec3::Y * 0.2;
             let pieces = 24;
             for k in 0..pieces {
                 if dashed && k % 2 == 1 {

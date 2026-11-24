@@ -25,7 +25,7 @@ use std::fmt;
 /// Value of the `format` field, so other JSON files are not mistaken for a layout.
 pub const FORMAT: &str = "sare-world-layout";
 /// Current layout version written by this SARE.
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 /// Default file name inside a pack.
 pub const FILE: &str = "layout.json";
 /// Most nodes one layout may hold.
@@ -86,6 +86,48 @@ impl Transform {
         let to_gltf = Mat4::from_mat3(BLENDER_TO_GLTF);
         to_gltf * blender * to_gltf.transpose()
     }
+    /// No move and no turn: what a group with no pivot of its own has.
+    pub fn is_unmoved(&self) -> bool {
+        self.position == [0.0; 3] && self.rotation == [0.0; 3]
+    }
+    /// `child`, given in this (a group's) own axes, in the axes this is in.
+    /// A group passes on its position and rotation, never its scale.
+    pub fn place(&self, child: &Transform) -> Transform {
+        if self.is_unmoved() {
+            return *child;
+        }
+        let turn = self.rotation_quat();
+        let position = Vec3::from_array(self.position) + turn * Vec3::from_array(child.position);
+        let rotation = if self.rotation == [0.0; 3] {
+            child.rotation
+        } else {
+            euler_degrees(turn * child.rotation_quat())
+        };
+        Transform {
+            position: position.to_array(),
+            rotation,
+            scale: child.scale,
+        }
+    }
+    /// The opposite of [`Transform::place`]: `world` in this group's own
+    /// axes.
+    pub fn local_of(&self, world: &Transform) -> Transform {
+        if self.is_unmoved() {
+            return *world;
+        }
+        let back = self.rotation_quat().inverse();
+        let position = back * (Vec3::from_array(world.position) - Vec3::from_array(self.position));
+        let rotation = if self.rotation == [0.0; 3] {
+            world.rotation
+        } else {
+            euler_degrees(back * world.rotation_quat())
+        };
+        Transform {
+            position: position.to_array(),
+            rotation,
+            scale: world.scale,
+        }
+    }
     pub fn is_valid(&self) -> bool {
         self.position
             .iter()
@@ -96,6 +138,22 @@ impl Transform {
                 .iter()
                 .all(|v| v.is_finite() && v.abs() >= 0.001 && v.abs() <= 1000.0)
     }
+}
+
+/// Blender XYZ Euler degrees of a rotation (the inverse of
+/// [`Transform::rotation_quat`]), with tiny float noise rounded away so
+/// a turn of 90° stays 90°.
+pub fn euler_degrees(rotation: Quat) -> [f32; 3] {
+    let (z, y, x) = rotation.normalize().to_euler(EulerRot::ZYX);
+    [x, y, z].map(|r| {
+        let d = r.to_degrees();
+        let tidy = (d * 1000.0).round() / 1000.0;
+        if tidy == -0.0 {
+            0.0
+        } else {
+            tidy
+        }
+    })
 }
 
 /// Blender (X east, Y north, Z up) to glTF (X east, Y up, -Z north).
@@ -184,6 +242,11 @@ pub struct Node {
     /// The group this node sits in, or None at the top level.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<NodeId>,
+    /// A group that is one thing (a car, a house): clicking any of its
+    /// objects in the world selects the whole group (Alt+click selects
+    /// inside). Other groups are folders: a click picks the object.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub model: bool,
     /// The model this object shows. None makes the node a group.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asset: Option<AssetRef>,
@@ -241,6 +304,7 @@ impl Node {
             id,
             name: name.into(),
             parent: None,
+            model: false,
             asset: Some(asset),
             transform,
             visible: true,
@@ -261,6 +325,7 @@ impl Node {
             id,
             name: name.into(),
             parent: None,
+            model: false,
             asset: None,
             transform: Transform::default(),
             visible: true,
@@ -837,9 +902,14 @@ pub fn migrate(mut doc: Value) -> Result<Value> {
 
 /// Turn a version `from` document into version `from + 1`.
 fn migrate_step(_doc: &mut Map<String, Value>, from: u64) -> Result<u64> {
-    // Add one arm per format change, e.g.:
-    // 1 => { rename or convert fields in `_doc`; Ok(2) }
-    bail!("no migration from layout version {from}")
+    match from {
+        // 2 gave groups a pivot: version 1 groups had none (their transform
+        // was not used), and it reads the same.
+        1 => Ok(2),
+        // Add one arm per format change, e.g.:
+        // 2 => { rename or convert fields in `_doc`; Ok(3) }
+        _ => bail!("no migration from layout version {from}"),
+    }
 }
 
 impl Layout {
@@ -854,7 +924,17 @@ impl Layout {
     }
     pub fn to_json(&self) -> Result<String> {
         self.validate()?;
-        Ok(serde_json::to_string_pretty(self)? + "\n")
+        // Version 2 added group pivots. A world without any is written as
+        // version 1, so older SARE versions still open it.
+        // (Written from the layout itself, not a JSON value, so numbers keep
+        // their short form.)
+        let version = if self.has_pivots() { VERSION } else { 1 };
+        if version == self.version {
+            return Ok(serde_json::to_string_pretty(self)? + "\n");
+        }
+        let mut written = self.clone();
+        written.version = version;
+        Ok(serde_json::to_string_pretty(&written)? + "\n")
     }
     pub fn read(path: &std::path::Path) -> Result<Self> {
         let text =
@@ -1055,6 +1135,70 @@ impl Layout {
                 .filter(|_| steps < 64);
             Some(node)
         })
+    }
+    /// Where node `id` is in the world: its transform placed in every group
+    /// above it (groups pass on position and rotation, not scale).
+    pub fn world_transform(&self, id: NodeId) -> Transform {
+        let mut chain: Vec<&Node> = self.ancestry(id).collect();
+        let Some(node) = chain.first() else {
+            return Transform::default();
+        };
+        let mut world = node.transform;
+        for group in chain.drain(..).skip(1) {
+            world = group.transform.place(&world);
+        }
+        world
+    }
+    /// The transform node `id` would need for `world` inside `parent`
+    /// (None: the top level).
+    pub fn local_in(&self, parent: Option<NodeId>, world: &Transform) -> Transform {
+        match parent {
+            Some(group) => self.world_transform(group).local_of(world),
+            None => *world,
+        }
+    }
+    /// Every node's world transform at once, by id.
+    pub fn world_transforms(&self) -> HashMap<NodeId, Transform> {
+        let by_id: HashMap<NodeId, &Node> = self.nodes.iter().map(|n| (n.id, n)).collect();
+        let moved = self
+            .nodes
+            .iter()
+            .any(|n| n.is_group() && !n.transform.is_unmoved());
+        self.nodes
+            .iter()
+            .map(|node| {
+                let mut world = node.transform;
+                if moved {
+                    let mut at = node.parent.and_then(|p| by_id.get(&p).copied());
+                    for _ in 0..64 {
+                        let Some(group) = at else { break };
+                        world = group.transform.place(&world);
+                        at = group.parent.and_then(|p| by_id.get(&p).copied());
+                    }
+                }
+                (node.id, world)
+            })
+            .collect()
+    }
+    /// A group has a pivot of its own (it is moved or turned), so the
+    /// layout needs format version 2.
+    pub fn has_pivots(&self) -> bool {
+        self.nodes
+            .iter()
+            .any(|n| n.is_group() && !n.transform.is_unmoved())
+    }
+    /// The layout for playing: every object's transform in world space, so
+    /// the game, servers and scripts need not know about group pivots.
+    pub fn resolved(&self) -> Layout {
+        let mut out = self.clone();
+        if !self.has_pivots() {
+            return out;
+        }
+        let world = self.world_transforms();
+        for node in &mut out.nodes {
+            node.transform = world[&node.id];
+        }
+        out
     }
     /// Every node inside group `id`, at any depth.
     pub fn descendants(&self, id: NodeId) -> Vec<NodeId> {
@@ -1290,5 +1434,56 @@ mod tests {
         assert_eq!(Layout::read(&path).unwrap(), sample());
         assert!(!dir.join(".layout.json.saving").exists());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn close(a: [f32; 3], b: [f32; 3]) -> bool {
+        a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-3)
+    }
+
+    #[test]
+    fn group_pivots_place_their_contents() {
+        let mut layout = Layout::default();
+        let mut model = Node::group(1, "Car");
+        model.transform = Transform {
+            position: [10.0, 0.0, 0.0],
+            rotation: [0.0, 0.0, 90.0],
+            scale: [1.0; 3],
+        };
+        let mut wheel = Node::object(
+            2,
+            "Wheel",
+            AssetRef::Builtin("cube".into()),
+            Transform {
+                position: [2.0, 0.0, 0.0],
+                rotation: [0.0, 0.0, 10.0],
+                scale: [2.0, 1.0, 1.0],
+            },
+        );
+        wheel.parent = Some(1);
+        layout.nodes = vec![model, wheel];
+        layout.next_id = 3;
+        // 2 m east of a pivot turned 90° is 2 m north of it.
+        let world = layout.world_transform(2);
+        assert!(close(world.position, [10.0, 2.0, 0.0]), "{world:?}");
+        assert!(close(world.rotation, [0.0, 0.0, 100.0]), "{world:?}");
+        assert_eq!(world.scale, [2.0, 1.0, 1.0], "groups do not scale");
+        assert_eq!(layout.world_transforms()[&2], world);
+        // And back.
+        let local = layout.local_in(Some(1), &world);
+        assert!(close(local.position, [2.0, 0.0, 0.0]) && close(local.rotation, [0.0, 0.0, 10.0]));
+        // Played: everything in world space.
+        let played = layout.resolved();
+        assert_eq!(played.node(2).unwrap().transform, world);
+        // Pivots need version 2; a world without them stays version 1, so
+        // older SARE versions still open it.
+        assert!(layout.to_json().unwrap().contains("\"version\": 2"));
+        let read = Layout::from_json(&layout.to_json().unwrap()).unwrap();
+        assert_eq!(read.world_transform(2), world);
+        layout.nodes[0].transform = Transform::default();
+        assert!(layout.to_json().unwrap().contains("\"version\": 1"));
+        assert_eq!(
+            layout.resolved().node(2).unwrap().transform,
+            layout.nodes[1].transform
+        );
     }
 }

@@ -258,10 +258,8 @@ mod tests {
         let copies = doc.layout.descendants(roots[0]);
         assert_eq!(copies.len(), 2);
         assert!(copies.iter().all(|id| !ids.contains(id)));
-        assert_eq!(
-            doc.layout.node(copies[0]).unwrap().transform.position[1],
-            5.0
-        );
+        // The copy's pivot moved; its contents stay relative to it.
+        assert_eq!(doc.layout.world_transform(copies[0]).position[1], 5.0);
         doc.layout.validate().unwrap();
         // Deleting a group deletes its contents; undo brings all back.
         let count = doc.layout.nodes.len();
@@ -790,5 +788,202 @@ mod tests {
             }
         });
         assert!(broken.validate().is_err());
+    }
+
+    fn near(a: [f32; 3], b: [f32; 3]) -> bool {
+        a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-3)
+    }
+
+    /// Two blocks, 4 m apart on X, grouped as a model.
+    fn model_doc() -> (
+        Document,
+        sa_scene::world_layout::NodeId,
+        [sa_scene::world_layout::NodeId; 2],
+    ) {
+        let mut doc = doc();
+        let mut ids = [0; 2];
+        for (i, x) in [10.0, 14.0].into_iter().enumerate() {
+            let (command, id) = ops::place(
+                &mut doc,
+                AssetRef::Builtin("part-block".into()),
+                "Block",
+                Transform::at([x, 2.0, 1.0]),
+                None,
+            )
+            .unwrap();
+            command.apply(&mut doc).unwrap();
+            ids[i] = id;
+        }
+        let (command, model) = ops::group(&mut doc, &ids, "House").unwrap();
+        command.apply(&mut doc).unwrap();
+        (doc, model, ids)
+    }
+
+    #[test]
+    fn grouping_makes_a_model_with_a_pivot_and_moves_nothing() {
+        let (doc, model, [a, b]) = model_doc();
+        let group = doc.layout.node(model).unwrap();
+        assert!(group.model && group.is_group());
+        // In the middle of its contents, at their base.
+        assert!(
+            near(group.transform.position, [12.0, 2.0, 1.0]),
+            "{:?}",
+            group.transform
+        );
+        assert!(near(
+            doc.layout.node(a).unwrap().transform.position,
+            [-2.0, 0.0, 0.0]
+        ));
+        assert!(near(
+            doc.layout.world_transform(a).position,
+            [10.0, 2.0, 1.0]
+        ));
+        assert!(near(
+            doc.layout.world_transform(b).position,
+            [14.0, 2.0, 1.0]
+        ));
+    }
+
+    #[test]
+    fn turning_a_model_turns_its_contents_about_the_pivot() {
+        let (mut doc, model, [a, _]) = model_doc();
+        ops::modify(&doc, "Rotate", &[model], |n| {
+            n.transform.rotation = [0.0, 0.0, 90.0]
+        })
+        .unwrap()
+        .apply(&mut doc)
+        .unwrap();
+        let world = doc.layout.world_transform(a);
+        assert!(near(world.position, [12.0, 0.0, 1.0]), "{world:?}");
+        assert!(near(world.rotation, [0.0, 0.0, 90.0]));
+        // Centre pivot moves only the pivot.
+        ops::set_pivot(&doc, model, Transform::at([0.0, 0.0, 0.0]), "Pivot")
+            .unwrap()
+            .apply(&mut doc)
+            .unwrap();
+        assert!(near(
+            doc.layout.world_transform(a).position,
+            [12.0, 0.0, 1.0]
+        ));
+        ops::center_pivot(&doc, model)
+            .unwrap()
+            .apply(&mut doc)
+            .unwrap();
+        assert!(near(
+            doc.layout.world_transform(a).position,
+            [12.0, 0.0, 1.0]
+        ));
+        assert!(near(
+            doc.layout.node(model).unwrap().transform.position,
+            [12.0, 2.0, 1.0]
+        ));
+    }
+
+    #[test]
+    fn objects_keep_their_place_leaving_and_entering_models() {
+        let (mut doc, model, [a, b]) = model_doc();
+        ops::modify(&doc, "Rotate", &[model], |n| {
+            n.transform.rotation = [0.0, 0.0, 90.0]
+        })
+        .unwrap()
+        .apply(&mut doc)
+        .unwrap();
+        let world_a = doc.layout.world_transform(a);
+        // Out of the model to the top level, and back in.
+        ops::reparent(&doc, &[a], None)
+            .unwrap()
+            .apply(&mut doc)
+            .unwrap();
+        assert_eq!(doc.layout.node(a).unwrap().parent, None);
+        assert!(near(
+            doc.layout.world_transform(a).position,
+            world_a.position
+        ));
+        ops::move_nodes(&doc, &[a], ops::Drop::Into(model))
+            .unwrap()
+            .unwrap()
+            .apply(&mut doc)
+            .unwrap();
+        assert!(near(
+            doc.layout.world_transform(a).position,
+            world_a.position
+        ));
+        // Copied out of a model and pasted (at the top level when the
+        // model is locked), a copy lands where the original is, plus the
+        // offset.
+        let copied = ops::copy(&doc, &[b]).unwrap();
+        ops::modify(&doc, "Lock", &[model], |n| n.locked = true)
+            .unwrap()
+            .apply(&mut doc)
+            .unwrap();
+        let (command, pasted) = ops::paste(&mut doc, &copied, [0.0, 0.0, 5.0]).unwrap();
+        command.apply(&mut doc).unwrap();
+        let world_b = doc.layout.world_transform(b);
+        let world_copy = doc.layout.world_transform(pasted[0]);
+        assert_eq!(doc.layout.node(pasted[0]).unwrap().parent, None);
+        assert!(near(
+            world_copy.position,
+            [
+                world_b.position[0],
+                world_b.position[1],
+                world_b.position[2] + 5.0
+            ]
+        ));
+        assert!(near(world_copy.rotation, world_b.rotation));
+        // A copy of the whole model is a model with its own pivot.
+        let copied = ops::copy(&doc, &[model]).unwrap();
+        let (command, pasted) = ops::paste(&mut doc, &copied, [0.0, 10.0, 0.0]).unwrap();
+        command.apply(&mut doc).unwrap();
+        let inside = doc.layout.descendants(pasted[0]);
+        assert_eq!(inside.len(), 2);
+        let copy_a = inside
+            .iter()
+            .map(|id| doc.layout.world_transform(*id).position)
+            .find(|p| {
+                near(
+                    *p,
+                    [
+                        world_a.position[0],
+                        world_a.position[1] + 10.0,
+                        world_a.position[2],
+                    ],
+                )
+            });
+        assert!(copy_a.is_some(), "the model's copy is not 10 m north");
+        // Ungrouping keeps everything where it is.
+        let before = doc.layout.world_transform(b);
+        ops::ungroup(&doc, model).unwrap().apply(&mut doc).unwrap();
+        assert!(near(
+            doc.layout.world_transform(b).position,
+            before.position
+        ));
+        assert!(near(
+            doc.layout.world_transform(b).rotation,
+            before.rotation
+        ));
+    }
+
+    #[test]
+    fn placing_into_a_turned_model_puts_it_where_clicked() {
+        let (mut doc, model, _) = model_doc();
+        ops::modify(&doc, "Rotate", &[model], |n| {
+            n.transform.rotation = [0.0, 0.0, 45.0]
+        })
+        .unwrap()
+        .apply(&mut doc)
+        .unwrap();
+        let (command, id) = ops::place(
+            &mut doc,
+            AssetRef::Builtin("cube".into()),
+            "Cube",
+            Transform::at([20.0, 20.0, 0.0]),
+            Some(model),
+        )
+        .unwrap();
+        command.apply(&mut doc).unwrap();
+        assert!(near(
+            doc.layout.world_transform(id).position,
+            [20.0, 20.0, 0.0]
+        ));
     }
 }

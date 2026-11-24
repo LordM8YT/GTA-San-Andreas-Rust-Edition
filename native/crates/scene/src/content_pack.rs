@@ -301,7 +301,7 @@ impl PackWorld {
         let mut model = base_model(folder, &manifest)?;
         if with_layout {
             if let Some(file) = &manifest.world.layout {
-                let layout = world_layout::Layout::read(&inside(folder, file)?)?;
+                let layout = world_layout::Layout::read(&inside(folder, file)?)?.resolved();
                 let mut assets = AssetResolver::new(folder);
                 let report = place_layout(&mut model, &layout, &mut assets);
                 for problem in &report.problems {

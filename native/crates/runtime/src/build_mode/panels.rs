@@ -111,6 +111,7 @@ pub struct UiState {
     /// `--smoke-build`: the road placed and its top before a point rose.
     pub smoke_road: Option<(NodeId, f32, usize)>,
     pub smoke_parts: Vec<NodeId>,
+    pub smoke_model: Option<(NodeId, (glam::Vec3, glam::Vec3))>,
     /// `--smoke-build`: the painted terrain and its triangles before a hole.
     pub smoke_paint: Option<(NodeId, usize)>,
     /// Asset Browser pictures; None when one could not be made.
@@ -1087,7 +1088,7 @@ fn edit_group(build: &mut BuildMode, ui: &mut Ui) {
             "Group",
             false,
             any,
-            "Group the selection (Ctrl+G)",
+            "Group the selection as a model (Ctrl+G): one thing with its own pivot, picked whole with a click",
         )
         .clicked()
         {
@@ -2089,7 +2090,9 @@ fn row_single(
                 return;
             }
         }
-        let icon = if node.is_group() {
+        let icon = if node.model {
+            "📦"
+        } else if node.is_group() {
             "📁"
         } else if missing {
             "⚠"
@@ -2409,6 +2412,62 @@ fn color_button(ui: &mut Ui, color: &mut [f32; 3]) -> bool {
         *color = shown.map(|c| c.clamp(0.0, 1.0));
     }
     changed
+}
+
+/// A group's pivot: where it is and how it is turned. Moving or turning
+/// it moves everything inside; Centre pivot moves only the pivot.
+fn pivot_section(build: &mut BuildMode, ui: &mut Ui, id: NodeId, node: &Node, locked: bool) {
+    section(ui, "Pivot");
+    ui.add_enabled_ui(!locked, |ui| {
+        let mut model = node.model;
+        if ui
+            .checkbox(&mut model, "Model")
+            .on_hover_text("One thing (a car, a house): a click in the world selects the whole group, Alt+click an object inside. Off: a folder, a click picks the object.")
+            .changed()
+        {
+            run(
+                build,
+                ops::modify(&build.doc, if model { "Make model" } else { "Make folder" }, &[id], |n| {
+                    n.model = model
+                }),
+            );
+        }
+        if node.transform.is_unmoved() {
+            ui.label(
+                RichText::new("No pivot yet: it turns and moves about the middle of its contents. Centre pivot (or the Move or Rotate tool) gives it one.")
+                    .small()
+                    .color(MUTED),
+            );
+        }
+        let mut t = node.transform;
+        let mut changed = axis_row(ui, "Position", &mut t.position, 0.05, " m");
+        changed |= axis_row(ui, "Rotation", &mut t.rotation, 0.5, "°");
+        if changed && t.is_valid() {
+            build.preview("Move model", &[id], |n| n.transform = t);
+        }
+        ui.horizontal(|ui| {
+            if ui
+                .small_button("Centre pivot")
+                .on_hover_text("Puts the pivot in the middle of the contents, at their base, without moving them")
+                .clicked()
+            {
+                run(build, ops::center_pivot(&build.doc, id));
+            }
+            if !node.transform.is_unmoved()
+                && ui
+                    .small_button("Reset rotation")
+                    .on_hover_text("Turns the model back straight, with everything in it")
+                    .clicked()
+            {
+                run(
+                    build,
+                    ops::modify(&build.doc, "Reset rotation", &[id], |n| {
+                        n.transform.rotation = [0.0; 3]
+                    }),
+                );
+            }
+        });
+    });
 }
 
 /// Quick colours for parts, one click each (the colour button picks any).
@@ -2950,7 +3009,13 @@ fn object(build: &mut BuildMode, ui: &mut Ui, id: NodeId) {
     };
     // Name
     ui.horizontal(|ui| {
-        let icon = if node.is_group() { "📁" } else { "■" };
+        let icon = if node.model {
+            "📦"
+        } else if node.is_group() {
+            "📁"
+        } else {
+            "■"
+        };
         ui.label(RichText::new(icon).size(18.0));
         let text = match &mut build.ui.name_edit {
             Some((edit_id, text)) if *edit_id == id => text,
@@ -3041,7 +3106,8 @@ fn object(build: &mut BuildMode, ui: &mut Ui, id: NodeId) {
             });
             // Server scripts (an RP job's Config.Locations) use world
             // coordinates; copy this spot ready to paste.
-            let vector = sa_editor::world_position::vector4(&node.transform);
+            let vector =
+                sa_editor::world_position::vector4(&build.doc.layout.world_transform(id));
             ui.horizontal(|ui| {
                 if ui
                     .small_button("📋 Copy position")
@@ -3056,6 +3122,9 @@ fn object(build: &mut BuildMode, ui: &mut Ui, id: NodeId) {
                 ui.label(RichText::new(&vector).monospace().small().color(MUTED));
             });
         });
+    }
+    if node.is_group() {
+        pivot_section(build, ui, id, &node, locked);
     }
     section(ui, "Object");
     let mut flags = (node.visible, node.locked, node.collision);
