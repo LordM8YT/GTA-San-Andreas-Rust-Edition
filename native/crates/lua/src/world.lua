@@ -3,17 +3,114 @@
 -- API on them: world, script, objects, players, vectors, wait and friends.
 local native = __world
 __world = nil
+local stopped = __stopped
+__stopped = nil
+local raw_resume, raw_pcall, raw_xpcall = coroutine.resume, pcall, xpcall
+
+-- A script stopped for running too long stays stopped: catching the stop
+-- only raises it again.
+local STOPPED = 'the script ran too long without wait() and was stopped'
+local function check(...)
+  if stopped() then
+    error(STOPPED, 0)
+  end
+  return ...
+end
+function pcall(...)
+  return check(raw_pcall(...))
+end
+function xpcall(...)
+  return check(raw_xpcall(...))
+end
+coroutine.resume = function(...)
+  return check(raw_resume(...))
+end
+coroutine.wrap = function(fn)
+  local co = coroutine.create(fn)
+  return function(...)
+    local result = table.pack(check(raw_resume(co, ...)))
+    if not result[1] then
+      error(result[2], 0)
+    end
+    return table.unpack(result, 2, result.n)
+  end
+end
+
+-- Pattern matching runs in C, where the time limit cannot reach: a pattern
+-- with many repeats on a long text is refused instead of freezing the game.
+local raw = { find = string.find, match = string.match, gmatch = string.gmatch, gsub = string.gsub }
+local function repeats(pattern)
+  local count, i, n = 0, 1, #pattern
+  while i <= n do
+    local c = pattern:sub(i, i)
+    if c == '%' then
+      i = i + 2
+    elseif c == '[' then
+      i = i + 1
+      if pattern:sub(i, i) == '^' then
+        i = i + 1
+      end
+      if pattern:sub(i, i) == ']' then
+        i = i + 1
+      end
+      while i <= n and pattern:sub(i, i) ~= ']' do
+        if pattern:sub(i, i) == '%' then
+          i = i + 1
+        end
+        i = i + 1
+      end
+      i = i + 1
+    else
+      if c == '*' or c == '+' or c == '-' or c == '?' then
+        count = count + 1
+      end
+      i = i + 1
+    end
+  end
+  return count
+end
+local function guard(name, text, pattern)
+  if type(text) ~= 'string' or type(pattern) ~= 'string' then
+    return
+  end
+  local k = repeats(pattern)
+  -- Backtracking can take about #text ^ (repeats + 1) steps.
+  if k > 0 and (k + 1) * math.log(math.max(#text, 1), 10) > 8 then
+    error(string.format('string.%s: a pattern with %d repeats on a text of %d characters could take too long; use a shorter text or a simpler pattern', name, k, #text), 3)
+  end
+end
+string.find = function(text, pattern, init, plain)
+  if not plain then
+    guard('find', text, pattern)
+  end
+  return raw.find(text, pattern, init, plain)
+end
+string.match = function(text, pattern, init)
+  guard('match', text, pattern)
+  return raw.match(text, pattern, init)
+end
+string.gmatch = function(text, pattern, init)
+  guard('gmatch', text, pattern)
+  return raw.gmatch(text, pattern, init)
+end
+string.gsub = function(text, pattern, replacement, n)
+  guard('gsub', text, pattern)
+  return raw.gsub(text, pattern, replacement, n)
+end
 
 local threads, now = {}, 0
 local handlers = {}
 
 local function report(message)
-  native.error(tostring(message))
+  -- A script stopped for running too long is reported once, by the host.
+  if not stopped() then
+    native.error(tostring(message))
+  end
 end
 
 -- Every script body and handler runs as its own coroutine, so it can wait.
 local function run(co, ...)
-  local ok, message = coroutine.resume(co, ...)
+  local ok, message = raw_resume(co, ...)
   if not ok then
     report(message)
   end

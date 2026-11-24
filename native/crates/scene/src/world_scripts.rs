@@ -197,7 +197,7 @@ mod tests {
             vec![PlayerInfo {
                 id: 1,
                 name: "Alice".into(),
-                position: [0.0; 3],
+                position: Some([0.0; 3]),
                 driving: false,
             }]
         };

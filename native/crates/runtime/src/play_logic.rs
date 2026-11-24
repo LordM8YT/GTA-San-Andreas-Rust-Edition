@@ -38,8 +38,10 @@ pub struct PlayLogic {
     /// ...and the frame the gate opened (a screenshot is taken after it).
     smoke_opened: Option<usize>,
     /// The world's scripts, when it has some and plays alone (a server runs
-    /// them for worlds played on it).
+    /// them for worlds played on it). Started on the first frame played
+    /// without a server, and again if the server goes away.
     scripts: Option<sa_scene::world_scripts::Scripts>,
+    scripts_started: bool,
     /// The scripts were told the player joined.
     joined: bool,
 }
@@ -102,11 +104,10 @@ impl PlayLogic {
         )
     }
     fn with(layout: &Layout, objects: Option<PackObjects>) -> Self {
-        let logic = Logic::new(layout);
-        let scripts = sa_scene::world_scripts::Scripts::start(layout, logic.shared());
         Self {
-            logic,
-            scripts,
+            logic: Logic::new(layout),
+            scripts: None,
+            scripts_started: false,
             joined: false,
             layout: layout.clone(),
             objects,
@@ -281,7 +282,16 @@ impl State {
         // is carried out like an action's effects.
         let happened = play.logic.player_mut().take_events();
         let mut lines = Vec::new();
-        if let Some(scripts) = &mut play.scripts {
+        // Joined to a server that has not sent the world yet: it runs the
+        // scripts, so none run here.
+        let alone = self.network_session.is_none();
+        if alone && !play.scripts_started {
+            play.scripts_started = true;
+            play.joined = false;
+            play.scripts =
+                sa_scene::world_scripts::Scripts::start(&play.layout, play.logic.shared());
+        }
+        if let Some(scripts) = play.scripts.as_mut().filter(|_| alone) {
             use sa_scene::world_scripts::{self as ws, PlayerInfo};
             let mut events: Vec<_> = happened.into_iter().map(|h| ws::event(1, h)).collect();
             if !play.joined {
@@ -295,7 +305,7 @@ impl State {
             let players = vec![PlayerInfo {
                 id: 1,
                 name,
-                position: feet,
+                position: Some(feet),
                 driving: self.driving,
             }];
             let hour = (self.daycycle.minutes / 60.0).rem_euclid(24.0) as u8;
@@ -337,8 +347,10 @@ impl State {
                         crate::runtime_log::line("World gameplay: the server runs it");
                     }
                     play.remote = true;
-                    // The server runs the world's scripts too.
+                    // The server runs the world's scripts too; they start
+                    // here again if it goes away.
                     play.scripts = None;
+                    play.scripts_started = false;
                     let shared = Shared::from_snapshot(play.logic.world(), &snapshot);
                     // A running clock that an action made jump.
                     if let Some((number, hour)) = shared.jump() {

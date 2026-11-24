@@ -524,7 +524,7 @@ fn list(build: &mut BuildMode, ui: &mut Ui, owner: Option<NodeId>, locked: bool)
                 toggle = Some((i, on));
             }
             let open = build.ui.script.as_ref().is_some_and(|e| e.at == at);
-            let problem = sa_lua::world::check(&script.name, &script.source);
+            let problem = checked(&script.name, &script.source);
             let mut text = RichText::new(format!("📜 {}", script.name));
             if problem.is_some() {
                 text = text.color(ERROR);
@@ -669,6 +669,28 @@ pub fn world_page(build: &mut BuildMode, ui: &mut Ui) {
     );
 }
 
+/// [`sa_lua::world::check`], remembered per text: lists redraw every frame.
+fn checked(name: &str, source: &str) -> Option<String> {
+    use std::collections::HashMap;
+    use std::hash::{Hash, Hasher};
+    thread_local! {
+        static CHECKS: std::cell::RefCell<HashMap<u64, Option<String>>> = Default::default();
+    }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    (name, source).hash(&mut hasher);
+    let key = hasher.finish();
+    CHECKS.with(|checks| {
+        let mut checks = checks.borrow_mut();
+        if checks.len() > 512 {
+            checks.clear();
+        }
+        checks
+            .entry(key)
+            .or_insert_with(|| sa_lua::world::check(name, source))
+            .clone()
+    })
+}
+
 /// Lua coloured for the editor: keywords, the script API, strings,
 /// numbers and comments; the line with a syntax error is underlined.
 fn highlight(text: &str, error_line: Option<usize>) -> LayoutJob {
@@ -701,47 +723,56 @@ fn highlight(text: &str, error_line: Option<usize>) -> LayoutJob {
     while i < bytes.len() {
         let c = bytes[i];
         let start = i;
-        let format;
         if c == b'\n' {
             i += 1;
             push(&mut job, "\n", plain.clone(), line);
             line += 1;
             continue;
-        } else if text[i..].starts_with("--") {
+        }
+        let format = if text[i..].starts_with("--") {
             // A comment to the end of the line (block comments too, line by line).
             while i < bytes.len() && bytes[i] != b'\n' {
                 i += 1;
             }
-            format = comment.clone();
+            comment.clone()
         } else if c == b'"' || c == b'\'' {
             i += 1;
             while i < bytes.len() && bytes[i] != c && bytes[i] != b'\n' {
-                i += if bytes[i] == b'\\' { 2 } else { 1 };
+                // An escape, unless it would swallow the line's end.
+                i += if bytes[i] == b'\\' && bytes.get(i + 1) != Some(&b'\n') {
+                    2
+                } else {
+                    1
+                };
             }
-            i = (i + 1).min(bytes.len());
-            format = string.clone();
+            // Past a real closing quote only: an unfinished string ends at
+            // the line's end, which is counted as a line.
+            if i < bytes.len() && bytes[i] == c {
+                i += 1;
+            }
+            string.clone()
         } else if c.is_ascii_digit() {
             while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'.') {
                 i += 1;
             }
-            format = number.clone();
+            number.clone()
         } else if c.is_ascii_alphabetic() || c == b'_' {
             while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
                 i += 1;
             }
             let word = &text[start..i];
-            format = if KEYWORDS.contains(&word) {
+            if KEYWORDS.contains(&word) {
                 keyword.clone()
             } else if API.contains(&word) {
                 api.clone()
             } else {
                 plain.clone()
-            };
+            }
         } else {
             // Anything else, one character at a time (keeps UTF-8 whole).
             i += text[i..].chars().next().map_or(1, char::len_utf8);
-            format = plain.clone();
-        }
+            plain.clone()
+        };
         // An escape may have stepped into a character: finish it.
         while i < bytes.len() && !text.is_char_boundary(i) {
             i += 1;
@@ -767,6 +798,20 @@ mod tests {
                 example.name
             );
         }
+    }
+
+    #[test]
+    fn an_unfinished_string_does_not_shift_the_error_line() {
+        let text = "local a = 'open\nprint(a\nx = = 1\n";
+        let job = highlight(text, Some(3));
+        assert_eq!(job.text, text);
+        let underlined: String = job
+            .sections
+            .iter()
+            .filter(|s| s.format.underline.width > 0.0)
+            .map(|s| &text[s.byte_range.start.0..s.byte_range.end.0])
+            .collect();
+        assert_eq!(underlined, "x = = 1\n");
     }
 
     #[test]

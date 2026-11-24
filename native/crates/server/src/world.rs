@@ -53,7 +53,12 @@ pub struct Game {
     /// What happened per instance since the scripts last ran.
     script_events: BTreeMap<u32, Vec<sa_lua::world::Event>>,
     last_scripts: Option<Instant>,
+    /// Since when an instance with running scripts has had no players.
+    empty_since: BTreeMap<u32, Instant>,
 }
+
+/// How long an instance's scripts keep running with nobody there.
+const IDLE_SCRIPTS: Duration = Duration::from_secs(30);
 
 struct Player {
     state: PlayerState,
@@ -84,6 +89,7 @@ impl Game {
             scripts: BTreeMap::new(),
             script_events: BTreeMap::new(),
             last_scripts: None,
+            empty_since: BTreeMap::new(),
         }
     }
     /// Whether the world has scripts to run.
@@ -507,14 +513,27 @@ fn run_scripts(
         .last_scripts
         .replace(now)
         .map_or(0.0, |last| (now - last).as_secs_f32().min(1.0));
-    // Instances with players or state start their scripts.
-    let buckets: Vec<u32> = game
-        .buckets
-        .keys()
-        .copied()
-        .chain(game.players.values().map(|p| p.bucket))
-        .collect();
-    for bucket in buckets {
+    // Instances nobody has been in for a while stop their scripts (the
+    // state stays); they start again when someone comes.
+    let occupied: std::collections::BTreeSet<u32> =
+        game.players.values().map(|p| p.bucket).collect();
+    let running: Vec<u32> = game.scripts.keys().copied().collect();
+    for bucket in running {
+        if occupied.contains(&bucket) {
+            game.empty_since.remove(&bucket);
+        } else if now - *game.empty_since.entry(bucket).or_insert(now) >= IDLE_SCRIPTS {
+            game.empty_since.remove(&bucket);
+            game.scripts.remove(&bucket);
+            game.script_events.remove(&bucket);
+            if bucket != 0 {
+                lines.push(format!(
+                    "World instance {bucket} is empty: its scripts stopped until someone comes back"
+                ));
+            }
+        }
+    }
+    // Instances with players start their scripts.
+    for bucket in occupied {
         if game.scripts.contains_key(&bucket) {
             continue;
         }
@@ -534,12 +553,12 @@ fn run_scripts(
                 game.players
                     .get(&peer.id)
                     .is_some_and(|p| p.bucket == *bucket)
-                    && peer.pose != sa_net::Pose::default()
             })
             .map(|peer| ws::PlayerInfo {
                 id: peer.id,
                 name: peer.name.clone(),
-                position: feet(&peer.pose),
+                // Not spawned yet: the pose is still the default one.
+                position: (peer.pose != sa_net::Pose::default()).then(|| feet(&peer.pose)),
                 driving: peer.pose.driving,
             })
             .collect();

@@ -7,9 +7,12 @@
 //! players, gameplay [`Event`]s and time, and returns [`Request`]s (show an
 //! object, message or teleport a player, set the hour or weather) for the
 //! game or server to carry out. Each script runs in its own sandboxed Lua
-//! state: no files, processes or debug library, a memory limit, and every
-//! call stopped after [`CALL_LIMIT`] so an endless loop cannot freeze a
-//! game or a server. See `docs/world-scripts.md` for the script API.
+//! state: no files, processes or debug library, a memory limit, and at most
+//! [`CALL_LIMIT`] of work per script per frame. A script that goes over is
+//! stopped for good (catching the stop with `pcall` does not help), and
+//! string patterns too costly for their text are refused, so an endless
+//! loop or a runaway match cannot freeze a game or a server. See
+//! `docs/world-scripts.md` for the script API.
 use mlua::{Function, HookTriggers, Lua, LuaOptions, StdLib, Table, Value, VmState};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -17,7 +20,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 const PRELUDE: &str = include_str!("world.lua");
-/// Longest any one call into a script may run.
+/// Longest a script may run in one frame, all its calls together.
 pub const CALL_LIMIT: Duration = Duration::from_millis(250);
 /// Memory per script.
 const MEMORY_LIMIT: usize = 16 * 1024 * 1024;
@@ -61,8 +64,8 @@ pub struct ObjectInfo {
 pub struct PlayerInfo {
     pub id: u32,
     pub name: String,
-    /// Feet, world metres.
-    pub position: [f32; 3],
+    /// Feet, world metres; None before they have spawned.
+    pub position: Option<[f32; 3]>,
     pub driving: bool,
 }
 
@@ -181,6 +184,8 @@ struct Inner {
     emits: Vec<(String, serde_json::Value)>,
     /// The script running now, for print and errors.
     current: String,
+    /// Players as last seen, so `quit` handlers still know who left.
+    known: HashMap<u32, PlayerInfo>,
 }
 impl Inner {
     fn line(&mut self, text: String, error: bool) {
@@ -210,15 +215,24 @@ type Shared = Rc<RefCell<Inner>>;
 struct Script {
     name: String,
     lua: Lua,
-    /// False after its body failed to load: it is not called again.
+    /// False after its body failed to load or it ran too long: it is not
+    /// called again.
     running: bool,
+}
+
+/// The work limit of the script running now: when it ends, and whether it
+/// was passed (the script is then stopped, whatever it catches).
+#[derive(Default)]
+struct Limit {
+    until: Cell<Option<Instant>>,
+    passed: Cell<bool>,
 }
 
 /// The scripts of one world (or one world instance on a server).
 pub struct WorldScripts {
     shared: Shared,
     scripts: Vec<Script>,
-    deadline: Rc<Cell<Option<Instant>>>,
+    limit: Rc<Limit>,
     time: f64,
 }
 
@@ -247,16 +261,17 @@ impl WorldScripts {
             dropped: 0,
             emits: Vec::new(),
             current: String::new(),
+            known: HashMap::new(),
         }));
         let mut host = Self {
             shared,
             scripts: Vec::new(),
-            deadline: Rc::new(Cell::new(None)),
+            limit: Rc::new(Limit::default()),
             time: 0.0,
         };
         for source in config.scripts {
             host.shared.borrow_mut().current = source.name.clone();
-            match create_state(&host.shared, &source, &host.deadline) {
+            match create_state(&host.shared, &source, &host.limit) {
                 Ok(lua) => {
                     let mut script = Script {
                         name: source.name.clone(),
@@ -270,10 +285,12 @@ impl WorldScripts {
                         .into_function();
                     match loaded {
                         Ok(body) => {
+                            host.limit.until.set(Some(Instant::now() + CALL_LIMIT));
                             host.call(&mut script, |lua| {
                                 let start: Function = lua.globals().get("__world_start")?;
                                 start.call::<()>(body.clone())
                             });
+                            host.limit.until.set(None);
                         }
                         Err(error) => {
                             script.running = false;
@@ -305,7 +322,19 @@ impl WorldScripts {
         self.time += f64::from(frame.dt.clamp(0.0, 1.0));
         {
             let mut inner = self.shared.borrow_mut();
-            inner.players = frame.players;
+            // Who left is still known to the scripts this frame.
+            let mut players = frame.players.clone();
+            for event in &events {
+                if let Event::Quit { player } = event {
+                    if !players.iter().any(|p| p.id == *player) {
+                        if let Some(known) = inner.known.get(player) {
+                            players.push(known.clone());
+                        }
+                    }
+                }
+            }
+            inner.known = frame.players.into_iter().map(|p| (p.id, p)).collect();
+            inner.players = players;
             inner.hour = frame.hour;
             inner.weather = frame.weather;
             for (id, object) in &inner.objects.clone() {
@@ -319,7 +348,9 @@ impl WorldScripts {
         let emits = std::mem::take(&mut self.shared.borrow_mut().emits);
         let time = self.time;
         let mut scripts = std::mem::take(&mut self.scripts);
-        for script in scripts.iter_mut().filter(|s| s.running) {
+        for script in scripts.iter_mut() {
+            // One budget for all of this script's calls this frame.
+            self.limit.until.set(Some(Instant::now() + CALL_LIMIT));
             for event in &events {
                 self.call(script, |lua| dispatch(lua, event));
             }
@@ -344,6 +375,7 @@ impl WorldScripts {
                 f.call::<()>(time)
             });
         }
+        self.limit.until.set(None);
         self.scripts = scripts;
         let mut inner = self.shared.borrow_mut();
         if inner.flooded {
@@ -372,10 +404,24 @@ impl WorldScripts {
     }
 
     fn call(&self, script: &mut Script, body: impl FnOnce(&Lua) -> mlua::Result<()>) {
+        if !script.running {
+            return;
+        }
         self.shared.borrow_mut().current = script.name.clone();
-        self.deadline.set(Some(Instant::now() + CALL_LIMIT));
+        self.limit.passed.set(false);
         let result = body(&script.lua);
-        self.deadline.set(None);
+        if self.limit.passed.replace(false) {
+            // However the script caught it, it stops here.
+            script.running = false;
+            self.shared.borrow_mut().line(
+                format!(
+                    "ran for more than {} ms in one frame without wait() and was stopped until the world starts again",
+                    CALL_LIMIT.as_millis()
+                ),
+                true,
+            );
+            return;
+        }
         if let Err(error) = result {
             self.shared.borrow_mut().line(clean(&error), true);
         }
@@ -440,27 +486,46 @@ fn clean_text(text: &str) -> String {
     text.to_string()
 }
 
-fn create_state(
-    shared: &Shared,
-    source: &Source,
-    deadline: &Rc<Cell<Option<Instant>>>,
-) -> mlua::Result<Lua> {
+/// The error a script that ran too long gets, wherever it is.
+const STOPPED: &str = "the script ran too long without wait() and was stopped";
+
+/// `__stopped()`, for the prelude's pcall, xpcall and coroutine wrappers.
+fn g_set_stopped(lua: &Lua, stopped: impl Fn() -> bool + 'static) -> mlua::Result<()> {
+    lua.globals().set(
+        "__stopped",
+        lua.create_function(move |_, ()| Ok(stopped()))?,
+    )
+}
+
+fn create_state(shared: &Shared, source: &Source, limit: &Rc<Limit>) -> mlua::Result<Lua> {
     let lua = Lua::new_with(
         StdLib::TABLE | StdLib::STRING | StdLib::MATH | StdLib::UTF8 | StdLib::COROUTINE,
         LuaOptions::new(),
     )?;
     lua.set_memory_limit(MEMORY_LIMIT)?;
     {
-        let deadline = deadline.clone();
+        let limit = limit.clone();
         lua.set_global_hook(
-            HookTriggers::new().every_nth_instruction(10_000),
-            move |_, _| match deadline.get() {
-                Some(limit) if Instant::now() > limit => Err(mlua::Error::runtime(
-                    "the script ran too long without wait() and was stopped",
-                )),
-                _ => Ok(VmState::Continue),
+            HookTriggers::new().every_nth_instruction(1_000),
+            move |_, _| {
+                let over = limit.passed.get()
+                    || limit
+                        .until
+                        .get()
+                        .is_some_and(|until| Instant::now() > until);
+                if over {
+                    limit.passed.set(true);
+                    Err(mlua::Error::runtime(STOPPED))
+                } else {
+                    Ok(VmState::Continue)
+                }
             },
         )?;
+    }
+    {
+        // pcall, xpcall and coroutines cannot keep a stopped script going.
+        let limit = limit.clone();
+        g_set_stopped(&lua, move || limit.passed.get())?;
     }
     let g = lua.globals();
     // Text chunks only: binary chunks could crash the game.
@@ -574,14 +639,17 @@ fn create_state(
         .find(|p| p.id == id)
         .map(|p| p.name.clone())));
     func!("player_position", |_lua, inner, id: u32| {
-        Ok(match inner.players.iter().find(|p| p.id == id) {
-            Some(p) => (
-                Some(p.position[0]),
-                Some(p.position[1]),
-                Some(p.position[2]),
-            ),
-            None => (None, None, None),
-        })
+        Ok(
+            match inner
+                .players
+                .iter()
+                .find(|p| p.id == id)
+                .and_then(|p| p.position)
+            {
+                Some(p) => (Some(p[0]), Some(p[1]), Some(p[2])),
+                None => (None, None, None),
+            },
+        )
     });
     func!("player_driving", |_lua, inner, id: u32| Ok(inner
         .players
@@ -787,9 +855,12 @@ mod tests {
         vec![PlayerInfo {
             id: 7,
             name: "Alice".into(),
-            position: [1.0, 2.0, 3.0],
+            position: Some([1.0, 2.0, 3.0]),
             driving: false,
         }]
+    }
+    fn host_with(name: &str, source: &str) -> WorldScripts {
+        host(&[(name, source, None)])
     }
     fn frame(dt: f32) -> Frame {
         Frame {
@@ -904,7 +975,7 @@ mod tests {
         ]);
         assert!(started.elapsed() < Duration::from_secs(5));
         let out = texts(&mut host);
-        assert!(out[0].contains("ran too long"), "{out:?}");
+        assert!(out[0].contains("ran for more than 250 ms"), "{out:?}");
         assert!(
             out[1].contains("too much memory") || out[1].contains("ran too long"),
             "{out:?}"
@@ -925,6 +996,110 @@ print(x",
         assert!(error.starts_with("Door:2:"), "{error}");
         assert_eq!(error_line("Door", &error), Some(2));
         assert_eq!(error_line("Door", "other: no"), None);
+    }
+
+    #[test]
+    fn a_stopped_script_stays_stopped_whatever_it_catches() {
+        let started = Instant::now();
+        let mut host = host(&[
+            (
+                "Catcher",
+                "while true do pcall(function() while true do end end) end",
+                None,
+            ),
+            (
+                "Wrapper",
+                "local f = coroutine.wrap(function() while true do end end) while true do pcall(f) end",
+                None,
+            ),
+            (
+                "Matcher",
+                "local s = string.rep('a', 100000) print(pcall(s.find, s, string.rep('.-', 8) .. 'b'))",
+                None,
+            ),
+            ("Fine", "every(0.5, function() print('tick') end)", None),
+        ]);
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "{:?}",
+            started.elapsed()
+        );
+        let out = texts(&mut host);
+        assert!(
+            out[0].starts_with("!Catcher: ran for more than 250 ms"),
+            "{out:?}"
+        );
+        assert!(
+            out[1].starts_with("!Wrapper: ran for more than 250 ms"),
+            "{out:?}"
+        );
+        assert!(
+            out[2].starts_with("Matcher: false  string.find: a pattern with 8 repeats"),
+            "{out:?}"
+        );
+        // Stopped scripts are not called again; the others go on.
+        host.tick(frame(0.6), vec![]);
+        assert_eq!(texts(&mut host), ["Fine: tick"]);
+        // Short texts may use patterns freely.
+        let mut host = host_with(
+            "Words",
+            "for w in ('a b c'):gmatch('%a+') do print(w) end print(('x=1'):match('(%w+)=(%d+)'))",
+        );
+        assert_eq!(
+            texts(&mut host),
+            ["Words: a", "Words: b", "Words: c", "Words: x  1"]
+        );
+    }
+
+    #[test]
+    fn a_frame_has_one_budget_per_script_however_many_calls() {
+        let started = Instant::now();
+        let mut host = host(&[(
+            "Echo",
+            "world.on('x', function() local t = os.clock() while os.clock() - t < 0.1 do end world.emit('x') end) for i = 1, 20 do world.emit('x') end",
+            None,
+        )]);
+        host.tick(frame(0.1), vec![]);
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "{:?}",
+            started.elapsed()
+        );
+        let out = texts(&mut host);
+        assert!(
+            out.iter().any(|l| l.contains("ran for more than 250 ms")),
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn players_who_left_or_have_not_spawned_still_have_names() {
+        let mut host = host_with(
+            "Hello",
+            "world.on('join', function(p) print('hi ' .. p.name, p.position) end) world.on('quit', function(p) print('bye ' .. p.name) end)",
+        );
+        let unspawned = vec![PlayerInfo {
+            id: 3,
+            name: "Bo".into(),
+            position: None,
+            driving: false,
+        }];
+        host.tick(
+            Frame {
+                players: unspawned,
+                ..frame(0.1)
+            },
+            vec![Event::Join { player: 3 }],
+        );
+        assert_eq!(texts(&mut host), ["Hello: hi Bo  nil"]);
+        host.tick(
+            Frame {
+                players: Vec::new(),
+                ..frame(0.1)
+            },
+            vec![Event::Quit { player: 3 }],
+        );
+        assert_eq!(texts(&mut host), ["Hello: bye Bo"]);
     }
 
     #[test]
