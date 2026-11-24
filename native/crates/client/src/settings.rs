@@ -92,6 +92,9 @@ pub struct Settings {
     /// Temporal anti-aliasing: blends jittered frames over time for smoother
     /// edges and less shimmer. Off by default.
     pub temporal_aa: bool,
+    /// Lamps placed in Build Mode worlds light the surfaces near them at
+    /// night, pixel by pixel (otherwise they paint a pool on the ground).
+    pub lamp_lighting: bool,
     /// Fixed hour of day, or `None` for the running day/night cycle.
     pub fixed_hour: Option<u8>,
     /// Fixed timecyc weather, or `None` for weather that changes by area.
@@ -144,6 +147,7 @@ impl Default for Settings {
             sun_shadows: true,
             enhanced_lighting: false,
             temporal_aa: false,
+            lamp_lighting: true,
             fixed_hour: None,
             fixed_weather: None,
             fsr1: true,
@@ -279,6 +283,7 @@ impl Settings {
             sun_shadows: false,
             enhanced_lighting: false,
             temporal_aa: false,
+            lamp_lighting: false,
             bloom: 0.0,
             fps_limit: match self.fps_limit {
                 0 => LIGHT_EDITOR_FPS,
@@ -349,7 +354,7 @@ mod tests {
         let light = full.light_editor();
         assert_eq!(light.render_scale, 67);
         assert!(light.fsr1 && !light.sun_shadows && !light.enhanced_lighting);
-        assert!(!light.temporal_aa && light.bloom == 0.0);
+        assert!(!light.temporal_aa && light.bloom == 0.0 && !light.lamp_lighting);
         assert_eq!(light.fps_limit, LIGHT_EDITOR_FPS);
         assert_eq!(light.fov, full.fov, "everything else stays the player's");
         // A lower scale or frame cap the player picked is kept.

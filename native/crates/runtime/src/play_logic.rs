@@ -850,6 +850,51 @@ impl State {
         build.chain(self.play_logic.iter().flat_map(PlayLogic::glows))
     }
 
+    /// The object lights nearest the camera, for lighting per pixel:
+    /// (render-space position, radius, colour). Lights of hidden objects
+    /// are off; moved objects take theirs along.
+    pub(crate) fn point_lights(&self, most: usize) -> Vec<(Vec3, f32, Vec3)> {
+        let (layout, visible): (&Layout, &dyn Fn(NodeId) -> bool) =
+            match (&self.build, &self.play_logic) {
+                (Some(build), _) if !build.playtesting => (&build.doc.layout, &|id| {
+                    build.doc.layout.effective_visible(id)
+                }),
+                (Some(build), Some(play)) => (&build.doc.layout, &|id| {
+                    play.logic.visible(id) && build.doc.layout.effective_visible(id)
+                }),
+                (None, Some(play)) => (&play.layout, &|id| play.logic.visible(id)),
+                _ => return Vec::new(),
+            };
+        let placed = self.play_logic.as_ref().map(|p| &p.placed);
+        let mut lights: Vec<(Vec3, f32, Vec3)> = layout
+            .nodes
+            .iter()
+            .filter_map(|node| {
+                let light = node.light.as_ref()?;
+                if !visible(node.id) || light.radius <= 0.1 {
+                    return None;
+                }
+                let transform = placed
+                    .and_then(|p| p.get(&node.id))
+                    .copied()
+                    .unwrap_or(node.transform);
+                let position =
+                    render_matrix(&transform).transform_point3(blender_to_gltf(light.offset));
+                // Reach a little past the painted pool, so walls nearby light up.
+                let radius =
+                    (light.radius * 1.6).min(sa_scene::world_layout::PointLight::MAX_RADIUS * 1.6);
+                Some((position, radius, Vec3::from_array(light.color)))
+            })
+            .filter(|(position, radius, _)| position.distance(self.position) < 250.0 + radius)
+            .collect();
+        lights.sort_by(|a, b| {
+            a.0.distance_squared(self.position)
+                .total_cmp(&b.0.distance_squared(self.position))
+        });
+        lights.truncate(most);
+        lights
+    }
+
     /// The colour look of the world being built or played.
     pub(crate) fn world_look(&self) -> Option<sa_scene::world_layout::WorldLook> {
         match (&self.build, &self.play_logic) {

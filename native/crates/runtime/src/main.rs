@@ -96,6 +96,8 @@ impl From<sa_scene::MapDoor> for MapDoorState {
     }
 }
 const HEADLIGHT_VERTICES: usize = 18;
+/// Object lights that light surfaces per pixel at once (nearest first).
+const MAX_POINT_LIGHTS: usize = 32;
 /// A light pool on the road ahead of the car and two coronas at its nose,
 /// in the corona/pool vertex encoding of `sa_scene::lights`.
 fn headlight_vertices(car: &sa_scene::vehicle::Car) -> [sa_scene::Vertex; HEADLIGHT_VERTICES] {
@@ -351,6 +353,9 @@ struct State {
     wreck_fire_seconds: f32,
     fire_glows: wgpu::Buffer,
     fire_glow_count: u32,
+    /// Object lights light the scene per pixel this frame (their painted
+    /// pools are skipped).
+    per_pixel_lights: bool,
     /// The parts look the player's car was last drawn with.
     car_render_look: sa_scene::vehicle::Look,
     /// Weapon model id to (model, txd), and the meshes of guns drawn so far.
@@ -727,7 +732,8 @@ impl State {
         });
         let camera = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("camera"),
-            size: 224,
+            // The camera and lighting (224 bytes), then the object lights.
+            size: 224 + 16 + (MAX_POINT_LIGHTS * 32) as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -1247,6 +1253,7 @@ impl State {
             wreck_fire_seconds: 0.0,
             fire_glows,
             fire_glow_count: 0,
+            per_pixel_lights: false,
             car_render_look: Default::default(),
             weapon_models: None,
             gun_meshes: std::collections::HashMap::new(),
@@ -2357,6 +2364,23 @@ impl State {
                 lighting.sky.extend(0.0).to_array(),
             ]),
         );
+        // Object lights light what is near them at night (the Lamp lighting
+        // setting; light editor graphics turn it off).
+        let night = 1.0 - lighting.daylight.clamp(0.0, 1.0);
+        let lamps = self.draw_settings().lamp_lighting;
+        let lights = if lamps && self.interior == 0 && night > 0.02 {
+            self.point_lights(MAX_POINT_LIGHTS)
+        } else {
+            Vec::new()
+        };
+        self.per_pixel_lights = !lights.is_empty();
+        let mut data = vec![lights.len() as f32, 0.0, 0.0, 0.0];
+        for (position, radius, colour) in &lights {
+            data.extend(position.extend(*radius).to_array());
+            data.extend(colour.extend(night * 0.9).to_array());
+        }
+        self.queue
+            .write_buffer(&self.camera, 224, bytemuck::cast_slice(&data));
     }
     /// World batches inside `frustum`, followed by every car and ped.
     fn mlo_batch_visible(&self, batch: &GpuBatch) -> bool {
@@ -3151,6 +3175,10 @@ impl State {
                 })
                 .chain(creator_glows)
             {
+                // Lit per pixel, a lamp needs no painted pool of light.
+                if self.per_pixel_lights && b.texture_key == sa_scene::lights::POOL_KEY {
+                    continue;
+                }
                 pass.set_pipeline(if b.texture_key == sa_scene::lights::CORONA_KEY {
                     &self.corona
                 } else {

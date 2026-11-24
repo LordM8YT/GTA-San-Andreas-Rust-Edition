@@ -9,6 +9,11 @@ struct Camera {
     // Multiplier for the day-baked prelit colours (night darkening).
     ambient: vec4<f32>,
     sky: vec4<f32>,
+    // x: how many object lights light surfaces per pixel (enhanced lighting
+    // at night), then two vec4s each: position and radius, colour and
+    // strength.
+    point: vec4<f32>,
+    lights: array<vec4<f32>, 64>,
 };
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(1) @binding(0) var image: texture_2d<f32>;
@@ -115,6 +120,24 @@ fn sun_light(world_position: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
     let shade = mix(1.0, 0.55, (1.0 - shadow) * camera.environment.z * camera.sun.w * smoothstep(0.0, 0.2, facing));
     return mix(vec3<f32>(1.0), lit, camera.environment.y) * shade * camera.ambient.rgb;
 }
+// Object lights (lamps placed in Build Mode) lighting what is near them.
+fn point_lights(world_position: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
+    var sum = vec3<f32>(0.0);
+    let count = min(u32(camera.point.x), 32u);
+    for (var i = 0u; i < count; i += 1u) {
+        let place = camera.lights[i * 2u];
+        let to_light = place.xyz - world_position;
+        let d = length(to_light);
+        if (d >= place.w) { continue; }
+        let colour = camera.lights[i * 2u + 1u];
+        // Bright under the lamp, fading softly to nothing at its reach.
+        let near = smoothstep(0.0, 1.0, 1.0 - d / place.w);
+        // Mostly the side facing the lamp, a little all round.
+        let facing = max(dot(normal, to_light / max(d, 0.001)), 0.0) * 0.8 + 0.2;
+        sum += colour.rgb * (near * near * facing * colour.w);
+    }
+    return sum;
+}
 fn shade(color: vec4<f32>, input: VertexOut, light: vec3<f32>, normal: vec3<f32>) -> vec4<f32> {
     let density = 0.00045 * max(camera.environment.w, 1.0);
     let haze = (1.0 - exp(-distance(input.world_position, camera.eye.xyz) * density)) * camera.environment.x;
@@ -124,7 +147,7 @@ fn shade(color: vec4<f32>, input: VertexOut, light: vec3<f32>, normal: vec3<f32>
 @fragment fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
     // Derivatives are taken before any discard.
     let normal = face_normal(input.world_position);
-    let light = sun_light(input.world_position, normal);
+    let light = sun_light(input.world_position, normal) + point_lights(input.world_position, normal);
     let color = textureSample(image, image_sampler, input.uv) * input.color;
     if (color.a < 0.5) { discard; }
     return shade(color, input, light, normal);
@@ -132,7 +155,7 @@ fn shade(color: vec4<f32>, input: VertexOut, light: vec3<f32>, normal: vec3<f32>
 @fragment fn fs_blended(input: VertexOut) -> @location(0) vec4<f32> {
     // Derivatives are taken before any discard.
     let normal = face_normal(input.world_position);
-    let light = sun_light(input.world_position, normal);
+    let light = sun_light(input.world_position, normal) + point_lights(input.world_position, normal);
     let color = textureSample(image, image_sampler, input.uv) * input.color;
     if (color.a < 0.04) { discard; }
     return shade(color, input, light, normal);

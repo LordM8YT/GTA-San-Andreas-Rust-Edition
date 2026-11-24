@@ -979,6 +979,11 @@ impl State {
                 let play = self.play_logic.as_ref().unwrap();
                 assert_eq!(play.hour(), Some(22), "the night zone did not set the time");
                 assert!(play.message().is_some(), "no message from the night zone");
+                // Lamps light the night per pixel (the default setting).
+                assert!(
+                    self.per_pixel_lights && !self.point_lights(32).is_empty(),
+                    "the sample's lamps do not light the night per pixel"
+                );
                 capture(self, "playtest-night-zone.png");
             }
             // World scripts: E at the bell, and its script hides the
