@@ -22,6 +22,31 @@ pub struct Builtin {
 /// Every built-in asset, in catalog order.
 pub const ALL: &[Builtin] = &[
     Builtin {
+        name: "part-block",
+        label: "Block",
+        category: PARTS,
+    },
+    Builtin {
+        name: "part-ball",
+        label: "Ball",
+        category: PARTS,
+    },
+    Builtin {
+        name: "part-cylinder",
+        label: "Cylinder",
+        category: PARTS,
+    },
+    Builtin {
+        name: "part-wedge",
+        label: "Wedge",
+        category: PARTS,
+    },
+    Builtin {
+        name: "part-corner-wedge",
+        label: "Corner wedge",
+        category: PARTS,
+    },
+    Builtin {
         name: "ground",
         label: "Ground plate 32 m",
         category: "Ground",
@@ -157,6 +182,27 @@ pub const ALL: &[Builtin] = &[
 
 /// Catalog category of gameplay assets.
 pub const GAMEPLAY: &str = "Gameplay";
+/// Catalog category of parts: shapes sized, coloured and given a
+/// material in Properties.
+pub const PARTS: &str = "Parts";
+/// The asset every placed part refers to (its look is in `Node::part`).
+pub const PART: &str = "part";
+
+/// The part a built-in places: `part-<shape>` from the catalog (`part`
+/// itself is a block). A 4 x 2 x 1 m grey plastic block, like a brick to
+/// build with; a ball, cylinder or corner wedge 2 m each way.
+pub fn preset_part(name: &str) -> Option<crate::world_layout::Part> {
+    use crate::world_layout::{Part, PartShape};
+    let (shape, size) = match name {
+        "part" | "part-block" => (PartShape::Block, [4.0, 2.0, 1.0]),
+        "part-ball" => (PartShape::Ball, [2.0, 2.0, 2.0]),
+        "part-cylinder" => (PartShape::Cylinder, [2.0, 2.0, 2.0]),
+        "part-wedge" => (PartShape::Wedge, [4.0, 2.0, 1.0]),
+        "part-corner-wedge" => (PartShape::CornerWedge, [2.0, 2.0, 2.0]),
+        _ => return None,
+    };
+    Some(Part::new(shape, size))
+}
 
 /// The ground a placed Terrain starts with: flat, 64 m, 2 m squares.
 pub fn preset_terrain() -> crate::world_layout::Terrain {
@@ -301,6 +347,9 @@ pub fn model(name: &str) -> Option<Model> {
         // A placed terrain shows its own heights (`Node::terrain`); this is
         // the picture and the stand-in.
         return Some(crate::terrain::model(&preset_terrain()));
+    }
+    if let Some(part) = preset_part(name) {
+        return Some(crate::part::model(&part));
     }
     if name == "spline-road" {
         // Likewise: a placed road shows its own points (`Node::road`).

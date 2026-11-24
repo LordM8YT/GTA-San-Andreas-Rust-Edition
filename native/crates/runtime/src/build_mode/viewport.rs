@@ -12,6 +12,7 @@ use sa_editor::viewport::{
 };
 use sa_scene::world_layout::{gltf_to_blender, Node, NodeId, Road, Terrain, Transform};
 use sa_scene::world_logic::{self, Action, Component};
+use std::collections::HashMap;
 
 /// The camera of the frame being drawn.
 pub struct Frame {
@@ -46,6 +47,8 @@ pub struct Drag {
     start_point: Vec3,
     start_mouse: Pos2,
     starts: Vec<(NodeId, Transform)>,
+    /// Sizes of the parts among them: scaling a part changes its size.
+    sizes: HashMap<NodeId, [f32; 3]>,
 }
 
 struct View {
@@ -949,6 +952,10 @@ fn begin_drag(build: &mut BuildMode, view: &View, handle: Handle, pointer: Pos2)
         .iter()
         .filter_map(|id| build.doc.layout.node(*id).map(|n| (*id, n.transform)))
         .collect();
+    let sizes = ids
+        .iter()
+        .filter_map(|id| Some((*id, build.doc.layout.node(*id)?.part.as_ref()?.size)))
+        .collect();
     build.commit_preview();
     build.drag = Some(Drag {
         handle,
@@ -958,6 +965,7 @@ fn begin_drag(build: &mut BuildMode, view: &View, handle: Handle, pointer: Pos2)
         start_point,
         start_mouse: pointer,
         starts,
+        sizes,
     });
 }
 
@@ -968,8 +976,11 @@ fn continue_drag(build: &mut BuildMode, view: &View, pointer: Pos2, fine: bool) 
     let (step, angle_step, scale_step) = (build.snap.step, build.snap.angle, build.snap.scale);
     let local = build.local;
     let starts = drag.starts.clone();
+    let sizes = drag.sizes.clone();
     let label;
     let mut updates: Vec<(NodeId, Transform)> = Vec::new();
+    // New sizes of parts being scaled.
+    let mut resized: Vec<(NodeId, [f32; 3])> = Vec::new();
     match drag.handle {
         Handle::Axis(i) => {
             let Some(s) = ray.closest_on_axis(drag.origin, drag.axis) else {
@@ -1049,12 +1060,34 @@ fn continue_drag(build: &mut BuildMode, view: &View, pointer: Pos2, fine: bool) 
             let together = starts.len() > 1;
             for (id, start) in &starts {
                 let mut t = *start;
-                let value = start.scale[i] * ratio;
-                t.scale[i] = clamp_scale(if snap_on {
-                    snap(value, scale_step)
+                if let Some(size) = sizes.get(id) {
+                    // A part grows in metres (snapped to the move step),
+                    // from its other side: the dragged face follows the
+                    // mouse. Its base is its origin, so it grows upwards.
+                    let mut new = *size;
+                    let value = size[i] * ratio;
+                    new[i] = clamp_size(if snap_on { snap(value, step) } else { value });
+                    // Only when the handle runs along the part's own side
+                    // (always with local axes; with world axes for a part
+                    // that is not turned off them).
+                    let mut unit = [0.0; 3];
+                    unit[i] = 1.0;
+                    let own = super::gpu::render_matrix(start)
+                        .transform_vector3(sa_scene::world_layout::blender_to_gltf(unit))
+                        .normalize_or_zero();
+                    if !together && i < 2 && own.dot(drag.axis).abs() > 0.999 {
+                        let grown = (new[i] - size[i]) * start.scale[i].abs();
+                        t.position = moved(start.position, drag.axis * (grown / 2.0));
+                    }
+                    resized.push((*id, new));
                 } else {
-                    value
-                });
+                    let value = start.scale[i] * ratio;
+                    t.scale[i] = clamp_scale(if snap_on {
+                        snap(value, scale_step)
+                    } else {
+                        value
+                    });
+                }
                 if together {
                     // Objects spread out (or close up) from the gizmo too.
                     t.position = spread(start, drag.origin, Some(drag.axis), ratio);
@@ -1071,13 +1104,17 @@ fn continue_drag(build: &mut BuildMode, view: &View, pointer: Pos2, fine: bool) 
                 if together {
                     t.position = spread(start, drag.origin, None, ratio);
                 }
-                for axis in 0..3 {
-                    let value = start.scale[axis] * ratio;
-                    t.scale[axis] = clamp_scale(if snap_on {
-                        snap(value, scale_step)
-                    } else {
-                        value
-                    });
+                if let Some(size) = sizes.get(id) {
+                    resized.push((*id, size.map(|s| clamp_size(s * ratio))));
+                } else {
+                    for axis in 0..3 {
+                        let value = start.scale[axis] * ratio;
+                        t.scale[axis] = clamp_scale(if snap_on {
+                            snap(value, scale_step)
+                        } else {
+                            value
+                        });
+                    }
                 }
                 updates.push((*id, t));
             }
@@ -1087,6 +1124,22 @@ fn continue_drag(build: &mut BuildMode, view: &View, pointer: Pos2, fine: bool) 
         if transform.is_valid() {
             build.preview(label, &[id], |n| n.transform = transform);
         }
+    }
+    for (id, size) in resized {
+        build.preview("Resize part", &[id], |n| {
+            if let Some(part) = &mut n.part {
+                part.size = size;
+            }
+        });
+    }
+}
+
+fn clamp_size(value: f32) -> f32 {
+    use sa_scene::world_layout::Part;
+    if value.is_finite() {
+        value.abs().clamp(Part::MIN_SIZE, Part::MAX_SIZE)
+    } else {
+        1.0
     }
 }
 

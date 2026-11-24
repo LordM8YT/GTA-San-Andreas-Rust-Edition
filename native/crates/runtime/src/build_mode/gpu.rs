@@ -100,6 +100,23 @@ pub struct LightMesh {
     pub object: ObjectMesh,
 }
 
+/// What an object's mesh is uploaded as: its asset, or for a part a key
+/// made from everything its mesh is built from (parts that look the same
+/// share one upload).
+pub fn mesh_key(node: &sa_scene::world_layout::Node) -> Option<AssetRef> {
+    match &node.part {
+        Some(part) => {
+            let mut look = part.clone();
+            look.extra.clear();
+            Some(AssetRef::Builtin(format!(
+                "part#{}",
+                serde_json::to_string(&look).unwrap_or_default()
+            )))
+        }
+        None => node.asset.clone(),
+    }
+}
+
 /// Render space from pack space: the pack origin is the runtime origin
 /// shifted by the pack anchor (zero for packs today).
 pub fn render_matrix(transform: &Transform) -> Mat4 {
@@ -173,7 +190,7 @@ impl Gpu {
         self.objects.retain(|id, object| {
             layout
                 .node(copies.get(id).copied().unwrap_or(*id))
-                .is_some_and(|n| n.asset.as_ref() == Some(&object.asset))
+                .is_some_and(|n| mesh_key(n).as_ref() == Some(&object.asset))
         });
         self.generated.retain(|id, _| {
             layout
@@ -229,20 +246,49 @@ impl Gpu {
                 }
                 continue;
             }
-            self.sync_model(state, resolver, node.id, asset, transform, problems);
+            let asset = self
+                .part_mesh(state, node, problems)
+                .unwrap_or_else(|| asset.clone());
+            self.sync_model(state, resolver, node.id, &asset, transform, problems);
         }
         let copies: Vec<(NodeId, NodeId)> = self.copies.iter().map(|(c, s)| (*c, *s)).collect();
         for (copy, source) in copies {
             let Some(node) = layout.node(source) else {
                 continue;
             };
-            // Only models are copied (not terrain or roads).
+            // Only models and parts are copied (not terrain or roads).
             let (Some(asset), None, None) = (&node.asset, &node.terrain, &node.road) else {
                 continue;
             };
+            let asset = self
+                .part_mesh(state, node, problems)
+                .unwrap_or_else(|| asset.clone());
             let transform = self.moved.get(&copy).copied().unwrap_or(node.transform);
-            self.sync_model(state, resolver, copy, asset, transform, problems);
+            self.sync_model(state, resolver, copy, &asset, transform, problems);
         }
+    }
+    /// A part's mesh, uploaded once for every part of the same shape, size,
+    /// colour and material; None for objects that are not parts.
+    fn part_mesh(
+        &mut self,
+        state: &State,
+        node: &sa_scene::world_layout::Node,
+        problems: &mut Vec<String>,
+    ) -> Option<AssetRef> {
+        let part = node.part.as_ref()?;
+        let key = mesh_key(node)?;
+        if !self.assets.contains_key(&key) {
+            match upload(state, &sa_scene::part::model(part), false) {
+                Ok(mesh) => {
+                    self.assets.insert(key.clone(), mesh);
+                }
+                Err(error) => {
+                    problems.push(format!("{}: {error:#}", node.name));
+                    return None;
+                }
+            }
+        }
+        Some(key)
     }
     /// Draw model object `id` with `transform`, in its colour.
     fn sync_model(

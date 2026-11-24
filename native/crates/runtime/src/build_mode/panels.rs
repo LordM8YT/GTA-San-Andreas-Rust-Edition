@@ -110,6 +110,7 @@ pub struct UiState {
     pub smoke_terrain: Option<(NodeId, f32)>,
     /// `--smoke-build`: the road placed and its top before a point rose.
     pub smoke_road: Option<(NodeId, f32, usize)>,
+    pub smoke_parts: Vec<NodeId>,
     /// `--smoke-build`: the painted terrain and its triangles before a hole.
     pub smoke_paint: Option<(NodeId, usize)>,
     /// Asset Browser pictures; None when one could not be made.
@@ -928,25 +929,41 @@ fn insert_group(build: &mut BuildMode, ui: &mut Ui) {
         let placing_part = build
             .placing
             .as_ref()
-            .is_some_and(|p| p.asset == AssetRef::Builtin("cube".into()));
-        if big_button(
-            ui,
-            "■",
-            "Part",
-            placing_part,
-            true,
-            "A plain block: click in the world to place it, then scale and colour it",
-        )
-        .clicked()
-        {
+            .is_some_and(|p| matches!(&p.asset, AssetRef::Builtin(b) if b.starts_with("part-")));
+        let place_part = |build: &mut BuildMode, name: &str, label: &str| {
             build.selection.clear();
             build.placing = Some(Placing {
-                asset: AssetRef::Builtin("cube".into()),
-                label: "Part".into(),
+                asset: AssetRef::Builtin(name.into()),
+                label: label.into(),
                 turn: 0.0,
                 dragged: false,
             });
-        }
+        };
+        ui.vertical(|ui| {
+            if big_button(
+                ui,
+                "■",
+                "Part",
+                placing_part,
+                true,
+                "A block to build with: click in the world to place it, then size, colour and give it a material in Properties",
+            )
+            .clicked()
+            {
+                place_part(build, "part-block", "Block");
+            }
+            ui.menu_button(RichText::new("Shapes...").small(), |ui| {
+                for builtin in sa_scene::builtin_assets::ALL
+                    .iter()
+                    .filter(|b| b.category == sa_scene::builtin_assets::PARTS)
+                {
+                    if ui.button(builtin.label).clicked() {
+                        place_part(build, builtin.name, builtin.label);
+                        ui.close();
+                    }
+                }
+            });
+        });
         if big_button(
             ui,
             "📦",
@@ -2394,6 +2411,176 @@ fn color_button(ui: &mut Ui, color: &mut [f32; 3]) -> bool {
     changed
 }
 
+/// Quick colours for parts, one click each (the colour button picks any).
+const SWATCHES: [(&str, [f32; 3]); 16] = [
+    ("White", [0.95, 0.95, 0.93]),
+    ("Light grey", [0.64, 0.64, 0.66]),
+    ("Dark grey", [0.3, 0.31, 0.33]),
+    ("Black", [0.07, 0.07, 0.08]),
+    ("Red", [0.78, 0.12, 0.1]),
+    ("Orange", [0.93, 0.45, 0.1]),
+    ("Yellow", [0.96, 0.8, 0.18]),
+    ("Lime", [0.55, 0.82, 0.2]),
+    ("Green", [0.16, 0.5, 0.22]),
+    ("Teal", [0.1, 0.55, 0.55]),
+    ("Sky", [0.4, 0.68, 0.92]),
+    ("Blue", [0.13, 0.3, 0.75]),
+    ("Purple", [0.45, 0.22, 0.7]),
+    ("Pink", [0.92, 0.5, 0.7]),
+    ("Brown", [0.45, 0.29, 0.16]),
+    ("Sand", [0.84, 0.75, 0.55]),
+];
+
+fn swatch(ui: &mut Ui, name: &str, color: [f32; 3], current: bool) -> bool {
+    let [r, g, b] = color.map(|c| (c.clamp(0.0, 1.0) * 255.0) as u8);
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::click());
+    ui.painter()
+        .rect_filled(rect, 3.0, Color32::from_rgb(r, g, b));
+    if current || response.hovered() {
+        ui.painter().rect_stroke(
+            rect,
+            3.0,
+            egui::Stroke::new(1.5, Color32::WHITE),
+            egui::StrokeKind::Outside,
+        );
+    }
+    response.on_hover_text(name).clicked()
+}
+
+/// What a click in the part editor changes.
+enum PartEdit {
+    Shape(sa_scene::world_layout::PartShape),
+    Color([f32; 3]),
+    Material(sa_scene::world_layout::PartMaterial),
+}
+
+/// Shape, colour and material pickers for one part (or the first of
+/// several); returns the change picked.
+fn part_pickers(ui: &mut Ui, part: Option<&sa_scene::world_layout::Part>) -> Option<PartEdit> {
+    use sa_scene::world_layout::{PartMaterial, PartShape};
+    let mut edit = None;
+    let caption = |ui: &mut Ui, text: &str| {
+        ui.add_sized(
+            [58.0, 20.0],
+            egui::Label::new(RichText::new(text).color(MUTED)),
+        );
+    };
+    ui.horizontal_wrapped(|ui| {
+        caption(ui, "Shape");
+        for shape in PartShape::ALL {
+            let on = part.is_some_and(|p| p.shape == shape);
+            if ui.selectable_label(on, shape.label()).clicked() && !on {
+                edit = Some(PartEdit::Shape(shape));
+            }
+        }
+    });
+    ui.horizontal_wrapped(|ui| {
+        caption(ui, "Colour");
+        if let Some(part) = part {
+            let mut color = part.color;
+            if color_button(ui, &mut color) {
+                edit = Some(PartEdit::Color(color));
+            }
+        }
+        ui.spacing_mut().item_spacing.x = 3.0;
+        for (name, color) in SWATCHES {
+            if swatch(ui, name, color, part.is_some_and(|p| p.color == color)) {
+                edit = Some(PartEdit::Color(color));
+            }
+        }
+    });
+    ui.horizontal_wrapped(|ui| {
+        caption(ui, "Material");
+        for material in PartMaterial::ALL {
+            let on = part.is_some_and(|p| p.material == material);
+            if ui.selectable_label(on, material.label()).clicked() && !on {
+                edit = Some(PartEdit::Material(material));
+            }
+        }
+    });
+    edit
+}
+
+fn apply_part_edit(part: &mut sa_scene::world_layout::Part, edit: &PartEdit) {
+    match edit {
+        PartEdit::Shape(shape) => part.shape = shape.clone(),
+        PartEdit::Color(color) => part.color = color.map(|c| c.clamp(0.0, 1.0)),
+        PartEdit::Material(material) => part.material = material.clone(),
+    }
+}
+
+/// Apply a pick to parts `ids`: a colour drag is one undo step when it
+/// ends, like every other Properties drag; other picks are single clicks.
+fn edit_parts(build: &mut BuildMode, ids: &[NodeId], edit: PartEdit) {
+    let change = |n: &mut Node| {
+        if let Some(part) = &mut n.part {
+            apply_part_edit(part, &edit);
+        }
+    };
+    if matches!(edit, PartEdit::Color(_)) {
+        build.preview("Part colour", ids, change);
+    } else {
+        run(build, ops::modify(&build.doc, "Edit part", ids, change));
+    }
+}
+
+/// A part: its shape, colour, material and transparency (its size is in
+/// Transform).
+fn part_section(build: &mut BuildMode, ui: &mut Ui, id: NodeId, node: &Node) {
+    let Some(part) = &node.part else {
+        return;
+    };
+    section(ui, "Part");
+    let locked = build.doc.layout.effective_locked(id);
+    let mut transparency = part.transparency;
+    let mut edit = None;
+    ui.add_enabled_ui(!locked, |ui| {
+        edit = part_pickers(ui, Some(part));
+        ui.add(
+            egui::Slider::new(&mut transparency, 0.0..=1.0)
+                .fixed_decimals(2)
+                .text("transparency"),
+        )
+        .on_hover_text("0 solid, 1 invisible. Still solid to walk on unless Collision is off.");
+    });
+    for (what, name) in [
+        (
+            "Shape",
+            match &part.shape {
+                sa_scene::world_layout::PartShape::Other(name) => Some(name),
+                _ => None,
+            },
+        ),
+        (
+            "Material",
+            match &part.material {
+                sa_scene::world_layout::PartMaterial::Other(name) => Some(name),
+                _ => None,
+            },
+        ),
+    ] {
+        if let Some(name) = name {
+            ui.label(
+                RichText::new(format!(
+                    "{what} \"{name}\" is from a newer SARE; drawn as the default."
+                ))
+                .small()
+                .color(WARNING),
+            );
+        }
+    }
+    if transparency != part.transparency {
+        build.preview("Part transparency", &[id], |n| {
+            if let Some(part) = &mut n.part {
+                part.transparency = transparency.clamp(0.0, 1.0);
+            }
+        });
+    }
+    if let Some(edit) = edit {
+        edit_parts(build, &[id], edit);
+    }
+}
+
 /// A terrain object: its size and colour, and how to sculpt it.
 fn terrain_section(build: &mut BuildMode, ui: &mut Ui, id: NodeId, node: &Node) {
     let Some(terrain) = &node.terrain else {
@@ -2695,6 +2882,22 @@ fn batch_edit(build: &mut BuildMode, ui: &mut Ui) {
             edit = Some(("Drop to ground", |n| n.transform.position[2] = 0.0));
         }
     });
+    let parts: Vec<NodeId> = ids
+        .iter()
+        .copied()
+        .filter(|id| {
+            !build.doc.layout.effective_locked(*id)
+                && build.doc.layout.node(*id).is_some_and(|n| n.part.is_some())
+        })
+        .collect();
+    if !parts.is_empty() {
+        section(ui, &format!("Parts ({} of {})", parts.len(), ids.len()));
+        // Shows the first part's look; a pick applies to every part.
+        let first = build.doc.layout.node(parts[0]).and_then(|n| n.part.clone());
+        if let Some(change) = part_pickers(ui, first.as_ref()) {
+            edit_parts(build, &parts, change);
+        }
+    }
     if let Some((label, change)) = edit {
         // Locked objects keep their transform; flags apply to all.
         let transform = label.starts_with("Reset") || label.starts_with("Drop");
@@ -2778,7 +2981,24 @@ fn object(build: &mut BuildMode, ui: &mut Ui, id: NodeId) {
             let mut changed = axis_row(ui, "Position", &mut t.position, 0.05, " m");
             changed |= axis_row(ui, "Rotation", &mut t.rotation, 0.5, "°");
             let before_scale = t.scale;
-            if axis_row(ui, "Scale", &mut t.scale, 0.01, "") {
+            // Parts are sized in metres; their scale stays as it is.
+            if let Some(part) = &node.part {
+                let mut size = part.size;
+                if axis_row(ui, "Size", &mut size, 0.05, " m") {
+                    let size = size.map(|s| {
+                        s.clamp(
+                            sa_scene::world_layout::Part::MIN_SIZE,
+                            sa_scene::world_layout::Part::MAX_SIZE,
+                        )
+                    });
+                    build.preview("Resize part", &[id], |n| {
+                        if let Some(part) = &mut n.part {
+                            part.size = size;
+                        }
+                    });
+                }
+            }
+            if node.part.is_none() && axis_row(ui, "Scale", &mut t.scale, 0.01, "") {
                 for (v, old) in t.scale.iter_mut().zip(before_scale) {
                     if v.abs() < 0.01 {
                         *v = 0.01_f32.copysign(if old == 0.0 { 1.0 } else { old });
@@ -2798,7 +3018,7 @@ fn object(build: &mut BuildMode, ui: &mut Ui, id: NodeId) {
                         }),
                     );
                 }
-                if ui.small_button("Reset scale").clicked() {
+                if node.part.is_none() && ui.small_button("Reset scale").clicked() {
                     run(
                         build,
                         ops::modify(&build.doc, "Reset scale", &[id], |n| {
@@ -2854,6 +3074,7 @@ fn object(build: &mut BuildMode, ui: &mut Ui, id: NodeId) {
         );
     }
     if !node.is_group() {
+        part_section(build, ui, id, &node);
         super::gameplay_ui::inspector(build, ui, id, &node);
         light_section(build, ui, id, &node);
         terrain_section(build, ui, id, &node);

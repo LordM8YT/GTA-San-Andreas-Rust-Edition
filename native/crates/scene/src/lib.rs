@@ -11,6 +11,7 @@ pub mod mlo;
 mod mods;
 mod mta_map;
 pub mod pack_vehicle;
+pub mod part;
 pub use mods::{share_resource_folders, share_resources};
 pub use mta_map::{MapPickup, PickupKind};
 pub mod ped;

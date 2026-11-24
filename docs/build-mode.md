@@ -89,6 +89,39 @@ playable at its spawn point with every object's collision. F6 (or *Back to
 Build Mode*) returns to the editor with the camera, selection and undo
 history as they were. Nothing is restarted.
 
+## Parts
+
+Parts are the shapes you build with: walls, floors, steps, pillars,
+roofs, signs. *Part* on the Home ribbon places a block (*Shapes...* under it,
+or the Toolbox's **Parts** category, has the others):
+
+| Shape | |
+| --- | --- |
+| Block | A box |
+| Ball | A ball; an uneven size stretches it |
+| Cylinder | Upright, round across its X and Y size |
+| Wedge | A slope rising to the north (+Y) |
+| Corner wedge | A slope rising to its north-east corner |
+
+Select one and its **Properties** show:
+
+- **Size** in metres (in Transform, instead of Scale). The Scale tool's
+  handles resize a part too: drag a side handle and that side moves out
+  while the other side stays put; the top handle grows it upwards. With
+  Snap on, sizes snap to the move step.
+- **Part**: the shape, a **colour** (the colour button picks any; the
+  swatches are one click), a **material** and **transparency**.
+  Materials are patterns the colour is painted over: Plastic, Smooth,
+  Concrete, Wood, Brick, Tiles, Metal and Glass (always see-through).
+  Patterns keep their size in metres, so a longer wall shows more bricks
+  instead of stretched ones. Transparency 1 makes a part invisible but
+  still solid, for invisible walls; turn Collision off for a part players
+  walk through.
+
+Select several parts to give them all the same shape, colour or material
+in one step. Parts are solid when played, also on servers, and scripts can
+colour, move, show, hide and copy them like any object.
+
 ## Gameplay
 
 Any object can get one **behaviour**: select it and use *+ Trigger zone*,
@@ -325,6 +358,14 @@ content/my-town/
   "width": 8 }`, 2-256 points in the object's own metres (east, north, up),
   each coordinate within ±2000 m, at least 0.5 m long, width 1-40 m
   (`sa_scene::road`).
+- `part` is optional: `{ "shape": "block", "size": [4, 2, 1],
+  "color": [0.64, 0.64, 0.66], "material": "brick", "transparency": 0.2 }`
+  (`sa_scene::part`). Shapes `block`, `ball`, `cylinder`, `wedge`,
+  `corner_wedge`; materials `plastic`, `smooth`, `concrete`, `wood`,
+  `brick`, `tiles`, `metal`, `glass`. Size 0.05-2048 m per side in the
+  object's own axes, colour linear RGB 0-1, transparency 0-1. The object
+  shows the part instead of its asset (`builtin:part`); a shape or
+  material this SARE does not know is kept and drawn as a plastic block.
 - `light` is optional: `{ "color": [1, 0.85, 0.6], "size": 1, "radius": 6,
   "offset": [0, 1, 4.25] }` (linear RGB 0-1, metres, offset in the object's
   axes). `settings.fog` (0.2-10), `sky` (RGB 0-1) and `brightness`
@@ -360,6 +401,7 @@ pipeline or project format.
 | Part | Where | Notes |
 | --- | --- | --- |
 | Layout format | `sa-scene::world_layout` | Serde types, validation, migration hook, atomic writes, Blender-to-glTF transform maths |
+| Parts | `sa-scene::part` | `model` builds a part's shape (origin in the middle of its base, faces outwards, closed), baked side shading and planar texture coordinates in metres; `texture` generates each material's pattern in code. The editor uploads one mesh per look (`gpu::mesh_key`), so parts that look the same share it and script colours tint it |
 | Terrain | `sa-scene::terrain` | `Terrain` heights on a node, `model` (drawn + solid), `height_at`, brushes `raise`/`smooth`/`flatten`; `content_pack::node_model` gives every path (pack, Playtest, editor) the terrain instead of the asset; the Sculpt tool is in `build_mode/viewport.rs` |
 | Built-in assets | `sa-scene::builtin_assets` | Original shapes generated in code (glTF space); `editor_only` markers are neither drawn nor solid in play |
 | Gameplay | `sa-scene::world_logic` | Components and actions (serde; unknown kinds kept), zone maths, `check` for problems, `preset` for gameplay assets, and the engine: `World` (compiled layout, no state), `Shared` (per world instance: shown/hidden objects, hour, weather, a revision and `Snapshot`) and `PlayerState` (zones, once-triggers, courses, `Happened` events for scripts). `Logic` bundles one of each for single player. `wire` holds the network events. No GPU, UI or GTA types: the server and the game run the same code |

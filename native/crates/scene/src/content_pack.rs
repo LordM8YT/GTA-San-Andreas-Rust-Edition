@@ -425,6 +425,9 @@ pub fn node_model(
     if let Some(road) = &node.road {
         return Ok(std::sync::Arc::new(crate::road::model(road)));
     }
+    if let Some(part) = &node.part {
+        return Ok(std::sync::Arc::new(crate::part::model(part)));
+    }
     let asset = node.asset.as_ref().context("a group has no model")?;
     assets.model(asset)
 }

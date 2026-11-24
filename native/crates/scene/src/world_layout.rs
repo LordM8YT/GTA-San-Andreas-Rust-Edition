@@ -213,6 +213,10 @@ pub struct Node {
     /// instead of its asset's model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub road: Option<Road>,
+    /// A part built in Studio: a shape with a size, colour and material
+    /// (see [`Part`]); the object shows it instead of its asset's model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub part: Option<Part>,
     /// Lua scripts on this object (`script.object` in them); see
     /// `docs/world-scripts.md`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -246,6 +250,7 @@ impl Node {
             light: None,
             terrain: None,
             road: None,
+            part: None,
             scripts: Vec::new(),
             scriptable: false,
             extra: Map::new(),
@@ -265,6 +270,7 @@ impl Node {
             light: None,
             terrain: None,
             road: None,
+            part: None,
             scripts: Vec::new(),
             scriptable: false,
             extra: Map::new(),
@@ -381,6 +387,139 @@ impl Road {
                 .all(|v| v.is_finite() && v.abs() <= Self::MAX_REACH)
             // Points all in one place would make a road with no surface.
             && self.length() >= Self::MIN_LENGTH
+    }
+}
+
+/// A part: a basic shape built in Studio, sized in metres, coloured and
+/// given a material (see [`crate::part`] for how it is built). Its size is
+/// its own; the transform's scale still applies on top.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Part {
+    #[serde(default)]
+    pub shape: PartShape,
+    /// Size in metres along the object's own axes: east, north, up.
+    pub size: [f32; 3],
+    /// Linear RGB, 0-1.
+    #[serde(default = "part_color")]
+    pub color: [f32; 3],
+    #[serde(default)]
+    pub material: PartMaterial,
+    /// 0 solid to 1 invisible (still solid to walk on unless Collision is
+    /// off).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub transparency: f32,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+fn part_color() -> [f32; 3] {
+    [0.64, 0.64, 0.66]
+}
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
+}
+
+/// The shape of a [`Part`]. A name this SARE does not know is kept and
+/// drawn as a block.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PartShape {
+    #[default]
+    Block,
+    /// A ball (stretched by an uneven size).
+    Ball,
+    /// Upright, round across its east and north size.
+    Cylinder,
+    /// A slope rising to the north.
+    Wedge,
+    /// A slope rising to its north-east corner.
+    CornerWedge,
+    #[serde(untagged)]
+    Other(String),
+}
+impl PartShape {
+    pub const ALL: [Self; 5] = [
+        Self::Block,
+        Self::Ball,
+        Self::Cylinder,
+        Self::Wedge,
+        Self::CornerWedge,
+    ];
+    pub fn label(&self) -> &str {
+        match self {
+            Self::Block => "Block",
+            Self::Ball => "Ball",
+            Self::Cylinder => "Cylinder",
+            Self::Wedge => "Wedge",
+            Self::CornerWedge => "Corner wedge",
+            Self::Other(name) => name,
+        }
+    }
+}
+
+/// The surface of a [`Part`]: a pattern its colour is painted over. A name
+/// this SARE does not know is kept and drawn as Plastic.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PartMaterial {
+    #[default]
+    Plastic,
+    Smooth,
+    Concrete,
+    Wood,
+    Brick,
+    Tiles,
+    Metal,
+    /// See-through even with Transparency 0.
+    Glass,
+    #[serde(untagged)]
+    Other(String),
+}
+impl PartMaterial {
+    pub const ALL: [Self; 8] = [
+        Self::Plastic,
+        Self::Smooth,
+        Self::Concrete,
+        Self::Wood,
+        Self::Brick,
+        Self::Tiles,
+        Self::Metal,
+        Self::Glass,
+    ];
+    pub fn label(&self) -> &str {
+        match self {
+            Self::Plastic => "Plastic",
+            Self::Smooth => "Smooth",
+            Self::Concrete => "Concrete",
+            Self::Wood => "Wood",
+            Self::Brick => "Brick",
+            Self::Tiles => "Tiles",
+            Self::Metal => "Metal",
+            Self::Glass => "Glass",
+            Self::Other(name) => name,
+        }
+    }
+}
+
+impl Part {
+    /// Smallest and largest side, metres.
+    pub const MIN_SIZE: f32 = 0.05;
+    pub const MAX_SIZE: f32 = 2048.0;
+    pub fn new(shape: PartShape, size: [f32; 3]) -> Self {
+        Self {
+            shape,
+            size,
+            color: part_color(),
+            material: PartMaterial::default(),
+            transparency: 0.0,
+            extra: Map::new(),
+        }
+    }
+    pub fn is_valid(&self) -> bool {
+        self.size
+            .iter()
+            .all(|s| (Self::MIN_SIZE..=Self::MAX_SIZE).contains(s))
+            && self.color.iter().all(|c| (0.0..=1.0).contains(c))
+            && (0.0..=1.0).contains(&self.transparency)
     }
 }
 
@@ -789,6 +928,14 @@ impl Layout {
                 "object {} ({}) has a road with too few or too many points, a bad width or a point too far away",
                 node.id,
                 node.name
+            );
+            ensure!(
+                node.part.as_ref().is_none_or(Part::is_valid),
+                "object {} ({}) is a part with a size outside {} to {} m, or a colour or transparency outside 0 to 1",
+                node.id,
+                node.name,
+                Part::MIN_SIZE,
+                Part::MAX_SIZE
             );
             ensure!(
                 node.terrain.as_ref().is_none_or(Terrain::is_valid),

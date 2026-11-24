@@ -1304,7 +1304,118 @@ impl State {
                 capture(self, "build-look-noir.png");
             }
             124 => self.build.as_mut().unwrap().doc.layout.settings.look = None,
-            126 => return true,
+            // Parts: every shape, sized, coloured and given a material.
+            126 => {
+                use sa_scene::world_layout::{PartMaterial, Transform};
+                let build = self.build.as_mut().unwrap();
+                let parts = [
+                    (
+                        "part-block",
+                        [8.0, 0.5, 3.0],
+                        [0.72, 0.26, 0.18],
+                        PartMaterial::Brick,
+                        0.0,
+                    ),
+                    (
+                        "part-block",
+                        [3.0, 0.2, 2.0],
+                        [0.55, 0.75, 0.9],
+                        PartMaterial::Glass,
+                        0.0,
+                    ),
+                    (
+                        "part-cylinder",
+                        [1.0, 1.0, 4.0],
+                        [0.5, 0.33, 0.18],
+                        PartMaterial::Wood,
+                        0.0,
+                    ),
+                    (
+                        "part-ball",
+                        [2.0, 2.0, 2.0],
+                        [0.96, 0.8, 0.18],
+                        PartMaterial::Plastic,
+                        0.0,
+                    ),
+                    (
+                        "part-wedge",
+                        [4.0, 3.0, 1.5],
+                        [0.62, 0.62, 0.6],
+                        PartMaterial::Concrete,
+                        0.0,
+                    ),
+                    (
+                        "part-corner-wedge",
+                        [2.0, 2.0, 2.0],
+                        [0.13, 0.3, 0.75],
+                        PartMaterial::Metal,
+                        0.0,
+                    ),
+                    (
+                        "part-block",
+                        [4.0, 4.0, 0.2],
+                        [0.95, 0.95, 0.93],
+                        PartMaterial::Tiles,
+                        0.4,
+                    ),
+                ];
+                let mut ids = Vec::new();
+                for (i, (name, size, color, material, transparency)) in
+                    parts.into_iter().enumerate()
+                {
+                    let at = Transform {
+                        position: [-14.0 + i as f32 * 5.0, 36.0, 0.0],
+                        ..Default::default()
+                    };
+                    let (command, id) = sa_editor::ops::place(
+                        &mut build.doc,
+                        AssetRef::Builtin(name.into()),
+                        "Part",
+                        at,
+                        None,
+                    )
+                    .expect("placing a part");
+                    build.execute(command);
+                    build.preview("Edit part", &[id], |n| {
+                        let part = n.part.as_mut().expect("a placed part");
+                        (part.size, part.color, part.material) = (size, color, material.clone());
+                        part.transparency = transparency;
+                    });
+                    build.commit_preview();
+                    ids.push(id);
+                }
+                build.ui.smoke_parts = ids;
+            }
+            // Framed once they are on the GPU.
+            128 => {
+                let build = self.build.as_mut().unwrap();
+                build.selection = build.ui.smoke_parts.clone();
+                build.focus_selection();
+                build.selection.truncate(1);
+            }
+            132 => {
+                let build = self.build.as_ref().unwrap();
+                let ids = &build.ui.smoke_parts;
+                let wall = &build.gpu.objects[&ids[0]];
+                let size = wall.bounds.1 - wall.bounds.0;
+                assert!(
+                    (size.x - 8.0).abs() < 0.05 && (size.y - 3.0).abs() < 0.05,
+                    "the brick wall is not drawn at its size: {size}"
+                );
+                assert!(
+                    wall.batches
+                        .iter()
+                        .any(|b| b.texture_key == "builtin:material/brick"),
+                    "the brick wall is not drawn with bricks"
+                );
+                let glass = &build.gpu.objects[&ids[1]];
+                assert!(
+                    glass.batches.iter().all(|b| b.alpha),
+                    "glass is not see-through"
+                );
+                capture(self, "build-parts.png");
+            }
+            134 => return true,
             _ => {}
         }
         false

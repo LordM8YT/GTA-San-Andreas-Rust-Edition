@@ -39,6 +39,15 @@ pub fn place(
     if matches!(node.asset.as_ref(), Some(AssetRef::Builtin(b)) if b == "spline-road") {
         node.road = Some(sa_scene::builtin_assets::preset_road());
     }
+    // Parts are all `builtin:part`; the shape picked is in the part.
+    let part = match node.asset.as_ref() {
+        Some(AssetRef::Builtin(b)) => sa_scene::builtin_assets::preset_part(b),
+        _ => None,
+    };
+    if let Some(part) = part {
+        node.part = Some(part);
+        node.asset = Some(AssetRef::Builtin(sa_scene::builtin_assets::PART.into()));
+    }
     node.light = match node.asset.as_ref() {
         Some(AssetRef::Builtin(builtin)) => sa_scene::builtin_assets::light_preset(builtin),
         _ => None,

@@ -1,5 +1,8 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.58.0:
+- Build Mode: build with parts. *Part* on the Home ribbon (or the Toolbox's new Parts category) places a block, ball, cylinder, wedge or corner wedge. Give it a size in metres, any colour (or one of 16 quick swatches), a material (Plastic, Smooth, Concrete, Wood, Brick, Tiles, Metal or Glass) and transparency in Properties. The Scale tool resizes a part from one side, like pulling out a wall. Select several parts to colour them all at once. Parts are solid when played, also on servers, and scripts can colour, move and copy them.
+
 Version 0.57.0:
 - Build Mode scripts can make copies of objects: `object:clone()` makes a copy where the object is, or at a position you give, and `copy:destroy()` removes it again. Drop crates, spawn targets, build a row of lamps or a pile of boxes while the world plays. Copies are solid, can be shown, hidden, moved and coloured like any object, and every player on a server sees the same ones. A world can have up to 200 copies at once, and they go away when the world starts again.
 - New script example: Crate dropper. In the sample world, the bell now leaves a copy of the signal crate each time it rings.

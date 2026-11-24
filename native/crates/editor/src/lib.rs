@@ -747,4 +747,48 @@ mod tests {
         });
         assert!(broken.validate().is_err());
     }
+
+    #[test]
+    fn a_placed_part_keeps_its_shape_saves_and_plays() {
+        use sa_scene::world_layout::{PartMaterial, PartShape};
+        let mut doc = doc();
+        let (command, id) = ops::place(
+            &mut doc,
+            AssetRef::Builtin("part-cylinder".into()),
+            "Cylinder",
+            Transform::default(),
+            None,
+        )
+        .unwrap();
+        command.apply(&mut doc).unwrap();
+        let node = doc.layout.node(id).unwrap();
+        // Every part refers to builtin:part; its look is in the part.
+        assert_eq!(node.asset, Some(AssetRef::Builtin("part".into())));
+        let mut part = node.part.clone().expect("a placed part gets its shape");
+        assert_eq!(part.shape, PartShape::Cylinder);
+        part.material = PartMaterial::Wood;
+        part.color = [0.5, 0.3, 0.1];
+        part.size = [1.0, 1.0, 6.0];
+        ops::modify(&doc, "Edit part", &[id], |n| n.part = Some(part.clone()))
+            .unwrap()
+            .apply(&mut doc)
+            .unwrap();
+        let json = serde_json::to_string(&doc.layout).unwrap();
+        let loaded: Layout = serde_json::from_str(&json).unwrap();
+        loaded.validate().unwrap();
+        assert_eq!(loaded.node(id).unwrap().part.as_ref(), Some(&part));
+        // Played and drawn as the part, not as the asset.
+        let mut resolver = AssetResolver::new(std::path::Path::new("."));
+        let model =
+            sa_scene::content_pack::node_model(loaded.node(id).unwrap(), &mut resolver).unwrap();
+        assert_eq!(model.drawn[0].key, "builtin:material/wood");
+        // A part with no size is refused on load.
+        let mut broken = loaded.clone();
+        broken.nodes.iter_mut().for_each(|n| {
+            if let Some(part) = &mut n.part {
+                part.size[2] = 0.0;
+            }
+        });
+        assert!(broken.validate().is_err());
+    }
 }

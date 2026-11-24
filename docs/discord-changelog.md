@@ -1,3 +1,9 @@
+**SARE 0.58: build with parts 🧱 (pending release)**
+
+🧱 **Parts:** blocks, balls, cylinders, wedges and corner wedges you size in metres, paint any colour and give a material: brick, wood, concrete, tiles, metal, glass and more. Pull a side to make a wall longer.
+
+---
+
 **SARE 0.57: scripts make copies 📦 (pending release)**
 
 📦 **Copies from scripts:** `object:clone()` drops a copy of any object while your world plays, and `copy:destroy()` takes it away. Copies are solid, can move and change colour, and everyone on the server sees them.
