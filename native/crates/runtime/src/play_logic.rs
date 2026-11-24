@@ -131,12 +131,12 @@ impl PlayLogic {
         }
     }
     /// The glow of the lights of the pack's switchable objects.
-    pub fn glows(&self) -> impl Iterator<Item = &GpuBatch> + '_ {
+    pub fn glows(&self) -> impl Iterator<Item = (NodeId, &GpuBatch)> + '_ {
         self.objects
             .iter()
             .flat_map(|o| o.gpu.lights.iter())
             .filter(|(id, _)| self.logic.visible(**id))
-            .flat_map(|(_, light)| &light.object.batches)
+            .flat_map(|(id, light)| light.object.batches.iter().map(move |b| (*id, b)))
     }
     /// The world settings of the layout being played.
     pub fn settings(&self) -> &sa_scene::world_layout::WorldSettings {
@@ -831,7 +831,7 @@ impl State {
     /// world setting).
     /// Lights of Build Mode objects and of a played pack's switchable
     /// objects (the pack's other lights are part of its world batches).
-    pub(crate) fn creator_glows(&self) -> impl Iterator<Item = &GpuBatch> + '_ {
+    pub(crate) fn creator_glows(&self) -> impl Iterator<Item = (NodeId, &GpuBatch)> + '_ {
         let build = self.build.iter().flat_map(move |build| {
             build
                 .gpu
@@ -845,15 +845,17 @@ impl State {
                         build.doc.layout.effective_visible(**id)
                     }
                 })
-                .flat_map(|(_, light)| &light.object.batches)
+                .flat_map(|(id, light)| light.object.batches.iter().map(move |b| (*id, b)))
         });
         build.chain(self.play_logic.iter().flat_map(PlayLogic::glows))
     }
 
     /// The object lights nearest the camera, for lighting per pixel:
-    /// (render-space position, radius, colour). Lights of hidden objects
-    /// are off; moved objects take theirs along.
-    pub(crate) fn point_lights(&self, most: usize) -> Vec<(Vec3, f32, Vec3)> {
+    /// (object, render-space position, reach, colour). Lights of hidden
+    /// objects are off; moved objects take theirs along. A pack played from
+    /// the launcher offers only the lamps it draws one by one (the others
+    /// are merged into its scene with their painted pools).
+    pub(crate) fn point_lights(&self, most: usize) -> Vec<(NodeId, Vec3, f32, Vec3)> {
         let (layout, visible): (&Layout, &dyn Fn(NodeId) -> bool) =
             match (&self.build, &self.play_logic) {
                 (Some(build), _) if !build.playtesting => (&build.doc.layout, &|id| {
@@ -866,12 +868,20 @@ impl State {
                 _ => return Vec::new(),
             };
         let placed = self.play_logic.as_ref().map(|p| &p.placed);
-        let mut lights: Vec<(Vec3, f32, Vec3)> = layout
+        let pack = self
+            .play_logic
+            .as_ref()
+            .filter(|_| self.build.is_none())
+            .and_then(|p| p.objects.as_ref());
+        let mut lights: Vec<(NodeId, Vec3, f32, Vec3)> = layout
             .nodes
             .iter()
             .filter_map(|node| {
                 let light = node.light.as_ref()?;
                 if !visible(node.id) || light.radius <= 0.1 {
+                    return None;
+                }
+                if pack.is_some_and(|objects| objects.layout.node(node.id).is_none()) {
                     return None;
                 }
                 let transform = placed
@@ -880,16 +890,25 @@ impl State {
                     .unwrap_or(node.transform);
                 let position =
                     render_matrix(&transform).transform_point3(blender_to_gltf(light.offset));
-                // Reach a little past the painted pool, so walls nearby light up.
-                let radius =
-                    (light.radius * 1.6).min(sa_scene::world_layout::PointLight::MAX_RADIUS * 1.6);
-                Some((position, radius, Vec3::from_array(light.color)))
+                // Reach a little past the painted pool (scaled with the
+                // object, as the pool was), plus the lamp's height, so a
+                // lamp up a pole still lights the ground under it.
+                let scale = Vec3::from_array(transform.scale)
+                    .abs()
+                    .max_element()
+                    .max(0.01);
+                let pool = light
+                    .radius
+                    .min(sa_scene::world_layout::PointLight::MAX_RADIUS);
+                let height = (light.offset[2] * transform.scale[2].abs()).max(0.0);
+                let radius = pool * scale * 1.6 + height;
+                Some((node.id, position, radius, Vec3::from_array(light.color)))
             })
-            .filter(|(position, radius, _)| position.distance(self.position) < 250.0 + radius)
+            .filter(|(_, position, radius, _)| position.distance(self.position) < 250.0 + radius)
             .collect();
         lights.sort_by(|a, b| {
-            a.0.distance_squared(self.position)
-                .total_cmp(&b.0.distance_squared(self.position))
+            a.1.distance_squared(self.position)
+                .total_cmp(&b.1.distance_squared(self.position))
         });
         lights.truncate(most);
         lights

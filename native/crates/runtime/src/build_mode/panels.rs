@@ -3028,6 +3028,16 @@ fn look_section(
                         v if v < -0.01 => format!("cold {:.2}", -v),
                         v if v > 0.01 => format!("warm {v:.2}"),
                         _ => "neutral".into(),
+                    })
+                    .custom_parser(|text| {
+                        let text = text.trim().to_lowercase();
+                        if text == "neutral" {
+                            return Some(0.0);
+                        }
+                        if let Some(v) = text.strip_prefix("cold") {
+                            return v.trim().parse::<f64>().ok().map(|v| -v.abs());
+                        }
+                        text.trim_start_matches("warm").trim().parse::<f64>().ok()
                     }),
             );
             ui.add(egui::Slider::new(&mut value.bloom, 0.0..=3.0).text("× glow"));

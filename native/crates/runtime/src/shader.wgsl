@@ -9,9 +9,9 @@ struct Camera {
     // Multiplier for the day-baked prelit colours (night darkening).
     ambient: vec4<f32>,
     sky: vec4<f32>,
-    // x: how many object lights light surfaces per pixel (enhanced lighting
-    // at night), then two vec4s each: position and radius, colour and
-    // strength.
+    // x: how many object lights light surfaces per pixel (the Lamp lighting
+    // setting, at night), then two vec4s each: position and reach, colour
+    // and strength.
     point: vec4<f32>,
     lights: array<vec4<f32>, 64>,
 };

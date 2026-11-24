@@ -981,7 +981,7 @@ impl State {
                 assert!(play.message().is_some(), "no message from the night zone");
                 // Lamps light the night per pixel (the default setting).
                 assert!(
-                    self.per_pixel_lights && !self.point_lights(32).is_empty(),
+                    !self.lit_lamps.is_empty() && !self.point_lights(32).is_empty(),
                     "the sample's lamps do not light the night per pixel"
                 );
                 capture(self, "playtest-night-zone.png");
@@ -1261,7 +1261,7 @@ impl State {
                 assert!(build.ui.script.is_some(), "the script editor did not open");
                 capture(self, "build-script-editor.png");
             }
-            // A world look: the same scene graded as a sunset.
+            // A world look: the same scene graded as Noir.
             118 => {
                 let build = self.build.as_mut().unwrap();
                 build.ui.script = None;

@@ -275,10 +275,10 @@ impl Node {
     }
 }
 
-/// A light on an object, drawn the way SARE draws street lamps: a glowing
-/// corona at the lamp and a soft pool of light on the ground under it,
-/// from dusk to dawn. It does not light other objects (the renderer has
-/// no per-object lights).
+/// A light on an object, from dusk to dawn: a glowing corona at the lamp
+/// that lights what is around it per pixel (the game's Lamp lighting
+/// setting), or paints a soft pool of light on the ground under it when
+/// that is off. It casts no shadows.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PointLight {
     /// Linear RGB, 0-1.
@@ -286,7 +286,8 @@ pub struct PointLight {
     /// Corona size in metres.
     #[serde(default = "light_size")]
     pub size: f32,
-    /// Radius of the pool of light on the ground, in metres (0: none).
+    /// Radius of the pool of light on the ground, in metres (0: none); the
+    /// light per pixel reaches a little further, plus the lamp's height.
     #[serde(default = "light_radius")]
     pub radius: f32,
     /// Where the lamp is, in the object's own axes (metres, Blender).

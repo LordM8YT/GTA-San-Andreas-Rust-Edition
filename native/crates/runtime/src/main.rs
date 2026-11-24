@@ -353,9 +353,9 @@ struct State {
     wreck_fire_seconds: f32,
     fire_glows: wgpu::Buffer,
     fire_glow_count: u32,
-    /// Object lights light the scene per pixel this frame (their painted
-    /// pools are skipped).
-    per_pixel_lights: bool,
+    /// Object lights lighting the scene per pixel this frame (their painted
+    /// pools are skipped; every other lamp keeps its pool).
+    lit_lamps: std::collections::HashSet<sa_scene::world_layout::NodeId>,
     /// The parts look the player's car was last drawn with.
     car_render_look: sa_scene::vehicle::Look,
     /// Weapon model id to (model, txd), and the meshes of guns drawn so far.
@@ -1253,7 +1253,7 @@ impl State {
             wreck_fire_seconds: 0.0,
             fire_glows,
             fire_glow_count: 0,
-            per_pixel_lights: false,
+            lit_lamps: Default::default(),
             car_render_look: Default::default(),
             weapon_models: None,
             gun_meshes: std::collections::HashMap::new(),
@@ -2373,9 +2373,9 @@ impl State {
         } else {
             Vec::new()
         };
-        self.per_pixel_lights = !lights.is_empty();
+        self.lit_lamps = lights.iter().map(|(id, ..)| *id).collect();
         let mut data = vec![lights.len() as f32, 0.0, 0.0, 0.0];
-        for (position, radius, colour) in &lights {
+        for (_, position, radius, colour) in &lights {
             data.extend(position.extend(*radius).to_array());
             data.extend(colour.extend(night * 0.9).to_array());
         }
@@ -3166,7 +3166,16 @@ impl State {
                 pass.set_pipeline(&self.corona);
                 pass.draw(0..self.fire_glow_count, 0..1);
             }
-            let creator_glows = self.creator_glows().filter(|_| night);
+            // A lamp lit per pixel needs no painted pool of light; the
+            // map's own lights and every other lamp keep theirs.
+            let creator_glows = self
+                .creator_glows()
+                .filter(|(id, b)| {
+                    night
+                        && !(b.texture_key == sa_scene::lights::POOL_KEY
+                            && self.lit_lamps.contains(id))
+                })
+                .map(|(_, b)| b);
             for b in self
                 .batches
                 .iter()
@@ -3175,10 +3184,6 @@ impl State {
                 })
                 .chain(creator_glows)
             {
-                // Lit per pixel, a lamp needs no painted pool of light.
-                if self.per_pixel_lights && b.texture_key == sa_scene::lights::POOL_KEY {
-                    continue;
-                }
                 pass.set_pipeline(if b.texture_key == sa_scene::lights::CORONA_KEY {
                     &self.corona
                 } else {
