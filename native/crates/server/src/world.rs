@@ -55,7 +55,14 @@ pub struct Game {
     last_scripts: Option<Instant>,
     /// Since when an instance with running scripts has had no players.
     empty_since: BTreeMap<u32, Instant>,
+    /// Players whose own on-screen lines must go (their scripts started
+    /// again).
+    hud_clear: std::collections::BTreeSet<u32>,
 }
+
+/// Shortest time between two snapshots to one player: a script changing
+/// on-screen text many times a second does not flood everyone.
+const SNAPSHOT_INTERVAL: Duration = Duration::from_millis(100);
 
 /// How long an instance's scripts keep running with nobody there.
 const IDLE_SCRIPTS: Duration = Duration::from_secs(30);
@@ -71,6 +78,7 @@ struct Player {
     /// A teleport the player's game has not reported yet: where to, and
     /// since when. Zones wait until the server sees the player arrive.
     arriving: Option<([f32; 3], Instant)>,
+    last_snapshot: Option<Instant>,
 }
 
 impl Game {
@@ -90,6 +98,7 @@ impl Game {
             script_events: BTreeMap::new(),
             last_scripts: None,
             empty_since: BTreeMap::new(),
+            hud_clear: Default::default(),
         }
     }
     /// Whether the world has scripts to run.
@@ -145,9 +154,11 @@ impl Game {
         for (bucket, id) in rejoin {
             self.queue(bucket, ws::joined(id));
         }
-        // Their once-only triggers work again for the players there.
-        for player in self.players.values_mut().filter(|p| chosen(p.bucket)) {
+        // Their once-only triggers work again for the players there, and
+        // the text the old scripts put on their screens goes.
+        for (id, player) in self.players.iter_mut().filter(|(_, p)| chosen(p.bucket)) {
             player.state.world_reset();
+            self.hud_clear.insert(*id);
         }
         count
     }
@@ -315,6 +326,14 @@ pub fn tick(shared: &Shared) {
     game.players
         .retain(|id, _| peers.iter().any(|peer| peer.id == *id));
     let mut deliveries = Vec::new();
+    // Cleared first, so new lines this frame stay.
+    for id in std::mem::take(&mut game.hud_clear) {
+        deliveries.push((
+            id,
+            vec![sa_scene::world_logic::Effect::HudClear],
+            Vec::new(),
+        ));
+    }
     for peer in &peers {
         let bucket = session.as_ref().map_or(0, |s| s.routing_bucket(peer.id));
         if !game.players.contains_key(&peer.id) {
@@ -328,6 +347,7 @@ pub fn tick(shared: &Shared) {
             last_use: None,
             refused: 0,
             arriving: None,
+            last_snapshot: None,
         });
         if player.bucket != bucket {
             // Another instance: its zones are new, its state is another.
@@ -337,6 +357,11 @@ pub fn tick(shared: &Shared) {
             player.arriving = None;
             game.queue(old, ws::left(peer.id));
             game.queue(bucket, ws::joined(peer.id));
+            deliveries.push((
+                peer.id,
+                vec![sa_scene::world_logic::Effect::HudClear],
+                Vec::new(),
+            ));
         }
         let Some(player) = game.players.get_mut(&peer.id) else {
             continue;
@@ -384,8 +409,16 @@ pub fn tick(shared: &Shared) {
             .entry(player.bucket)
             .or_insert_with(|| world.shared());
         let current = (player.bucket, state.revision());
-        if player.sent != Some(current) {
+        // A new instance at once; changes at most every SNAPSHOT_INTERVAL.
+        let due = player
+            .sent
+            .is_none_or(|(bucket, _)| bucket != player.bucket)
+            || player
+                .last_snapshot
+                .is_none_or(|last| now - last >= SNAPSHOT_INTERVAL);
+        if player.sent != Some(current) && due {
             player.sent = Some(current);
+            player.last_snapshot = Some(now);
             let snapshot = state.snapshot();
             let size = serde_json::to_string(&snapshot).map_or(0, |s| s.len());
             if size + 2 > sa_net::MAX_EVENT_PAYLOAD && !game.warned_size {

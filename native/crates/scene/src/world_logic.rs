@@ -409,6 +409,9 @@ pub enum Effect {
     /// For the player: a line of a script's on-screen text (None removes
     /// it).
     Hud { key: String, text: Option<String> },
+    /// For the player: the scripts that set their own lines started again
+    /// (or the player changed instance): remove all of them.
+    HudClear,
 }
 impl Effect {
     /// Changes the world everyone in it shares, not only the one player.
@@ -1398,6 +1401,7 @@ pub mod wire {
         Message { text: String, seconds: f32 },
         Teleport { position: [f32; 3], heading: f32 },
         Hud { key: String, text: Option<String> },
+        HudClear,
     }
     impl Personal {
         /// The personal part of an effect; shared ones travel in snapshots.
@@ -1415,6 +1419,7 @@ pub mod wire {
                     key: key.clone(),
                     text: text.clone(),
                 }),
+                Effect::HudClear => Some(Self::HudClear),
                 _ => None,
             }
         }
@@ -1442,6 +1447,7 @@ pub mod wire {
                         .as_ref()
                         .map(|t| t.chars().take(super::HUD_TEXT).collect()),
                 }),
+                Self::HudClear => Some(Effect::HudClear),
                 _ => None,
             }
         }

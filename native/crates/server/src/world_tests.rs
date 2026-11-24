@@ -523,7 +523,8 @@ fn world_scripts_run_once_per_instance_on_the_server() {
     server.output();
     server.run("world_reset 0");
     server.until(&mut [&mut anna, &mut ben], "the reset", |_, p| {
-        snapshot(p[1]).is_some_and(|s| !s.hidden.contains(&lamp))
+        snapshot(p[1]).is_some_and(|s| !s.hidden.contains(&lamp) && s.hud.is_empty())
+            && personal(p[0]).contains(&wire::Personal::HudClear)
     });
     server.idle(&mut [&mut anna, &mut ben], 3);
     assert_eq!(

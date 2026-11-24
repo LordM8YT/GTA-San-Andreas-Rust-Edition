@@ -76,7 +76,7 @@ east, y north, z up. Headings are degrees, and 0 faces north.
 | `player.id`, `.name`, `.position`, `.driving` | `position` is nil until the player has spawned. |
 | `player:message(text, seconds)` | A message for this player only. |
 | `player:teleport(object or vector, [heading])` | Onto an object (facing its way), or to a spot. |
-| `player:hud(name, text)`, `world.hud(name, text)` | A line of on-screen text for this player, or for everyone, until it changes. Set it again under the same name to change it; `nil` or `''` removes it. At most 12 lines of up to 120 characters each. |
+| `player:hud(name, text)`, `world.hud(name, text)` | A line of on-screen text for this player, or for everyone, until it changes. Set it again under the same name to change it; `nil` or `''` removes it. At most 12 lines for everyone and 12 per player, of up to 120 characters each; everyone's lines come first. A player's own lines go when the scripts start again (`world_reset`) or the player changes instance; for a player who left, it does nothing. |
 | `vector(x, y, z)` | Add, subtract, multiply by a number, `:length()`, `:distance(v)`. |
 | `wait(seconds)` | Pause this script or handler. Other scripts go on. |
 | `spawn(fn)`, `delay(seconds, fn)`, `every(seconds, fn)` | Run something now, later, or again and again. `every` returns a handle with `:stop()`. |

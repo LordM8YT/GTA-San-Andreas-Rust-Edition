@@ -347,6 +347,9 @@ end
 -- A line of on-screen text for this player, by name: hud('score', 'Score: 3').
 -- nil or '' removes it.
 function Player:hud(name, text)
+  if type(name) ~= 'string' and type(name) ~= 'number' then
+    error('hud needs a name for the line', 2)
+  end
   local ok, message = native.hud(rawget(self, '__player'), tostring(name), text ~= nil and tostring(text) or nil)
   if not ok then
     error(message, 2)
@@ -394,6 +397,9 @@ function world.message(text, seconds)
 end
 -- A line of on-screen text for everyone in the world.
 function world.hud(name, text)
+  if type(name) ~= 'string' and type(name) ~= 'number' then
+    error('hud needs a name for the line', 2)
+  end
   local ok, message = native.hud(nil, tostring(name), text ~= nil and tostring(text) or nil)
   if not ok then
     error(message, 2)

@@ -212,6 +212,8 @@ struct Inner {
     /// Where their latest move takes them: a move that changes only the
     /// position (or heading) keeps the other half of it.
     targets: HashMap<u64, ([f32; 3], f32)>,
+    /// On-screen line names in use: everyone's (None) and each player's.
+    hud: HashMap<Option<u32>, std::collections::HashSet<String>>,
 }
 impl Inner {
     fn line(&mut self, text: String, error: bool) {
@@ -290,6 +292,7 @@ impl WorldScripts {
             known: HashMap::new(),
             poses: HashMap::new(),
             targets: HashMap::new(),
+            hud: HashMap::new(),
         }));
         let mut host = Self {
             shared,
@@ -839,12 +842,32 @@ fn create_state(shared: &Shared, source: &Source, limit: &Rc<Limit>) -> mlua::Re
                 Some("hud needs a name of 1 to 32 characters".to_string()),
             ));
         }
+        // A player who left has no screen: nothing to do.
         if player.is_some_and(|id| !inner.players.iter().any(|p| p.id == id)) {
             return Ok((true, None));
         }
-        let text = text
+        let text: Option<String> = text
             .filter(|t| !t.is_empty())
             .map(|t| t.chars().take(120).collect());
+        let lines = inner.hud.entry(player).or_default();
+        if text.is_none() {
+            lines.remove(&key);
+        } else if !lines.contains(&key) {
+            if lines.len() >= 12 {
+                return Ok((
+                    false,
+                    Some(format!(
+                        "on-screen text has at most 12 lines {}; remove one first",
+                        if player.is_some() {
+                            "per player"
+                        } else {
+                            "for everyone"
+                        }
+                    )),
+                ));
+            }
+            lines.insert(key.clone());
+        }
         Ok(match inner.request(Request::Hud { player, key, text }) {
             Ok(()) => (true, None),
             Err(e) => (false, Some(e)),
@@ -1377,6 +1400,14 @@ print(x",
             "world.on('join', function(p) world.hud('round', 'Round 1') p:hud('score', 0) p:hud('old', nil) end)",
         );
         let requests = host.tick(frame(0.1), vec![Event::Join { player: 7 }]);
+        let mut full = host_with("Full", "for i = 1, 13 do world.hud('line' .. i, i) end");
+        let out = texts(&mut full);
+        assert!(
+            out[0].contains("Full:1: on-screen text has at most 12 lines for everyone"),
+            "{out:?}"
+        );
+        let mut unnamed = host_with("Unnamed", "world.hud(nil, 'x')");
+        assert!(texts(&mut unnamed)[0].contains("hud needs a name"));
         assert_eq!(
             requests,
             [

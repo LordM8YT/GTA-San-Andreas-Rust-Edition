@@ -286,7 +286,12 @@ impl State {
             // The server steps the zones; its state and effects arrive as
             // events (`handle_world_event`).
             if self.network_session.is_none() {
+                // The server went away: the world goes on alone, from the
+                // start, with its own scripts (and none of the server's
+                // text on screen).
                 play.remote = false;
+                play.logic.set_shared(play.logic.world().shared());
+                play.hud.clear();
             }
             return;
         }
@@ -301,6 +306,8 @@ impl State {
         if alone && !play.scripts_started {
             play.scripts_started = true;
             play.joined = false;
+            // Nothing of other scripts stays on screen.
+            play.hud.clear();
             play.scripts =
                 sa_scene::world_scripts::Scripts::start(&play.layout, play.logic.shared());
         }
@@ -358,6 +365,7 @@ impl State {
                 if let Some(play) = &mut self.play_logic {
                     if !play.remote {
                         crate::runtime_log::line("World gameplay: the server runs it");
+                        play.hud.clear();
                     }
                     play.remote = true;
                     // The server runs the world's scripts too; they start
@@ -767,6 +775,11 @@ impl State {
                         world_logic::set_hud(&mut play.hud, &key, text.as_deref());
                     }
                 }
+                Effect::HudClear => {
+                    if let Some(play) = &mut self.play_logic {
+                        play.hud.clear();
+                    }
+                }
             }
         }
         // Hidden objects (an opened door) let the player through.
@@ -888,11 +901,7 @@ impl State {
             .shared()
             .hud()
             .iter()
-            .chain(
-                play.hud
-                    .iter()
-                    .filter(|(k, _)| !play.logic.shared().hud().contains_key(*k)),
-            )
+            .chain(play.hud.iter())
             .collect();
         if !lines.is_empty() {
             egui::Area::new("world-hud".into())
