@@ -148,16 +148,25 @@ weather. See [World scripts](world-scripts.md).
 Only what SARE's renderer really draws is offered:
 
 - **Lights on objects** (Properties → *+ Light*): a glowing corona at the
-  lamp and a soft pool of light on the ground under it, from dusk to dawn,
-  the same way SARE draws street lamps. Colour, glow size (m), ground light
-  radius (m) and where the lamp sits on the object. Lamp posts from the
-  Toolbox come with one. Lights do not light up other objects or cast
-  shadows: the renderer has one sun and no per-object lights. Set a fixed
+  lamp that lights the walls, ground, cars and people around it from dusk
+  to dawn, softly fading out a little past its *ground light radius*.
+  Colour, glow size (m), ground light radius (m) and where the lamp sits on
+  the object. Lamp posts from the Toolbox come with one. The 32 lamps
+  nearest the camera light the scene; lamps do not cast shadows. Players who
+  turn off *Lamp lighting* in their graphics settings (and the light editor
+  graphics) see a painted pool of light on the ground instead. Set a fixed
   time after 20:00 to see them while editing.
 - **Explorer → Lighting**: the hour, the weather, *Fog* (density
   ×0.2 to ×10 over the time and weather's own), *Sky colour* (also the
   colour of the distant haze) and *Brightness* (ambient light ×0.3 to ×1.5).
   The sun follows the hour and casts shadows.
+- **Look** (also on the Lighting page): how the world's colours look on
+  every player's screen. Pick Classic (as drawn), Natural, Vivid,
+  Cinematic, Sunset, Cold night, Dreamy or Noir, and fine-tune it under
+  *Adjust the look*: exposure, contrast, colour, warmth (cold to warm), glow
+  and dark corners. A look works on top of each player's own picture
+  settings: exposure, colour and glow multiply theirs, so a player who
+  turned glow off keeps it off, and any look runs on any PC.
 
 All of it is saved in `layout.json`, shows while you edit, and is used when
 the world is played from the launcher or hosted on a server (every player
@@ -422,8 +431,8 @@ Milestone 1 and part of milestone 2 are in. Still to come, roughly in order:
   do yet.
 - A wireframe view of the exact collision triangles (the Collision view
   outlines object bounds).
-- Real per-pixel point and spot lights (needs renderer work; today lights
-  are glow and ground light), per-object shadow switches.
+- Spot lights, shadows from lamps, and per-object shadow switches (lamps
+  light their surroundings per pixel, without shadows).
 - Terrain bigger than one object (place several side by side today), and
   textured materials (today: colours).
 - Roads: junctions where roads meet, and road surfaces that follow the

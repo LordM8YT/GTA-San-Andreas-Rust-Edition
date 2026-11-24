@@ -1,3 +1,10 @@
+**SARE 0.56: world looks and real lamp light 🌆 (pending release)**
+
+🎨 **A look for your world:** Natural, Vivid, Cinematic, Sunset, Cold night, Dreamy or Noir, or tune your own. Everyone sees your world that way.
+💡 **Lamps light the night:** walls, ground and people near a lamp catch its light. Slower PC? Turn off Lamp lighting in the graphics settings.
+
+---
+
 **SARE 0.55: world scripts 📜 (pending release)**
 
 📜 **Scripts in your world:** give any object a Lua script in Build Mode and make it do what you want: timed doors, lifts, sliding doors, scores, welcome messages.

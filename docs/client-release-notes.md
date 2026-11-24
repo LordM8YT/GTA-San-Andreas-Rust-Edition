@@ -1,5 +1,10 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.56.0:
+- Build Mode: give your world a look. Lighting → Look has Classic, Natural, Vivid, Cinematic, Sunset, Cold night, Dreamy and Noir, and *Adjust the look* fine-tunes exposure, contrast, colour, warmth, glow and dark corners. Every player sees the world in its look, on top of their own picture settings, so it costs nothing extra on slower PCs.
+- Lamps in Build Mode worlds now really light their surroundings at night: walls, ground, cars and people near a lamp catch its warm (or any colour's) light, softly fading out, instead of only a painted pool on the ground. Lamps on objects that scripts move or hide go along.
+- New graphics setting, Lamp lighting (on by default): turn it off on a slower graphics card to get the painted pools back. The light editor graphics turn it off too.
+
 Version 0.55.0:
 - Build Mode: world scripts. Give any object (or the whole world) a Lua script and make your world do what you want: doors with timers, lifts, sliding doors, spinning things, scores, welcome messages, race results, day and night switches. Scripts react to trigger zones, E, checkpoints, finishes and players joining or leaving, and they show, hide and move objects, send messages, teleport players and set the time and weather.
 - Moving objects carry their collision along, and players standing on one ride with it.
