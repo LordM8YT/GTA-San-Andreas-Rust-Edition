@@ -1203,8 +1203,9 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(5));
         let out = texts(&mut host);
         assert!(out[0].contains("ran for more than 250 ms"), "{out:?}");
+        // A slow machine may reach the time limit before the memory one.
         assert!(
-            out[1].contains("too much memory") || out[1].contains("ran too long"),
+            out[1].contains("too much memory") || out[1].contains("ran for more than 250 ms"),
             "{out:?}"
         );
         host.tick(frame(0.6), vec![]);
