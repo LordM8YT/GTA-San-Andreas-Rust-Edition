@@ -83,9 +83,11 @@ impl Game {
             .set_visible(world, node, visible)
     }
     pub fn visible(&mut self, bucket: u32, node: NodeId) -> bool {
-        let world = &self.world;
-        let state = self.buckets.entry(bucket).or_insert_with(|| world.shared());
-        world.visible(state, node)
+        // Asking makes no state: an instance nobody played is as placed.
+        match self.buckets.get(&bucket) {
+            Some(state) => self.world.visible(state, node),
+            None => self.world.visible(&self.world.shared(), node),
+        }
     }
     /// Put instance `bucket` (or every instance, for None) back to how the
     /// world starts; players there get the new state, and their "only the
@@ -275,6 +277,7 @@ pub fn tick(shared: &Shared) {
             player.bucket = bucket;
             player.state = PlayerState::new();
             player.sent = None;
+            player.arriving = None;
         }
         let dt = (now - player.last_step).as_secs_f32().min(1.0);
         player.last_step = now;
@@ -287,6 +290,8 @@ pub fn tick(shared: &Shared) {
             let gap: f32 = here.iter().zip(to).map(|(a, b)| (a - b) * (a - b)).sum();
             let there = gap.sqrt() < ARRIVED;
             if !there && now - since < ARRIVAL_WAIT {
+                // Zones wait for the player, race clocks do not.
+                player.state.wait(dt);
                 continue;
             }
             // Arrived (or gave up waiting): take the zones here quietly.

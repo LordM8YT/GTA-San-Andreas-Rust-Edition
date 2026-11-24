@@ -533,6 +533,11 @@ impl PlayerState {
     pub fn moved(&mut self) {
         self.settle = true;
     }
+    /// Time passes for the player without a step (a server waiting for
+    /// them to arrive somewhere): course times keep running.
+    pub fn wait(&mut self, dt: f32) {
+        self.clock += dt.max(0.0);
+    }
     /// The player's world instance was reset: "only the first time"
     /// triggers work again, and the zones they stand in are taken quietly.
     /// Course progress and times are kept.

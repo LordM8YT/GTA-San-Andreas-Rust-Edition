@@ -329,6 +329,10 @@ pub struct Road {
     /// Width in metres.
     #[serde(default = "road_width")]
     pub width: f32,
+    /// The road runs on from its last point back to its first, as a loop
+    /// (with three points or more).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub closed: bool,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -349,6 +353,7 @@ impl Road {
         Self {
             points: vec![from, to],
             width,
+            closed: false,
             extra: Map::new(),
         }
     }

@@ -7,7 +7,7 @@
 
 🧰 **A familiar editor:** Build Mode now has a ribbon with Home, Model, Test and View tabs, plus Toolbox, Explorer, Properties and Output panels. Insert a Part, copy and paste, Ctrl+1 to 4 for the tools and F5 to play.
 🎨 **Paint the ground** with grass, dirt, sand, rock or snow, and cut holes for caves.
-🛣️ **Roads along points:** drag the points or click to draw, and the road bends and climbs with them.
+🛣️ **Roads along points:** drag the points or click to draw, and the road bends and climbs with them, or joins back into a loop.
 💻 **Runs on slower PCs:** the editor switches to light graphics on integrated graphics, or pick it yourself under View → Performance.
 ⛰️ **Terrain and lights:** sculpt hills with the new Sculpt tool, and lamps glow at night.
 🌐 **Multiplayer worlds:** host your Build Mode world and everyone shares the same doors, time and weather. The server decides, and your Lua scripts can react to zones and races.

@@ -29,18 +29,31 @@ const STEP: f32 = 1.0;
 const DASH: f32 = 3.0;
 
 impl Road {
+    /// The road runs on from its last point back to its first.
+    pub fn is_loop(&self) -> bool {
+        self.closed && self.points.len() >= 3
+    }
     /// The smooth centre line through the points, sampled about every
-    /// metre (each point is on it).
+    /// metre (each point is on it). A loop ends back on its first point.
     pub fn curve(&self) -> Vec<Vec3> {
         let points: Vec<Vec3> = self.points.iter().map(|p| Vec3::from_array(*p)).collect();
         let Some(first) = points.first() else {
             return Vec::new();
         };
+        let n = points.len();
+        let looped = self.is_loop();
+        // Neighbours wrap around a loop and stop at the ends otherwise.
+        let at = |i: isize| -> Vec3 {
+            if looped {
+                points[i.rem_euclid(n as isize) as usize]
+            } else {
+                points[i.clamp(0, n as isize - 1) as usize]
+            }
+        };
+        let segments = if looped { n } else { n - 1 };
         let mut out = vec![*first];
-        for i in 0..points.len().saturating_sub(1) {
-            let p0 = points[i.saturating_sub(1)];
-            let (p1, p2) = (points[i], points[i + 1]);
-            let p3 = points[(i + 2).min(points.len() - 1)];
+        for i in 0..segments as isize {
+            let (p0, p1, p2, p3) = (at(i - 1), at(i), at(i + 1), at(i + 2));
             // Points are at most a few km apart: about a metre each keeps
             // long bends smooth and dashes short.
             let steps = ((p2.distance(p1) / STEP).ceil() as usize).clamp(1, 8192);
@@ -165,14 +178,24 @@ impl Frame {
 
 fn frames(road: &Road) -> Vec<Frame> {
     let curve = road.curve();
+    let looped = road.is_loop();
     let mut distance = 0.0;
     let mut previous_left = Vec3::Y;
     curve
         .iter()
         .enumerate()
         .map(|(i, &center)| {
-            let before = curve[i.saturating_sub(1)];
-            let after = curve[(i + 1).min(curve.len() - 1)];
+            // A loop's first and last samples are the same spot: look across
+            // the join so it has no kink.
+            let last = curve.len() - 1;
+            let before = match i {
+                0 if looped && last >= 2 => curve[last - 1],
+                _ => curve[i.saturating_sub(1)],
+            };
+            let after = match i {
+                _ if i == last && looped && last >= 2 => curve[1],
+                _ => curve[(i + 1).min(last)],
+            };
             let ahead = Vec2::new(after.x - before.x, after.y - before.y);
             // Level sideways, so the road never tilts across.
             let left = if ahead.length() > 1e-4 {
@@ -216,9 +239,17 @@ pub fn model(road: &Road) -> Model {
         paint.strip(&frames, 0..n, [-edge, -edge + 0.12], PAINT, EDGE);
     }
     if road.width >= 3.0 {
+        // A loop fits a whole number of dash-and-gap pairs, so the dashes
+        // meet evenly where its end joins its start.
+        let total = frames.last().map_or(0.0, |f| f.distance);
+        let dash = if road.is_loop() && total > 0.0 {
+            total / (2.0 * (total / (2.0 * DASH)).round().max(1.0))
+        } else {
+            DASH
+        };
         for i in 0..n.saturating_sub(1) {
             let middle = (frames[i].distance + frames[i + 1].distance) * 0.5;
-            if ((middle / DASH) as u32).is_multiple_of(2) {
+            if ((middle / dash) as u32).is_multiple_of(2) {
                 paint.strip(&frames, i..i + 1, [-0.08, 0.08], PAINT, LINE);
             }
         }
@@ -252,8 +283,56 @@ mod tests {
         Road {
             points: points.to_vec(),
             width,
+            closed: false,
             extra: Default::default(),
         }
+    }
+
+    #[test]
+    fn a_closed_road_runs_back_to_its_first_point() {
+        let square = [
+            [0.0, 0.0, 0.0],
+            [40.0, 0.0, 0.0],
+            [40.0, 40.0, 0.0],
+            [0.0, 40.0, 0.0],
+        ];
+        let open = road(&square, 8.0);
+        let closed = Road {
+            closed: true,
+            ..open.clone()
+        };
+        assert!(closed.is_loop() && !open.is_loop());
+        let curve = closed.curve();
+        assert!(curve.first().unwrap().distance(*curve.last().unwrap()) < 1e-4);
+        assert!(curve.windows(2).all(|w| w[0].distance(w[1]) < 1.6));
+        // The fourth side is there, so a loop is about a side longer.
+        assert!(
+            closed.length() > open.length() + 35.0,
+            "{} vs {}",
+            closed.length(),
+            open.length()
+        );
+        // Solid on the closing side, halfway from the last point to the first;
+        // the curve bows 5 m out there (Blender (-5, 20) is glTF (-5, -20)).
+        let world = crate::collision::CollisionWorld::from_batches(&model(&closed).collision);
+        assert!(world
+            .ground_below(Vec3::new(-5.0, 5.0, -20.0), 10.0)
+            .is_some());
+        let world = crate::collision::CollisionWorld::from_batches(&model(&open).collision);
+        assert!(world
+            .ground_below(Vec3::new(-5.0, 5.0, -20.0), 10.0)
+            .is_none());
+        // No kink where it joins: the sides at the first and last sample
+        // match.
+        let f = frames(&closed);
+        assert!(f[0].left.distance(f[f.len() - 1].left) < 1e-4);
+        // Two points cannot make a loop.
+        let short = Road {
+            closed: true,
+            ..road(&square[..2], 8.0)
+        };
+        assert!(!short.is_loop());
+        assert_eq!(short.curve(), road(&square[..2], 8.0).curve());
     }
 
     #[test]

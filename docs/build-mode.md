@@ -184,7 +184,10 @@ white dots in the world:
   lands on the grid).
 - **Draw points** in the Properties: every click in the world adds a point
   at the end of the road, on whatever surface is under the mouse.
-  Right-click or Esc stops.
+  Right-click or Esc stops. Clicking the first point (with three points
+  or more) joins the end to the start and stops drawing.
+- **Closed loop** in the Properties does the same: the road runs on from
+  its last point back to its first, for a ring road or a race track.
 - **+ Add point** continues the road 16 m in its direction; × removes a
   point (a road keeps at least two).
 - Type a point's X, Y and Z (the road's own metres) or the width (1-40 m).

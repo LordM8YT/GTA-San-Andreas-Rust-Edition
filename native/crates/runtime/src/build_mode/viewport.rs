@@ -376,9 +376,22 @@ fn terrain_surface_hit(build: &BuildMode, ray: &Ray) -> Option<(NodeId, Vec3)> {
             };
             let step =
                 (terrain.spacing() * 0.5 * scale.x.abs().min(scale.y.abs())).clamp(0.05, 1.0);
+            // Only where the ray crosses the terrain's box (a metre more all
+            // round): nothing to sample over the sky.
+            let (lo, hi) = build.gpu.objects.get(&n.id)?.bounds;
+            let inv = ray.direction.recip();
+            let (a, b) = (
+                (lo - Vec3::ONE - ray.origin) * inv,
+                (hi + Vec3::ONE - ray.origin) * inv,
+            );
+            let near = a.min(b).max_element().max(0.0);
+            let far = a.max(b).min_element().min(3000.0);
+            if far < near {
+                return None;
+            }
             let mut previous: Option<(f32, f32)> = None;
-            let mut along = 0.0;
-            while along < 3000.0 {
+            let mut along = near;
+            while along <= far + step {
                 match (above(along), previous) {
                     (Some(now), Some((before_t, before))) if before > 0.0 && now <= 0.0 => {
                         // Crossed the surface: narrow it down.
@@ -654,10 +667,26 @@ fn road_points(
         build.commit_preview();
     }
 
+    // Draw mode: a click on the first point closes the road into a loop.
+    let closes = drawing && !road.is_loop() && road.points.len() >= 3 && hover == Some(0);
+    let closed_now = closes && response.clicked_by(egui::PointerButton::Primary) && !modifiers.alt;
+    if closed_now {
+        let mut edited = road.clone();
+        edited.closed = true;
+        super::panels::run(
+            build,
+            ops::modify(&build.doc, "Close road loop", &[id], |n| {
+                n.road = Some(edited.clone())
+            }),
+        );
+        build.ui.road_draw = None;
+    }
+    let drawing = drawing && build.ui.road_draw == Some(id);
     // Draw mode: a click adds a point where it lands.
     // Only a point drag or draw mode keep the mouse from the gizmo and
     // selection; hovering a point does not.
-    let mut took = build.ui.road_drag.is_some();
+    // The click that closed a loop is not also a selection click.
+    let mut took = build.ui.road_drag.is_some() || closed_now;
     if drawing {
         took = true;
         if response.clicked_by(egui::PointerButton::Primary) && hover.is_none() && !modifiers.alt {
@@ -696,9 +725,11 @@ fn road_points(
             build.ui.road_draw = None;
         }
         if pointer.is_some() {
-            response.clone().on_hover_text_at_pointer(
-                "Click to add a road point. Right-click or Esc to stop drawing.",
-            );
+            response.clone().on_hover_text_at_pointer(if closes {
+                "Click to close the road into a loop."
+            } else {
+                "Click to add a road point. Right-click or Esc to stop drawing."
+            });
         }
     }
     let active = build.ui.road_drag.map(|(_, i)| i).or(hover);

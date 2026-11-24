@@ -105,7 +105,7 @@ pub struct UiState {
     /// `--smoke-build`: the terrain sculpted and its height before.
     pub smoke_terrain: Option<(NodeId, f32)>,
     /// `--smoke-build`: the road placed and its top before a point rose.
-    pub smoke_road: Option<(NodeId, f32)>,
+    pub smoke_road: Option<(NodeId, f32, usize)>,
     /// `--smoke-build`: the painted terrain and its triangles before a hole.
     pub smoke_paint: Option<(NodeId, usize)>,
     /// Asset Browser pictures; None when one could not be made.
@@ -2471,6 +2471,12 @@ fn road_section(build: &mut BuildMode, ui: &mut Ui, id: NodeId, node: &Node) {
                 edited.points.push(next);
             }
         });
+        ui.add_enabled(
+            edited.points.len() >= 3,
+            egui::Checkbox::new(&mut edited.closed, "Closed loop"),
+        )
+        .on_hover_text("The road runs on from its last point back to its first (a ring road, a race track). In Draw points, clicking the first point closes it too.")
+        .on_disabled_hover_text("A loop needs three points or more");
         egui::Grid::new(("road-points", id))
             .num_columns(5)
             .spacing([4.0, 2.0])
@@ -2506,10 +2512,15 @@ fn road_section(build: &mut BuildMode, ui: &mut Ui, id: NodeId, node: &Node) {
     if let Some(i) = remove {
         edited.points.remove(i);
     }
+    // Two points cannot make a loop: unticked, so a point added later does
+    // not close it again unasked.
+    if edited.points.len() < 3 {
+        edited.closed = false;
+    }
     if !edited.is_valid() || edited == *road {
         return;
     }
-    if edited.points.len() == road.points.len() {
+    if edited.points.len() == road.points.len() && edited.closed == road.closed {
         // A drag is one undo step, like every other Properties drag.
         build.preview("Edit road", &[id], |n| n.road = Some(edited.clone()));
     } else {
