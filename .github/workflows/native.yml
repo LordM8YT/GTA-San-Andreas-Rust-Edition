@@ -70,6 +70,24 @@ jobs:
           name: SARE-${{ matrix.platform }}-test
           path: native/target/packages/*.zip
           if-no-files-found: error
+  # Licences, crate sources and security advisories of every dependency
+  # (native/deny.toml). A new advisory shows as a failed check but does not
+  # block the build; licences and sources must pass.
+  dependencies:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        checks:
+          - licenses bans sources
+          - advisories
+    continue-on-error: ${{ matrix.checks == 'advisories' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: native/Cargo.toml
+          command: check ${{ matrix.checks }}
   publish-client:
     needs: native
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

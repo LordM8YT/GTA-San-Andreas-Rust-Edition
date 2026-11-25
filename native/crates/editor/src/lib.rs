@@ -52,6 +52,30 @@ mod tests {
     }
 
     #[test]
+    fn history_keeps_only_the_newest_steps() {
+        let mut doc = doc();
+        let mut history = History::default();
+        let total = crate::history::LIMIT + 5;
+        for i in 0..total {
+            let before = doc.info.clone();
+            let mut after = before.clone();
+            after.name = format!("World {i}");
+            history
+                .execute(&mut doc, Command::Info { before, after })
+                .unwrap();
+        }
+        let mut undone = 0;
+        while history.undo(&mut doc).unwrap().is_some() {
+            undone += 1;
+        }
+        assert_eq!(undone, crate::history::LIMIT);
+        // The five oldest steps were forgotten, so undo stops at "World 4".
+        assert_eq!(doc.info.name, "World 4");
+        assert!(history.redo(&mut doc).unwrap().is_some());
+        assert_eq!(doc.info.name, "World 5");
+    }
+
+    #[test]
     fn create_delete_and_undo_redo() {
         let mut doc = doc();
         let mut history = History::default();

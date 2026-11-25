@@ -1,0 +1,68 @@
+# cargo-deny: checks every crate SARE builds with for licences we can ship
+# under MIT, known security advisories, and where crates come from.
+# Run it in native/ with `cargo deny check`. See
+# docs/OPEN_SOURCE_REUSE_AUDIT.md for why each rule is here.
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+ignore = []
+
+[licenses]
+version = 2
+# Permissive licences that are fine to ship inside an MIT program.
+allow = [
+  "0BSD",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "BSL-1.0",
+  "CC0-1.0",
+  "CDLA-Permissive-2.0",
+  "ISC",
+  "MIT",
+  "MIT-0",
+  "Unicode-3.0",
+  "Unlicense",
+  "Zlib",
+]
+confidence-threshold = 0.9
+
+# Exceptions are named crate by crate, so a new copyleft crate fails CI and
+# a person decides about it.
+exceptions = [
+  # egui's built-in fonts (font licences, not code).
+  { name = "epaint_default_fonts", allow = ["OFL-1.1", "Ubuntu-font-1.0"] },
+  # MPL-2.0 is file-level copyleft. These come in through kira (audio
+  # decoding and the audio thread) and are used unmodified from crates.io,
+  # which MPL allows in an MIT program. Never copy their files into SARE.
+  { name = "symphonia", allow = ["MPL-2.0"] },
+  { name = "symphonia-bundle-flac", allow = ["MPL-2.0"] },
+  { name = "symphonia-bundle-mp3", allow = ["MPL-2.0"] },
+  { name = "symphonia-codec-pcm", allow = ["MPL-2.0"] },
+  { name = "symphonia-codec-vorbis", allow = ["MPL-2.0"] },
+  { name = "symphonia-common", allow = ["MPL-2.0"] },
+  { name = "symphonia-core", allow = ["MPL-2.0"] },
+  { name = "symphonia-format-ogg", allow = ["MPL-2.0"] },
+  { name = "symphonia-format-riff", allow = ["MPL-2.0"] },
+  { name = "symphonia-metadata", allow = ["MPL-2.0"] },
+  { name = "audio_thread_priority", allow = ["MPL-2.0"] },
+  { name = "triple_buffer", allow = ["MPL-2.0"] },
+]
+
+[licenses.private]
+# SARE's own crates (MIT, see LICENSE).
+ignore = true
+
+[bans]
+# Several versions of one crate (glam, egui) are normal for now.
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
