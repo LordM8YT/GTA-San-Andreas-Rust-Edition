@@ -1,4 +1,4 @@
-# Open-source code reuse audit (before SARE Studio 0.62)
+# Open-source code reuse audit (for SARE Studio 0.61 part 2)
 
 Status: **audit only, awaiting review.** Nothing here has been implemented, no
 dependency has been added and no engine code was changed. Every REUSE or
@@ -33,7 +33,9 @@ studying**. The clear wins are:
 5. **`cargo-deny`** in CI (MIT OR Apache-2.0, a dev tool, not shipped) to
    enforce the license and advisory rules this audit describes. **REUSE**.
 
-Everything else is INSPIRE (study, implement our own way) or AVOID.
+Everything else is INSPIRE (study, implement our own way) or AVOID. A
+second pass (see "Additional sources") adds a network conditioner from
+lightyear and net graphs from renet_visualizer for Test › Server.
 
 ## Verification of the named projects
 
@@ -155,7 +157,7 @@ has no editor undo.
 | Bevy Remote Protocol | `crates/bevy_remote/src/lib.rs` (JSON-RPC 2.0 over HTTP) | **INSPIRE** | SARE's sa-mcp already plays this role for editing; the idea to borrow is a read-only live "inspect a running server" endpoint for `local_test`. |
 | Bevy dev tools | `crates/bevy_dev_tools/src/{fps_overlay.rs,frame_time_graph/,infinite_grid.rs}` | **INSPIRE** | Frame-time graph and net stats overlay for the 1–4 player test windows. |
 | `puffin` 0.20 (+ `puffin_egui`) | crates.io | **ADAPT** (optional, dev builds) | MIT OR Apache-2.0, MSRV 1.92. In-app profiler with an egui viewer; keep behind a feature so release builds are unaffected. |
-| Network conditioner | — | **INSPIRE** | Add simulated latency/loss/jitter to `local_test` (a small relay in `crates/net`); no library needed. |
+| Network conditioner | lightyear `conditioner.rs` (see Additional sources) | **ADAPT** | Add simulated latency/loss/jitter to `local_test` (a small relay in `crates/net`). |
 | Frame Engine net | `crates/frame-engine/src/net/mod.rs` | **AVOID** | A minimal TCP slice; SARE's networking is further along. |
 
 ### 9. Publishing and content packaging
@@ -206,36 +208,65 @@ matches SARE's rules.
 | Inspector mixed values / reset | INSPIRE | S | Low | None |
 | cargo-deny in CI | REUSE | S (½ day) | Low | None |
 | puffin profiler (dev feature) | ADAPT | S | Low | None in release |
-| Network conditioner in local test | INSPIRE | S–M | Low | None |
+| Network conditioner + net graphs in local test | ADAPT | S–M | Low | None |
 | parry3d for picking + terrain heightfield collision | ADAPT | M–L (2–3 weeks) | Medium: Dimforge releases breaking versions often (0.x) | Likely faster than the grid for big worlds; must benchmark |
 | rapier3d for loose parts (opt-in) | ADAPT | L (3–4 weeks) | Medium–high | Real cost; cap bodies, setting to disable |
 | Terrain LOD/chunks | INSPIRE | L | Medium | Positive for big terrains |
 | egui-snarl node graph | REUSE | M, only with a feature that needs it | Low–medium | None |
 
-## Roadmap proposal (0.62–0.66)
+## Additional sources (second pass)
 
-Each version is one small PR or a short stack, merged only when CI is green
-and, for this audit's items, after Patrick approves the version's scope.
+Cloned and read on 2026-11-25 after Patrick asked for more places to take
+from.
 
-- **0.62 — Safety net and quick wins.** `cargo-deny` + `deny.toml` in CI;
-  `THIRD_PARTY.md` listing vendored code. Undo: merge same-property edits,
-  selection as insignificant, `VecDeque`. Inspector: "mixed" display and reset
-  to default.
-- **0.63 — Assets.** glTF skins, animation clips and morph targets in content
-  packs; JPEG and data-URI textures (`zune-jpeg`); import settings sidecar
-  (scale, collision on/off) inspired by Godot/Bevy `.meta`.
-- **0.64 — Terrain generation.** Vendor LibreTerrain `terrain-field` + erosion
-  into a SARE crate with notices; "Generate" panel (noise type, seed, octaves,
-  thermal and hydraulic erosion steps) writing into the existing `Terrain`
-  as one undo step; sa-mcp tool for it.
-- **0.65 — Collision.** `parry3d` behind an internal switch for editor picks
-  and terrain heightfield collision; benchmark against `collision.rs` on a
-  weak-PC profile before making it default.
-- **0.66 — Physics and test tools.** Opt-in `rapier3d` for loose parts
-  (server-authoritative, body cap, setting to turn off); network conditioner
-  and puffin overlay in Test › Server.
+| Candidate | Source | License | Class | Notes |
+|---|---|---|---|---|
+| lightyear link conditioner | `cBournhonesque/lightyear` @ 2026-11-24, `crates/io/link/src/conditioner.rs` (489 lines) | MIT OR Apache-2.0 | **ADAPT** | Receive-side latency, jitter and Gilbert–Elliott packet loss. Uses `bevy_reflect` and lightyear's `ReadyBuffer`; strip those and it becomes a small module for Test › Server ("simulate a bad connection"). The rest of lightyear (Bevy-based replication) is **INSPIRE** for prediction/interpolation. |
+| renet visualizer | `lucaspoffo/renet` @ 2026-10-30, `renet_visualizer/src/{lib.rs,circular_buffer.rs}` (≈450 lines) | MIT OR Apache-2.0 | **ADAPT** | egui 0.36 graphs of RTT, packet loss and bandwidth per client, same egui version as SARE. Tied to `renet::NetworkInfo`; swap that for SARE's own stats. The `renet` transport itself is **AVOID** (SARE has its own net). |
+| bevy-inspector-egui | `jakobhellermann/bevy-inspector-egui` @ 2026-10-17, `crates/bevy-inspector-egui/src/{inspector_egui_impls/,egui_utils.rs,reflect_inspector/}` | MIT OR Apache-2.0 | **INSPIRE** | The best egui property-editor widgets around (vectors, colours, enums, collections), but built on Bevy 0.20 reflection. Copy small widget ideas by hand. |
+| Ambient | `AmbientRun/Ambient` @ 2025-01-07, `crates/intent/src/{lib.rs,logic.rs,registry.rs}`, `crates/asset_cache/src/lib.rs`, `crates/package_semantic_native/`, `crates/deploy/` | MIT OR Apache-2.0 | **INSPIRE** | Rust/WASM multiplayer creation platform, close to Patrick's Roblox+FiveM vision. Its "intents" are server-side undo/redo per user in a shared editing session, the model for collaborative Studio editing. **Paused indefinitely** (README), so never depend on it. |
+| oxidized_navigation | `TheGrimsey/oxidized_navigation` @ 2025-11-14, `crates/oxidized_navigation/src/{heightfields.rs,regions.rs,contour.rs,mesher.rs,detail_mesh.rs,query.rs}` | MIT OR Apache-2.0 | **ADAPT** (later) | Pure-Rust Recast-style navmesh building and path queries, for NPCs in content-pack worlds (SA path nodes only exist for the SA map). Tied to Bevy 0.16 and an old parry3d; pull the algorithm files out. |
+| meshopt (meshoptimizer bindings) | `gwihlidal/meshopt-rs` 0.7.0 @ 2026-10-17, `src/{simplify.rs,optimize.rs,clusterlod.rs}`; C++ `zeux/meshoptimizer` as git submodule | MIT OR Apache-2.0 (bindings), MIT (meshoptimizer) | **REUSE** (when needed) | Mesh simplification for automatic LODs of imported glTF, and vertex-cache optimisation. Builds C++ with `cc` (bindgen is optional), like mlua already does. Good for weak PCs. |
+| notify 9 | `notify-rs/notify` @ 2026-11-23 | CC0-1.0 | **REUSE** (when needed) | File watching for hot-reloading assets and scripts while Studio is open. |
 
-Later, only on demand: terrain node graph with `egui-snarl`, terrain LOD,
+Checked by license only, not cloned; all **AVOID** for code (ideas are fine):
+
+- **MTA:SA** and **Veloren**, **OpenMW**: GPL-3.0.
+- **Luanti (Minetest)**: engine LGPL-2.1+, so copied code would have to stay LGPL.
+- **Blender**: GPL. Use it as a tool only (SARE already does for glTF).
+- **symphonia** (audio decoding): MPL-2.0; kira already covers SARE's needs.
+- **FiveM/Cfx.re**: proprietary platform terms. SARE copies its conventions, never its code.
+
+## Roadmap proposal (0.61 part 2)
+
+Patrick wants this in **0.61 part 2**, so the work is one release series in
+small steps instead of five minor versions. Each step is its own PR, merged
+only when CI is green and after Patrick approves that step's scope.
+
+1. **Safety net and quick wins.** `cargo-deny` + `deny.toml` in CI;
+   `THIRD_PARTY.md` listing vendored code. Undo: merge same-property edits,
+   selection as insignificant, `VecDeque`. Inspector: "mixed" display and reset
+   to default.
+2. **Test tools.** Network conditioner (from lightyear) and net graphs (from
+   renet_visualizer) in Test › Server; optional puffin overlay in dev builds.
+3. **Assets.** glTF skins, animation clips and morph targets in content
+   packs; JPEG and data-URI textures (`zune-jpeg`); import settings sidecar
+   (scale, collision on/off) inspired by Godot/Bevy `.meta`.
+4. **Terrain generation.** Vendor LibreTerrain `terrain-field` + erosion
+   into a SARE crate with notices; "Generate" panel (noise type, seed, octaves,
+   thermal and hydraulic erosion steps) writing into the existing `Terrain`
+   as one undo step; sa-mcp tool for it.
+5. **Collision.** `parry3d` behind an internal switch for editor picks
+   and terrain heightfield collision; benchmark against `collision.rs` on a
+   weak-PC profile before making it default.
+6. **Physics.** Opt-in `rapier3d` for loose parts (server-authoritative, body
+   cap, setting to turn off).
+
+If part 2 gets too big, steps 5–6 are the natural cut to move to 0.62.
+
+Later, only on demand: automatic LODs with meshopt, asset hot reload with
+notify, NPC navmesh from oxidized_navigation, collaborative editing modelled
+on Ambient's intents, terrain node graph with `egui-snarl`, terrain LOD,
 animation graph editor, UI editor.
 
 ## Not done in this audit
@@ -244,6 +275,6 @@ animation graph editor, UI editor.
 - `github.com/LibreTerrain/LibreTerrain` was unreachable; the GitLab source
   and the EllisonDigital GitHub mirror were used.
 - Rapier/parry performance on weak PCs was not measured; that is the first
-  task of 0.65.
+  task of step 5.
 - Security review of new crates is limited to license and maintenance
-  checks here; `cargo-deny`'s RustSec check (0.62) covers advisories.
+  checks here; `cargo-deny`'s RustSec check (step 1) covers advisories.
