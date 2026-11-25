@@ -133,6 +133,24 @@ a script or teleport elsewhere in the world that points at one of them
 points at nothing afterwards (scripts that find objects by name keep
 working).
 
+## Command bar
+
+Under Output is a line for Lua (the `>` field). It runs once against the
+world you are editing, with the same API as [world scripts](world-scripts.md)
+plus `selection()`, the selected objects:
+
+```lua
+for _, lamp in ipairs(world.tagged('Lamp')) do lamp.visible = false end
+for _, o in ipairs(selection()) do o.color = rgb(1, 0.5, 0) o:set('Team', 'Orange') end
+world.find('Gate').position = vector(10, 4, 0)
+```
+
+What it changes (shown, moved, painted parts, attributes, tags, copies made
+with `:clone`) is one undo step. `print` writes to Output, and errors show
+there with their line. Up and Down go through earlier commands. While
+editing, only parts keep a colour; `wait`, `every` and events do nothing
+here, as the command runs once.
+
 ## Arranging
 
 - **Nudge:** the arrow keys move the selection one grid step (10 cm with
@@ -485,6 +503,7 @@ pipeline or project format.
 | Part | Where | Notes |
 | --- | --- | --- |
 | Layout format | `sa-scene::world_layout` | Serde types, validation, migration hook, atomic writes, Blender-to-glTF transform maths |
+| Command bar | `sa-editor::command_bar`, `build_mode/command.rs` | Runs the line in a `sa_lua::world` host built from the resolved layout (everything changeable), then turns its requests and changed attributes/tags into one `Command::Batch`; copies are pasted first so later requests find them |
 | Arranging | `build_mode/arrange.rs` | `nudge`, `align`, `distribute` on world boxes from the GPU meshes (a group: everything in it); one `Command::Modify` each, written back relative to each object's group |
 | Attributes and tags | `world_layout::Attribute`, `Node.attributes`/`tags`, `build_mode/attributes_ui.rs`, `sa-lua` world API | `Layout::effective_attributes`/`effective_tags` merge a node's groups'; `world_logic::script_objects` hands them to scripts; unknown kinds from a newer SARE are kept (`Attribute::Other`) and hidden from scripts |
 | My Models | `sa-scene::saved_model`, `sa-editor::ops`, `build_mode/saved_models.rs` | `SavedModel::capture` takes a model out of the layout (pivot at the origin, ids from 1), `matches` compares a copy with the file; `AssetResolver` draws a saved model as one model (Toolbox picture, placement preview); `ops::place_saved` and `ops::update_copies` place copies and replace their contents as one undo step; a node's `saved_model` names its file |

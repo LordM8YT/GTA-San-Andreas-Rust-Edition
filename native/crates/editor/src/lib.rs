@@ -13,6 +13,7 @@
 //! The runtime (`sa-runtime`, `build_mode` module) draws the editor with
 //! egui and the existing wgpu renderer. See docs/build-mode.md.
 pub mod catalog;
+pub mod command_bar;
 pub mod history;
 pub mod ops;
 pub mod project;
@@ -1059,5 +1060,60 @@ mod tests {
             .apply(&mut doc)
             .unwrap();
         assert_eq!(ops::copies_of(&doc, path).len(), 2);
+    }
+
+    #[test]
+    fn the_command_bar_changes_the_world_in_one_undo_step() {
+        use crate::command_bar;
+        let (mut doc, model, [a, b]) = model_doc();
+        ops::modify(&doc, "Tag", &[a, b], |n| n.tags = vec!["Brick".into()])
+            .unwrap()
+            .apply(&mut doc)
+            .unwrap();
+        let before = doc.clone();
+        let mut history = History::default();
+        let outcome = command_bar::run(
+            &mut doc,
+            "for _, b in ipairs(world.tagged('Brick')) do b.color = rgb(1, 0, 0) end \
+             world.find('Block').position = vector(1, 2, 3) \
+             world.find('Block'):set('Price', 5) \
+             world.find('Block'):addTag('Sold') \
+             local c = world.find('Block 2'):clone(vector(9, 9, 0), 90) \
+             print(#selection(), #world.tagged('Brick'))",
+            &[model],
+        )
+        .unwrap();
+        // The clone is tagged Brick too.
+        assert_eq!(outcome.output, [("2  3".to_string(), false)]);
+        history
+            .execute(&mut doc, outcome.command.expect("changes"))
+            .unwrap();
+        let block = doc.layout.node(a).unwrap();
+        assert_eq!(block.part.as_ref().unwrap().color, [1.0, 0.0, 0.0]);
+        assert!(near(
+            doc.layout.world_transform(a).position,
+            [1.0, 2.0, 3.0]
+        ));
+        assert_eq!(
+            block.attributes["Price"],
+            sa_scene::world_layout::Attribute::Number(5.0)
+        );
+        assert!(block.tags.contains(&"Sold".to_string()));
+        let copy = doc.layout.nodes.last().unwrap();
+        assert!(
+            copy.id > b && copy.part.is_some(),
+            "the clone is a new part"
+        );
+        assert!(near(
+            doc.layout.world_transform(copy.id).position,
+            [9.0, 9.0, 0.0]
+        ));
+        assert!(doc.layout.validate().is_ok());
+        history.undo(&mut doc).unwrap();
+        assert_eq!(doc.layout.nodes, before.layout.nodes);
+        // Errors are shown, and change nothing.
+        let outcome = command_bar::run(&mut doc, "local x = nil + 1", &[]).unwrap();
+        assert!(outcome.command.is_none());
+        assert!(outcome.output[0].1, "{:?}", outcome.output);
     }
 }

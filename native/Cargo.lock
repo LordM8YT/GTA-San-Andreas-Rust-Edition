@@ -3355,6 +3355,7 @@ dependencies = [
  "anyhow",
  "glam 0.30.10",
  "png",
+ "sa-lua",
  "sa-scene",
  "serde",
  "serde_json",

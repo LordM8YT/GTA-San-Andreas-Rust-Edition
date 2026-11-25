@@ -70,7 +70,7 @@ pub struct UiState {
     /// The editor draws light right now (for the status line).
     pub light: bool,
     bottom: BottomTab,
-    bottom_open: bool,
+    pub bottom_open: bool,
     asset_search: String,
     pub category: Option<String>,
     outliner_search: String,
@@ -116,6 +116,8 @@ pub struct UiState {
     pub smoke_copy: Option<NodeId>,
     /// A new attribute or tag being typed in the Properties panel.
     pub attributes: super::attributes_ui::Draft,
+    /// The command bar under Output.
+    pub command: super::command::CommandLine,
     /// `--smoke-build`: the painted terrain and its triangles before a hole.
     pub smoke_paint: Option<(NodeId, usize)>,
     /// Asset Browser pictures; None when one could not be made.
@@ -1630,6 +1632,9 @@ fn bottom(build: &mut BuildMode, ui: &mut Ui) {
         });
     });
     ui.separator();
+    if build.ui.bottom == BottomTab::Console {
+        super::command::ui(build, ui);
+    }
     egui::ScrollArea::vertical().stick_to_bottom(true).auto_shrink(false).show(ui, |ui| {
         match build.ui.bottom {
             BottomTab::Console | BottomTab::Problems => {

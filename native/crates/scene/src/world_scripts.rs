@@ -39,24 +39,7 @@ impl Scripts {
         if scripts.is_empty() {
             return None;
         }
-        let mut objects: Vec<host::ObjectInfo> = world_logic::script_objects(layout)
-            .into_iter()
-            .map(|o| host::ObjectInfo {
-                id: o.id,
-                name: o.name,
-                position: o.position,
-                heading: o.heading,
-                changeable: o.changeable,
-                paintable: o.paintable,
-                visible: o.visible,
-                attributes: o
-                    .attributes
-                    .into_iter()
-                    .filter_map(|(name, value)| Some((name, script_attribute(value)?)))
-                    .collect(),
-                tags: o.tags,
-            })
-            .collect();
+        let mut objects = host_objects(layout);
         let changeable = objects
             .iter()
             .filter(|o| o.changeable)
@@ -209,6 +192,40 @@ impl Scripts {
 }
 
 /// A player's gameplay moment as a script event.
+/// Every object of the layout as scripts see it (see
+/// [`world_logic::script_objects`]).
+pub fn host_objects(layout: &Layout) -> Vec<host::ObjectInfo> {
+    world_logic::script_objects(layout)
+        .into_iter()
+        .map(|o| host::ObjectInfo {
+            id: o.id,
+            name: o.name,
+            position: o.position,
+            heading: o.heading,
+            changeable: o.changeable,
+            paintable: o.paintable,
+            visible: o.visible,
+            attributes: o
+                .attributes
+                .into_iter()
+                .filter_map(|(name, value)| Some((name, script_attribute(value)?)))
+                .collect(),
+            tags: o.tags,
+        })
+        .collect()
+}
+
+/// An attribute as the layout keeps it.
+pub fn layout_attribute(value: &host::Attribute) -> crate::world_layout::Attribute {
+    use crate::world_layout::Attribute;
+    match value {
+        host::Attribute::Bool(b) => Attribute::Bool(*b),
+        host::Attribute::Number(n) => Attribute::Number(*n),
+        host::Attribute::Text(t) => Attribute::Text(t.clone()),
+        host::Attribute::Vector(v) => Attribute::Vector(*v),
+    }
+}
+
 /// An attribute as scripts see it (kinds from a newer SARE they do not).
 fn script_attribute(value: crate::world_layout::Attribute) -> Option<host::Attribute> {
     use crate::world_layout::Attribute;

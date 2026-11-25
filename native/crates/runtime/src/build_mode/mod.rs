@@ -11,6 +11,7 @@
 //! See docs/build-mode.md.
 mod arrange;
 mod attributes_ui;
+mod command;
 mod gameplay_ui;
 pub mod gpu;
 mod pacing;
@@ -1617,7 +1618,27 @@ impl State {
                 );
                 build.undo();
             }
-            164 => return true,
+            // The command bar: paint the three blocks and mark them.
+            164 => {
+                let build = self.build.as_mut().unwrap();
+                build.selection = build.ui.smoke_parts.clone();
+                build.ui.bottom_open = true;
+                build.run_command(
+                    "for _, o in ipairs(selection()) do o.color = rgb(0.2, 0.4, 1) o:set('Row', true) end print('painted', #selection())",
+                );
+                for id in build.ui.smoke_parts.clone() {
+                    let node = build.doc.layout.node(id).unwrap();
+                    assert_eq!(node.part.as_ref().unwrap().color, [0.2, 0.4, 1.0]);
+                    assert!(node.attributes.contains_key("Row"));
+                }
+                assert!(
+                    build.log.iter().any(|l| l.text == "painted  3"),
+                    "the command's print is not in Output"
+                );
+                build.focus_selection();
+            }
+            168 => capture(self, "build-command.png"),
+            170 => return true,
             _ => {}
         }
         false

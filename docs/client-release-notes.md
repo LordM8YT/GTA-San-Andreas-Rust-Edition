@@ -2,6 +2,7 @@ SARE free-roam test client, built and tested from the linked commit.
 
 Version 0.61.0 (in progress: the big SARE Studio update):
 - Build Mode: attributes and tags. Give any object or group values of your own (number, text, true/false, vector) and tags in its Properties. Scripts read and change them with `object:get`/`object:set`, check tags with `object:hasTag` and find every tagged object with `world.tagged`. A group's attributes and tags apply to everything inside it. Type `#tag` in the Explorer filter to find tagged objects.
+- Build Mode: command bar. A Lua line under Output runs against the world you are editing, with the world script API plus `selection()`: hide every lamp, paint the selection, set attributes, make copies. Each command is one undo step; Up and Down recall earlier ones.
 - Build Mode: arranging. The arrow keys nudge the selection one grid step (Page Up/Down up and down). Model › Arrange lines the selection up with the last object selected (sides, middles, bottoms, tops) or spaces three or more evenly.
 
 Version 0.60.0:

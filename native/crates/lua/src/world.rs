@@ -582,6 +582,17 @@ impl WorldScripts {
     }
 
     /// What scripts printed and the errors in them since the last call.
+    /// Every object as the scripts see it now (placed ones, then copies),
+    /// with the attributes and tags they changed.
+    pub fn objects(&self) -> Vec<ObjectInfo> {
+        let inner = self.shared.borrow();
+        inner
+            .order
+            .iter()
+            .filter_map(|id| inner.objects.get(id).cloned())
+            .collect()
+    }
+
     pub fn take_output(&mut self) -> Vec<Line> {
         let mut inner = self.shared.borrow_mut();
         let dropped = std::mem::take(&mut inner.dropped);
