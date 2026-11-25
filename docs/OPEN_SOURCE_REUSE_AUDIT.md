@@ -118,7 +118,7 @@ has no editor undo.
 
 | Candidate | Source | Class | Notes |
 |---|---|---|---|
-| Godot `UndoRedo` merge modes | `core/object/undo_redo.h` (`MergeMode::{MERGE_DISABLE, MERGE_ENDS, MERGE_ALL}`), `editor/editor_undo_redo_manager.cpp` (per-scene histories) | **INSPIRE** | Two ideas worth ~1 day: merge consecutive edits of the same property within a short time into one step (slider/colour scrubbing), and separate histories per open document if Studio opens several worlds. |
+| Godot `UndoRedo` merge modes | `core/object/undo_redo.h` (`MergeMode::{MERGE_DISABLE, MERGE_ENDS, MERGE_ALL}`), `editor/editor_undo_redo_manager.cpp` (per-scene histories) | **INSPIRE** | Merging slider/colour scrubbing into one step is **already done** in SARE (`BuildMode::preview` + `commit_preview` in `build_mode/mod.rs`, committed when the pointer and focus are free, `panels.rs` ~line 2603). The idea left is separate histories per open document if Studio opens several worlds. |
 | Fyrox `CommandTrait` | `editor/src/command/mod.rs` (`is_significant`, `finalize`) | **INSPIRE** | "Insignificant" commands (selection) that don't mark the file dirty; `finalize` to free resources when a command drops off the stack. |
 | `undo` crate 0.52 | crates.io | **AVOID** | MIT OR Apache-2.0, small, but replacing working code adds risk for no gain. |
 | Small fix spotted | `history.rs` `self.undo.remove(0)` | — | O(n) at the 1000-step cap; a `VecDeque` would be O(1). Cosmetic. |
@@ -186,7 +186,9 @@ MIT, Apache-2.0, BSD-2/3, Zlib, ISC, Unicode-3.0, CC0, and dual
 | Frame Engine | **MPL-2.0** | **Not without Patrick's approval.** MPL is file-level copyleft: copied files must stay MPL-2.0 and their source must stay available. Allowed in an MIT project, but it splits licensing and contradicts "keep SARE simple MIT". Also "Frame Engine" is a trademark (`TRADEMARKS.md`). | No |
 | egui-snarl / puffin / zune-jpeg / cargo-deny | MIT OR Apache-2.0 (zune-jpeg also Zlib) | — | Yes |
 
-Transitive dependency check (cargo metadata, normal + build deps):
+SARE's own tree today (`cargo metadata --locked` on `native/`, 506 crates): all permissive except the MPL-2.0 audio crates above and dual-licensed crates with a copyleft *option* (we take the permissive side). No GPL/AGPL-only crate.
+
+Transitive dependency check of the candidates (cargo metadata, normal + build deps):
 
 - `rapier3d` 0.36.1: 61 crates, all MIT/Apache/Zlib/Unlicense-or-MIT/Unicode. No copyleft.
 - `egui-snarl` 0.12: 81 crates (mostly egui's tree, which SARE already has). Dual-licensed items with a copyleft *option* (`self_cell`: Apache-2.0 OR GPL-2.0-only; `r-efi`: MIT OR Apache-2.0 OR LGPL-2.1-or-later) are fine; we take the permissive side. Both are already in SARE's egui tree.
@@ -204,7 +206,7 @@ matches SARE's rules.
 |---|---|---|---|---|
 | glTF skins/animation + JPEG in packs | REUSE | M (1–2 weeks) | Low; `gltf` is stable | None unless used |
 | LibreTerrain field + erosion → "Generate terrain" | ADAPT | M (≈1 week) | Medium: vendored, one upstream maintainer; we own the copy | Editor-time only; zero at runtime |
-| Undo merge + insignificant commands | INSPIRE | S (1–2 days) | Low | None |
+| Undo `VecDeque` + insignificant commands | INSPIRE | S (½ day) | Low | None |
 | Inspector mixed values / reset | INSPIRE | S | Low | None |
 | cargo-deny in CI | REUSE | S (½ day) | Low | None |
 | puffin profiler (dev feature) | ADAPT | S | Low | None in release |
@@ -234,7 +236,7 @@ Checked by license only, not cloned; all **AVOID** for code (ideas are fine):
 - **MTA:SA** and **Veloren**, **OpenMW**: GPL-3.0.
 - **Luanti (Minetest)**: engine LGPL-2.1+, so copied code would have to stay LGPL.
 - **Blender**: GPL. Use it as a tool only (SARE already does for glTF).
-- **symphonia** (audio decoding): MPL-2.0; kira already covers SARE's needs.
+- **symphonia** (audio decoding): MPL-2.0. Note: SARE **already depends** on it unmodified through kira (`symphonia*` 0.6.1, plus `audio_thread_priority` and `triple_buffer`, also MPL-2.0). Using MPL crates unmodified from crates.io is allowed in an MIT program; copying their files into SARE is not. The `deny.toml` in step 1 should list these as named exceptions.
 - **FiveM/Cfx.re**: proprietary platform terms. SARE copies its conventions, never its code.
 
 ## Roadmap proposal (0.61 part 2)
@@ -244,8 +246,8 @@ small steps instead of five minor versions. Each step is its own PR, merged
 only when CI is green and after Patrick approves that step's scope.
 
 1. **Safety net and quick wins.** `cargo-deny` + `deny.toml` in CI;
-   `THIRD_PARTY.md` listing vendored code. Undo: merge same-property edits,
-   selection as insignificant, `VecDeque`. Inspector: "mixed" display and reset
+   `THIRD_PARTY.md` listing vendored code. Undo: selection as insignificant,
+   `VecDeque`. Inspector: "mixed" display and reset
    to default.
 2. **Test tools.** Network conditioner (from lightyear) and net graphs (from
    renet_visualizer) in Test › Server; optional puffin overlay in dev builds.
