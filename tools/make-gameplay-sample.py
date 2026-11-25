@@ -244,8 +244,7 @@ manifest = {
     "license": "CC0-1.0",
     "author": "SARE contributors",
     "description": "Every Build Mode gameplay behaviour in one small world: doors, teleports, "
-    "trigger zones, time and weather, a checkpoint course and world scripts. Made by "
-    "tools/make-gameplay-sample.py.",
+    "trigger zones, time and weather, a checkpoint course and world scripts.",
     "world": {"layout": "layout.json", "spawn": [0, -6, 0]},
 }
 OUT.mkdir(parents=True, exist_ok=True)

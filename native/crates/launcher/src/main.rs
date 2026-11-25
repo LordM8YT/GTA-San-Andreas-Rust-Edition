@@ -12,16 +12,30 @@ use std::{
     time::{Duration, Instant},
 };
 mod artwork;
+mod experience;
 mod local_mods;
+mod pages;
 mod servers;
+mod shell;
+#[allow(dead_code)]
 #[path = "../../../ui/theme.rs"]
 mod ui_theme;
 mod updater;
-use ui_theme::{ACCENT, BACKGROUND, MUTED, SURFACE, SURFACE_HIGH, TEXT};
+use shell::palette::{ACCENT, BACKGROUND, MUTED, SURFACE, SURFACE_HIGH, TEXT};
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
     Home,
+    Discover,
+    Library,
+    /// The server browser, shown as "Servers".
     Multiplayer,
+    Friends,
+    Messages,
+    Profile,
+    Create,
+    /// One experience's own page (opened from a tile, not in the sidebar).
+    Details,
+    /// Mods and the resource cache, shown as "Mods".
     Resources,
     Settings,
     Help,
@@ -75,6 +89,18 @@ struct Launcher {
     mods: Vec<local_mods::Entry>,
     /// Content packs found in `content/`: folder and display name.
     packs: Vec<(PathBuf, String)>,
+    /// Everything the client can show and start (see `experience`).
+    experiences: Vec<experience::Experience>,
+    /// Header search text; Discover filters by it.
+    catalog_search: String,
+    /// Card cover textures, loaded when first shown.
+    covers: shell::Covers,
+    /// The experience shown on its own page.
+    selected: Option<String>,
+    /// Which featured world the Home banner shows.
+    featured: usize,
+    /// Discover filter chip: 0 all, 1 worlds, 2 built in.
+    discover_filter: usize,
     /// Build Mode: the name typed for a new world, and the world the next
     /// launch opens in the editor.
     new_world_name: String,
@@ -101,19 +127,9 @@ impl Launcher {
         settings: Settings,
         detect: bool,
     ) -> Self {
-        let mut fonts = egui::FontDefinitions::default();
-        fonts.font_data.insert(
-            "title".into(),
-            egui::FontData::from_static(include_bytes!(
-                "../../runtime/assets/ArchivoBlack-Regular.ttf"
-            ))
-            .into(),
-        );
-        fonts
-            .families
-            .insert(egui::FontFamily::Name("title".into()), vec!["title".into()]);
-        ctx.set_fonts(fonts);
+        shell::install_fonts(ctx);
         ui_theme::apply(ctx);
+        shell::apply_style(ctx);
         ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(egui::SystemTheme::Dark));
 
         if config.player.is_empty() {
@@ -168,6 +184,12 @@ impl Launcher {
             cache: None,
             mods: Vec::new(),
             packs: Vec::new(),
+            experiences: experience::local(&[]),
+            catalog_search: String::new(),
+            covers: shell::Covers::default(),
+            selected: None,
+            featured: 0,
+            discover_filter: 0,
             new_world_name: String::new(),
             build_target: None,
             join_pack: None,
@@ -190,6 +212,13 @@ impl Launcher {
                 "resources" => Page::Resources,
                 "multiplayer" => Page::Multiplayer,
                 "help" => Page::Help,
+                "discover" => Page::Discover,
+                "library" => Page::Library,
+                "friends" => Page::Friends,
+                "messages" => Page::Messages,
+                "profile" => Page::Profile,
+                "create" => Page::Create,
+                "details" => Page::Details,
                 _ => Page::Home,
             };
             app.resource_tab = std::env::var("SARE_PREVIEW_RESOURCE_TAB")
@@ -198,6 +227,7 @@ impl Launcher {
                 .unwrap_or(0)
                 .min(2);
             app.direct_open = std::env::var_os("SARE_PREVIEW_DIRECT").is_some();
+            app.selected = std::env::var("SARE_PREVIEW_EXPERIENCE").ok();
             app.favorites_only = std::env::var_os("SARE_PREVIEW_FAVORITES").is_some();
             if let Ok(scale) = std::env::var("SARE_PREVIEW_SCALE")
                 .unwrap_or_default()
@@ -330,7 +360,7 @@ impl Launcher {
                             self.pending_artwork = Some(image);
                             self.config.hero_image = Some(path);
                             self.message = match self.config.save() {
-                                Ok(()) => "Home artwork saved.".into(),
+                                Ok(()) => "Cover art saved.".into(),
                                 Err(e) => format!("Could not save artwork setting: {e}"),
                             };
                         }
@@ -412,52 +442,6 @@ impl Launcher {
     }
     /// Offline play in a content pack, without game files.
     /// Build Mode: make a new world or edit a pack. No game files needed.
-    fn build_mode_row(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("Build Mode:").color(MUTED));
-            ui.add(
-                egui::TextEdit::singleline(&mut self.new_world_name)
-                    .hint_text("New world name")
-                    .desired_width(160.0),
-            );
-            let new = ui
-                .add_enabled(self.testbed_ready(), egui::Button::new("Create world"))
-                .on_hover_text("Make a new world in content/ and open it in Build Mode")
-                .on_disabled_hover_text("Close the running game first");
-            if new.clicked() {
-                let name = match self.new_world_name.trim() {
-                    "" => "My World".to_owned(),
-                    name => name.to_owned(),
-                };
-                let root = local_mods::content_root();
-                let id = sa_editor::project::new_id(&name, &root);
-                match sa_editor::project::Project::create(&root.join(&id), &id, &name) {
-                    Ok((project, _)) => {
-                        self.new_world_name.clear();
-                        self.scan_packs();
-                        self.edit_world(project.folder);
-                    }
-                    Err(error) => self.message = format!("Could not create the world: {error:#}"),
-                }
-            }
-            let mut chosen = None;
-            for (folder, name) in &self.packs {
-                if ui
-                    .add_enabled(
-                        self.testbed_ready(),
-                        egui::Button::new(format!("Edit {name}")),
-                    )
-                    .on_hover_text(format!("Open {} in Build Mode", folder.display()))
-                    .clicked()
-                {
-                    chosen = Some(folder.clone());
-                }
-            }
-            if let Some(folder) = chosen {
-                self.edit_world(folder);
-            }
-        });
-    }
     fn edit_world(&mut self, folder: PathBuf) {
         self.build_target = Some(folder.clone());
         self.message = "Build Mode is starting.".into();
@@ -471,7 +455,10 @@ impl Launcher {
     }
     /// Find content packs again (on start and from the Home page).
     fn scan_packs(&mut self) {
-        self.packs = sa_scene::content_pack::list(&local_mods::content_root())
+        let found = sa_scene::content_pack::list(&local_mods::content_root());
+        self.experiences = experience::local(&found);
+        self.covers.clear();
+        self.packs = found
             .into_iter()
             .map(|(folder, manifest)| (folder, manifest.name))
             .collect();
@@ -680,269 +667,6 @@ impl Launcher {
                 }
             }
         }
-    }
-    fn home(&mut self, ui: &mut egui::Ui) {
-        let checkpoint =
-            sa_client::progress::Save::load(&sa_client::config_dir().join("progress.json"))
-                .ok()
-                .flatten();
-        let width = ui.available_width();
-        let height = (ui.available_height() * 0.52).clamp(260.0, 360.0);
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
-        artwork::background(ui, rect, self.hero.as_ref());
-        let painter = ui.painter().with_clip_rect(rect);
-        let left = rect.left() + 28.0;
-        painter.text(
-            egui::pos2(left, rect.top() + 27.0),
-            egui::Align2::LEFT_TOP,
-            "SARE",
-            egui::FontId::new(
-                if width < 600.0 { 44.0 } else { 62.0 },
-                egui::FontFamily::Name("title".into()),
-            ),
-            TEXT,
-        );
-        painter.text(
-            egui::pos2(left, rect.top() + if width < 600.0 { 94.0 } else { 112.0 }),
-            egui::Align2::LEFT_TOP,
-            "A modding platform for your own copy of the game.",
-            egui::FontId::proportional(17.0),
-            MUTED,
-        );
-        painter.text(
-            egui::pos2(left, rect.top() + if width < 600.0 { 124.0 } else { 145.0 }),
-            egui::Align2::LEFT_TOP,
-            "SAME CITY. NEW STORIES.",
-            egui::FontId::proportional(12.0),
-            ACCENT,
-        );
-        let play = egui::Rect::from_min_size(
-            egui::pos2(left, rect.bottom() - 84.0),
-            egui::vec2(218.0, 44.0),
-        );
-        let label = if checkpoint.is_some() {
-            "Continue free roam"
-        } else {
-            "Start free roam"
-        };
-        let ready = self.ready();
-        let response = ui
-            .scope_builder(
-                egui::UiBuilder::new()
-                    .max_rect(play)
-                    .layout(egui::Layout::centered_and_justified(
-                        egui::Direction::TopDown,
-                    )),
-                |ui| {
-                    ui.add_enabled(
-                        ready,
-                        egui::Button::new(RichText::new(label).color(BACKGROUND).strong())
-                            .fill(ACCENT),
-                    )
-                },
-            )
-            .inner;
-        if response
-            .on_disabled_hover_text("Choose and validate your original installation in Settings")
-            .clicked()
-        {
-            self.start(Session::Offline);
-        }
-        let note_left = play.right() + 14.0;
-        let place = checkpoint
-            .as_ref()
-            .map_or("Grove Street", |save| saved_place(save.position));
-        let detail = checkpoint
-            .as_ref()
-            .map_or("A new free roam", |save| save.car.as_str());
-        for (y, text, color) in [
-            (play.top() + 1.0, place, TEXT),
-            (play.top() + 24.0, detail, MUTED),
-        ] {
-            let galley = painter.layout(
-                text.into(),
-                egui::FontId::proportional(14.0),
-                color,
-                (rect.right() - 24.0 - note_left).max(60.0),
-            );
-            painter.galley(egui::pos2(note_left, y), galley, color);
-        }
-        if !self.validation.as_ref().is_some_and(|(_, v)| v.ready()) {
-            let link = egui::Rect::from_min_size(
-                egui::pos2(left, rect.bottom() - 29.0),
-                egui::vec2(width - 56.0, 21.0),
-            );
-            if ui
-                .scope_builder(
-                    egui::UiBuilder::new()
-                        .max_rect(link)
-                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
-                    |ui| ui.link("Choose your installation in Settings"),
-                )
-                .inner
-                .clicked()
-            {
-                self.page = Page::Settings;
-            }
-        }
-        ui.add_space(12.0);
-        ui.horizontal_wrapped(|ui| {
-            let testbed = ui
-                .add_enabled(
-                    self.testbed_ready(),
-                    egui::Button::new(RichText::new("Play SARE Testbed").strong()),
-                )
-                .on_hover_text(
-                    "Walk, jump and drive in a small built-in test world. No San Andreas installation needed.",
-                )
-                .on_disabled_hover_text("Close the running game first");
-            if testbed.clicked() {
-                self.start_testbed();
-            }
-            ui.label(
-                RichText::new("No game files needed: a built-in test world for walking and driving.")
-                    .color(MUTED),
-            );
-        });
-        if !self.packs.is_empty() {
-            ui.add_space(6.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("Content packs:").color(MUTED));
-                let mut chosen = None;
-                for (folder, name) in &self.packs {
-                    let button = ui
-                        .add_enabled(self.testbed_ready(), egui::Button::new(name.as_str()))
-                        .on_hover_text(format!(
-                            "Play {name} from {}. No San Andreas installation needed.",
-                            folder.display()
-                        ))
-                        .on_disabled_hover_text("Close the running game first");
-                    if button.clicked() {
-                        chosen = Some(folder.clone());
-                    }
-                }
-                if ui
-                    .small_button("Refresh")
-                    .on_hover_text("Look for new folders in content/")
-                    .clicked()
-                {
-                    self.scan_packs();
-                }
-                if let Some(folder) = chosen {
-                    self.start_pack(folder);
-                }
-            });
-        }
-        ui.add_space(6.0);
-        self.build_mode_row(ui);
-        ui.add_space(8.0);
-        ui.horizontal_wrapped(|ui| {
-            ui_theme::key_hint(ui, "Enter", "Select");
-            ui_theme::key_hint(ui, "Tab", "Move focus");
-            ui_theme::key_hint(ui, "Esc", "Home");
-        });
-        ui.add_space(14.0);
-        self.dashboard(ui);
-    }
-    fn dashboard(&mut self, ui: &mut egui::Ui) {
-        if ui.available_width() >= 720. {
-            ui.columns(3, |columns| {
-                for (index, column) in columns.iter_mut().enumerate() {
-                    self.dashboard_card(column, index);
-                }
-            });
-        } else {
-            for index in 0..3 {
-                self.dashboard_card(ui, index);
-                ui.add_space(12.);
-            }
-        }
-    }
-    fn dashboard_card(&mut self, ui: &mut egui::Ui, index: usize) {
-        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-            egui::Frame::new()
-                .fill(SURFACE)
-                .inner_margin(20)
-                .corner_radius(4)
-                .stroke(egui::Stroke::new(1.0, SURFACE_HIGH))
-                .show(ui, |ui| {
-                    ui.set_min_width((ui.available_width() - 2.).max(100.));
-                    ui.set_min_height(135.);
-                    let card_top = ui.next_widget_position().y;
-                    ui.label(
-                        RichText::new(["Browse servers", "Last session", "Favorites"][index])
-                            .size(20.)
-                            .strong(),
-                    );
-                    ui.add_space(8.);
-                    let recent = self.config.last_session.clone();
-                    let body = match index {
-                        0 => "Find friends on your relay, or join with a code.".to_owned(),
-                        1 => recent.as_ref().map(|r| r.name.clone()).unwrap_or_else(|| {
-                            "Join a server to keep your next session here.".into()
-                        }),
-                        _ if self.config.favorites.is_empty() => {
-                            "Save a trusted host from Servers to find it here.".into()
-                        }
-                        _ => format!(
-                            "{} saved sessions, ready when you are.",
-                            self.config.favorites.len()
-                        ),
-                    };
-                    ui.label(RichText::new(body).color(MUTED));
-                    // Bottom alignment keeps all card actions on one baseline.
-                    ui.add_space((card_top + 98. - ui.next_widget_position().y).max(8.));
-                    match index {
-                        0 => {
-                            if ui
-                                .add(
-                                    egui::Button::new("Browse servers")
-                                        .min_size(egui::vec2(150., 38.)),
-                                )
-                                .clicked()
-                            {
-                                self.page = Page::Multiplayer;
-                                self.browse();
-                            }
-                        }
-                        1 => {
-                            if let Some(recent) = recent {
-                                if ui
-                                    .add_enabled(
-                                        self.join_ready(),
-                                        egui::Button::new("Reconnect")
-                                            .min_size(egui::vec2(150., 38.)),
-                                    )
-                                    .clicked()
-                                {
-                                    self.start(if recent.relay {
-                                        Session::Relay {
-                                            address: recent.address,
-                                            code: recent.code,
-                                        }
-                                    } else {
-                                        Session::Direct(recent.address)
-                                    });
-                                }
-                            }
-                        }
-                        _ => {
-                            let label = if self.config.favorites.is_empty() {
-                                "Find a server"
-                            } else {
-                                "Open favorites"
-                            };
-                            if ui
-                                .add(egui::Button::new(label).min_size(egui::vec2(150., 38.)))
-                                .clicked()
-                            {
-                                self.page = Page::Multiplayer;
-                                self.favorites_only = !self.config.favorites.is_empty();
-                            }
-                        }
-                    }
-                });
-        });
     }
     fn resources(&mut self, ui: &mut egui::Ui) {
         ui.heading("Resources");
@@ -1234,7 +958,7 @@ impl Launcher {
         });
         ui.separator();
         ui.label(RichText::new("Appearance").strong().size(21.));
-        ui.label("Home artwork");
+        ui.label("San Andreas cover art");
         ui.label(
             RichText::new(
                 "Choose your own gameplay screenshot (PNG). Optional and stored only on this PC.",
@@ -1397,9 +1121,13 @@ fn input_limit(ui: &mut egui::Ui, value: &mut String, hint: &str, limit: usize) 
     )
 }
 fn primary(label: &str) -> egui::Button<'_> {
-    egui::Button::new(RichText::new(label).color(BACKGROUND).strong())
-        .fill(ACCENT)
-        .min_size(egui::vec2(100., 40.))
+    egui::Button::new(
+        RichText::new(label)
+            .font(shell::semibold(14.5))
+            .color(BACKGROUND),
+    )
+    .fill(ACCENT)
+    .min_size(egui::vec2(100., 38.))
 }
 fn surface(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::new()
@@ -1499,13 +1227,6 @@ impl Launcher {
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.page = Page::Home;
         }
-        let pages = [
-            (Page::Home, "Home"),
-            (Page::Multiplayer, "Multiplayer"),
-            (Page::Resources, "Resources"),
-            (Page::Settings, "Settings"),
-            (Page::Help, "Help"),
-        ];
         egui::Panel::bottom("footer")
             .frame(
                 egui::Frame::new()
@@ -1544,96 +1265,61 @@ impl Launcher {
                     }
                 });
             });
-        // FiveM-style top bar: logo, page tabs with an accent underline, and
-        // the player name on the right. Tabs stay keyboard/controller focusable.
-        egui::Panel::top("topbar")
+        // SARE Client shell: a persistent sidebar and a compact header. The
+        // sidebar comes first so keyboard/controller focus starts in it.
+        egui::Panel::left("sidebar")
+            .exact_size(if ui.available_width() < 760. {
+                176.
+            } else {
+                220.
+            })
+            .resizable(false)
+            .frame(
+                egui::Frame::new()
+                    .fill(shell::palette::SIDEBAR)
+                    .inner_margin(egui::Margin::symmetric(12, 14)),
+            )
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("sidebar")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        if let Some(page) = shell::sidebar(ui, self.page) {
+                            self.page = page;
+                        }
+                    });
+            });
+        egui::Panel::top("header")
             .frame(
                 egui::Frame::new()
                     .fill(BACKGROUND)
-                    .inner_margin(egui::Margin::symmetric(24, 10)),
+                    .inner_margin(egui::Margin {
+                        left: 28,
+                        right: 20,
+                        top: 12,
+                        bottom: 8,
+                    }),
             )
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new("SARE")
-                            .font(egui::FontId::new(
-                                32.,
-                                egui::FontFamily::Name("title".into()),
-                            ))
-                            .color(ACCENT),
-                    );
-                    ui.add_space(18.);
-                    let compact = ui.available_width() < 760.;
-                    for (page, label) in pages {
-                        let active = self.page == page;
-                        let text = if compact {
-                            label.to_string()
-                        } else {
-                            format!("        {label}")
-                        };
-                        let response = ui.add(
-                            egui::Button::new(RichText::new(text).size(16.).color(if active {
-                                TEXT
-                            } else {
-                                MUTED
-                            }))
-                            .frame(false)
-                            .min_size(egui::vec2(0., 40.)),
-                        );
-                        if !compact {
-                            nav_icon(
-                                ui,
-                                response.rect.left_center() + egui::vec2(12., 0.),
-                                page,
-                                if active { ACCENT } else { MUTED },
-                            );
-                        }
-                        if active {
-                            let r = response.rect;
-                            ui.painter().rect_filled(
-                                egui::Rect::from_min_max(
-                                    egui::pos2(r.left(), r.bottom() + 6.),
-                                    egui::pos2(r.right(), r.bottom() + 9.),
-                                ),
-                                1,
-                                ACCENT,
-                            );
-                        }
-                        if response.clicked() {
-                            self.page = page;
-                        }
-                    }
-                    if !compact {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let name = if self.config.player.trim().is_empty() {
-                                "Player"
-                            } else {
-                                self.config.player.as_str()
-                            };
-                            egui::Frame::new()
-                                .fill(SURFACE_HIGH)
-                                .corner_radius(16)
-                                .inner_margin(egui::Margin::symmetric(12, 6))
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        let (dot, _) = ui.allocate_exact_size(
-                                            egui::vec2(8., 8.),
-                                            egui::Sense::hover(),
-                                        );
-                                        ui.painter().circle_filled(
-                                            dot.center(),
-                                            4.,
-                                            ui_theme::SUCCESS,
-                                        );
-                                        ui.label(RichText::new(name).size(14.));
-                                    });
-                                });
-                        });
-                    }
-                });
+                let player = self.player_name().to_owned();
+                match shell::header(ui, &mut self.catalog_search, &player) {
+                    Some(shell::HeaderAction::Search) => self.page = Page::Discover,
+                    Some(shell::HeaderAction::Profile) => self.page = Page::Profile,
+                    Some(shell::HeaderAction::Settings) => self.page = Page::Settings,
+                    None => {}
+                }
             });
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(BACKGROUND).inner_margin(28))
+            .frame(
+                egui::Frame::new()
+                    .fill(BACKGROUND)
+                    .inner_margin(egui::Margin {
+                        left: 28,
+                        right: 28,
+                        top: 10,
+                        bottom: 28,
+                    }),
+            )
             .show(ui, |ui| {
                 egui::ScrollArea::vertical()
                     .id_salt(("launcher-body", self.page as u8))
@@ -1644,6 +1330,13 @@ impl Launcher {
                         Page::Resources => self.resources(ui),
                         Page::Settings => self.settings_ui(ui),
                         Page::Help => self.help(ui),
+                        Page::Discover => self.discover(ui),
+                        Page::Library => self.library(ui),
+                        Page::Friends => self.friends(ui),
+                        Page::Messages => self.messages(ui),
+                        Page::Profile => self.profile(ui),
+                        Page::Create => self.create(ui),
+                        Page::Details => self.experience_page(ui),
                     });
             });
         if self.worker.is_some()
@@ -1711,61 +1404,6 @@ fn save_preview(path: &std::path::Path, image: &egui::ColorImage) -> anyhow::Res
             .collect::<Vec<_>>(),
     )?;
     Ok(())
-}
-fn nav_icon(ui: &egui::Ui, center: egui::Pos2, page: Page, color: Color32) {
-    let painter = ui.painter();
-    let stroke = egui::Stroke::new(1.5, color);
-    let p = |x, y| center + egui::vec2(x, y);
-    match page {
-        Page::Home => {
-            painter.add(egui::Shape::line(
-                vec![p(-8., 0.), p(0., -7.), p(8., 0.)],
-                stroke,
-            ));
-            painter.add(egui::Shape::line(
-                vec![p(-6., -1.), p(-6., 7.), p(6., 7.), p(6., -1.)],
-                stroke,
-            ));
-        }
-        Page::Multiplayer => {
-            for y in [-5., 3.] {
-                painter.rect_stroke(
-                    egui::Rect::from_min_size(p(-7., y), egui::vec2(14., 5.)),
-                    1,
-                    stroke,
-                    egui::StrokeKind::Inside,
-                );
-                painter.circle_filled(p(4., y + 2.5), 1., color);
-            }
-        }
-        Page::Resources => {
-            painter.add(egui::Shape::closed_line(
-                vec![
-                    p(-7., -4.),
-                    p(0., -8.),
-                    p(7., -4.),
-                    p(7., 5.),
-                    p(0., 9.),
-                    p(-7., 5.),
-                ],
-                stroke,
-            ));
-            painter.line_segment([p(-7., -4.), p(0., 0.)], stroke);
-            painter.line_segment([p(7., -4.), p(0., 0.)], stroke);
-            painter.line_segment([p(0., 0.), p(0., 9.)], stroke);
-        }
-        Page::Settings => {
-            for (x, y) in [(-5., -3.), (0., 4.), (5., -1.)] {
-                painter.line_segment([p(x, -8.), p(x, 8.)], stroke);
-                painter.circle_filled(p(x, y), 2.5, color);
-            }
-        }
-        Page::Help => {
-            painter.circle_stroke(center, 8., stroke);
-            painter.line_segment([p(0., -1.), p(0., 5.)], stroke);
-            painter.circle_filled(p(0., -4.), 1., color);
-        }
-    }
 }
 fn preview_size() -> egui::Vec2 {
     if std::env::var_os("SARE_SCREENSHOT_TO").is_some() {
@@ -2021,7 +1659,7 @@ mod tests {
         }
         frame(vec![controller_event(gilrs::Button::South, true).unwrap()]);
         frame(vec![controller_event(gilrs::Button::South, false).unwrap()]);
-        assert!(app.page == Page::Multiplayer);
+        assert!(app.page == Page::Discover);
         let mut output = context.run_ui(
             egui::RawInput {
                 events: vec![controller_event(gilrs::Button::East, true).unwrap()],

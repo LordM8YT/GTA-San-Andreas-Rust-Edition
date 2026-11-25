@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 egui = "0.36.2"
+egui-phosphor = { version = "0.14.0", default-features = false, features = ["regular", "fill"] }
 eframe = { version = "0.36.2", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland", "accesskit"] }
 rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal", "pollster"] }
 sa-client = { path = "../client" }

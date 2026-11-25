@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "license": "CC0-1.0",
   "author": "SARE contributors",
-  "description": "A tiny original town to copy and change. Made by tools/make-example-pack.py.",
+  "description": "A tiny original town to explore, copy and change.",
   "world": {
     "scene": "world.glb",
     "spawn": [0, -20, 0]
