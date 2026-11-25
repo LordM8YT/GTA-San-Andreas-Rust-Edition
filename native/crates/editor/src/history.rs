@@ -8,6 +8,7 @@
 //! before the drag, so a whole drag is one undo step.
 use anyhow::{bail, ensure, Context, Result};
 use sa_scene::world_layout::{Layout, Node, NodeId, WorldSettings};
+use std::collections::VecDeque;
 
 /// World facts kept in `content.json`, edited like everything else.
 #[derive(Clone, Debug, PartialEq)]
@@ -179,7 +180,8 @@ fn replace<'a>(
 /// Undo and redo stacks plus "unsaved changes" tracking.
 #[derive(Default)]
 pub struct History {
-    undo: Vec<(u64, Command)>,
+    /// Oldest first; the cap drops from the front.
+    undo: VecDeque<(u64, Command)>,
     redo: Vec<(u64, Command)>,
     serial: u64,
     /// Serial of the newest applied command when the project was saved.
@@ -201,20 +203,20 @@ impl History {
     /// of a live preview such as a gizmo drag).
     pub fn record(&mut self, command: Command) {
         self.serial += 1;
-        self.undo.push((self.serial, command));
+        self.undo.push_back((self.serial, command));
         if self.undo.len() > LIMIT {
-            self.undo.remove(0);
+            self.undo.pop_front();
         }
         self.redo.clear();
         self.revision += 1;
     }
     /// Undo the newest command; returns its label.
     pub fn undo(&mut self, doc: &mut Document) -> Result<Option<String>> {
-        let Some((serial, command)) = self.undo.pop() else {
+        let Some((serial, command)) = self.undo.pop_back() else {
             return Ok(None);
         };
         if let Err(error) = command.revert(doc) {
-            self.undo.push((serial, command));
+            self.undo.push_back((serial, command));
             return Err(error);
         }
         let label = command.label();
@@ -231,7 +233,7 @@ impl History {
             return Err(error);
         }
         let label = command.label();
-        self.undo.push((serial, command));
+        self.undo.push_back((serial, command));
         self.revision += 1;
         Ok(Some(label))
     }
@@ -242,13 +244,13 @@ impl History {
         !self.redo.is_empty()
     }
     pub fn undo_label(&self) -> Option<String> {
-        self.undo.last().map(|(_, c)| c.label())
+        self.undo.back().map(|(_, c)| c.label())
     }
     pub fn redo_label(&self) -> Option<String> {
         self.redo.last().map(|(_, c)| c.label())
     }
     fn current(&self) -> u64 {
-        self.undo.last().map_or(0, |(serial, _)| *serial)
+        self.undo.back().map_or(0, |(serial, _)| *serial)
     }
     pub fn mark_saved(&mut self) {
         self.saved = self.current();
