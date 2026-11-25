@@ -222,7 +222,11 @@ pub fn load(shared: &Shared, server_root: &Path, id: &str) {
     });
     match layout {
         Ok(Some(layout)) => {
-            let game = Game::new(&layout);
+            let mut game = Game::new(&layout);
+            // Unanchored parts fall here, and players see them fall.
+            let mut assets = sa_scene::content_pack::AssetResolver::new(&folder);
+            game.world
+                .set_physics(sa_scene::physics::Physics::new(&layout, &mut assets));
             out(
                 shared,
                 format!(
@@ -547,8 +551,10 @@ fn run_scripts(
         .replace(now)
         .map_or(0.0, |last| (now - last).as_secs_f32().min(1.0));
     // Objects scripts move go on moving (clients move them the same way).
+    let world = &game.world;
     for state in game.buckets.values_mut() {
         state.advance(dt);
+        state.settle(world);
     }
     // Instances nobody has been in for a while stop their scripts (the
     // state stays); they start again when someone comes.

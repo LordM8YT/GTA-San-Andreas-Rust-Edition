@@ -12,6 +12,7 @@ mod mods;
 mod mta_map;
 pub mod pack_vehicle;
 pub mod part;
+pub mod physics;
 pub mod saved_model;
 pub use mods::{share_resource_folders, share_resources};
 pub use mta_map::{MapPickup, PickupKind};

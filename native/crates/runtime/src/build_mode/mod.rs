@@ -857,7 +857,10 @@ impl State {
         }
         let collision = build.playtest_collision();
         // Gameplay starts fresh from the layout as it is now.
-        let play = crate::play_logic::PlayLogic::playtest(&build.doc.layout.resolved());
+        let play = crate::play_logic::PlayLogic::playtest(
+            &build.doc.layout.resolved(),
+            &mut build.resolver,
+        );
         for problem in sa_scene::world_logic::check(&build.doc.layout) {
             build.warn(format!("Gameplay: {}", problem.text));
         }
@@ -1638,7 +1641,68 @@ impl State {
                 build.focus_selection();
             }
             168 => capture(self, "build-command.png"),
-            170 => return true,
+            // Physics: the three blocks let go, one lifted high; in the
+            // playtest they fall and come to rest.
+            170 => {
+                let build = self.build.as_mut().unwrap();
+                let ids = build.ui.smoke_parts.clone();
+                // A floor to land on.
+                let (command, floor) = sa_editor::ops::place(
+                    &mut build.doc,
+                    AssetRef::Builtin("part-block".into()),
+                    "Floor",
+                    sa_scene::world_layout::Transform::at([37.0, 71.0, 0.0]),
+                    None,
+                )
+                .expect("placing a floor");
+                build.execute(command);
+                build.preview("Floor", &[floor], |n| {
+                    n.part.as_mut().unwrap().size = [40.0, 20.0, 1.0];
+                });
+                build.preview("Unanchor", &ids, |n| n.anchored = false);
+                build.preview("Lift", &ids[..1], |n| n.transform.position[2] = 11.0);
+                build.commit_preview();
+                build.selection.clear();
+                build.ui.smoke_fall = Some((Instant::now(), f32::MAX));
+                self.toggle_playtest();
+                assert!(self.build.as_ref().unwrap().playtesting);
+            }
+            f if self
+                .build
+                .as_ref()
+                .and_then(|b| b.ui.smoke_shot)
+                .is_some_and(|shot| f as u64 >= shot + 4) =>
+            {
+                self.toggle_playtest();
+                return true;
+            }
+            f if f > 170
+                && self
+                    .build
+                    .as_ref()
+                    .is_some_and(|b| b.ui.smoke_fall.is_some()) =>
+            {
+                let lifted = self.build.as_ref().unwrap().ui.smoke_parts[0];
+                let play = self.play_logic.as_ref().expect("playtest logic");
+                let z = play
+                    .logic
+                    .shared()
+                    .moved()
+                    .find(|(n, _)| *n == lifted)
+                    .map_or(11.0, |(_, p)| p.position[2]);
+                let (started, last) = self.build.as_ref().unwrap().ui.smoke_fall.unwrap();
+                let waited = started.elapsed().as_secs_f32();
+                if waited > 2.5 && (z - last).abs() < 1e-4 {
+                    assert!(z < 10.0, "the unanchored block did not fall: {z}");
+                    capture(self, "playtest-physics.png");
+                    let build = self.build.as_mut().unwrap();
+                    build.ui.smoke_fall = None;
+                    build.ui.smoke_shot = Some(f as u64);
+                    return false;
+                }
+                assert!(waited < 15.0, "the falling block never came to rest: {z}");
+                self.build.as_mut().unwrap().ui.smoke_fall = Some((started, z));
+            }
             _ => {}
         }
         false

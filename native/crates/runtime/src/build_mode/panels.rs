@@ -114,6 +114,11 @@ pub struct UiState {
     pub smoke_model: Option<(NodeId, (glam::Vec3, glam::Vec3))>,
     /// `--smoke-build`: the saved model's copy.
     pub smoke_copy: Option<NodeId>,
+    /// `--smoke-build`: when the physics playtest started, and the
+    /// lifted block's height last frame.
+    pub smoke_fall: Option<(std::time::Instant, f32)>,
+    /// `--smoke-build`: the frame the physics shot was taken.
+    pub smoke_shot: Option<u64>,
     /// A new attribute or tag being typed in the Properties panel.
     pub attributes: super::attributes_ui::Draft,
     /// The command bar under Output.
@@ -186,7 +191,8 @@ pub fn draw(build: &mut BuildMode, root: &mut Ui, frame: &viewport::Frame) {
     let mut bottom_open = build.ui.bottom_open;
     egui::Panel::bottom("build-log")
         .resizable(true)
-        .default_size(150.0)
+        .default_size(170.0)
+        .min_size(90.0)
         .frame(egui::Frame::new().fill(SURFACE).inner_margin(6))
         .show_collapsible(root, &mut bottom_open, |ui| {
             compact(ui);
@@ -2781,6 +2787,19 @@ fn part_section(build: &mut BuildMode, ui: &mut Ui, id: NodeId, node: &Node) {
                 .text("transparency"),
         )
         .on_hover_text("0 solid, 1 invisible. Still solid to walk on unless Collision is off.");
+        let mut anchored = node.anchored;
+        if ui
+            .checkbox(&mut anchored, "Anchored")
+            .on_hover_text("Stays where you put it. Off: when the world is played it falls and lands on what is below it (the ground, objects, other parts).")
+            .changed()
+        {
+            run(
+                build,
+                ops::modify(&build.doc, if anchored { "Anchor" } else { "Unanchor" }, &[id], |n| {
+                    n.anchored = anchored
+                }),
+            );
+        }
     });
     for (what, name) in [
         (

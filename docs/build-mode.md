@@ -133,6 +133,20 @@ a script or teleport elsewhere in the world that points at one of them
 points at nothing afterwards (scripts that find objects by name keep
 working).
 
+## Physics
+
+A part's Properties have **Anchored** (on for every part placed). Untick
+it and the part falls when the world is played: straight down, faster and
+faster, until it lands on what is below it: the ground, objects or other
+parts, so loose blocks stack. It falls again when a script moves it and
+lets go, or when what it stands on is hidden. Nothing falls while you
+edit.
+
+Falls run where the world's gameplay runs (on the server when there is
+one), and players see them through the usual snapshots, so everyone sees
+the same pile. Not yet: tumbling, sliding, or players and cars pushing
+parts; only parts can be unanchored.
+
 ## Command bar
 
 Under Output is a line for Lua (the `>` field). It runs once against the
@@ -503,6 +517,7 @@ pipeline or project format.
 | Part | Where | Notes |
 | --- | --- | --- |
 | Layout format | `sa-scene::world_layout` | Serde types, validation, migration hook, atomic writes, Blender-to-glTF transform maths |
+| Physics | `sa-scene::physics`, `world_logic::Shared::settle` | `Physics::new` takes the solid, fixed objects (`place_layout`) as a `CollisionWorld` and each unanchored part's box; `settle` lands parts lowest first (so they stack) and starts a `Motion` with `fall` (gravity easing, sent as `g` in snapshots). `Logic::advance` and the server's loop call it |
 | Command bar | `sa-editor::command_bar`, `build_mode/command.rs` | Runs the line in a `sa_lua::world` host built from the resolved layout (everything changeable), then turns its requests and changed attributes/tags into one `Command::Batch`; copies are pasted first so later requests find them |
 | Arranging | `build_mode/arrange.rs` | `nudge`, `align`, `distribute` on world boxes from the GPU meshes (a group: everything in it); one `Command::Modify` each, written back relative to each object's group |
 | Attributes and tags | `world_layout::Attribute`, `Node.attributes`/`tags`, `build_mode/attributes_ui.rs`, `sa-lua` world API | `Layout::effective_attributes`/`effective_tags` merge a node's groups'; `world_logic::script_objects` hands them to scripts; unknown kinds from a newer SARE are kept (`Attribute::Other`) and hidden from scripts |

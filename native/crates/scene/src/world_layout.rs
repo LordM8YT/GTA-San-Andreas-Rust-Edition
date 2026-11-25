@@ -50,6 +50,9 @@ pub struct Transform {
 fn one() -> [f32; 3] {
     [1.0; 3]
 }
+fn is_true(value: &bool) -> bool {
+    *value
+}
 fn yes() -> bool {
     true
 }
@@ -294,6 +297,11 @@ pub struct Node {
     /// with scripts of their own, or named in a script, are always.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub scriptable: bool,
+    /// Stays where it is put. A part that is not anchored falls when the
+    /// world is played and lands on what is below it (see
+    /// [`crate::physics`]).
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub anchored: bool,
     /// The creator's own named values (a price, a team, a speed), read by
     /// scripts with `object:get`. A group's apply to everything inside it
     /// that has none of the same name.
@@ -333,6 +341,7 @@ impl Node {
             part: None,
             scripts: Vec::new(),
             scriptable: false,
+            anchored: true,
             attributes: BTreeMap::new(),
             tags: Vec::new(),
             extra: Map::new(),
@@ -357,6 +366,7 @@ impl Node {
             part: None,
             scripts: Vec::new(),
             scriptable: false,
+            anchored: true,
             attributes: BTreeMap::new(),
             tags: Vec::new(),
             extra: Map::new(),

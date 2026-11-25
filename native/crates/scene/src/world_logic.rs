@@ -481,6 +481,8 @@ pub struct World {
     copyable: HashSet<NodeId>,
     hour: Option<u8>,
     weather: Option<Weather>,
+    /// Unanchored parts and what they land on (None: none in this world).
+    physics: Option<std::sync::Arc<crate::physics::Physics>>,
 }
 
 /// Copies scripts make get ids from here up, far above any layout's own.
@@ -550,6 +552,8 @@ pub struct Motion {
     pub to: Pose,
     pub seconds: f32,
     pub elapsed: f32,
+    /// A fall (see [`crate::physics`]): faster and faster, not eased.
+    pub fall: bool,
 }
 impl Motion {
     /// Longest move, seconds.
@@ -562,7 +566,11 @@ impl Motion {
         } else {
             (self.elapsed / self.seconds).clamp(0.0, 1.0)
         };
-        let t = t * t * (3.0 - 2.0 * t);
+        let t = if self.fall {
+            t * t
+        } else {
+            t * t * (3.0 - 2.0 * t)
+        };
         let from = Vec3::from_array(self.from.position);
         let to = Vec3::from_array(self.to.position);
         let turn = (self.to.heading - self.from.heading + 180.0).rem_euclid(360.0) - 180.0;
@@ -689,6 +697,7 @@ impl Shared {
                 to: pose,
                 seconds: 0.0,
                 elapsed: 0.0,
+                fall: false,
             },
         );
         if let Some(color) = self.colors.get(&source).copied() {
@@ -718,6 +727,64 @@ impl Shared {
             }
         }
     }
+    /// Unanchored parts with nothing under them start to fall (see
+    /// [`crate::physics`]). Call it after time passes; a resting part
+    /// changes nothing.
+    pub fn settle(&mut self, world: &World) {
+        let Some(physics) = world.physics.clone() else {
+            return;
+        };
+        let mut ids: Vec<NodeId> = world
+            .switchable
+            .iter()
+            .copied()
+            .filter(|id| physics.has_body(*id))
+            .collect();
+        ids.extend(
+            self.copies
+                .iter()
+                .filter(|(_, source)| physics.has_body(**source))
+                .map(|(copy, _)| *copy),
+        );
+        ids.sort_unstable();
+        let falls = physics.falls(
+            &ids,
+            |id| {
+                if !world.visible(self, id) {
+                    return None;
+                }
+                match self.motions.get(&id) {
+                    Some(m) if !m.done() => Some(crate::physics::BodyState {
+                        position: m.to.position,
+                        busy: true,
+                    }),
+                    _ => self.pose(world, id).map(|p| crate::physics::BodyState {
+                        position: p.position,
+                        busy: false,
+                    }),
+                }
+            },
+            |id| self.copies.get(&id).copied().unwrap_or(id),
+        );
+        for (id, drop) in falls {
+            let Some(from) = self.pose(world, id) else {
+                continue;
+            };
+            let mut to = from;
+            to.position[2] -= drop;
+            self.motions.insert(
+                id,
+                Motion {
+                    from,
+                    to,
+                    seconds: crate::physics::fall_seconds(drop),
+                    elapsed: 0.0,
+                    fall: true,
+                },
+            );
+            self.revision += 1;
+        }
+    }
     /// Start moving `node` from where it is now to `to` over `seconds`.
     /// False when scripts may not move it.
     pub fn place(&mut self, world: &World, node: NodeId, to: Pose, seconds: f32) -> bool {
@@ -742,6 +809,7 @@ impl Shared {
                 to,
                 seconds,
                 elapsed: 0.0,
+                fall: false,
             },
         );
         self.revision += 1;
@@ -889,6 +957,7 @@ impl Shared {
                     ],
                     seconds: m.seconds,
                     elapsed: m.elapsed,
+                    fall: m.fall,
                 })
                 .collect(),
         }
@@ -934,6 +1003,7 @@ impl Shared {
                         to: pose(m.to),
                         seconds,
                         elapsed: m.elapsed.clamp(0.0, seconds),
+                        fall: m.fall,
                     },
                 )
             })
@@ -1022,6 +1092,7 @@ impl World {
                 .collect(),
             copyable: copyable(layout),
             switchable: switchable(layout),
+            physics: None,
             hour: layout.settings.hour,
             weather: layout.settings.weather.as_deref().and_then(Weather::parse),
         }
@@ -1082,6 +1153,13 @@ impl World {
         let mut out = Vec::new();
         self.run(shared, player, 0, &[Kept::Known(action)], &mut out);
         out
+    }
+    /// Let unanchored parts fall (see [`crate::physics`]).
+    pub fn set_physics(&mut self, physics: Option<crate::physics::Physics>) {
+        self.physics = physics.map(std::sync::Arc::new);
+    }
+    pub fn has_physics(&self) -> bool {
+        self.physics.is_some()
     }
     /// A fresh shared state: the world's own hour and weather, nothing
     /// shown or hidden yet.
@@ -1447,9 +1525,15 @@ impl Logic {
     pub fn set_shared(&mut self, shared: Shared) {
         self.shared = shared;
     }
-    /// Time passes for objects scripts are moving.
+    /// Time passes for objects scripts are moving, and unanchored parts
+    /// fall.
     pub fn advance(&mut self, dt: f32) {
         self.shared.advance(dt);
+        self.shared.settle(&self.world);
+    }
+    /// Let unanchored parts fall (see [`crate::physics`]).
+    pub fn set_physics(&mut self, physics: Option<crate::physics::Physics>) {
+        self.world.set_physics(physics);
     }
     /// [`World::apply_script`] for the one player.
     pub fn apply_script(&mut self, change: ScriptChange) -> Vec<Effect> {
@@ -1638,6 +1722,9 @@ pub struct SnapshotMotion {
     pub seconds: f32,
     #[serde(rename = "e")]
     pub elapsed: f32,
+    /// A fall: gravity, not eased (older games ease it, which looks close).
+    #[serde(rename = "g", default, skip_serializing_if = "std::ops::Not::not")]
+    pub fall: bool,
 }
 
 /// Switchable objects scripts may copy: models, not terrain or roads.
@@ -1675,6 +1762,7 @@ pub fn switchable(layout: &Layout) -> HashSet<NodeId> {
         .filter(|n| {
             objects.contains(&n.id)
                 && (n.scriptable
+                    || (!n.anchored && n.part.is_some())
                     || n.scripts.iter().any(|s| s.enabled)
                     || named.contains(n.name.as_str()))
         })

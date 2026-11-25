@@ -70,8 +70,11 @@ struct PackObjects {
 
 impl PlayLogic {
     /// Build Mode's playtest of `layout`.
-    pub fn playtest(layout: &Layout) -> Self {
-        Self::with(layout, None)
+    pub fn playtest(layout: &Layout, resolver: &mut AssetResolver) -> Self {
+        let mut play = Self::with(layout, None);
+        play.logic
+            .set_physics(sa_scene::physics::Physics::new(layout, resolver));
+        play
     }
     /// A content pack played from the launcher, from its `folder`.
     pub fn pack(layout: &Layout, folder: &std::path::Path) -> Self {
@@ -103,7 +106,8 @@ impl PlayLogic {
             copy.parent = None;
             objects.nodes.push(copy);
         }
-        Self::with(
+        let physics = sa_scene::physics::Physics::new(layout, &mut resolver);
+        let mut play = Self::with(
             layout,
             Some(PackObjects {
                 gpu: Gpu::default(),
@@ -111,7 +115,9 @@ impl PlayLogic {
                 layout: objects,
                 solid,
             }),
-        )
+        );
+        play.logic.set_physics(physics);
+        play
     }
     fn with(layout: &Layout, objects: Option<PackObjects>) -> Self {
         Self {
