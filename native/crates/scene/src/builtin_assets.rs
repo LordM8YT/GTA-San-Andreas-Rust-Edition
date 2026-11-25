@@ -22,6 +22,31 @@ pub struct Builtin {
 /// Every built-in asset, in catalog order.
 pub const ALL: &[Builtin] = &[
     Builtin {
+        name: "part-block",
+        label: "Block",
+        category: PARTS,
+    },
+    Builtin {
+        name: "part-ball",
+        label: "Ball",
+        category: PARTS,
+    },
+    Builtin {
+        name: "part-cylinder",
+        label: "Cylinder",
+        category: PARTS,
+    },
+    Builtin {
+        name: "part-wedge",
+        label: "Wedge",
+        category: PARTS,
+    },
+    Builtin {
+        name: "part-corner-wedge",
+        label: "Corner wedge",
+        category: PARTS,
+    },
+    Builtin {
         name: "ground",
         label: "Ground plate 32 m",
         category: "Ground",
@@ -32,8 +57,18 @@ pub const ALL: &[Builtin] = &[
         category: "Ground",
     },
     Builtin {
+        name: "terrain",
+        label: "Terrain 64 m (sculpt)",
+        category: "Ground",
+    },
+    Builtin {
         name: "road",
         label: "Road 8 x 32 m",
+        category: "Roads",
+    },
+    Builtin {
+        name: "spline-road",
+        label: "Road along points",
         category: "Roads",
     },
     Builtin {
@@ -101,7 +136,101 @@ pub const ALL: &[Builtin] = &[
         label: "Rock",
         category: "Nature",
     },
+    // Gameplay: placing one also attaches its behaviour (see
+    // `world_logic::preset`). Markers are only drawn in the editor.
+    Builtin {
+        name: "marker-spawn",
+        label: "Spawn point",
+        category: GAMEPLAY,
+    },
+    Builtin {
+        name: "door",
+        label: "Door (opens with E)",
+        category: GAMEPLAY,
+    },
+    Builtin {
+        name: "door-teleport",
+        label: "Door to another place",
+        category: GAMEPLAY,
+    },
+    Builtin {
+        name: "marker-teleport",
+        label: "Teleport pad",
+        category: GAMEPLAY,
+    },
+    Builtin {
+        name: "marker-target",
+        label: "Destination point",
+        category: GAMEPLAY,
+    },
+    Builtin {
+        name: "marker-trigger",
+        label: "Trigger zone",
+        category: GAMEPLAY,
+    },
+    Builtin {
+        name: "marker-interact",
+        label: "Interaction point",
+        category: GAMEPLAY,
+    },
+    Builtin {
+        name: "marker-checkpoint",
+        label: "Checkpoint",
+        category: GAMEPLAY,
+    },
 ];
+
+/// Catalog category of gameplay assets.
+pub const GAMEPLAY: &str = "Gameplay";
+/// Catalog category of parts: shapes sized, coloured and given a
+/// material in Properties.
+pub const PARTS: &str = "Parts";
+/// The asset every placed part refers to (its look is in `Node::part`).
+pub const PART: &str = "part";
+
+/// The part a built-in places: `part-<shape>` from the catalog (`part`
+/// itself is a block). A 4 x 2 x 1 m grey plastic block, like a brick to
+/// build with; a ball, cylinder or corner wedge 2 m each way.
+pub fn preset_part(name: &str) -> Option<crate::world_layout::Part> {
+    use crate::world_layout::{Part, PartShape};
+    let (shape, size) = match name {
+        "part" | "part-block" => (PartShape::Block, [4.0, 2.0, 1.0]),
+        "part-ball" => (PartShape::Ball, [2.0, 2.0, 2.0]),
+        "part-cylinder" => (PartShape::Cylinder, [2.0, 2.0, 2.0]),
+        "part-wedge" => (PartShape::Wedge, [4.0, 2.0, 1.0]),
+        "part-corner-wedge" => (PartShape::CornerWedge, [2.0, 2.0, 2.0]),
+        _ => return None,
+    };
+    Some(Part::new(shape, size))
+}
+
+/// The ground a placed Terrain starts with: flat, 64 m, 2 m squares.
+pub fn preset_terrain() -> crate::world_layout::Terrain {
+    crate::world_layout::Terrain::flat(64.0, 32)
+}
+
+/// The road a placed "Road along points" starts with: 8 m wide, 48 m
+/// long with a gentle bend, ready to drag its points.
+pub fn preset_road() -> crate::world_layout::Road {
+    crate::world_layout::Road {
+        points: vec![[-24.0, 0.0, 0.0], [0.0, 6.0, 0.0], [24.0, 0.0, 0.0]],
+        ..crate::world_layout::Road::straight([0.0; 3], [0.0; 3], 8.0)
+    }
+}
+
+/// The light a built-in comes with when placed (a lamp post glows).
+pub fn light_preset(name: &str) -> Option<crate::world_layout::PointLight> {
+    (name == "lamp-post").then(|| crate::world_layout::PointLight {
+        offset: [0.0, 1.0, 4.25],
+        ..crate::world_layout::PointLight::lamp()
+    })
+}
+
+/// Shown only in Build Mode: gameplay markers are invisible and have no
+/// collision when the world is played.
+pub fn editor_only(name: &str) -> bool {
+    name.starts_with("marker-")
+}
 
 pub fn find(name: &str) -> Option<&'static Builtin> {
     ALL.iter().find(|b| b.name == name)
@@ -214,6 +343,18 @@ const DARK: [f32; 3] = [0.22, 0.22, 0.24];
 
 /// Build a built-in model, or None for an unknown name.
 pub fn model(name: &str) -> Option<Model> {
+    if name == "terrain" {
+        // A placed terrain shows its own heights (`Node::terrain`); this is
+        // the picture and the stand-in.
+        return Some(crate::terrain::model(&preset_terrain()));
+    }
+    if let Some(part) = preset_part(name) {
+        return Some(crate::part::model(&part));
+    }
+    if name == "spline-road" {
+        // Likewise: a placed road shows its own points (`Node::road`).
+        return Some(crate::road::model(&preset_road()));
+    }
     let mut s = Shape::default();
     match name {
         "ground" => s.cuboid([-16.0, -16.0, -0.3], [16.0, 16.0, 0.0], [0.5, 0.5, 0.48]),
@@ -284,6 +425,33 @@ pub fn model(name: &str) -> Option<Model> {
             s.cuboid([-0.9, -0.7, 0.0], [0.9, 0.7, 0.8], [0.5, 0.48, 0.45]);
             s.cuboid([-0.5, -0.4, 0.8], [0.6, 0.5, 1.2], [0.55, 0.53, 0.5]);
         }
+        "door" | "door-teleport" => {
+            let panel = if name == "door" {
+                WOOD
+            } else {
+                [0.25, 0.32, 0.55]
+            };
+            s.cuboid([-0.6, -0.06, 0.0], [0.6, 0.06, 2.2], panel);
+            s.cuboid([0.38, -0.12, 1.0], [0.48, 0.12, 1.08], [0.85, 0.75, 0.4]);
+        }
+        marker if editor_only(marker) => {
+            let color = match marker {
+                "marker-spawn" => [0.3, 0.85, 0.4],
+                "marker-teleport" => [0.7, 0.4, 0.95],
+                "marker-target" => [0.35, 0.6, 1.0],
+                "marker-trigger" => [1.0, 0.6, 0.2],
+                "marker-interact" => [0.3, 0.85, 0.9],
+                "marker-checkpoint" => [1.0, 0.85, 0.2],
+                _ => return None,
+            };
+            s.cuboid([-0.5, -0.5, 0.0], [0.5, 0.5, 0.05], color);
+            s.cuboid([-0.05, -0.05, 0.05], [0.05, 0.05, 1.6], DARK);
+            s.cuboid([0.05, -0.02, 1.2], [0.5, 0.02, 1.6], color);
+            if matches!(marker, "marker-spawn" | "marker-target") {
+                // The way the player will face: +Y.
+                s.cuboid([-0.12, 0.0, 0.05], [0.12, 0.9, 0.12], color);
+            }
+        }
         _ => return None,
     }
     let triangles = s.vertices.len() / 3;
@@ -296,8 +464,14 @@ pub fn model(name: &str) -> Option<Model> {
         map_door: None,
         mlo_entity: None,
     };
+    // Markers are pictures for the editor, never solid.
+    let collision = if editor_only(name) {
+        Vec::new()
+    } else {
+        vec![batch(s.vertices.clone())]
+    };
     Some(Model {
-        collision: vec![batch(s.vertices.clone())],
+        collision,
         drawn: vec![batch(s.vertices)],
         textures: HashMap::from([(KEY.into(), white())]),
         triangles,
@@ -322,7 +496,13 @@ mod tests {
         for builtin in ALL {
             let model = model(builtin.name).unwrap_or_else(|| panic!("{}", builtin.name));
             assert!(model.triangles > 0, "{}", builtin.name);
-            assert!(!model.collision.is_empty());
+            // Gameplay markers are never solid; everything else is.
+            assert_eq!(
+                model.collision.is_empty(),
+                editor_only(builtin.name),
+                "{}",
+                builtin.name
+            );
             let lowest = model.drawn[0]
                 .vertices
                 .iter()

@@ -16,4 +16,9 @@ serde_json = "1.0.151"
 png = "0.18"
 quick-xml = "0.41"
 gltf = { version = "1.4.1", default-features = false, features = ["utils", "names"] }
+sa-lua = { path = "../lua", optional = true }
+
+[features]
+# World scripts (`world_scripts`): the game and the server run them.
+scripts = ["dep:sa-lua"]
 

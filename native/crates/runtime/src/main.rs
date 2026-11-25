@@ -25,6 +25,7 @@ mod mipmaps;
 mod multiplayer;
 mod pack_actors;
 mod pickups;
+mod play_logic;
 mod police;
 mod postprocess;
 mod progress;
@@ -95,6 +96,8 @@ impl From<sa_scene::MapDoor> for MapDoorState {
     }
 }
 const HEADLIGHT_VERTICES: usize = 18;
+/// Object lights that light surfaces per pixel at once (nearest first).
+const MAX_POINT_LIGHTS: usize = 32;
 /// A light pool on the road ahead of the car and two coronas at its nose,
 /// in the corona/pool vertex encoding of `sa_scene::lights`.
 fn headlight_vertices(car: &sa_scene::vehicle::Car) -> [sa_scene::Vertex; HEADLIGHT_VERTICES] {
@@ -258,6 +261,9 @@ struct State {
     gps: gps::Gps,
     menu: menu::Menu,
     applied_settings: settings::Settings,
+    /// The graphics adapter is integrated, virtual or a software renderer: the
+    /// editor draws light there unless the player picks otherwise.
+    integrated_gpu: bool,
     persist_settings: bool,
     progress_path: Option<PathBuf>,
     last_progress: Option<progress::Save>,
@@ -347,6 +353,9 @@ struct State {
     wreck_fire_seconds: f32,
     fire_glows: wgpu::Buffer,
     fire_glow_count: u32,
+    /// Object lights lighting the scene per pixel this frame (their painted
+    /// pools are skipped; every other lamp keeps its pool).
+    lit_lamps: std::collections::HashSet<sa_scene::world_layout::NodeId>,
     /// The parts look the player's car was last drawn with.
     car_render_look: sa_scene::vehicle::Look,
     /// Weapon model id to (model, txd), and the meshes of guns drawn so far.
@@ -392,6 +401,9 @@ struct State {
     pack: pack_actors::PackActors,
     /// Build Mode, when SARE was started with `--build`.
     build: Option<build_mode::BuildMode>,
+    /// The world's Build Mode gameplay while it is played (playtest, or a
+    /// content pack with a layout).
+    play_logic: Option<play_logic::PlayLogic>,
 }
 impl State {
     fn play_menu_sound(&mut self, kind: sa_audio::MenuSound) {
@@ -720,7 +732,8 @@ impl State {
         });
         let camera = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("camera"),
-            size: 224,
+            // The camera and lighting (224 bytes), then the object lights.
+            size: 224 + 16 + (MAX_POINT_LIGHTS * 32) as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -1031,6 +1044,10 @@ impl State {
         let mut menu = menu::Menu::new(&gui_context, Vec::new());
         menu.settings = startup_settings;
         let gpu = adapter.get_info();
+        let integrated_gpu = matches!(
+            gpu.device_type,
+            wgpu::DeviceType::IntegratedGpu | wgpu::DeviceType::VirtualGpu | wgpu::DeviceType::Cpu
+        );
         menu.graphics_device = format!("{} / {:?}", gpu.name, gpu.backend);
         runtime_log::line(format!("Renderer: {}", menu.graphics_device));
         if !args
@@ -1169,6 +1186,7 @@ impl State {
             gps: gps::Gps::default(),
             menu,
             applied_settings,
+            integrated_gpu,
             persist_settings: true,
             progress_path: None,
             last_progress: None,
@@ -1235,6 +1253,7 @@ impl State {
             wreck_fire_seconds: 0.0,
             fire_glows,
             fire_glow_count: 0,
+            lit_lamps: Default::default(),
             car_render_look: Default::default(),
             weapon_models: None,
             gun_meshes: std::collections::HashMap::new(),
@@ -1267,6 +1286,7 @@ impl State {
             ped_yaw: 0.0,
             pack: Default::default(),
             build: None,
+            play_logic: None,
         };
         if !first_model && state.animation.is_none() {
             if let Some(world) = &state.collision {
@@ -1622,7 +1642,7 @@ impl State {
         if size.width > 0 && size.height > 0 {
             self.postprocess.resize(
                 &self.device,
-                self.menu.settings.render_size(size.width, size.height),
+                self.draw_settings().render_size(size.width, size.height),
                 [size.width.max(1), size.height.max(1)],
             );
             self.configure();
@@ -1729,6 +1749,7 @@ impl State {
             self.daycycle.advance_weather(dt);
         }
         self.daycycle.fixed_weather = self.menu.settings.fixed_weather.map(usize::from);
+        self.play_logic_update();
         self.daycycle
             .set_position(ORIGIN[0] + self.position.x, ORIGIN[1] - self.position.z);
         let right = Vec3::new(self.yaw.cos(), 0.0, -self.yaw.sin());
@@ -2249,7 +2270,7 @@ impl State {
         );
         let camera_matrix = projection * view;
         self.frustum = culling::Frustum::new(camera_matrix);
-        let jittered = self.menu.settings.temporal_aa.then(|| {
+        let jittered = self.draw_settings().temporal_aa.then(|| {
             temporal::jittered(
                 camera_matrix,
                 self.postprocess.temporal.jitter(),
@@ -2267,6 +2288,10 @@ impl State {
             .fixed_hour
             .map_or(self.daycycle.minutes / 60.0, f32::from);
         let mut lighting = self.daycycle.lighting(hour);
+        if let Some(weather) = self.world_weather() {
+            daycycle::apply_weather(&mut lighting, weather, hour);
+        }
+        self.apply_world_environment(&mut lighting);
         if self.interior != 0 {
             // Interiors keep their own baked lighting at every hour.
             lighting.ambient = Vec3::ONE;
@@ -2276,7 +2301,7 @@ impl State {
         }
         self.lighting = lighting;
         self.wetness = dampen(self.wetness, lighting.rain, dt);
-        let enhanced = self.menu.settings.enhanced_lighting;
+        let enhanced = self.draw_settings().enhanced_lighting;
         self.queue.write_buffer(
             &self.camera,
             64,
@@ -2313,6 +2338,7 @@ impl State {
             },
             sky: lighting.sky,
             jittered,
+            look: self.world_look(),
         };
         let light = shadow::light_matrix(self.position, lighting.sun);
         self.light_frustum = culling::Frustum::new(light);
@@ -2338,6 +2364,23 @@ impl State {
                 lighting.sky.extend(0.0).to_array(),
             ]),
         );
+        // Object lights light what is near them at night (the Lamp lighting
+        // setting; light editor graphics turn it off).
+        let night = 1.0 - lighting.daylight.clamp(0.0, 1.0);
+        let lamps = self.draw_settings().lamp_lighting;
+        let lights = if lamps && self.interior == 0 && night > 0.02 {
+            self.point_lights(MAX_POINT_LIGHTS)
+        } else {
+            Vec::new()
+        };
+        self.lit_lamps = lights.iter().map(|(id, ..)| *id).collect();
+        let mut data = vec![lights.len() as f32, 0.0, 0.0, 0.0];
+        for (_, position, radius, colour) in &lights {
+            data.extend(position.extend(*radius).to_array());
+            data.extend(colour.extend(night * 0.9).to_array());
+        }
+        self.queue
+            .write_buffer(&self.camera, 224, bytemuck::cast_slice(&data));
     }
     /// World batches inside `frustum`, followed by every car and ped.
     fn mlo_batch_visible(&self, batch: &GpuBatch) -> bool {
@@ -2414,21 +2457,29 @@ impl State {
                     .flatten()
                     .flatten(),
             )
+            .chain(self.play_logic.iter().flat_map(|play| play.batches()))
             .chain(self.build.iter().flat_map(|build| {
                 build
                     .gpu
                     .objects
                     .iter()
                     .filter(|(id, object)| {
-                        build.doc.layout.effective_visible(**id)
-                            && !(build.playtesting && object.placeholder)
+                        if !build.playtesting {
+                            return build.doc.layout.effective_visible(**id);
+                        }
+                        // Playtest: what the gameplay shows; no markers or
+                        // stand-ins for missing models.
+                        self.play_logic_visible(**id)
+                            .unwrap_or_else(|| build.doc.layout.effective_visible(**id))
+                            && !object.placeholder
+                            && !object.editor_only()
                     })
                     .flat_map(|(_, object)| &object.batches)
                     .chain(build.gpu.ghost.iter().flat_map(|ghost| &ghost.batches))
             }))
     }
     fn shadows_active(&self) -> bool {
-        self.interior == 0 && self.menu.settings.sun_shadows
+        self.interior == 0 && self.draw_settings().sun_shadows
     }
     fn respawn(&mut self) {
         self.leave_passenger();
@@ -2776,8 +2827,7 @@ impl State {
         }
         self.postprocess.resize(
             &self.device,
-            self.menu
-                .settings
+            self.draw_settings()
                 .render_size(self.size.width, self.size.height),
             [self.size.width.max(1), self.size.height.max(1)],
         );
@@ -2888,6 +2938,8 @@ impl State {
                 // Build Mode draws the whole interface itself.
                 return;
             }
+            let scale = (ui.ctx().content_rect().height() / 900.0).clamp(0.65, 1.5);
+            self.play_logic_ui(ui.ctx(), scale);
             if let Some(text) = &debug {
                 egui::Area::new("performance".into())
                     .anchor(egui::Align2::RIGHT_TOP, [-12., 12.])
@@ -2922,7 +2974,6 @@ impl State {
                 std::f32::consts::PI - self.yaw,
                 &self.radar_tiles,
             );
-            let scale = (ui.ctx().content_rect().height() / 900.0).clamp(0.65, 1.5);
             if self.menu.page.is_none() {
                 script_actions = script_ui::draw(ui.ctx(), &self.scripts, scale);
             }
@@ -3115,9 +3166,24 @@ impl State {
                 pass.set_pipeline(&self.corona);
                 pass.draw(0..self.fire_glow_count, 0..1);
             }
-            for b in self.batches.iter().filter(|b| {
-                night && is_glow(b) && (!self.culling_enabled || self.frustum.visible(b.bounds))
-            }) {
+            // A lamp lit per pixel needs no painted pool of light; the
+            // map's own lights and every other lamp keep theirs.
+            let creator_glows = self
+                .creator_glows()
+                .filter(|(id, b)| {
+                    night
+                        && !(b.texture_key == sa_scene::lights::POOL_KEY
+                            && self.lit_lamps.contains(id))
+                })
+                .map(|(_, b)| b);
+            for b in self
+                .batches
+                .iter()
+                .filter(|b| {
+                    night && is_glow(b) && (!self.culling_enabled || self.frustum.visible(b.bounds))
+                })
+                .chain(creator_glows)
+            {
                 pass.set_pipeline(if b.texture_key == sa_scene::lights::CORONA_KEY {
                     &self.corona
                 } else {
@@ -3128,11 +3194,12 @@ impl State {
                 pass.draw(0..b.count, 0..1);
             }
         }
+        let settings = self.draw_settings().into_owned();
         self.postprocess.draw(
             &mut encoder,
             &self.queue,
             &view,
-            &self.menu.settings,
+            &settings,
             [self.size.width, self.size.height],
             &self.reflections,
         );
@@ -3226,6 +3293,8 @@ struct App {
     world_name: String,
     /// Where a content pack asks the player to start, in runtime space.
     spawn_eye: Option<Vec3>,
+    /// The pack's Build Mode layout, for its gameplay (not in Build Mode).
+    pack_layout: Option<(PathBuf, sa_scene::world_layout::Layout)>,
     /// `--build`: the world folder Build Mode edits.
     build_folder: Option<PathBuf>,
     smoke: bool,
@@ -3276,6 +3345,8 @@ struct App {
     smoke_ped: bool,
     smoke_wardrobe: bool,
     smoke_interiors: bool,
+    /// `--smoke-build`: edit, playtest the gameplay and return (Build Mode).
+    smoke_build: bool,
     trailer: Option<trailer::Director>,
     car_start: Vec3,
     smoke_returning: bool,
@@ -3509,6 +3580,18 @@ impl ApplicationHandler for App {
                 state.standalone = self.standalone;
                 state.pack_id = self.pack_id.clone();
                 state.world_name = self.world_name.clone();
+                if let Some((folder, layout)) = &self.pack_layout {
+                    let play = play_logic::PlayLogic::pack(layout, folder);
+                    if let Some(pose) = play.logic.spawn() {
+                        // A Spawn point object wins over content.json's spawn.
+                        self.spawn_eye = Some(play_logic::spawn_eye(&pose));
+                        state.yaw = play_logic::yaw_for(pose.heading);
+                    }
+                    if play.logic.has_gameplay() {
+                        runtime_log::line("World gameplay: on");
+                    }
+                    state.play_logic = Some(play);
+                }
                 if let (Some(eye), Some(world)) = (self.spawn_eye, &state.collision) {
                     let player = Player::spawn(world, eye);
                     state.position = player.eye();
@@ -3833,6 +3916,12 @@ impl ApplicationHandler for App {
                         .window
                         .set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
                 }
+                if self.smoke_build {
+                    // Test edits must never replace a real autosave.
+                    if let Some(build) = &mut state.build {
+                        build.autosave_off = true;
+                    }
+                }
                 self.state = Some(state);
                 match gilrs::Gilrs::new() {
                     Ok(gilrs) => {
@@ -3978,7 +4067,7 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => state.resize(size),
             WindowEvent::RedrawRequested => {
-                if !self.smoke && state.build_mode_editing() {
+                if !self.smoke && !self.smoke_build && state.build_mode_editing() {
                     // Build Mode paces itself after each frame (see below).
                     if Instant::now() < state.next_frame {
                         event_loop.set_control_flow(ControlFlow::WaitUntil(state.next_frame));
@@ -4261,7 +4350,30 @@ impl ApplicationHandler for App {
                 }
                 let previous_position = state.position;
                 let rendered = state.render();
-                if !self.smoke {
+                if self.smoke_build && rendered {
+                    assert!(
+                        self.smoke_started.elapsed().as_secs() < 120,
+                        "Build Mode smoke timed out"
+                    );
+                    if !state.loading() {
+                        self.smoke_frames += 1;
+                        let captures = self.capture_dir.as_deref();
+                        if state.build.is_some() {
+                            if state.build_mode_smoke(self.smoke_frames, captures) {
+                                println!(
+                                    "Build Mode smoke passed: edit, playtest gameplay, return"
+                                );
+                                event_loop.exit();
+                            }
+                        } else if state.play_logic_smoke(self.smoke_frames, captures) {
+                            println!("Pack gameplay smoke passed");
+                            event_loop.exit();
+                        }
+                    }
+                    state.window.request_redraw();
+                    return;
+                }
+                if !self.smoke && !self.smoke_build {
                     if let Some(next) = state.build_mode_frame_drawn() {
                         state.next_frame = next;
                         event_loop.set_control_flow(ControlFlow::WaitUntil(next));
@@ -4996,9 +5108,16 @@ impl ApplicationHandler for App {
                             KeyCode::KeyQ | KeyCode::KeyE
                                 if !event.repeat && state.walking && !state.driving =>
                             {
-                                if code != KeyCode::KeyE || !state.interact_map_door() {
+                                if code != KeyCode::KeyE
+                                    || !(state.interact_play_logic() || state.interact_map_door())
+                                {
                                     state.arsenal.cycle(code == KeyCode::KeyE);
                                 }
+                            }
+                            // At the wheel, E uses interactions that work
+                            // from vehicles.
+                            KeyCode::KeyE if !event.repeat && state.driving => {
+                                state.interact_play_logic();
                             }
                             KeyCode::KeyF if !event.repeat => {
                                 state.toggle_car();
@@ -6413,6 +6532,12 @@ fn run() -> Result<()> {
         pack_id,
         world_name,
         spawn_eye: spawn_eye.filter(|_| build_folder.is_none()),
+        pack_layout: match (&standalone_source, &build_folder) {
+            (Some(sa_scene::content::ContentSource::Pack(folder)), None) => {
+                play_logic::load_pack(folder).map(|layout| (folder.clone(), layout))
+            }
+            _ => None,
+        },
         build_folder,
         smoke: args.iter().any(|a| {
             a == "--smoke-save"
@@ -6500,6 +6625,7 @@ fn run() -> Result<()> {
             .any(|a| a == "--smoke-ped" || a == "--smoke-wardrobe"),
         smoke_wardrobe: args.iter().any(|a| a == "--smoke-wardrobe"),
         smoke_interiors: args.iter().any(|a| a == "--smoke-interiors"),
+        smoke_build: args.iter().any(|a| a == "--smoke-build"),
         trailer: trailer::Director::from_args(&args)?,
         car_start: Vec3::ZERO,
         smoke_returning: false,

@@ -65,6 +65,7 @@ for rcon) on the port for internet hosting.
 ## Console
 
 `status`, `resources`, `ensure|start|stop|restart <resource>`, `refresh`,
+`world_reset [instance]`,
 `clientkick <id> <reason>`, `say <text>`, `add_principal player.<id> group.admin`,
 `test_ace`, `list_aces`, `cmdlist`, `quit`. Any `RegisterCommand` command can be
 run from the console. Players run commands from chat (`/respawn`); built-in and
@@ -185,6 +186,48 @@ In content packs with [characters](content-packs.md#characters),
 the colours `skin`, `hairColor`, `topColor`, `pantsColor`, `shoesColor`
 (`{r, g, b}`, 0–255). The server keeps it until the player leaves; save it
 yourself (`sare_rp_identity` keeps it in character metadata).
+
+### Build Mode worlds
+
+With `sets content_pack <id>` and the pack in `content/<id>` next to
+server.cfg, the server runs the world's [Build Mode gameplay](build-mode.md#multiplayer)
+for everyone: doors, zones, checkpoints, time and weather are the server's
+decisions, per routing bucket. The console says `World gameplay: <id> ...
+runs on the server`. Without the pack on the server, each player's game runs
+the gameplay alone, unsynchronised.
+
+The world's own [scripts](world-scripts.md) run on the server too, once per
+instance, in their sandbox: what they change is shared like a door, and
+their `print` and errors go to the console (`[Bell/Ring] ...`,
+`Script error in Bell/Ring: ...`). An instance's scripts stop 30 seconds
+after its last player leaves and start again when someone comes back.
+
+Events (`source` is the player): `sare:zoneEnter` and `sare:zoneLeave`
+(`node`, `name`), `sare:objectUsed` (`node`, `name`), `sare:checkpoint`
+(`race`, `number`, `total`) and `sare:raceFinished` (`race`, `seconds`).
+Natives (objects are layout ids or object names; `bucket` defaults to 0):
+`SetWorldObjectVisible(object, visible, bucket)` (false when there is no
+such object), `IsWorldObjectVisible(object, bucket)`,
+`GetWorldObjectByName(name)`, `SetWorldHour(hour or nil, bucket)`,
+`SetWorldWeather('clear'|'cloudy'|'rain'|'fog' or nil, bucket)` and
+`ResetWorldInstance(bucket)` (every object as placed, the world's own hour
+and weather, "only the first time" triggers usable again and its world
+scripts started again; true when the instance had state).
+
+The console command `world_reset [instance]` does the same: `world_reset 0`
+puts the main world back as it starts (its world scripts start again),
+`world_reset` resets every instance that has state. Players there get the new state at once and can use "only
+the first time" triggers again; their course progress and times are kept.
+
+```lua
+AddEventHandler('sare:raceFinished', function(race, seconds)
+    TriggerClientEvent('chat:addMessage', -1, { args = { 'Race', ('%s finished in %.1f s'):format(GetPlayerName(source), seconds) } })
+end)
+RegisterCommand('lockdown', function()
+    SetWorldObjectVisible('Garden gate', true)  -- shut the gate for everyone
+    SetWorldWeather('fog')
+end, true)
+```
 
 Not supported yet: NUI pages (by design: use the script UI), passenger seats in server vehicles, OneSync population, entity lockdown modes, replicated state bags,
 databases (oxmysql is a Node.js resource), `PerformHttpRequest`, and identifiers

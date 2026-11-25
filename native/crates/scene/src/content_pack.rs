@@ -301,7 +301,7 @@ impl PackWorld {
         let mut model = base_model(folder, &manifest)?;
         if with_layout {
             if let Some(file) = &manifest.world.layout {
-                let layout = world_layout::Layout::read(&inside(folder, file)?)?;
+                let layout = world_layout::Layout::read(&inside(folder, file)?)?.resolved();
                 let mut assets = AssetResolver::new(folder);
                 let report = place_layout(&mut model, &layout, &mut assets);
                 for problem in &report.problems {
@@ -350,21 +350,32 @@ pub struct PlaceReport {
 
 /// Add every visible (or solid) layout object to `model`, transformed into
 /// pack space. Objects whose asset is missing are reported, not dropped from
-/// the layout: the layout file is never changed here.
+/// the layout: the layout file is never changed here. Objects gameplay can
+/// show or hide ([`crate::world_logic::switchable`]) are left out: the game
+/// draws them, and switches their collision, one by one.
 pub fn place_layout(
     model: &mut gltf_model::Model,
     layout: &world_layout::Layout,
     assets: &mut AssetResolver,
 ) -> PlaceReport {
     let mut report = PlaceReport::default();
+    let switchable = crate::world_logic::switchable(layout);
     for node in &layout.nodes {
         let Some(asset) = &node.asset else { continue };
+        if switchable.contains(&node.id) {
+            continue;
+        }
+        if matches!(asset, world_layout::AssetRef::Builtin(name) if crate::builtin_assets::editor_only(name))
+        {
+            // Gameplay markers only show in Build Mode.
+            continue;
+        }
         let visible = layout.effective_visible(node.id);
         let solid = layout.effective_collision(node.id);
         if !visible && !solid {
             continue;
         }
-        let source = match assets.model(asset) {
+        let source = match node_model(node, assets) {
             Ok(source) => source,
             Err(error) => {
                 report.problems.push(format!(
@@ -375,6 +386,15 @@ pub fn place_layout(
             }
         };
         let (drawn, collision) = source.transformed(node.transform.matrix());
+        if let Some(light) = node.light.as_ref().filter(|_| visible) {
+            let glow = crate::lights::point_light_model(light);
+            model
+                .drawn
+                .extend(glow.transformed(node.transform.matrix()).0);
+            for (key, texture) in glow.textures {
+                model.textures.entry(key).or_insert(texture);
+            }
+        }
         if visible {
             model.triangles += source.triangles;
             model.drawn.extend(drawn);
@@ -393,6 +413,25 @@ pub fn place_layout(
     report
 }
 
+/// The model a layout object shows: its sculpted terrain, its road, or its
+/// asset.
+pub fn node_model(
+    node: &world_layout::Node,
+    assets: &mut AssetResolver,
+) -> Result<std::sync::Arc<gltf_model::Model>> {
+    if let Some(terrain) = &node.terrain {
+        return Ok(std::sync::Arc::new(crate::terrain::model(terrain)));
+    }
+    if let Some(road) = &node.road {
+        return Ok(std::sync::Arc::new(crate::road::model(road)));
+    }
+    if let Some(part) = &node.part {
+        return Ok(std::sync::Arc::new(crate::part::model(part)));
+    }
+    let asset = node.asset.as_ref().context("a group has no model")?;
+    assets.model(asset)
+}
+
 /// Finds and caches the models layout objects refer to.
 pub struct AssetResolver {
     own: PathBuf,
@@ -401,6 +440,8 @@ pub struct AssetResolver {
         world_layout::AssetRef,
         std::result::Result<std::sync::Arc<gltf_model::Model>, String>,
     >,
+    /// Saved models being put together now: one inside itself is refused.
+    composing: Vec<world_layout::AssetRef>,
 }
 impl AssetResolver {
     /// Resolve `self:` paths in `own_folder` and `pack:` ids in the usual
@@ -417,6 +458,7 @@ impl AssetResolver {
             own: own_folder.to_path_buf(),
             pack_dirs,
             cache: HashMap::new(),
+            composing: Vec::new(),
         }
     }
     pub fn own_folder(&self) -> &Path {
@@ -446,7 +488,12 @@ impl AssetResolver {
         if let Some(cached) = self.cache.get(asset) {
             return cached.clone().map_err(anyhow::Error::msg);
         }
-        let loaded = self.load(asset).map(std::sync::Arc::new);
+        let loaded = if crate::saved_model::path_of(asset).is_some() {
+            self.compose(asset)
+        } else {
+            self.load(asset)
+        }
+        .map(std::sync::Arc::new);
         let stored = loaded
             .as_ref()
             .map(Clone::clone)
@@ -457,6 +504,25 @@ impl AssetResolver {
     /// Forget cached models, so files changed on disk load again.
     pub fn clear(&mut self) {
         self.cache.clear();
+    }
+    /// Forget one cached model (a saved model that was just written).
+    pub fn forget(&mut self, asset: &world_layout::AssetRef) {
+        self.cache.remove(asset);
+    }
+    /// A saved model as one model: everything in it, about its pivot.
+    fn compose(&mut self, asset: &world_layout::AssetRef) -> Result<gltf_model::Model> {
+        ensure!(!self.composing.contains(asset), "{asset} contains itself");
+        let path = self.path(asset)?.context("a saved model is a file")?;
+        let saved = crate::saved_model::SavedModel::read(&path)?;
+        self.composing.push(asset.clone());
+        let mut model = gltf_model::Model::default();
+        let report = place_layout(&mut model, &saved.layout.resolved(), self);
+        self.composing.pop();
+        // A missing piece leaves a gap; nothing at all is an error.
+        if let (0, Some(problem)) = (report.placed, report.problems.first()) {
+            anyhow::bail!("{problem}");
+        }
+        Ok(model)
     }
     fn load(&self, asset: &world_layout::AssetRef) -> Result<gltf_model::Model> {
         match self.path(asset)? {

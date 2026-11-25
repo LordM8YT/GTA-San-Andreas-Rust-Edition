@@ -8,6 +8,41 @@ pub enum Renderer {
     Vulkan,
     DirectX12,
 }
+/// How heavily Build Mode draws the world while editing. Playtesting
+/// always uses the player's own graphics settings.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EditorPerformance {
+    /// Light on integrated graphics, full on a graphics card.
+    #[default]
+    Auto,
+    /// The player's own graphics settings.
+    Full,
+    /// Lighter drawing for slower computers: see [`Settings::light_editor`].
+    Light,
+}
+impl EditorPerformance {
+    pub const ALL: [Self; 3] = [Self::Auto, Self::Full, Self::Light];
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Auto => "Automatic",
+            Self::Full => "Full",
+            Self::Light => "Light",
+        }
+    }
+    /// Whether the editor draws light, on a computer with or without a
+    /// separate graphics card.
+    pub fn light(self, integrated_gpu: bool) -> bool {
+        match self {
+            Self::Auto => integrated_gpu,
+            Self::Full => false,
+            Self::Light => true,
+        }
+    }
+}
+
+/// Most frames a second while editing in the light mode.
+pub const LIGHT_EDITOR_FPS: u32 = 30;
+
 impl Renderer {
     pub fn name(self) -> &'static str {
         match self {
@@ -57,6 +92,9 @@ pub struct Settings {
     /// Temporal anti-aliasing: blends jittered frames over time for smoother
     /// edges and less shimmer. Off by default.
     pub temporal_aa: bool,
+    /// Lamps placed in Build Mode worlds light the surfaces near them at
+    /// night, pixel by pixel (otherwise they paint a pool on the ground).
+    pub lamp_lighting: bool,
     /// Fixed hour of day, or `None` for the running day/night cycle.
     pub fixed_hour: Option<u8>,
     /// Fixed timecyc weather, or `None` for weather that changes by area.
@@ -78,6 +116,8 @@ pub struct Settings {
     pub rigid_cars: bool,
     /// Police patrols, the wanted level and chases.
     pub police: bool,
+    /// How heavily Build Mode draws while editing.
+    pub editor_performance: EditorPerformance,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -107,6 +147,7 @@ impl Default for Settings {
             sun_shadows: true,
             enhanced_lighting: false,
             temporal_aa: false,
+            lamp_lighting: true,
             fixed_hour: None,
             fixed_weather: None,
             fsr1: true,
@@ -121,6 +162,7 @@ impl Default for Settings {
             car_camera_recenter: true,
             rigid_cars: false,
             police: true,
+            editor_performance: EditorPerformance::Auto,
         }
     }
 }
@@ -230,6 +272,26 @@ impl Settings {
                 .join("sa-freeroam/settings.json")
         }
     }
+    /// These settings made lighter for editing on a slow computer: no sun
+    /// shadows, wet reflections, bloom or temporal anti-aliasing, at most
+    /// two thirds of the window's resolution (upscaled with FSR 1), and at
+    /// most [`LIGHT_EDITOR_FPS`] frames a second.
+    pub fn light_editor(&self) -> Self {
+        Self {
+            render_scale: self.render_scale.min(67),
+            fsr1: true,
+            sun_shadows: false,
+            enhanced_lighting: false,
+            temporal_aa: false,
+            lamp_lighting: false,
+            bloom: 0.0,
+            fps_limit: match self.fps_limit {
+                0 => LIGHT_EDITOR_FPS,
+                limit => limit.min(LIGHT_EDITOR_FPS),
+            },
+            ..self.clone()
+        }
+    }
     pub fn render_size(&self, width: u32, height: u32) -> [u32; 2] {
         let scale = self.render_scale.clamp(50, 150) as u64;
         [width, height].map(|value| ((value as u64 * scale / 100).clamp(1, 8192)) as u32)
@@ -278,6 +340,39 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn light_editor_drops_the_heavy_effects_and_caps_frames() {
+        let mut full = Settings {
+            render_scale: 150,
+            sun_shadows: true,
+            enhanced_lighting: true,
+            temporal_aa: true,
+            bloom: 0.2,
+            fsr1: false,
+            ..Settings::default()
+        };
+        let light = full.light_editor();
+        assert_eq!(light.render_scale, 67);
+        assert!(light.fsr1 && !light.sun_shadows && !light.enhanced_lighting);
+        assert!(!light.temporal_aa && light.bloom == 0.0 && !light.lamp_lighting);
+        assert_eq!(light.fps_limit, LIGHT_EDITOR_FPS);
+        assert_eq!(light.fov, full.fov, "everything else stays the player's");
+        // A lower scale or frame cap the player picked is kept.
+        full.render_scale = 50;
+        full.fps_limit = 20;
+        assert_eq!(full.light_editor().render_scale, 50);
+        assert_eq!(full.light_editor().fps_limit, 20);
+    }
+    #[test]
+    fn automatic_editor_graphics_are_light_on_integrated_graphics() {
+        assert!(EditorPerformance::Auto.light(true));
+        assert!(!EditorPerformance::Auto.light(false));
+        assert!(EditorPerformance::Light.light(false));
+        assert!(!EditorPerformance::Full.light(true));
+        // Old settings files without the field get the automatic choice.
+        let old: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(old.editor_performance, EditorPerformance::Auto);
+    }
     #[test]
     fn old_and_invalid_settings_have_safe_defaults() {
         let mut settings: Settings =

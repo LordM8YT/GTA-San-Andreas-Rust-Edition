@@ -12,7 +12,7 @@ pollster.workspace = true
 wgpu.workspace = true
 winit.workspace = true
 sa-assets = { path = "../assets" }
-sa-scene = { path = "../scene" }
+sa-scene = { path = "../scene", features = ["scripts"] }
 sa-script = { path = "../script" }
 png = "0.18"
 egui = "0.36.2"
@@ -27,6 +27,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 
 sa-client = { path = "../client" }
 sa-editor = { path = "../editor" }
+rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal", "pollster"] }
 
 [dev-dependencies]
 naga = { version = "30.0.1", features = ["wgsl-in"] }

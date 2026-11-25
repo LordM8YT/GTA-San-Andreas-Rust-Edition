@@ -41,6 +41,7 @@ files at all.
 | Different car handling | **Mod** with `original_vehicle_handling` | Yes | [vehicle dynamics](vehicle-dynamics.md) |
 | A race or stunt map from MTA | Drop the MTA folder into `mods/` | Yes | [native mods → MTA maps](native-mods.md#mtasa-maps) |
 | Commands, game modes, chat, instances | **Server resource** in Lua | Players: depends on the world | [Tutorial 6](#6-tutorial-a-server-command-in-lua), [server guide](server-guide.md) |
+| Logic inside your world: doors, lifts, scores, events | **World script** in Lua, written in Build Mode | **No** | [world scripts](world-scripts.md) |
 | On-screen UI and client logic | **Client script** in Lua | Depends on the world | [client scripts](client-scripts.md) |
 
 **Mods** and **content packs** are data: models, textures and JSON. They never
@@ -158,7 +159,7 @@ are two ways, and you can mix them: build it inside SARE with **Build Mode**
 under **Build Mode** and press **Create world**. Build Mode opens with a
 ground plate and a spawn point.
 
-**Step 2. Place things.** The **Asset Browser** on the left shows a picture of
+**Step 2. Place things.** The **Toolbox** on the left shows a picture of
 every piece: ground and grass plates, roads, floors, walls, stairs, ramps,
 houses, trees, crates, benches, lamp posts, plus the models of every content
 pack you have installed. To place one:
@@ -170,23 +171,23 @@ pack you have installed. To place one:
 `[` and `]` turn the piece before you place it. With **Surface** on (the
 default), pieces land on whatever is under the mouse, so a house can stand on
 a platform. With **Snap** on, they line up on a 1 m grid (change the size in
-the toolbar).
+the ribbon's Model tab).
 
 **Step 3. Arrange.** Click an object to select it. Move (W), Rotate (E) and
 Scale (R) give you handles to drag, or type exact numbers in the
-**Inspector** on the right. Ctrl+D duplicates, Delete removes, Ctrl+Z undoes
-anything. The **World Outliner** tab lists every object: rename, group, hide
+**Properties** on the right. Ctrl+D duplicates, Delete removes, Ctrl+Z undoes
+anything. The **Explorer** on the right lists every object: rename, group, hide
 and lock them there.
 
 **Step 4. Your own models.** Drag a `.glb` file from your file explorer onto
-the SARE window, or use **File → Import model**. It is copied into your world,
+the SARE window, or use **Import** on the ribbon (or **File → Import model**) to pick it with your system's file picker. It is copied into your world,
 so the world stays one folder you can share. Make the model in Blender as in
 [Tutorial 4](#4-tutorial-your-first-prop-in-5-minutes).
 
 **Step 5. Play it.** Press **F6** to walk around your world right away, and
 F6 again to go back to editing. Move the green spawn marker with **Set spawn
-at camera focus** in the Inspector (click empty space first to see the world
-settings).
+at camera focus** in the Properties panel (click empty space or **Workspace** in the Explorer
+first), or with **Set spawn** in the ribbon's Test tab.
 
 **Step 6. Save.** Ctrl+S. Your work is also autosaved, and offered back if
 SARE closes unexpectedly. The world is now a normal content pack in
@@ -310,7 +311,7 @@ These are world coordinates, like in FiveM scripts. Two ways to get them:
 - **In game:** stand on the spot and type `/coords`. Chat shows
   `vector4(...)` with your heading; the server console prints it too, to copy.
 - **In Build Mode:** select an object where the spot should be (a small cube,
-  a sign, a door) and press **Copy position** in the Inspector. The
+  a sign, a door) and press **Copy position** in the Properties panel. The
   `vector4(...)` is now on your clipboard; paste it into `config.lua`. The
   heading is the object's Z rotation.
 
@@ -389,7 +390,7 @@ channels. JPEG textures are skipped: save your images as PNG.
   `[x, y, z]`: x east, y north, z up, in metres. Grove Street is around
   `[2495, -1665, 13.3]`. The pause menu map shows where you are.
 - **In a content pack**: positions are Blender coordinates around your
-  world's origin, `[east, north, up]`. Build Mode's Inspector shows the same
+  world's origin, `[east, north, up]`. Build Mode's Properties shows the same
   numbers (X east, Y north, Z up).
 - **In server scripts** (RP jobs, spawn points): world coordinates. A
   content pack's origin is world `(2500, -1670, 0)`, so Build Mode's

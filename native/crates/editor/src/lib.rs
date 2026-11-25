@@ -13,9 +13,11 @@
 //! The runtime (`sa-runtime`, `build_mode` module) draws the editor with
 //! egui and the existing wgpu renderer. See docs/build-mode.md.
 pub mod catalog;
+pub mod command_bar;
 pub mod history;
 pub mod ops;
 pub mod project;
+pub mod publish;
 pub mod thumbnail;
 pub mod viewport;
 pub mod world_position;
@@ -136,6 +138,100 @@ mod tests {
     }
 
     #[test]
+    fn cut_and_paste_keeps_groups_and_lands_at_top_level() {
+        let mut doc = doc();
+        let mut history = History::default();
+        let mut ids = Vec::new();
+        for x in 0..2 {
+            let (place, id) = ops::place(
+                &mut doc,
+                crate_asset(),
+                "Crate",
+                Transform::at([x as f32, 0.0, 0.0]),
+                None,
+            )
+            .unwrap();
+            history.execute(&mut doc, place).unwrap();
+            ids.push(id);
+        }
+        let (group, gid) = ops::group(&mut doc, &ids[..1], "Stack").unwrap();
+        history.execute(&mut doc, group).unwrap();
+        let (outer, outer_id) = ops::group(&mut doc, &[gid], "Outer").unwrap();
+        history.execute(&mut doc, outer).unwrap();
+        // Cut the inner group: copy, then delete.
+        let copied = ops::copy(&doc, &[gid]).unwrap();
+        assert_eq!(copied.len(), 2, "the group and the crate inside it");
+        let command = ops::delete(&doc, &[gid]).unwrap();
+        history.execute(&mut doc, command).unwrap();
+        let (paste, roots) = ops::paste(&mut doc, &copied, [0.0, 0.0, 2.0]).unwrap();
+        history.execute(&mut doc, paste).unwrap();
+        assert_eq!(roots.len(), 1);
+        let pasted = doc.layout.node(roots[0]).unwrap();
+        assert!(pasted.is_group());
+        // Its old group still exists, so it goes back in there.
+        assert_eq!(pasted.parent, Some(outer_id));
+        let inside = doc.layout.descendants(roots[0]);
+        assert_eq!(inside.len(), 1);
+        assert_eq!(
+            doc.layout.node(inside[0]).unwrap().transform.position[2],
+            2.0
+        );
+        // With the old group gone too, a paste lands at the top level.
+        let command = ops::delete(&doc, &[outer_id]).unwrap();
+        history.execute(&mut doc, command).unwrap();
+        let (paste, roots) = ops::paste(&mut doc, &copied, [0.0; 3]).unwrap();
+        history.execute(&mut doc, paste).unwrap();
+        assert_eq!(doc.layout.node(roots[0]).unwrap().parent, None);
+        doc.layout.validate().unwrap();
+        assert!(ops::paste(&mut doc, &[], [0.0; 3]).is_err());
+    }
+
+    #[test]
+    fn cut_paste_keeps_ids_and_pastes_stay_editable_and_uniquely_named() {
+        let mut doc = doc();
+        let mut history = History::default();
+        let mut ids = Vec::new();
+        for _ in 0..2 {
+            let (place, id) =
+                ops::place(&mut doc, crate_asset(), "Crate", Transform::default(), None).unwrap();
+            history.execute(&mut doc, place).unwrap();
+            ids.push(id);
+        }
+        // "Crate" and "Crate 2": pasting both must not name two "Crate 3".
+        let copied = ops::copy(&doc, &ids).unwrap();
+        let (paste, roots) = ops::paste(&mut doc, &copied, [1.0, 0.0, 0.0]).unwrap();
+        history.execute(&mut doc, paste).unwrap();
+        let names: Vec<&str> = roots
+            .iter()
+            .map(|id| doc.layout.node(*id).unwrap().name.as_str())
+            .collect();
+        assert_ne!(names[0], names[1]);
+        // Cut and paste brings back the same ids, where they were.
+        let cut = ops::copy(&doc, &[ids[0]]).unwrap();
+        let command = ops::delete(&doc, &[ids[0]]).unwrap();
+        history.execute(&mut doc, command).unwrap();
+        let (restore, back) = ops::paste_cut(&doc, &cut).unwrap();
+        history.execute(&mut doc, restore).unwrap();
+        assert_eq!(back, vec![ids[0]]);
+        assert_eq!(
+            doc.layout.node(ids[0]).unwrap().transform.position,
+            [0.0; 3]
+        );
+        // It exists again, so a second paste makes copies.
+        assert!(ops::paste_cut(&doc, &cut).is_none());
+        // A copy from a group that is now locked lands at the top level.
+        let (group, gid) = ops::group(&mut doc, &[ids[1]], "Houses").unwrap();
+        history.execute(&mut doc, group).unwrap();
+        let copied = ops::copy(&doc, &[ids[1]]).unwrap();
+        let lock = ops::modify(&doc, "Lock", &[gid], |n| n.locked = true).unwrap();
+        history.execute(&mut doc, lock).unwrap();
+        let (paste, roots) = ops::paste(&mut doc, &copied, [0.0; 3]).unwrap();
+        history.execute(&mut doc, paste).unwrap();
+        assert_eq!(doc.layout.node(roots[0]).unwrap().parent, None);
+        doc.layout.validate().unwrap();
+    }
+
+    #[test]
     fn duplicate_group_and_ungroup() {
         let mut doc = doc();
         let mut history = History::default();
@@ -164,10 +260,8 @@ mod tests {
         let copies = doc.layout.descendants(roots[0]);
         assert_eq!(copies.len(), 2);
         assert!(copies.iter().all(|id| !ids.contains(id)));
-        assert_eq!(
-            doc.layout.node(copies[0]).unwrap().transform.position[1],
-            5.0
-        );
+        // The copy's pivot moved; its contents stay relative to it.
+        assert_eq!(doc.layout.world_transform(copies[0]).position[1], 5.0);
         doc.layout.validate().unwrap();
         // Deleting a group deletes its contents; undo brings all back.
         let count = doc.layout.nodes.len();
@@ -188,6 +282,79 @@ mod tests {
         assert_eq!(doc.layout.node(ids[0]).unwrap().parent, Some(gid));
         assert!(ops::reparent(&doc, &[gid], Some(gid)).is_err());
         doc.layout.validate().unwrap();
+    }
+
+    #[test]
+    fn outliner_drag_and_drop_reorders_and_regroups_with_undo() {
+        use crate::ops::Drop;
+        let mut doc = doc();
+        let mut history = History::default();
+        let mut add = |doc: &mut Document, name: &str| {
+            let (command, id) =
+                ops::place(doc, crate_asset(), name, Transform::default(), None).unwrap();
+            history.execute(doc, command).unwrap();
+            id
+        };
+        let a = add(&mut doc, "A");
+        let b = add(&mut doc, "B");
+        let c = add(&mut doc, "C");
+        let names = |doc: &Document| {
+            doc.layout
+                .nodes
+                .iter()
+                .map(|n| n.name.clone())
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        let run = |doc: &mut Document, history: &mut History, ids: &[u64], to: Drop| {
+            let command = ops::move_nodes(doc, ids, to).unwrap().unwrap();
+            history.execute(doc, command).unwrap();
+        };
+        run(&mut doc, &mut history, &[c], Drop::Before(a));
+        assert_eq!(names(&doc), "C,A,B");
+        history.undo(&mut doc).unwrap();
+        assert_eq!(names(&doc), "A,B,C", "one undo step");
+        history.redo(&mut doc).unwrap();
+        // A group, and B dragged into it, then A after B inside it.
+        let (group, g) = ops::group(&mut doc, &[c], "G").unwrap();
+        history.execute(&mut doc, group).unwrap();
+        run(&mut doc, &mut history, &[b], Drop::Into(g));
+        run(&mut doc, &mut history, &[a], Drop::After(b));
+        let parent = |doc: &Document, id| doc.layout.node(id).unwrap().parent;
+        assert_eq!((parent(&doc, a), parent(&doc, b)), (Some(g), Some(g)));
+        let inside: Vec<_> = doc
+            .layout
+            .nodes
+            .iter()
+            .filter(|n| n.parent == Some(g))
+            .map(|n| n.name.as_str())
+            .collect();
+        assert_eq!(inside, ["C", "B", "A"]);
+        // The whole group moves to the end with its contents, past D.
+        let (place, d) =
+            ops::place(&mut doc, crate_asset(), "D", Transform::default(), None).unwrap();
+        history.execute(&mut doc, place).unwrap();
+        assert!(
+            ops::move_nodes(&doc, &[d], Drop::End).unwrap().is_none(),
+            "already last"
+        );
+        run(&mut doc, &mut history, &[g], Drop::End);
+        assert_eq!(names(&doc), "D,G,C,B,A", "contents follow in order");
+        assert_eq!(parent(&doc, a), Some(g));
+        doc.layout.validate().unwrap();
+        // A group cannot go into itself; a no-op is None.
+        assert!(ops::move_nodes(&doc, &[g], Drop::Into(g)).is_err());
+        assert!(ops::move_nodes(&doc, &[g], Drop::Before(a)).is_err());
+        assert!(ops::move_nodes(&doc, &[a], Drop::After(b))
+            .unwrap()
+            .is_none());
+        // Out to the top level.
+        run(&mut doc, &mut history, &[a], Drop::End);
+        assert_eq!(parent(&doc, a), None);
+        while history.can_undo() {
+            history.undo(&mut doc).unwrap();
+        }
+        assert!(doc.layout.nodes.is_empty());
     }
 
     #[test]
@@ -233,6 +400,145 @@ mod tests {
         assert_eq!(Project::open(&copy.folder).unwrap().0.id, "copy");
         assert!(again.layout.node(id).is_some());
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn gameplay_assets_place_with_behaviour_save_and_play() {
+        use sa_scene::world_logic::{self, Action, Component, Effect, Kept, Logic};
+        let root = temp("gameplay");
+        let folder = root.join("w");
+        let (project, mut doc) = Project::create(&folder, "w", "W").unwrap();
+        let mut history = History::default();
+        let mut place = |doc: &mut Document, name: &str, at: [f32; 3]| {
+            let (command, id) = ops::place(
+                doc,
+                AssetRef::Builtin(name.into()),
+                name,
+                Transform::at(at),
+                None,
+            )
+            .unwrap();
+            history.execute(doc, command).unwrap();
+            id
+        };
+        let door = place(&mut doc, "door", [0.0, 5.0, 0.0]);
+        let pad = place(&mut doc, "marker-teleport", [8.0, 0.0, 0.0]);
+        let target = place(&mut doc, "marker-target", [-8.0, 0.0, 0.0]);
+        let first = place(&mut doc, "marker-checkpoint", [0.0, -8.0, 0.0]);
+        let second = place(&mut doc, "marker-checkpoint", [0.0, -14.0, 0.0]);
+        let plain = place(&mut doc, "crate", [3.0, 3.0, 0.0]);
+        let gameplay = |doc: &Document, id| doc.layout.node(id).unwrap().gameplay.clone();
+        assert!(matches!(
+            gameplay(&doc, door),
+            Some(Kept::Known(Component::Interact(_)))
+        ));
+        assert!(
+            gameplay(&doc, target).is_none(),
+            "a destination is only a place"
+        );
+        assert!(gameplay(&doc, plain).is_none());
+        let order = |doc: &Document, id| match gameplay(doc, id) {
+            Some(Kept::Known(Component::Checkpoint(c))) => c.order,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!((order(&doc, first), order(&doc, second)), (1, 2));
+        // The pad has no destination yet: the editor says so.
+        assert!(world_logic::check(&doc.layout)
+            .iter()
+            .any(|p| p.node == pad && p.text.contains("no destination")));
+        let point = ops::modify(&doc, "Edit gameplay", &[pad], |n| {
+            if let Some(Kept::Known(Component::Trigger(t))) = &mut n.gameplay {
+                t.on_enter = vec![Kept::Known(Action::Teleport {
+                    target: Some(target),
+                })];
+            }
+        })
+        .unwrap();
+        history.execute(&mut doc, point).unwrap();
+        assert!(world_logic::check(&doc.layout).is_empty());
+        // One undo takes the edit back.
+        history.undo(&mut doc).unwrap();
+        assert!(!world_logic::check(&doc.layout).is_empty());
+        history.redo(&mut doc).unwrap();
+
+        project.save(&doc).unwrap();
+        let (_, reopened) = Project::open(&folder).unwrap();
+        assert_eq!(reopened, doc, "gameplay survives save and open");
+        // Played as a pack: markers are neither drawn nor solid, and the door
+        // (gameplay opens it) is drawn and made solid by the game on its own.
+        let mut world = PackWorld::open(&folder).unwrap();
+        let origin = sa_scene::content_pack::ANCHOR;
+        let scene = world.load(origin, origin, 300.0).unwrap();
+        let markers: usize = ["marker-teleport", "marker-target", "marker-checkpoint"]
+            .iter()
+            .map(|m| sa_scene::builtin_assets::model(m).unwrap().triangles)
+            .sum();
+        let expected: usize = ["ground", "crate"]
+            .iter()
+            .map(|m| sa_scene::builtin_assets::model(m).unwrap().triangles)
+            .sum();
+        assert!(markers > 0);
+        assert_eq!(scene.triangles, expected);
+        // Duplicating the course end gives the next number; duplicating the
+        // pad with its destination makes the copy lead to the copy.
+        let (copy, new) = ops::duplicate(&mut doc, &[second], [2.0, 0.0, 0.0]).unwrap();
+        history.execute(&mut doc, copy).unwrap();
+        assert_eq!(order(&doc, new[0]), 3);
+        let (group, gid) = ops::group(&mut doc, &[pad, target], "Pad").unwrap();
+        history.execute(&mut doc, group).unwrap();
+        let (copy, new) = ops::duplicate(&mut doc, &[gid], [0.0, 20.0, 0.0]).unwrap();
+        history.execute(&mut doc, copy).unwrap();
+        let inside = doc.layout.descendants(new[0]);
+        let new_pad = *inside
+            .iter()
+            .find(|id| gameplay(&doc, **id).is_some())
+            .unwrap();
+        let new_target = *inside.iter().find(|id| **id != new_pad).unwrap();
+        match gameplay(&doc, new_pad) {
+            Some(Kept::Known(Component::Trigger(t))) => assert_eq!(
+                t.on_enter,
+                vec![Kept::Known(Action::Teleport {
+                    target: Some(new_target)
+                })]
+            ),
+            other => panic!("{other:?}"),
+        }
+        assert!(world_logic::check(&doc.layout).is_empty());
+        let mut logic = Logic::new(&reopened.layout);
+        logic.step([20.0, 20.0, 0.0], 0.1);
+        logic.step([20.0, 20.0, 0.0], 0.1);
+        let effects = logic.step([8.0, 0.0, 0.0], 0.1);
+        assert!(matches!(&effects[..], [Effect::Teleport(p)] if p.position == [-8.0, 0.0, 0.0]));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_gameplay_sample_is_clean_and_playable() {
+        use sa_scene::world_logic::{self, Logic};
+        let folder = PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../content/gameplay-sample"
+        ));
+        let (_, doc) = Project::open(&folder).unwrap();
+        assert_eq!(world_logic::check(&doc.layout), Vec::new());
+        let logic = Logic::new(&doc.layout);
+        assert_eq!(logic.spawn().unwrap().position, [0.0, -6.0, 0.0]);
+        assert!(logic.prompt([6.0, -6.0, 0.0]).is_some(), "the sign");
+        let mut world = PackWorld::open(&folder).unwrap();
+        let origin = sa_scene::content_pack::ANCHOR;
+        let scene = world.load(origin, origin, 300.0).unwrap();
+        let collision = scene.collision.unwrap();
+        let [x, y, z] = world.spawn().unwrap();
+        let point = glam::Vec3::new(x - origin[0], z, origin[1] - y);
+        assert!(collision.standing_at(point, z + 2.0).is_some());
+        // Its lamp posts glow: their coronas are part of the played world.
+        let coronas = scene
+            .batches
+            .iter()
+            .filter(|b| b.key == sa_scene::lights::CORONA_KEY)
+            .map(|b| b.vertices.len() / 6)
+            .sum::<usize>();
+        assert_eq!(coronas, 3);
     }
 
     #[test]
@@ -401,5 +707,414 @@ mod tests {
         }
         let empty = render(&sa_scene::gltf_model::Model::default(), 8);
         assert!(empty.rgba.iter().all(|v| *v == 0));
+    }
+
+    #[test]
+    fn a_placed_road_has_points_saves_and_draws_from_them() {
+        let mut doc = doc();
+        let at = Transform {
+            position: [100.0, 50.0, 2.0],
+            ..Transform::default()
+        };
+        let (command, id) = ops::place(
+            &mut doc,
+            AssetRef::Builtin("spline-road".into()),
+            "Road",
+            at,
+            None,
+        )
+        .unwrap();
+        command.apply(&mut doc).unwrap();
+        let node = doc.layout.node(id).unwrap();
+        let road = node.road.clone().expect("a placed road gets its points");
+        assert!(road.is_valid() && road.points.len() >= 2);
+        // It saves and loads with its points, and validates.
+        let json = serde_json::to_string(&doc.layout).unwrap();
+        let loaded: Layout = serde_json::from_str(&json).unwrap();
+        loaded.validate().unwrap();
+        assert_eq!(loaded.node(id).unwrap().road.as_ref(), Some(&road));
+        // The model played and drawn is the road along its own points.
+        let mut resolver = AssetResolver::new(std::path::Path::new("."));
+        let model =
+            sa_scene::content_pack::node_model(loaded.node(id).unwrap(), &mut resolver).unwrap();
+        assert_eq!(model.triangles, sa_scene::road::model(&road).triangles);
+        // A road needs two points: one alone does not validate.
+        let mut broken = loaded.clone();
+        broken.nodes.iter_mut().for_each(|n| {
+            if let Some(road) = &mut n.road {
+                road.points.truncate(1);
+            }
+        });
+        assert!(broken.validate().is_err());
+    }
+
+    #[test]
+    fn a_placed_part_keeps_its_shape_saves_and_plays() {
+        use sa_scene::world_layout::{PartMaterial, PartShape};
+        let mut doc = doc();
+        let (command, id) = ops::place(
+            &mut doc,
+            AssetRef::Builtin("part-cylinder".into()),
+            "Cylinder",
+            Transform::default(),
+            None,
+        )
+        .unwrap();
+        command.apply(&mut doc).unwrap();
+        let node = doc.layout.node(id).unwrap();
+        // Every part refers to builtin:part; its look is in the part.
+        assert_eq!(node.asset, Some(AssetRef::Builtin("part".into())));
+        let mut part = node.part.clone().expect("a placed part gets its shape");
+        assert_eq!(part.shape, PartShape::Cylinder);
+        part.material = PartMaterial::Wood;
+        part.color = [0.5, 0.3, 0.1];
+        part.size = [1.0, 1.0, 6.0];
+        ops::modify(&doc, "Edit part", &[id], |n| n.part = Some(part.clone()))
+            .unwrap()
+            .apply(&mut doc)
+            .unwrap();
+        let json = serde_json::to_string(&doc.layout).unwrap();
+        let loaded: Layout = serde_json::from_str(&json).unwrap();
+        loaded.validate().unwrap();
+        assert_eq!(loaded.node(id).unwrap().part.as_ref(), Some(&part));
+        // Played and drawn as the part, not as the asset.
+        let mut resolver = AssetResolver::new(std::path::Path::new("."));
+        let model =
+            sa_scene::content_pack::node_model(loaded.node(id).unwrap(), &mut resolver).unwrap();
+        assert_eq!(model.drawn[0].key, "builtin:material/wood");
+        // A part with no size is refused on load.
+        let mut broken = loaded.clone();
+        broken.nodes.iter_mut().for_each(|n| {
+            if let Some(part) = &mut n.part {
+                part.size[2] = 0.0;
+            }
+        });
+        assert!(broken.validate().is_err());
+    }
+
+    fn near(a: [f32; 3], b: [f32; 3]) -> bool {
+        a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-3)
+    }
+
+    /// Two blocks, 4 m apart on X, grouped as a model.
+    fn model_doc() -> (
+        Document,
+        sa_scene::world_layout::NodeId,
+        [sa_scene::world_layout::NodeId; 2],
+    ) {
+        let mut doc = doc();
+        let mut ids = [0; 2];
+        for (i, x) in [10.0, 14.0].into_iter().enumerate() {
+            let (command, id) = ops::place(
+                &mut doc,
+                AssetRef::Builtin("part-block".into()),
+                "Block",
+                Transform::at([x, 2.0, 1.0]),
+                None,
+            )
+            .unwrap();
+            command.apply(&mut doc).unwrap();
+            ids[i] = id;
+        }
+        let (command, model) = ops::group(&mut doc, &ids, "House").unwrap();
+        command.apply(&mut doc).unwrap();
+        (doc, model, ids)
+    }
+
+    #[test]
+    fn grouping_makes_a_model_with_a_pivot_and_moves_nothing() {
+        let (doc, model, [a, b]) = model_doc();
+        let group = doc.layout.node(model).unwrap();
+        assert!(group.model && group.is_group());
+        // In the middle of its contents, at their base.
+        assert!(
+            near(group.transform.position, [12.0, 2.0, 1.0]),
+            "{:?}",
+            group.transform
+        );
+        assert!(near(
+            doc.layout.node(a).unwrap().transform.position,
+            [-2.0, 0.0, 0.0]
+        ));
+        assert!(near(
+            doc.layout.world_transform(a).position,
+            [10.0, 2.0, 1.0]
+        ));
+        assert!(near(
+            doc.layout.world_transform(b).position,
+            [14.0, 2.0, 1.0]
+        ));
+    }
+
+    #[test]
+    fn turning_a_model_turns_its_contents_about_the_pivot() {
+        let (mut doc, model, [a, _]) = model_doc();
+        ops::modify(&doc, "Rotate", &[model], |n| {
+            n.transform.rotation = [0.0, 0.0, 90.0]
+        })
+        .unwrap()
+        .apply(&mut doc)
+        .unwrap();
+        let world = doc.layout.world_transform(a);
+        assert!(near(world.position, [12.0, 0.0, 1.0]), "{world:?}");
+        assert!(near(world.rotation, [0.0, 0.0, 90.0]));
+        // Centre pivot moves only the pivot.
+        ops::set_pivot(&doc, model, Transform::at([0.0, 0.0, 0.0]), "Pivot")
+            .unwrap()
+            .apply(&mut doc)
+            .unwrap();
+        assert!(near(
+            doc.layout.world_transform(a).position,
+            [12.0, 0.0, 1.0]
+        ));
+        ops::center_pivot(&doc, model)
+            .unwrap()
+            .apply(&mut doc)
+            .unwrap();
+        assert!(near(
+            doc.layout.world_transform(a).position,
+            [12.0, 0.0, 1.0]
+        ));
+        assert!(near(
+            doc.layout.node(model).unwrap().transform.position,
+            [12.0, 2.0, 1.0]
+        ));
+    }
+
+    #[test]
+    fn objects_keep_their_place_leaving_and_entering_models() {
+        let (mut doc, model, [a, b]) = model_doc();
+        ops::modify(&doc, "Rotate", &[model], |n| {
+            n.transform.rotation = [0.0, 0.0, 90.0]
+        })
+        .unwrap()
+        .apply(&mut doc)
+        .unwrap();
+        let world_a = doc.layout.world_transform(a);
+        // Out of the model to the top level, and back in.
+        ops::reparent(&doc, &[a], None)
+            .unwrap()
+            .apply(&mut doc)
+            .unwrap();
+        assert_eq!(doc.layout.node(a).unwrap().parent, None);
+        assert!(near(
+            doc.layout.world_transform(a).position,
+            world_a.position
+        ));
+        ops::move_nodes(&doc, &[a], ops::Drop::Into(model))
+            .unwrap()
+            .unwrap()
+            .apply(&mut doc)
+            .unwrap();
+        assert!(near(
+            doc.layout.world_transform(a).position,
+            world_a.position
+        ));
+        // Copied out of a model and pasted (at the top level when the
+        // model is locked), a copy lands where the original is, plus the
+        // offset.
+        let copied = ops::copy(&doc, &[b]).unwrap();
+        ops::modify(&doc, "Lock", &[model], |n| n.locked = true)
+            .unwrap()
+            .apply(&mut doc)
+            .unwrap();
+        let (command, pasted) = ops::paste(&mut doc, &copied, [0.0, 0.0, 5.0]).unwrap();
+        command.apply(&mut doc).unwrap();
+        let world_b = doc.layout.world_transform(b);
+        let world_copy = doc.layout.world_transform(pasted[0]);
+        assert_eq!(doc.layout.node(pasted[0]).unwrap().parent, None);
+        assert!(near(
+            world_copy.position,
+            [
+                world_b.position[0],
+                world_b.position[1],
+                world_b.position[2] + 5.0
+            ]
+        ));
+        assert!(near(world_copy.rotation, world_b.rotation));
+        // A copy of the whole model is a model with its own pivot.
+        let copied = ops::copy(&doc, &[model]).unwrap();
+        let (command, pasted) = ops::paste(&mut doc, &copied, [0.0, 10.0, 0.0]).unwrap();
+        command.apply(&mut doc).unwrap();
+        let inside = doc.layout.descendants(pasted[0]);
+        assert_eq!(inside.len(), 2);
+        let copy_a = inside
+            .iter()
+            .map(|id| doc.layout.world_transform(*id).position)
+            .find(|p| {
+                near(
+                    *p,
+                    [
+                        world_a.position[0],
+                        world_a.position[1] + 10.0,
+                        world_a.position[2],
+                    ],
+                )
+            });
+        assert!(copy_a.is_some(), "the model's copy is not 10 m north");
+        // Ungrouping keeps everything where it is.
+        let before = doc.layout.world_transform(b);
+        ops::ungroup(&doc, model).unwrap().apply(&mut doc).unwrap();
+        assert!(near(
+            doc.layout.world_transform(b).position,
+            before.position
+        ));
+        assert!(near(
+            doc.layout.world_transform(b).rotation,
+            before.rotation
+        ));
+    }
+
+    #[test]
+    fn placing_into_a_turned_model_puts_it_where_clicked() {
+        let (mut doc, model, _) = model_doc();
+        ops::modify(&doc, "Rotate", &[model], |n| {
+            n.transform.rotation = [0.0, 0.0, 45.0]
+        })
+        .unwrap()
+        .apply(&mut doc)
+        .unwrap();
+        let (command, id) = ops::place(
+            &mut doc,
+            AssetRef::Builtin("cube".into()),
+            "Cube",
+            Transform::at([20.0, 20.0, 0.0]),
+            Some(model),
+        )
+        .unwrap();
+        command.apply(&mut doc).unwrap();
+        assert!(near(
+            doc.layout.world_transform(id).position,
+            [20.0, 20.0, 0.0]
+        ));
+    }
+
+    #[test]
+    fn saved_model_copies_follow_the_file() {
+        use sa_scene::saved_model::SavedModel;
+        let (mut doc, model, [a, _]) = model_doc();
+        let path = "models/house.model.json";
+        let saved = SavedModel::capture(&doc.layout, model).unwrap();
+        ops::link_saved(&doc, model, path)
+            .unwrap()
+            .apply(&mut doc)
+            .unwrap();
+        // Two more copies, one turned.
+        let mut placed = Vec::new();
+        for (x, turn) in [(40.0, 0.0), (80.0, 90.0)] {
+            let mut at = Transform::at([x, 0.0, 0.0]);
+            at.rotation[2] = turn;
+            let (command, id) = ops::place_saved(&mut doc, &saved, path, at, None).unwrap();
+            command.apply(&mut doc).unwrap();
+            placed.push(id);
+        }
+        assert_eq!(ops::copies_of(&doc, path).len(), 3);
+        let copy = placed[1];
+        assert!(saved.matches(&doc.layout, copy));
+        assert_ne!(
+            doc.layout.node(copy).unwrap().name,
+            "House",
+            "copies get their own names"
+        );
+        // A block 2 m west of the pivot, turned 90°: 2 m south of it.
+        let inside = doc.layout.descendants(copy);
+        assert_eq!(inside.len(), 2);
+        let west = inside
+            .iter()
+            .map(|id| doc.layout.world_transform(*id).position)
+            .any(|p| near(p, [80.0, -2.0, 0.0]));
+        assert!(west, "the copy's contents turn with it");
+
+        // Change the first copy (move a block) and save it to all copies.
+        ops::modify(&doc, "Move", &[a], |n| n.transform.position[2] = 3.0)
+            .unwrap()
+            .apply(&mut doc)
+            .unwrap();
+        assert!(!saved.matches(&doc.layout, model));
+        let changed = SavedModel::capture(&doc.layout, model).unwrap();
+        let mut history = History::default();
+        let before = doc.clone();
+        let others: Vec<_> = ops::copies_of(&doc, path)
+            .into_iter()
+            .filter(|id| *id != model)
+            .collect();
+        let command = ops::update_copies(&mut doc, &changed, &others)
+            .unwrap()
+            .expect("two copies to update");
+        history.execute(&mut doc, command).unwrap();
+        for id in ops::copies_of(&doc, path) {
+            assert!(
+                changed.matches(&doc.layout, id),
+                "copy {id} was not updated"
+            );
+        }
+        let node = doc.layout.node(copy).unwrap();
+        assert_eq!(node.transform.rotation[2], 90.0, "copies keep their place");
+        assert_eq!(node.saved_model.as_deref(), Some(path));
+        assert!(doc.layout.validate().is_ok());
+        // One undo step puts everything back.
+        history.undo(&mut doc).unwrap();
+        assert_eq!(doc.layout.nodes, before.layout.nodes);
+        // Unlinked, a copy is left alone.
+        ops::unlink_saved(&doc, copy)
+            .unwrap()
+            .apply(&mut doc)
+            .unwrap();
+        assert_eq!(ops::copies_of(&doc, path).len(), 2);
+    }
+
+    #[test]
+    fn the_command_bar_changes_the_world_in_one_undo_step() {
+        use crate::command_bar;
+        let (mut doc, model, [a, b]) = model_doc();
+        ops::modify(&doc, "Tag", &[a, b], |n| n.tags = vec!["Brick".into()])
+            .unwrap()
+            .apply(&mut doc)
+            .unwrap();
+        let before = doc.clone();
+        let mut history = History::default();
+        let outcome = command_bar::run(
+            &mut doc,
+            "for _, b in ipairs(world.tagged('Brick')) do b.color = rgb(1, 0, 0) end \
+             world.find('Block').position = vector(1, 2, 3) \
+             world.find('Block'):set('Price', 5) \
+             world.find('Block'):addTag('Sold') \
+             local c = world.find('Block 2'):clone(vector(9, 9, 0), 90) \
+             print(#selection(), #world.tagged('Brick'))",
+            &[model],
+        )
+        .unwrap();
+        // The clone is tagged Brick too.
+        assert_eq!(outcome.output, [("2  3".to_string(), false)]);
+        history
+            .execute(&mut doc, outcome.command.expect("changes"))
+            .unwrap();
+        let block = doc.layout.node(a).unwrap();
+        assert_eq!(block.part.as_ref().unwrap().color, [1.0, 0.0, 0.0]);
+        assert!(near(
+            doc.layout.world_transform(a).position,
+            [1.0, 2.0, 3.0]
+        ));
+        assert_eq!(
+            block.attributes["Price"],
+            sa_scene::world_layout::Attribute::Number(5.0)
+        );
+        assert!(block.tags.contains(&"Sold".to_string()));
+        let copy = doc.layout.nodes.last().unwrap();
+        assert!(
+            copy.id > b && copy.part.is_some(),
+            "the clone is a new part"
+        );
+        assert!(near(
+            doc.layout.world_transform(copy.id).position,
+            [9.0, 9.0, 0.0]
+        ));
+        assert!(doc.layout.validate().is_ok());
+        history.undo(&mut doc).unwrap();
+        assert_eq!(doc.layout.nodes, before.layout.nodes);
+        // Errors are shown, and change nothing.
+        let outcome = command_bar::run(&mut doc, "local x = nil + 1", &[]).unwrap();
+        assert!(outcome.command.is_none());
+        assert!(outcome.output[0].1, "{:?}", outcome.output);
     }
 }

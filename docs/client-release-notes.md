@@ -1,5 +1,64 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.61.0 (in progress: the big SARE Studio update):
+- Build Mode: attributes and tags. Give any object or group values of your own (number, text, true/false, vector) and tags in its Properties. Scripts read and change them with `object:get`/`object:set`, check tags with `object:hasTag` and find every tagged object with `world.tagged`. A group's attributes and tags apply to everything inside it. Type `#tag` in the Explorer filter to find tagged objects.
+- Build Mode: Test › Publish. Put the saved world on a SARE server folder and make it the world players join (server.cfg is updated); restart the server to play it.
+- Build Mode: Test › Server. Start the world (saved or not) on a server on this computer with 1 to 4 player windows joined to it; the server's and players' messages show in Output, and Stop closes them all.
+- Build Mode: physics. Untick *Anchored* on a part and it falls when the world is played, landing on the ground, objects or other parts (loose blocks stack). It falls the same for everyone on a server.
+- Build Mode: command bar. A Lua line under Output runs against the world you are editing, with the world script API plus `selection()`: hide every lamp, paint the selection, set attributes, make copies. Each command is one undo step; Up and Down recall earlier ones.
+- Build Mode: arranging. The arrow keys nudge the selection one grid step (Page Up/Down up and down). Model › Arrange lines the selection up with the last object selected (sides, middles, bottoms, tops) or spaces three or more evenly.
+
+Version 0.60.0:
+- Build Mode: My Models. Save a model to My Models from its Properties (or right-click in the Explorer) and place it again from the Toolbox as often as you like. Copies stay linked: change one and press *Save to all copies*, and every copy gets the change while keeping its own place. *Revert* throws away a copy's changes and *Unlink* makes it an ordinary model. Saved models live in the world's `models/` folder; copies play like any other objects.
+
+Version 0.59.0:
+- Build Mode: models. *Group* (Ctrl+G) now makes the selection a model with a pivot of its own: move or turn the model and everything in it comes along, turning about the pivot. A click on any part of a model selects the whole model, Alt+click the object inside. Properties show the pivot's position and rotation and *Centre pivot*; untick *Model* to make a group a plain folder again. Objects keep their place when they move into or out of a model, and copies of a model are models too. Worlds without models still open in older SARE versions.
+
+Version 0.58.0:
+- Build Mode: build with parts. *Part* on the Home ribbon (or the Toolbox's new Parts category) places a block, ball, cylinder, wedge or corner wedge. Give it a size in metres, any colour (or one of 16 quick swatches), a material (Plastic, Smooth, Concrete, Wood, Brick, Tiles, Metal or Glass) and transparency in Properties. The Scale tool resizes a part from one side, like pulling out a wall. Select several parts to colour them all at once. Parts are solid when played, also on servers, and scripts can colour, move and copy them.
+
+Version 0.57.0:
+- Build Mode scripts can make copies of objects: `object:clone()` makes a copy where the object is, or at a position you give, and `copy:destroy()` removes it again. Drop crates, spawn targets, build a row of lamps or a pile of boxes while the world plays. Copies are solid, can be shown, hidden, moved and coloured like any object, and every player on a server sees the same ones. A world can have up to 200 copies at once, and they go away when the world starts again.
+- New script example: Crate dropper. In the sample world, the bell now leaves a copy of the signal crate each time it rings.
+
+Version 0.56.0:
+- Build Mode: give your world a look. Lighting → Look has Classic, Natural, Vivid, Cinematic, Sunset, Cold night, Dreamy and Noir, and *Adjust the look* fine-tunes exposure, contrast, colour, warmth, glow and dark corners. Every player sees the world in its look, on top of their own picture settings, so it costs nothing extra on slower PCs.
+- Lamps in Build Mode worlds now really light their surroundings at night: walls, ground, cars and people near a lamp catch its warm (or any colour's) light, softly fading out, instead of only a painted pool on the ground. Lamps on objects that scripts move or hide go along.
+- New graphics setting, Lamp lighting (on by default): turn it off on a slower graphics card to get the painted pools back. The light editor graphics turn it off too.
+
+Version 0.55.0:
+- Build Mode: world scripts. Give any object (or the whole world) a Lua script and make your world do what you want: doors with timers, lifts, sliding doors, spinning things, scores, welcome messages, race results, day and night switches. Scripts react to trigger zones, E, checkpoints, finishes and players joining or leaving, and they show, hide and move objects, send messages, teleport players and set the time and weather.
+- Moving objects carry their collision along, and players standing on one ride with it.
+- Scripts can colour objects (`object.color = rgb(1, 0.2, 0.1)`): traffic lights, team colours, a button that lights up. Everyone sees the same colours.
+- Scripts can put text on screen for one player or everyone (`player:hud`, `world.hud`): scores, timers, rounds. Everyone's lines reach players who join later too.
+- *Script* on the Home ribbon adds a script and opens the new script editor: Lua is coloured and checked as you type (the line with an error is underlined), with examples to start from and a short API help. The Explorer lists scripts under their objects and on its Scripts page; print and errors show in Output while you play.
+- Scripts run the same in Play (F5), from the launcher and on servers. A server runs them once per world instance, so every player sees the same doors and lifts, also players who join later; messages and teleports stay personal.
+- Scripts are sandboxed: no files or programs, 16 MiB of memory, and a script that runs too long without wait() is stopped (even if it tries to catch that), so a broken script cannot freeze the game or a server.
+- Gameplay Sample has a bell that hides a crate for a moment, a lift that goes up and down, and race results for the checkpoint course.
+
+Version 0.54.0:
+- Build Mode has a new layout that works like the building editors many creators already know: a ribbon with Home, Model, Test and View tabs, the Toolbox on the left, the Explorer (with Workspace and Lighting) above the Properties on the right, and Output at the bottom. Insert a Part with one click, copy, cut and paste objects, and use Ctrl+1 to Ctrl+4 for the tools and F5 to play. Docks can be closed and opened again from the View tab.
+- Servers: `world_reset [instance]` in the console (and `ResetWorldInstance` for scripts) puts a Build Mode world instance back as it starts: doors, hour and weather.
+- Build Mode: interactions can work from a vehicle (tick *Works from a vehicle*): drivers press E there. Teleports now take a driver's car along (damage and all) when it fits at the destination. Servers check it too.
+- Build Mode terrain: paint it with Grass, Dirt, Sand, Rock or Snow (the new Paint brush, softly blended), and cut holes for cave and tunnel entrances (the Hole brush). Painting over a hole fills it. Holes are open when played, also on servers.
+- Build Mode: roads along points. Place *Road along points* (Roads), drag its points in the world or click to draw more, and it follows a smooth curve with lines and kerbs, climbing to each point's height. Click its first point (or tick *Closed loop*) to join the end to the start for a ring road or track. It is solid when played, also on servers.
+- Build Mode: Import on the ribbon (and File → Import model) opens your system's file picker for .glb models.
+- Build Mode: a selected group, or several selected objects, now turns and scales as one with the gizmo, about the middle of the selection, instead of every object turning in place.
+- Build Mode runs on slower computers: the new Light editor graphics (View → Performance) draw without shadows, reflections or bloom, at two thirds resolution and at most 30 FPS, which draws less than half the pixels, half as often, without the shadow pass, and used clearly less CPU on our test PC (testing on slower hardware is still pending). It turns on by itself on integrated graphics; playtesting keeps your own graphics settings. Traffic and pedestrians no longer run while you edit.
+- Build Mode: worlds can now have gameplay. Select any object and give it a behaviour in the Properties panel: a trigger zone, an interaction (press E), a checkpoint or a spawn point. Behaviours run actions: show a message, teleport the player, show, hide or toggle an object, and set the time or the weather.
+- New Gameplay category in the Toolbox: a door that opens with E, a door to another place, a teleport pad, a destination point, a spawn point, a trigger zone, an interaction point and checkpoints that number themselves. Drop one in and it works.
+- Checkpoints make a timed course: the first starts the clock, the last shows your time.
+- The viewport shows every zone with a label and where teleports lead. The new Collision view outlines solid objects in cyan and objects without collision in red.
+- World settings have a weather (clear, cloudy, rain, fog), and worlds played from the launcher now use the world's time of day and weather too.
+- Playtest runs it all: walk into zones, press E at doors, and go back to the editor with F6 as before.
+- New sample world, Gameplay Sample (content/gameplay-sample), with every behaviour in one place. No game files needed.
+- Everything also works when the world is played from the launcher, including doors that open and close.
+- Multiplayer worlds: host a Build Mode world (`sets content_pack <id>` with the pack in the server's `content/` folder) and the server runs its gameplay for everyone. A door one player opens is open for all, also for players who join later; time and weather are shared; messages, teleports and checkpoint times stay personal. The server checks that a player really stands at what they use, and each instance (routing bucket) has its own doors.
+- Lights: give any object a light (colour, glow size, ground light radius) that glows from dusk to dawn like SARE's street lamps; lamp posts come with one. World settings add fog density, sky colour and brightness. Lights do not light other objects yet.
+- Terrain: place Terrain 64 m and shape it with the new Sculpt tool (T): raise, lower, smooth and flatten with a brush, one undo step per stroke. It is solid and plays everywhere, also on servers.
+- Explorer: drag objects to reorder them and to move them in and out of groups. With several objects selected, show, hide, lock, switch collision, reset or drop them all at once. Teleports without a destination offer "New destination here".
+- Server scripts: new events `sare:zoneEnter`, `sare:zoneLeave`, `sare:objectUsed`, `sare:checkpoint` and `sare:raceFinished`, and natives `SetWorldObjectVisible`, `IsWorldObjectVisible`, `GetWorldObjectByName`, `SetWorldHour` and `SetWorldWeather`.
+
 Version 0.53.0:
 - RP servers: police, EMS, mechanic and taxi are now each their own resource (sare_job_police, sare_job_ems, sare_job_mechanic, sare_job_taxi) with their own config.lua: the job and grades, `Config.Locations` as `vector4(...)`, gear, work vehicle and rules like fines and jail time. Change one job without touching the others.
 - sare_rp_jobs is now the shared job tools: City Hall job centre, `/911` and `/call`, bills, duty menus, locker gear and the F2 menu. Any job, also your own, adds its calls, bills and F2 actions with exports (`AddService`, `AllowBills`, `AddJobAction`, `DutyMenu`, `Gear`).

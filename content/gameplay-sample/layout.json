@@ -1,0 +1,1593 @@
+{
+  "format": "sare-world-layout",
+  "version": 1,
+  "next_id": 36,
+  "settings": {
+    "hour": 12,
+    "weather": "clear",
+    "scripts": [
+      {
+        "name": "Race results",
+        "source": "-- Tells everyone each finish time of the checkpoint course.\nlocal best\n\nworld.on('finish', function(player, race, seconds)\n  local text = string.format('%s ran the course in %.1f s', player.name, seconds)\n  if not best or seconds < best then\n    best = seconds\n    text = text .. ' - a new best!'\n  end\n  world.message(text, 6)\nend)\n"
+      }
+    ]
+  },
+  "nodes": [
+    {
+      "id": 1,
+      "name": "Town square"
+    },
+    {
+      "id": 2,
+      "name": "Ground",
+      "parent": 1,
+      "asset": "builtin:ground",
+      "transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 3,
+      "name": "Course ground",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          0,
+          -32,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 4,
+      "name": "House",
+      "parent": 1,
+      "asset": "builtin:house",
+      "transform": {
+        "position": [
+          0,
+          8,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 5,
+      "name": "Tree",
+      "parent": 1,
+      "asset": "builtin:tree",
+      "transform": {
+        "position": [
+          -6,
+          12,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 6,
+      "name": "Tree",
+      "parent": 1,
+      "asset": "builtin:tree",
+      "transform": {
+        "position": [
+          6,
+          12,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 7,
+      "name": "Bench",
+      "parent": 1,
+      "asset": "builtin:bench",
+      "transform": {
+        "position": [
+          4,
+          -2,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          180
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 8,
+      "name": "Lamp post",
+      "parent": 1,
+      "asset": "builtin:lamp-post",
+      "transform": {
+        "position": [
+          -4,
+          -2,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "light": {
+        "color": [
+          1.0,
+          0.85,
+          0.6
+        ],
+        "size": 1.0,
+        "radius": 6.0,
+        "offset": [
+          0.0,
+          1.0,
+          4.25
+        ]
+      }
+    },
+    {
+      "id": 9,
+      "name": "Lamp post",
+      "parent": 1,
+      "asset": "builtin:lamp-post",
+      "transform": {
+        "position": [
+          6,
+          2,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          180
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "light": {
+        "color": [
+          1.0,
+          0.85,
+          0.6
+        ],
+        "size": 1.0,
+        "radius": 6.0,
+        "offset": [
+          0.0,
+          1.0,
+          4.25
+        ]
+      }
+    },
+    {
+      "id": 10,
+      "name": "Lamp post",
+      "parent": 1,
+      "asset": "builtin:lamp-post",
+      "transform": {
+        "position": [
+          -6,
+          -14,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "light": {
+        "color": [
+          0.6,
+          0.8,
+          1.0
+        ],
+        "size": 1.0,
+        "radius": 6.0,
+        "offset": [
+          0.0,
+          1.0,
+          4.25
+        ]
+      }
+    },
+    {
+      "id": 11,
+      "name": "Wall north",
+      "parent": 1,
+      "asset": "builtin:wall",
+      "transform": {
+        "position": [
+          -10,
+          3,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          90
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 12,
+      "name": "Wall south",
+      "parent": 1,
+      "asset": "builtin:wall",
+      "transform": {
+        "position": [
+          -10,
+          -3,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          90
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 13,
+      "name": "Hill",
+      "parent": 1,
+      "asset": "builtin:terrain",
+      "transform": {
+        "position": [
+          -44,
+          0,
+          -0.05
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "terrain": {
+        "size": 48.0,
+        "cells": 24,
+        "heights": [
+          0.017,
+          0.027,
+          0.041,
+          0.061,
+          0.086,
+          0.117,
+          0.152,
+          0.191,
+          0.229,
+          0.264,
+          0.293,
+          0.311,
+          0.318,
+          0.311,
+          0.293,
+          0.264,
+          0.229,
+          0.191,
+          0.152,
+          0.117,
+          0.086,
+          0.061,
+          0.041,
+          0.027,
+          0.017,
+          0.027,
+          0.043,
+          0.066,
+          0.097,
+          0.138,
+          0.187,
+          0.244,
+          0.305,
+          0.366,
+          0.423,
+          0.468,
+          0.498,
+          0.508,
+          0.498,
+          0.468,
+          0.423,
+          0.366,
+          0.305,
+          0.244,
+          0.187,
+          0.138,
+          0.097,
+          0.066,
+          0.043,
+          0.027,
+          0.041,
+          0.066,
+          0.101,
+          0.149,
+          0.211,
+          0.287,
+          0.374,
+          0.468,
+          0.562,
+          0.649,
+          0.718,
+          0.764,
+          0.78,
+          0.764,
+          0.718,
+          0.649,
+          0.562,
+          0.468,
+          0.374,
+          0.287,
+          0.211,
+          0.149,
+          0.101,
+          0.066,
+          0.041,
+          0.061,
+          0.097,
+          0.149,
+          0.22,
+          0.311,
+          0.423,
+          0.551,
+          0.69,
+          0.829,
+          0.956,
+          1.059,
+          1.126,
+          1.149,
+          1.126,
+          1.059,
+          0.956,
+          0.829,
+          0.69,
+          0.551,
+          0.423,
+          0.311,
+          0.22,
+          0.149,
+          0.097,
+          0.061,
+          0.086,
+          0.138,
+          0.211,
+          0.311,
+          0.44,
+          0.598,
+          0.78,
+          0.976,
+          1.172,
+          1.353,
+          1.498,
+          1.592,
+          1.625,
+          1.592,
+          1.498,
+          1.353,
+          1.172,
+          0.976,
+          0.78,
+          0.598,
+          0.44,
+          0.311,
+          0.211,
+          0.138,
+          0.086,
+          0.117,
+          0.187,
+          0.287,
+          0.423,
+          0.598,
+          0.812,
+          1.059,
+          1.325,
+          1.592,
+          1.837,
+          2.034,
+          2.163,
+          2.207,
+          2.163,
+          2.034,
+          1.837,
+          1.592,
+          1.325,
+          1.059,
+          0.812,
+          0.598,
+          0.423,
+          0.287,
+          0.187,
+          0.117,
+          0.152,
+          0.244,
+          0.374,
+          0.551,
+          0.78,
+          1.059,
+          1.38,
+          1.728,
+          2.076,
+          2.395,
+          2.652,
+          2.82,
+          2.878,
+          2.82,
+          2.652,
+          2.395,
+          2.076,
+          1.728,
+          1.38,
+          1.059,
+          0.78,
+          0.551,
+          0.374,
+          0.244,
+          0.152,
+          0.191,
+          0.305,
+          0.468,
+          0.69,
+          0.976,
+          1.325,
+          1.728,
+          2.163,
+          2.599,
+          2.998,
+          3.32,
+          3.529,
+          3.602,
+          3.529,
+          3.32,
+          2.998,
+          2.599,
+          2.163,
+          1.728,
+          1.325,
+          0.976,
+          0.69,
+          0.468,
+          0.305,
+          0.191,
+          0.229,
+          0.366,
+          0.562,
+          0.829,
+          1.172,
+          1.592,
+          2.076,
+          2.599,
+          3.123,
+          3.602,
+          3.989,
+          4.241,
+          4.329,
+          4.241,
+          3.989,
+          3.602,
+          3.123,
+          2.599,
+          2.076,
+          1.592,
+          1.172,
+          0.829,
+          0.562,
+          0.366,
+          0.229,
+          0.264,
+          0.423,
+          0.649,
+          0.956,
+          1.353,
+          1.837,
+          2.395,
+          2.998,
+          3.602,
+          4.155,
+          4.602,
+          4.892,
+          4.993,
+          4.892,
+          4.602,
+          4.155,
+          3.602,
+          2.998,
+          2.395,
+          1.837,
+          1.353,
+          0.956,
+          0.649,
+          0.423,
+          0.264,
+          0.293,
+          0.468,
+          0.718,
+          1.059,
+          1.498,
+          2.034,
+          2.652,
+          3.32,
+          3.989,
+          4.602,
+          5.096,
+          5.418,
+          5.53,
+          5.418,
+          5.096,
+          4.602,
+          3.989,
+          3.32,
+          2.652,
+          2.034,
+          1.498,
+          1.059,
+          0.718,
+          0.468,
+          0.293,
+          0.311,
+          0.498,
+          0.764,
+          1.126,
+          1.592,
+          2.163,
+          2.82,
+          3.529,
+          4.241,
+          4.892,
+          5.418,
+          5.76,
+          5.879,
+          5.76,
+          5.418,
+          4.892,
+          4.241,
+          3.529,
+          2.82,
+          2.163,
+          1.592,
+          1.126,
+          0.764,
+          0.498,
+          0.311,
+          0.318,
+          0.508,
+          0.78,
+          1.149,
+          1.625,
+          2.207,
+          2.878,
+          3.602,
+          4.329,
+          4.993,
+          5.53,
+          5.879,
+          6.0,
+          5.879,
+          5.53,
+          4.993,
+          4.329,
+          3.602,
+          2.878,
+          2.207,
+          1.625,
+          1.149,
+          0.78,
+          0.508,
+          0.318,
+          0.311,
+          0.498,
+          0.764,
+          1.126,
+          1.592,
+          2.163,
+          2.82,
+          3.529,
+          4.241,
+          4.892,
+          5.418,
+          5.76,
+          5.879,
+          5.76,
+          5.418,
+          4.892,
+          4.241,
+          3.529,
+          2.82,
+          2.163,
+          1.592,
+          1.126,
+          0.764,
+          0.498,
+          0.311,
+          0.293,
+          0.468,
+          0.718,
+          1.059,
+          1.498,
+          2.034,
+          2.652,
+          3.32,
+          3.989,
+          4.602,
+          5.096,
+          5.418,
+          5.53,
+          5.418,
+          5.096,
+          4.602,
+          3.989,
+          3.32,
+          2.652,
+          2.034,
+          1.498,
+          1.059,
+          0.718,
+          0.468,
+          0.293,
+          0.264,
+          0.423,
+          0.649,
+          0.956,
+          1.353,
+          1.837,
+          2.395,
+          2.998,
+          3.602,
+          4.155,
+          4.602,
+          4.892,
+          4.993,
+          4.892,
+          4.602,
+          4.155,
+          3.602,
+          2.998,
+          2.395,
+          1.837,
+          1.353,
+          0.956,
+          0.649,
+          0.423,
+          0.264,
+          0.229,
+          0.366,
+          0.562,
+          0.829,
+          1.172,
+          1.592,
+          2.076,
+          2.599,
+          3.123,
+          3.602,
+          3.989,
+          4.241,
+          4.329,
+          4.241,
+          3.989,
+          3.602,
+          3.123,
+          2.599,
+          2.076,
+          1.592,
+          1.172,
+          0.829,
+          0.562,
+          0.366,
+          0.229,
+          0.191,
+          0.305,
+          0.468,
+          0.69,
+          0.976,
+          1.325,
+          1.728,
+          2.163,
+          2.599,
+          2.998,
+          3.32,
+          3.529,
+          3.602,
+          3.529,
+          3.32,
+          2.998,
+          2.599,
+          2.163,
+          1.728,
+          1.325,
+          0.976,
+          0.69,
+          0.468,
+          0.305,
+          0.191,
+          0.152,
+          0.244,
+          0.374,
+          0.551,
+          0.78,
+          1.059,
+          1.38,
+          1.728,
+          2.076,
+          2.395,
+          2.652,
+          2.82,
+          2.878,
+          2.82,
+          2.652,
+          2.395,
+          2.076,
+          1.728,
+          1.38,
+          1.059,
+          0.78,
+          0.551,
+          0.374,
+          0.244,
+          0.152,
+          0.117,
+          0.187,
+          0.287,
+          0.423,
+          0.598,
+          0.812,
+          1.059,
+          1.325,
+          1.592,
+          1.837,
+          2.034,
+          2.163,
+          2.207,
+          2.163,
+          2.034,
+          1.837,
+          1.592,
+          1.325,
+          1.059,
+          0.812,
+          0.598,
+          0.423,
+          0.287,
+          0.187,
+          0.117,
+          0.086,
+          0.138,
+          0.211,
+          0.311,
+          0.44,
+          0.598,
+          0.78,
+          0.976,
+          1.172,
+          1.353,
+          1.498,
+          1.592,
+          1.625,
+          1.592,
+          1.498,
+          1.353,
+          1.172,
+          0.976,
+          0.78,
+          0.598,
+          0.44,
+          0.311,
+          0.211,
+          0.138,
+          0.086,
+          0.061,
+          0.097,
+          0.149,
+          0.22,
+          0.311,
+          0.423,
+          0.551,
+          0.69,
+          0.829,
+          0.956,
+          1.059,
+          1.126,
+          1.149,
+          1.126,
+          1.059,
+          0.956,
+          0.829,
+          0.69,
+          0.551,
+          0.423,
+          0.311,
+          0.22,
+          0.149,
+          0.097,
+          0.061,
+          0.041,
+          0.066,
+          0.101,
+          0.149,
+          0.211,
+          0.287,
+          0.374,
+          0.468,
+          0.562,
+          0.649,
+          0.718,
+          0.764,
+          0.78,
+          0.764,
+          0.718,
+          0.649,
+          0.562,
+          0.468,
+          0.374,
+          0.287,
+          0.211,
+          0.149,
+          0.101,
+          0.066,
+          0.041,
+          0.027,
+          0.043,
+          0.066,
+          0.097,
+          0.138,
+          0.187,
+          0.244,
+          0.305,
+          0.366,
+          0.423,
+          0.468,
+          0.498,
+          0.508,
+          0.498,
+          0.468,
+          0.423,
+          0.366,
+          0.305,
+          0.244,
+          0.187,
+          0.138,
+          0.097,
+          0.066,
+          0.043,
+          0.027,
+          0.017,
+          0.027,
+          0.041,
+          0.061,
+          0.086,
+          0.117,
+          0.152,
+          0.191,
+          0.229,
+          0.264,
+          0.293,
+          0.311,
+          0.318,
+          0.311,
+          0.293,
+          0.264,
+          0.229,
+          0.191,
+          0.152,
+          0.117,
+          0.086,
+          0.061,
+          0.041,
+          0.027,
+          0.017
+        ],
+        "color": [
+          0.36,
+          0.5,
+          0.27
+        ]
+      }
+    },
+    {
+      "id": 14,
+      "name": "Gameplay"
+    },
+    {
+      "id": 15,
+      "name": "Start",
+      "parent": 14,
+      "asset": "builtin:marker-spawn",
+      "transform": {
+        "position": [
+          0,
+          -6,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "spawn"
+      }
+    },
+    {
+      "id": 16,
+      "name": "Outside the house",
+      "parent": 14,
+      "asset": "builtin:marker-target",
+      "transform": {
+        "position": [
+          0,
+          2,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          180
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 17,
+      "name": "Inside the house",
+      "parent": 14,
+      "asset": "builtin:marker-target",
+      "transform": {
+        "position": [
+          60,
+          -2,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 18,
+      "name": "Front door",
+      "parent": 14,
+      "asset": "builtin:door-teleport",
+      "transform": {
+        "position": [
+          0,
+          4.9,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "interact",
+        "size": [
+          2.4,
+          3.0,
+          2.6
+        ],
+        "prompt": "Go inside",
+        "actions": [
+          {
+            "do": "teleport",
+            "target": 17
+          },
+          {
+            "do": "message",
+            "text": "Inside the house",
+            "seconds": 4
+          }
+        ]
+      }
+    },
+    {
+      "id": 19,
+      "name": "Garden gate",
+      "parent": 14,
+      "asset": "builtin:door",
+      "transform": {
+        "position": [
+          -10,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          90
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "interact",
+        "size": [
+          2.4,
+          3.0,
+          2.6
+        ],
+        "prompt": "Open / close the gate",
+        "actions": [
+          {
+            "do": "toggle"
+          }
+        ]
+      }
+    },
+    {
+      "id": 20,
+      "name": "Welcome sign",
+      "parent": 14,
+      "asset": "builtin:marker-interact",
+      "transform": {
+        "position": [
+          6,
+          -6,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "interact",
+        "size": [
+          2.0,
+          2.0,
+          2.5
+        ],
+        "prompt": "Read the sign",
+        "actions": [
+          {
+            "do": "message",
+            "text": "Welcome! Walk into the orange zones, open the gate, enter the house and run the checkpoint course to the south.",
+            "seconds": 8
+          }
+        ]
+      }
+    },
+    {
+      "id": 21,
+      "name": "Night zone",
+      "parent": 14,
+      "asset": "builtin:marker-trigger",
+      "transform": {
+        "position": [
+          10,
+          -10,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "trigger",
+        "size": [
+          5,
+          5,
+          3
+        ],
+        "on_enter": [
+          {
+            "do": "set_time",
+            "hour": 22
+          },
+          {
+            "do": "message",
+            "text": "Night falls",
+            "seconds": 4
+          }
+        ],
+        "on_leave": [
+          {
+            "do": "set_time",
+            "hour": 12
+          }
+        ]
+      }
+    },
+    {
+      "id": 22,
+      "name": "Rain zone",
+      "parent": 14,
+      "asset": "builtin:marker-trigger",
+      "transform": {
+        "position": [
+          -10,
+          -10,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "trigger",
+        "size": [
+          5,
+          5,
+          3
+        ],
+        "on_enter": [
+          {
+            "do": "set_weather",
+            "weather": "rain"
+          },
+          {
+            "do": "message",
+            "text": "Here comes the rain",
+            "seconds": 4
+          }
+        ],
+        "on_leave": [
+          {
+            "do": "set_weather",
+            "weather": "clear"
+          }
+        ]
+      }
+    },
+    {
+      "id": 23,
+      "name": "Checkpoint course",
+      "parent": 14
+    },
+    {
+      "id": 24,
+      "name": "Checkpoint 1",
+      "parent": 23,
+      "asset": "builtin:marker-checkpoint",
+      "transform": {
+        "position": [
+          -8,
+          -22,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "checkpoint",
+        "size": [
+          6,
+          6,
+          4
+        ],
+        "race": "main",
+        "order": 1
+      }
+    },
+    {
+      "id": 25,
+      "name": "Checkpoint 2",
+      "parent": 23,
+      "asset": "builtin:marker-checkpoint",
+      "transform": {
+        "position": [
+          8,
+          -32,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "checkpoint",
+        "size": [
+          6,
+          6,
+          4
+        ],
+        "race": "main",
+        "order": 2
+      }
+    },
+    {
+      "id": 26,
+      "name": "Checkpoint 3",
+      "parent": 23,
+      "asset": "builtin:marker-checkpoint",
+      "transform": {
+        "position": [
+          -8,
+          -42,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "checkpoint",
+        "size": [
+          6,
+          6,
+          4
+        ],
+        "race": "main",
+        "order": 3
+      }
+    },
+    {
+      "id": 27,
+      "name": "Inside"
+    },
+    {
+      "id": 28,
+      "name": "Floor",
+      "parent": 27,
+      "asset": "builtin:ground",
+      "transform": {
+        "position": [
+          60,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 29,
+      "name": "Crate",
+      "parent": 27,
+      "asset": "builtin:crate",
+      "transform": {
+        "position": [
+          57,
+          6,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 30,
+      "name": "Crate",
+      "parent": 27,
+      "asset": "builtin:crate",
+      "transform": {
+        "position": [
+          60,
+          6,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          20
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 31,
+      "name": "Crate",
+      "parent": 27,
+      "asset": "builtin:crate",
+      "transform": {
+        "position": [
+          63,
+          6,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          40
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 32,
+      "name": "Way out",
+      "parent": 27,
+      "asset": "builtin:marker-teleport",
+      "transform": {
+        "position": [
+          60,
+          -8,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "trigger",
+        "size": [
+          1.5,
+          1.5,
+          2.5
+        ],
+        "on_enter": [
+          {
+            "do": "teleport",
+            "target": 16
+          }
+        ]
+      }
+    },
+    {
+      "id": 33,
+      "name": "Bell",
+      "parent": 14,
+      "asset": "builtin:marker-interact",
+      "transform": {
+        "position": [
+          -4,
+          -8,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "interact",
+        "size": [
+          2.0,
+          2.0,
+          2.5
+        ],
+        "prompt": "Ring the bell"
+      },
+      "scripts": [
+        {
+          "name": "Ring",
+          "source": "-- Press E at the bell: the signal crate vanishes for 3 seconds and\n-- leaves a copy of itself beside it (the three newest stay), and\n-- everyone sees how often the bell has rung.\nlocal crate = world.find(\"Signal crate\")\nlocal rings = 0\nlocal copies = {}\n\nscript.object:on('use', function(player)\n  rings = rings + 1\n  world.hud('bell', 'Bell rung ' .. rings .. (rings == 1 and ' time' or ' times'))\n  script.object.color = rgb(1, 0.8, 0.2)\n  copies[#copies + 1] = crate:clone(crate.position + vector(0, 2 * (1 + (rings - 1) % 3), 0))\n  if #copies > 3 then\n    local oldest = table.remove(copies, 1)\n    if oldest.exists then\n      oldest:destroy()\n    end\n  end\n  crate:hide()\n  world.message(player.name .. ' rang the bell')\n  wait(3)\n  crate:show()\nend)\n"
+        }
+      ]
+    },
+    {
+      "id": 34,
+      "name": "Signal crate",
+      "parent": 14,
+      "asset": "builtin:crate",
+      "transform": {
+        "position": [
+          -6,
+          -8,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 35,
+      "name": "Lift",
+      "parent": 14,
+      "asset": "builtin:platform",
+      "transform": {
+        "position": [
+          16,
+          6,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "scripts": [
+        {
+          "name": "Up and down",
+          "source": "-- The lift rises 4 m and comes back down, again and again.\n-- Stand on it to ride along.\nlocal lift = script.object\nlocal bottom = lift.position\n\nwhile true do\n  lift:moveTo(bottom + vector(0, 0, 4), 3)\n  wait(5)\n  lift:moveTo(bottom, 3)\n  wait(5)\nend\n"
+        }
+      ]
+    }
+  ]
+}

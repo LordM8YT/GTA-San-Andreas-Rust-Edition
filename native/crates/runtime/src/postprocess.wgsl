@@ -7,6 +7,8 @@ struct Controls {
     // xyz: camera position, w: ground wetness (0 turns reflections off).
     eye: vec4<f32>,
     sky: vec4<f32>,
+    // rgb: the world look's colour temperature, w: its contrast.
+    tone: vec4<f32>,
 };
 @group(0) @binding(0) var scene: texture_2d<f32>;
 @group(0) @binding(1) var linear_sampler: sampler;
@@ -157,6 +159,11 @@ fn reflection(uv: vec2<f32>, color: vec3<f32>) -> vec3<f32> {
     }
     color *= controls.grade.y;
     color = mix(vec3<f32>(luma(color)), color, controls.grade.z);
+    // The world's look: warmth, then contrast around mid grey.
+    color *= controls.tone.rgb;
+    if (controls.tone.w != 1.0) {
+        color = 0.18 * pow(max(color, vec3<f32>(0.0)) / 0.18, vec3<f32>(controls.tone.w));
+    }
     // Filmic display mapping; output is linear and the sRGB target handles encoding.
     color = clamp((color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14), vec3<f32>(0.0), vec3<f32>(1.0));
     let edge = dot(uv - 0.5, uv - 0.5) * 2.0;

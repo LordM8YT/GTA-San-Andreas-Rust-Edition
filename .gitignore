@@ -17,6 +17,9 @@ mods/local-ped-test/
 mods/local-upscaled-textures/
 .claude-flow/
 
+# Build Mode autosaves of unsaved work, per world
+.autosave.json
+
 # Created by sa-server at runtime
 server-data/identity.salt
 server-data/kvp/

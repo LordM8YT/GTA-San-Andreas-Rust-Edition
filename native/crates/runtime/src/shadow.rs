@@ -312,6 +312,8 @@ pub(super) async fn probe(backends: wgpu::Backends) -> anyhow::Result<(f32, f32)
     uniforms.extend(light_matrix(Vec3::ZERO, sun).to_cols_array());
     uniforms.extend([sun.x, sun.y, sun.z, 1.0]);
     uniforms.extend([1.0, 0.95, 0.86, 0.0, 1.0, 1.0, 1.0, 0.0, 0.5, 0.6, 0.7, 0.0]);
+    // No object lights.
+    uniforms.resize(uniforms.len() + 4 + crate::MAX_POINT_LIGHTS * 8, 0.0);
     let camera = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: None,
         contents: bytemuck::cast_slice(&uniforms),

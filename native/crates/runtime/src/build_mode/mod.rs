@@ -9,9 +9,16 @@
 //!
 //! Start it with `sa-runtime --build <pack id | folder | new:Name>`.
 //! See docs/build-mode.md.
+mod arrange;
+mod attributes_ui;
+mod command;
+mod gameplay_ui;
 pub mod gpu;
+pub mod local_test;
 mod pacing;
 mod panels;
+mod saved_models;
+mod script_ui;
 mod viewport;
 
 use crate::State;
@@ -35,6 +42,72 @@ pub enum Tool {
     Move,
     Rotate,
     Scale,
+    /// Shape terrain objects with a brush.
+    Sculpt,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Brush {
+    Raise,
+    Lower,
+    Smooth,
+    Flatten,
+    /// Paint squares with [`Sculpt::material`].
+    Paint,
+    /// Cut squares out of the terrain.
+    Hole,
+}
+impl Brush {
+    pub const ALL: [Brush; 6] = [
+        Self::Raise,
+        Self::Lower,
+        Self::Smooth,
+        Self::Flatten,
+        Self::Paint,
+        Self::Hole,
+    ];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Raise => "Raise",
+            Self::Lower => "Lower",
+            Self::Smooth => "Smooth",
+            Self::Flatten => "Flatten",
+            Self::Paint => "Paint",
+            Self::Hole => "Hole",
+        }
+    }
+    pub fn hint(self) -> &'static str {
+        match self {
+            Self::Raise => "Lift the ground under the brush",
+            Self::Lower => "Sink the ground under the brush",
+            Self::Smooth => "Even out bumps and sharp edges",
+            Self::Flatten => "Level the ground to where the stroke began",
+            Self::Paint => "Paint the ground with a material; painting over a hole fills it",
+            Self::Hole => "Cut the ground away (for caves and tunnels); Paint fills it again",
+        }
+    }
+}
+
+/// The Sculpt tool's brush.
+#[derive(Clone, Copy, Debug)]
+pub struct Sculpt {
+    pub brush: Brush,
+    /// Metres.
+    pub radius: f32,
+    /// 0-1: how fast the brush works.
+    pub strength: f32,
+    /// What Paint paints: an index in `TERRAIN_MATERIALS`.
+    pub material: u8,
+}
+impl Default for Sculpt {
+    fn default() -> Self {
+        Self {
+            brush: Brush::Raise,
+            radius: 6.0,
+            strength: 0.5,
+            material: 1,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -105,6 +178,7 @@ pub struct BuildMode {
     /// Gizmo in object (local) axes instead of world axes.
     pub local: bool,
     pub snap: Snap,
+    pub sculpt: Sculpt,
     pub camera: EditorCamera,
     pub placing: Option<Placing>,
     pub playtesting: bool,
@@ -125,7 +199,14 @@ pub struct BuildMode {
     base_bounds: Option<(Vec3, Vec3)>,
     last_autosave: Instant,
     autosaved_revision: u64,
+    /// `--smoke-build`: its test edits must not replace a real autosave.
+    pub autosave_off: bool,
     ui: panels::UiState,
+    /// Test › Server + players, while it runs.
+    local_test: Option<local_test::LocalTest>,
+    /// Saved models read from the world's folder (My Models), by path.
+    saved_models:
+        std::collections::HashMap<String, Result<sa_scene::saved_model::SavedModel, String>>,
     /// Draw only when something changes while editing (see `pacing`).
     pacing: pacing::Pacing,
 }
@@ -193,6 +274,7 @@ impl BuildMode {
             tool: Tool::Move,
             local: false,
             snap: Snap::default(),
+            sculpt: Sculpt::default(),
             camera: EditorCamera::default(),
             placing: None,
             playtesting: false,
@@ -208,7 +290,10 @@ impl BuildMode {
             base_bounds,
             last_autosave: Instant::now(),
             autosaved_revision: 0,
+            autosave_off: false,
             ui: panels::UiState::default(),
+            saved_models: std::collections::HashMap::new(),
+            local_test: None,
             pacing: pacing::Pacing::default(),
             history: History::default(),
             project,
@@ -251,6 +336,7 @@ impl BuildMode {
     }
 
     pub fn refresh_catalog(&mut self) {
+        self.saved_models.clear();
         let providers = Catalog::providers_for(
             &self.project.folder,
             &self.project.id,
@@ -290,6 +376,7 @@ impl BuildMode {
             .retain(|id| self.doc.layout.node(*id).is_some());
     }
     pub fn undo(&mut self) {
+        script_ui::flush(self);
         self.commit_preview();
         match self.history.undo(&mut self.doc) {
             Ok(Some(label)) => self.info(format!("Undo: {label}")),
@@ -300,6 +387,7 @@ impl BuildMode {
             .retain(|id| self.doc.layout.node(*id).is_some());
     }
     pub fn redo(&mut self) {
+        script_ui::flush(self);
         self.commit_preview();
         match self.history.redo(&mut self.doc) {
             Ok(Some(label)) => self.info(format!("Redo: {label}")),
@@ -348,6 +436,7 @@ impl BuildMode {
     }
 
     pub fn save(&mut self) {
+        script_ui::flush(self);
         self.commit_preview();
         match self.project.save(&self.doc) {
             Ok(()) => {
@@ -356,6 +445,25 @@ impl BuildMode {
                 self.info(format!("Saved {}", self.project.folder.display()));
             }
             Err(error) => self.error(format!("Save failed, nothing was overwritten: {error:#}")),
+        }
+    }
+    /// Save, then put the world on the SARE server in `server`.
+    pub fn publish(&mut self, server: &Path) {
+        self.save();
+        if self.history.dirty() {
+            return self.error("Publish: the world could not be saved, so nothing was published");
+        }
+        match sa_editor::publish::to_server(&self.project, server) {
+            Ok(published) => self.info(format!(
+                "Published to {}{}. Restart the server so players get this version.",
+                published.folder.display(),
+                if published.was_named {
+                    ""
+                } else {
+                    " and made it the server's world in server.cfg"
+                }
+            )),
+            Err(error) => self.error(format!("Publish failed: {error:#}")),
         }
     }
     pub fn save_as(&mut self, name: &str) {
@@ -392,7 +500,10 @@ impl BuildMode {
         self.autosave();
     }
     pub fn autosave(&mut self) {
-        if !self.history.dirty() || self.history.revision == self.autosaved_revision {
+        if self.autosave_off
+            || !self.history.dirty()
+            || self.history.revision == self.autosaved_revision
+        {
             return;
         }
         match self.project.autosave(&self.doc) {
@@ -488,7 +599,11 @@ impl BuildMode {
     }
 
     /// Collision for playtesting: the pack's scene plus every solid object.
+    /// Objects gameplay can show or hide are switchable, so an opened door
+    /// lets the player through without rebuilding the world.
     fn playtest_collision(&mut self) -> sa_scene::collision::CollisionWorld {
+        let switchable = sa_scene::world_logic::switchable(&self.doc.layout);
+        let mut switched = Vec::new();
         let mut batches: Vec<sa_scene::Batch> = self
             .base_collision
             .iter()
@@ -503,15 +618,22 @@ impl BuildMode {
             })
             .collect();
         let mut problems = Vec::new();
+        let world = self.doc.layout.world_transforms();
         for node in &self.doc.layout.nodes {
-            let Some(asset) = &node.asset else { continue };
+            if node.asset.is_none() {
+                continue;
+            }
             if !self.doc.layout.effective_collision(node.id) {
                 continue;
             }
-            match self.resolver.model(asset) {
+            match sa_scene::content_pack::node_model(node, &mut self.resolver) {
                 Ok(model) => {
-                    let (_, solid) = model.transformed(gpu::render_matrix(&node.transform));
-                    batches.extend(solid);
+                    let (_, solid) = model.transformed(gpu::render_matrix(&world[&node.id]));
+                    if switchable.contains(&node.id) {
+                        switched.push((node.id, solid));
+                    } else {
+                        batches.extend(solid);
+                    }
                 }
                 Err(error) => problems.push(format!("{}: {error:#}", node.name)),
             }
@@ -519,7 +641,11 @@ impl BuildMode {
         for problem in problems {
             self.warn(format!("No collision for {problem}"));
         }
-        sa_scene::collision::CollisionWorld::from_batches(&batches)
+        let mut world = sa_scene::collision::CollisionWorld::from_batches(&batches);
+        for (id, solid) in switched {
+            world.add_switchable(id, &solid);
+        }
+        world
     }
 }
 
@@ -528,6 +654,25 @@ impl State {
     pub(crate) fn build_mode_editing(&self) -> bool {
         self.build.as_ref().is_some_and(|b| !b.playtesting)
     }
+    /// Editing, with the light editor graphics on (picked, or automatic on
+    /// integrated graphics).
+    pub(crate) fn build_mode_light(&self) -> bool {
+        self.build_mode_editing()
+            && self
+                .menu
+                .settings
+                .editor_performance
+                .light(self.integrated_gpu)
+    }
+    /// The graphics settings this frame is drawn with: the player's own,
+    /// made lighter while editing in the light editor mode.
+    pub(crate) fn draw_settings(&self) -> std::borrow::Cow<'_, sa_client::settings::Settings> {
+        if self.build_mode_light() {
+            std::borrow::Cow::Owned(self.menu.settings.light_editor())
+        } else {
+            std::borrow::Cow::Borrowed(&self.menu.settings)
+        }
+    }
     /// While editing: a window event arrived. Returns when the next frame
     /// may be drawn (None: not editing, the game paces itself).
     pub(crate) fn build_mode_event(
@@ -535,7 +680,7 @@ impl State {
         event: &winit::event::WindowEvent,
     ) -> Option<Instant> {
         use winit::event::WindowEvent;
-        let fps_limit = self.menu.settings.fps_limit;
+        let fps_limit = self.draw_settings().fps_limit;
         let build = self.build.as_mut().filter(|b| !b.playtesting)?;
         let pacing = &mut build.pacing;
         match event {
@@ -557,7 +702,7 @@ impl State {
     /// While editing: a frame was drawn; when the next one is due (None:
     /// not editing).
     pub(crate) fn build_mode_frame_drawn(&mut self) -> Option<Instant> {
-        let fps_limit = self.menu.settings.fps_limit;
+        let fps_limit = self.draw_settings().fps_limit;
         let loading = self.loading();
         let build = self.build.as_mut().filter(|b| !b.playtesting)?;
         let busy = loading
@@ -570,13 +715,21 @@ impl State {
     /// Before the game update: the editor camera drives the view.
     pub(crate) fn build_mode_begin_frame(&mut self) {
         let Some(build) = &mut self.build else { return };
+        if build.playtesting {
+            // The world's gameplay sets the time while playing.
+            return;
+        }
         if let Some(hour) = build.doc.layout.settings.hour {
             self.daycycle.minutes = f32::from(hour.min(23)) * 60.0;
         }
-        if build.playtesting {
-            return;
-        }
         build.autosave_if_due();
+        build.poll_local_test();
+        build.ui.performance = self.menu.settings.editor_performance;
+        build.ui.light = self
+            .menu
+            .settings
+            .editor_performance
+            .light(self.integrated_gpu);
         let eye = build.camera.eye();
         self.position = Vec3::new(eye.x, eye.y.max(-90.0), eye.z);
         self.yaw = build.camera.yaw;
@@ -618,10 +771,30 @@ impl State {
         if !build.playtesting && self.captured {
             self.capture(false);
         }
+        let performance_changed = build.ui.performance != self.menu.settings.editor_performance;
+        if performance_changed {
+            self.menu.settings.editor_performance = build.ui.performance;
+            let light = build.ui.performance.light(self.integrated_gpu);
+            build.info(format!(
+                "Editor graphics: {} (drawing {})",
+                build.ui.performance.name(),
+                if light { "light" } else { "full" }
+            ));
+        }
         let mut problems = Vec::new();
+        if !build.playtesting {
+            // However the playtest ended, objects are drawn where placed,
+            // in their own colours.
+            build.gpu.moved.clear();
+            build.gpu.tints.clear();
+            build.gpu.copies.clear();
+        }
         build
             .gpu
             .sync(self, &mut build.resolver, &build.doc.layout, &mut problems);
+        build
+            .gpu
+            .sync_lights(self, &build.doc.layout, &mut problems);
         let ghost = build.placing.as_ref().map(|p| p.asset.clone());
         match (ghost, build.ui.ghost_transform) {
             (Some(asset), Some(transform)) if !build.playtesting => {
@@ -658,6 +831,20 @@ impl State {
                 Request::Quit => self.quit_requested = true,
             }
         }
+        // With Build Mode back in place (draw_settings asks whether it is
+        // editing) and any playtest switch made: save a new editor graphics
+        // choice, and size the frame for light or full drawing.
+        if performance_changed {
+            self.apply_settings();
+        }
+        if self.size.width > 0 && self.size.height > 0 {
+            self.postprocess.resize(
+                &self.device,
+                self.draw_settings()
+                    .render_size(self.size.width, self.size.height),
+                [self.size.width, self.size.height],
+            );
+        }
     }
 
     /// Start playing the edited world, or go back to editing it.
@@ -671,15 +858,19 @@ impl State {
             }
             self.walking = false;
             self.player = None;
+            self.play_logic = None;
             self.capture(false);
             self.keys.clear();
             if let Some(build) = &mut self.build {
                 build.playtesting = false;
+                // Objects scripts moved are back where they were placed.
+                build.gpu.moved.clear();
                 build.info("Back in Build Mode. Your edits are as you left them.");
             }
             return;
         }
         let Some(build) = &mut self.build else { return };
+        script_ui::flush(build);
         build.commit_preview();
         build.placing = None;
         build.drag = None;
@@ -689,16 +880,29 @@ impl State {
             build.autosave();
         }
         let collision = build.playtest_collision();
-        let spawn = build.spawn_render() + Vec3::Y * 2.0;
-        let player = sa_scene::collision::Player::spawn(&collision, spawn);
-        let feet = build.spawn_render();
+        // Gameplay starts fresh from the layout as it is now.
+        let play = crate::play_logic::PlayLogic::playtest(
+            &build.doc.layout.resolved(),
+            &mut build.resolver,
+        );
+        for problem in sa_scene::world_logic::check(&build.doc.layout) {
+            build.warn(format!("Gameplay: {}", problem.text));
+        }
+        let (feet, yaw) = match play.logic.spawn() {
+            Some(pose) => (
+                crate::play_logic::blender_to_render(pose.position),
+                crate::play_logic::yaw_for(pose.heading),
+            ),
+            None => (build.spawn_render(), build.camera.yaw),
+        };
+        let player = sa_scene::collision::Player::spawn(&collision, feet + Vec3::Y * 2.0);
         let standing = collision.standing_at(feet, feet.y + 2.0).is_some();
         build.playtesting = true;
         build.info("Playtest started. Press F6 to return to Build Mode.");
         if !standing {
             build.warn("Nothing solid under the spawn point: the player may fall. Move the spawn or add ground.");
         }
-        let yaw = build.camera.yaw;
+        self.play_logic = Some(play);
         self.collision = Some(collision);
         self.position = player.eye();
         self.player = Some(player);
@@ -743,4 +947,800 @@ pub fn restart_on(args: &[String], folder: &Path) -> Result<()> {
         .spawn()
         .context("starting SARE on the other world")?;
     Ok(())
+}
+
+/// An object of the smoke world by name: (id, position).
+fn smoke_node(state: &State, name: &str) -> (NodeId, [f32; 3]) {
+    state
+        .build
+        .as_ref()
+        .and_then(|b| b.doc.layout.nodes.iter().find(|n| n.name == name))
+        .map(|n| (n.id, n.transform.position))
+        .unwrap_or_else(|| panic!("the smoke world has no {name} (use content/gameplay-sample)"))
+}
+
+/// `--smoke-build`: drive Build Mode through editing, a playtest of the
+/// world's gameplay and back, with screenshots when `--capture-dir` is set.
+/// Meant for `content/gameplay-sample`.
+impl State {
+    /// One rendered frame of the smoke run; true when it has passed.
+    pub(crate) fn build_mode_smoke(&mut self, frame: usize, captures: Option<&Path>) -> bool {
+        let capture = |state: &mut State, name: &str| {
+            if let Some(dir) = captures {
+                state.capture_next = Some(dir.join(name));
+            }
+        };
+        // A menu shown on a first start would take the E key: keep it shut.
+        self.menu.page = None;
+        if let Some(build) = &mut self.build {
+            build.autosave_off = true;
+        }
+        let build = self
+            .build
+            .as_ref()
+            .expect("--smoke-build needs --build <world>");
+        let crate::play_logic::SmokeTargets { gate, door, night } =
+            crate::play_logic::smoke_targets(&build.doc.layout);
+        match frame {
+            5 => {
+                let build = self.build.as_mut().unwrap();
+                // An autosave left by someone's own session: keep it (the
+                // file stays), but do not let its question cover the shots.
+                build.recovery = None;
+                build.selection = vec![door.0];
+                build.focus_selection();
+            }
+            15 => capture(self, "build-editor.png"),
+            20 => {
+                self.toggle_playtest();
+                assert!(
+                    self.build.as_ref().unwrap().playtesting,
+                    "playtest did not start"
+                );
+            }
+            30 => self.smoke_stand_at(gate.1),
+            34 => {
+                let prompt = self
+                    .play_logic
+                    .as_ref()
+                    .and_then(|p| p.prompt().map(str::to_owned));
+                assert!(prompt.is_some(), "no prompt at the gate");
+                assert!(self.interact_play_logic(), "E did nothing at the gate");
+                assert!(
+                    !self.play_logic.as_ref().unwrap().logic.visible(gate.0),
+                    "the gate did not open"
+                );
+            }
+            40 => capture(self, "playtest-gate-open.png"),
+            45 => self.smoke_stand_at(night.1),
+            52 => {
+                let play = self.play_logic.as_ref().unwrap();
+                assert_eq!(play.hour(), Some(22), "the night zone did not set the time");
+                assert!(play.message().is_some(), "no message from the night zone");
+                // Lamps light the night per pixel (the default setting).
+                assert!(
+                    !self.lit_lamps.is_empty() && !self.point_lights(32).is_empty(),
+                    "the sample's lamps do not light the night per pixel"
+                );
+                capture(self, "playtest-night-zone.png");
+            }
+            // World scripts: E at the bell, and its script hides the
+            // signal crate and tells everyone.
+            54 => {
+                let bell = smoke_node(self, "Bell");
+                self.smoke_stand_at(bell.1);
+            }
+            56 => assert!(self.interact_play_logic(), "E did nothing at the bell"),
+            58 => {
+                let crate_id = smoke_node(self, "Signal crate").0;
+                let play = self.play_logic.as_ref().unwrap();
+                assert!(
+                    !play.logic.visible(crate_id),
+                    "the bell's script did not hide the signal crate"
+                );
+                assert!(
+                    play.message().is_some_and(|m| m.ends_with("rang the bell")),
+                    "the bell's script sent no message: {:?}",
+                    play.message()
+                );
+                assert_eq!(
+                    play.logic.shared().hud().get("bell").map(String::as_str),
+                    Some("Bell rung 1 time"),
+                    "the bell's script put no text on screen"
+                );
+                let bell = smoke_node(self, "Bell").0;
+                assert!(
+                    play.logic.shared().colors().contains_key(&bell)
+                        && self.build.as_ref().unwrap().gpu.tints.contains_key(&bell),
+                    "the bell's script did not colour it"
+                );
+                // ...and left a copy of the crate 2 m north of it: drawn
+                // and solid there.
+                let signal = smoke_node(self, "Signal crate");
+                let copies: Vec<_> = play.logic.shared().copies().iter().collect();
+                assert_eq!(
+                    copies.len(),
+                    1,
+                    "the bell's script made no copy: {copies:?}"
+                );
+                let (copy, source) = (*copies[0].0, *copies[0].1);
+                assert_eq!(source, signal.0, "the copy is not of the signal crate");
+                assert!(play.logic.visible(copy), "the copy is hidden");
+                assert!(
+                    self.build.as_ref().unwrap().gpu.objects.contains_key(&copy),
+                    "the copy is not drawn"
+                );
+                let above =
+                    crate::play_logic::blender_to_render([signal.1[0], signal.1[1] + 2.0, 10.0]);
+                let collision = self.collision.as_ref().unwrap();
+                assert!(
+                    collision.has_switchable(copy)
+                        && collision
+                            .ground_below(above, above.y)
+                            .is_some_and(|y| y > 0.1),
+                    "the copy is not solid where it stands"
+                );
+                let build = self.build.as_ref().unwrap();
+                let errors: Vec<&str> = build
+                    .log
+                    .iter()
+                    .map(|l| l.text.as_str())
+                    .filter(|t| t.starts_with("Script error"))
+                    .collect();
+                assert!(errors.is_empty(), "script errors: {errors:?}");
+                // The lift's script has been moving it since the playtest
+                // began: drawn and solid higher up.
+                let lift = smoke_node(self, "Lift");
+                let risen = play
+                    .logic
+                    .shared()
+                    .moved()
+                    .find(|(id, _)| *id == lift.0)
+                    .map(|(_, pose)| pose.position[2]);
+                assert!(
+                    risen.is_some_and(|z| z > 0.0),
+                    "the lift's script did not move it: {risen:?}"
+                );
+                assert!(
+                    build.gpu.moved.contains_key(&lift.0),
+                    "the moved lift is not drawn where it is"
+                );
+                let top = crate::play_logic::blender_to_render([lift.1[0], lift.1[1], 10.0]);
+                let ground = self
+                    .collision
+                    .as_ref()
+                    .unwrap()
+                    .ground_below(top, top.y)
+                    .unwrap_or(0.0);
+                let base = crate::play_logic::blender_to_render([lift.1[0], lift.1[1], 1.0]).y;
+                assert!(
+                    ground > base + 0.001,
+                    "the moved lift is not solid where it is ({ground} vs {base})"
+                );
+                capture(self, "playtest-script-bell.png");
+            }
+            60 => self.smoke_stand_at(door.1),
+            64 => {
+                let before = self.player.as_ref().unwrap().feet;
+                assert!(self.interact_play_logic(), "E did nothing at the door");
+                let after = self.player.as_ref().unwrap().feet;
+                assert!(
+                    before.distance(after) > 20.0,
+                    "the door did not teleport the player"
+                );
+            }
+            72 => capture(self, "playtest-inside.png"),
+            // A player standing on the lift rides along when it moves.
+            74 => {
+                let lift = smoke_node(self, "Lift").0;
+                let play = self.play_logic.as_ref().unwrap();
+                let pose = play.logic.shared().pose(play.logic.world(), lift).unwrap();
+                let [x, y, z] = pose.position;
+                self.smoke_stand_at([x, y, z + 1.0]);
+            }
+            76 => {
+                use sa_scene::world_logic::{Pose, ScriptChange};
+                let lift = smoke_node(self, "Lift").0;
+                let feet = self.player.as_ref().unwrap().feet;
+                assert_eq!(
+                    self.collision.as_ref().unwrap().standing_on(feet),
+                    Some(lift),
+                    "the player is not standing on the lift"
+                );
+                let play = self.play_logic.as_mut().unwrap();
+                let pose = play.logic.shared().pose(play.logic.world(), lift).unwrap();
+                let [x, y, z] = pose.position;
+                play.logic.apply_script(ScriptChange::Move(
+                    lift,
+                    Pose {
+                        position: [x, y, z + 2.0],
+                        heading: pose.heading,
+                    },
+                    0.0,
+                ));
+                self.sync_moved_objects();
+                let risen = self.player.as_ref().unwrap().feet.y - feet.y;
+                assert!(
+                    (risen - 2.0).abs() < 0.05,
+                    "the lift did not carry the player up 2 m ({risen})"
+                );
+            }
+            80 => {
+                let revision = self.build.as_ref().unwrap().history.revision;
+                self.toggle_playtest();
+                let build = self.build.as_ref().unwrap();
+                assert!(!build.playtesting && self.play_logic.is_none());
+                assert_eq!(
+                    build.history.revision, revision,
+                    "playtest changed the document"
+                );
+            }
+            // Terrain: a sculpt stroke rebuilds the mesh; one undo takes it back.
+            84 => {
+                let build = self.build.as_mut().unwrap();
+                let hill = build
+                    .doc
+                    .layout
+                    .nodes
+                    .iter()
+                    .find(|n| n.terrain.is_some())
+                    .map(|n| n.id)
+                    .expect("the smoke world has a terrain object");
+                build.selection = vec![hill];
+                build.focus_selection();
+                let before = build.gpu.objects[&hill].bounds.1.y;
+                build.ui.smoke_terrain = Some((hill, before));
+                build.preview("Sculpt terrain", &[hill], |n| {
+                    if let Some(terrain) = &mut n.terrain {
+                        sa_scene::terrain::raise(terrain, glam::Vec2::ZERO, 10.0, 5.0);
+                    }
+                });
+                build.commit_preview();
+            }
+            86 => {
+                let build = self.build.as_ref().unwrap();
+                let (hill, before) = build.ui.smoke_terrain.unwrap();
+                let after = build.gpu.objects[&hill].bounds.1.y;
+                assert!(
+                    after > before + 4.0,
+                    "the sculpted terrain mesh did not rise ({before} -> {after})"
+                );
+                capture(self, "build-terrain.png");
+            }
+            88 => {
+                let build = self.build.as_mut().unwrap();
+                build.undo();
+            }
+            90 => {
+                let build = self.build.as_ref().unwrap();
+                let (hill, before) = build.ui.smoke_terrain.unwrap();
+                let after = build.gpu.objects[&hill].bounds.1.y;
+                let log: Vec<&str> = build
+                    .log
+                    .iter()
+                    .rev()
+                    .take(4)
+                    .map(|l| l.text.as_str())
+                    .collect();
+                assert!(
+                    (after - before).abs() < 0.01,
+                    "undo did not restore the terrain ({before} -> {after}); log {log:?}"
+                );
+            }
+            // A road along points: placed, drawn, and rebuilt when a point
+            // moves.
+            92 => {
+                let build = self.build.as_mut().unwrap();
+                let at = sa_scene::world_layout::Transform {
+                    position: [0.0, -40.0, 0.0],
+                    ..Default::default()
+                };
+                let (command, id) = sa_editor::ops::place(
+                    &mut build.doc,
+                    AssetRef::Builtin("spline-road".into()),
+                    "Road",
+                    at,
+                    None,
+                )
+                .expect("placing a road");
+                build.execute(command);
+                build.selection = vec![id];
+                build.focus_selection();
+            }
+            96 => {
+                let build = self.build.as_mut().unwrap();
+                let id = build.selection[0];
+                let before = build.gpu.objects[&id].bounds;
+                let triangles = build.gpu.objects[&id].triangles.len();
+                build.ui.smoke_road = Some((id, before.1.y, triangles));
+                assert!(
+                    (before.1 - before.0).x > 40.0,
+                    "the road mesh is not along its points: {before:?}"
+                );
+                build.preview("Move road point", &[id], |n| {
+                    if let Some(road) = &mut n.road {
+                        road.points[2][2] = 6.0;
+                        // And joined back to its start, as a loop.
+                        road.closed = true;
+                    }
+                });
+                build.commit_preview();
+            }
+            100 => {
+                let build = self.build.as_ref().unwrap();
+                let (id, before, open) = build.ui.smoke_road.unwrap();
+                let after = build.gpu.objects[&id].bounds.1.y;
+                assert!(
+                    after > before + 5.0,
+                    "raising a road point did not rebuild the road ({before} -> {after})"
+                );
+                let looped = build.gpu.objects[&id].triangles.len();
+                assert!(
+                    looped > open,
+                    "closing the road into a loop did not add its last side ({open} -> {looped})"
+                );
+                capture(self, "build-road.png");
+            }
+            // Terrain paint and holes: sand around a hole, fewer triangles.
+            102 => {
+                let build = self.build.as_mut().unwrap();
+                let (hill, _) = build.ui.smoke_terrain.unwrap();
+                let before = build.gpu.objects[&hill].triangles.len();
+                build.ui.smoke_paint = Some((hill, before));
+                build.selection = vec![hill];
+                build.focus_selection();
+                build.preview("Paint terrain", &[hill], |n| {
+                    if let Some(terrain) = &mut n.terrain {
+                        sa_scene::terrain::paint(terrain, glam::Vec2::ZERO, 14.0, 3);
+                        sa_scene::terrain::paint(
+                            terrain,
+                            glam::Vec2::ZERO,
+                            5.0,
+                            sa_scene::world_layout::Terrain::HOLE,
+                        );
+                    }
+                });
+                build.commit_preview();
+            }
+            106 => {
+                let build = self.build.as_ref().unwrap();
+                let (hill, before) = build.ui.smoke_paint.unwrap();
+                let after = build.gpu.objects[&hill].triangles.len();
+                assert!(
+                    after < before,
+                    "the hole did not remove terrain triangles ({before} -> {after})"
+                );
+                capture(self, "build-terrain-paint.png");
+            }
+            // The script editor: the bell's script, checked as it is typed.
+            108 => {
+                let bell = smoke_node(self, "Bell").0;
+                let build = self.build.as_mut().unwrap();
+                build.selection = vec![bell];
+                build.focus_selection();
+                script_ui::open(build, script_ui::ScriptAt::Object(bell, 0));
+            }
+            114 => {
+                let build = self.build.as_ref().unwrap();
+                assert!(build.ui.script.is_some(), "the script editor did not open");
+                capture(self, "build-script-editor.png");
+            }
+            // A world look: the same scene graded as Noir.
+            118 => {
+                let build = self.build.as_mut().unwrap();
+                build.ui.script = None;
+                build.selection.clear();
+                build.reset_camera();
+                build.doc.layout.settings.look = sa_scene::world_layout::WorldLook::presets()
+                    .into_iter()
+                    .find(|(name, _)| *name == "Noir")
+                    .map(|(_, look)| look);
+            }
+            122 => {
+                assert!(self.world_look().is_some(), "the world look is not used");
+                capture(self, "build-look-noir.png");
+            }
+            124 => self.build.as_mut().unwrap().doc.layout.settings.look = None,
+            // Parts: every shape, sized, coloured and given a material.
+            126 => {
+                use sa_scene::world_layout::{PartMaterial, Transform};
+                let build = self.build.as_mut().unwrap();
+                let parts = [
+                    (
+                        "part-block",
+                        [8.0, 0.5, 3.0],
+                        [0.72, 0.26, 0.18],
+                        PartMaterial::Brick,
+                        0.0,
+                    ),
+                    (
+                        "part-block",
+                        [3.0, 0.2, 2.0],
+                        [0.55, 0.75, 0.9],
+                        PartMaterial::Glass,
+                        0.0,
+                    ),
+                    (
+                        "part-cylinder",
+                        [1.0, 1.0, 4.0],
+                        [0.5, 0.33, 0.18],
+                        PartMaterial::Wood,
+                        0.0,
+                    ),
+                    (
+                        "part-ball",
+                        [2.0, 2.0, 2.0],
+                        [0.96, 0.8, 0.18],
+                        PartMaterial::Plastic,
+                        0.0,
+                    ),
+                    (
+                        "part-wedge",
+                        [4.0, 3.0, 1.5],
+                        [0.62, 0.62, 0.6],
+                        PartMaterial::Concrete,
+                        0.0,
+                    ),
+                    (
+                        "part-corner-wedge",
+                        [2.0, 2.0, 2.0],
+                        [0.13, 0.3, 0.75],
+                        PartMaterial::Metal,
+                        0.0,
+                    ),
+                    (
+                        "part-block",
+                        [4.0, 4.0, 0.2],
+                        [0.95, 0.95, 0.93],
+                        PartMaterial::Tiles,
+                        0.4,
+                    ),
+                ];
+                let mut ids = Vec::new();
+                for (i, (name, size, color, material, transparency)) in
+                    parts.into_iter().enumerate()
+                {
+                    let at = Transform {
+                        position: [-14.0 + i as f32 * 5.0, 36.0, 0.0],
+                        ..Default::default()
+                    };
+                    let (command, id) = sa_editor::ops::place(
+                        &mut build.doc,
+                        AssetRef::Builtin(name.into()),
+                        "Part",
+                        at,
+                        None,
+                    )
+                    .expect("placing a part");
+                    build.execute(command);
+                    build.preview("Edit part", &[id], |n| {
+                        let part = n.part.as_mut().expect("a placed part");
+                        (part.size, part.color, part.material) = (size, color, material.clone());
+                        part.transparency = transparency;
+                    });
+                    build.commit_preview();
+                    ids.push(id);
+                }
+                build.ui.smoke_parts = ids;
+            }
+            // Framed once they are on the GPU.
+            128 => {
+                let build = self.build.as_mut().unwrap();
+                build.selection = build.ui.smoke_parts.clone();
+                build.focus_selection();
+                build.selection.truncate(1);
+            }
+            132 => {
+                let build = self.build.as_ref().unwrap();
+                let ids = &build.ui.smoke_parts;
+                let wall = &build.gpu.objects[&ids[0]];
+                let size = wall.bounds.1 - wall.bounds.0;
+                assert!(
+                    (size.x - 8.0).abs() < 0.05 && (size.y - 3.0).abs() < 0.05,
+                    "the brick wall is not drawn at its size: {size}"
+                );
+                assert!(
+                    wall.batches
+                        .iter()
+                        .any(|b| b.texture_key == "builtin:material/brick"),
+                    "the brick wall is not drawn with bricks"
+                );
+                let glass = &build.gpu.objects[&ids[1]];
+                assert!(
+                    glass.batches.iter().all(|b| b.alpha),
+                    "glass is not see-through"
+                );
+                capture(self, "build-parts.png");
+            }
+            // The parts as one model: grouped, then turned a quarter about
+            // its pivot; everything in it turns along.
+            134 => {
+                let build = self.build.as_mut().unwrap();
+                let ids = build.ui.smoke_parts.clone();
+                let (command, model) =
+                    sa_editor::ops::group(&mut build.doc, &ids, "Parts model").expect("grouping");
+                build.execute(command);
+                let wall = build.gpu.objects[&ids[0]].bounds;
+                build.ui.smoke_model = Some((model, wall));
+                build.preview("Rotate", &[model], |n| n.transform.rotation[2] = 90.0);
+                build.commit_preview();
+                build.selection = vec![model];
+            }
+            138 => {
+                let build = self.build.as_mut().unwrap();
+                let (model, before) = build.ui.smoke_model.unwrap();
+                let ids = build.ui.smoke_parts.clone();
+                let after = build.gpu.objects[&ids[0]].bounds;
+                let (was, now) = (before.1 - before.0, after.1 - after.0);
+                // Render space: x east, z south. The 8 m wall now runs north.
+                assert!(
+                    (was.x - now.z).abs() < 0.1 && (was.z - now.x).abs() < 0.1,
+                    "the wall did not turn with its model: {was} -> {now}"
+                );
+                assert!(build.doc.layout.node(model).is_some_and(|n| n.model));
+                build.focus_selection();
+            }
+            142 => {
+                capture(self, "build-model.png");
+                // Played, the parts are where the model puts them.
+                let played = self.build.as_ref().unwrap().doc.layout.resolved();
+                let wall = self.build.as_ref().unwrap().ui.smoke_parts[0];
+                let at = played.node(wall).unwrap().transform;
+                assert_eq!(
+                    at.rotation[2].round(),
+                    90.0,
+                    "the played wall is not turned: {at:?}"
+                );
+            }
+            // Saved to My Models, placed again, changed there and saved to
+            // every copy.
+            144 => {
+                let build = self.build.as_mut().unwrap();
+                let (model, _) = build.ui.smoke_model.unwrap();
+                build.save_to_my_models(model);
+                let path = build.doc.layout.node(model).unwrap().saved_model.clone();
+                let path = path.expect("the model is linked to its saved file");
+                assert!(build.project.folder.join(&path).is_file());
+                assert!(
+                    build.catalog.find(&AssetRef::Own(path.clone())).is_some(),
+                    "the saved model is not in the Toolbox"
+                );
+                let at = sa_scene::world_layout::Transform {
+                    position: [-2.0, 56.0, 0.0],
+                    ..Default::default()
+                };
+                let (command, copy) = build.place_saved(&path, at, None).expect("placing a copy");
+                build.execute(command);
+                build.ui.smoke_copy = Some(copy);
+                build.ui.category = Some(sa_editor::catalog::MY_MODELS.into());
+            }
+            146 => {
+                let build = self.build.as_mut().unwrap();
+                let (model, _) = build.ui.smoke_model.unwrap();
+                let copy = build.ui.smoke_copy.unwrap();
+                let wall = build
+                    .doc
+                    .layout
+                    .descendants(copy)
+                    .into_iter()
+                    .find(|id| build.doc.layout.node(*id).is_some_and(|n| n.part.is_some()))
+                    .expect("a part in the copy");
+                build.preview("Edit part", &[wall], |n| {
+                    n.part.as_mut().expect("a part").color = [0.8, 0.1, 0.1];
+                });
+                build.commit_preview();
+                build.save_to_all_copies(copy);
+                let path = build
+                    .doc
+                    .layout
+                    .node(copy)
+                    .unwrap()
+                    .saved_model
+                    .clone()
+                    .unwrap();
+                let saved = build.saved_model(&path).expect("the saved model");
+                assert!(
+                    saved.matches(&build.doc.layout, model),
+                    "the first copy was not updated"
+                );
+                assert!(saved.matches(&build.doc.layout, copy));
+                build.selection = vec![model, copy];
+                build.focus_selection();
+                build.selection = vec![copy];
+            }
+            150 => {
+                capture(self, "build-saved-models.png");
+                // The smoke run leaves the sample world as it found it.
+                let build = self.build.as_ref().unwrap();
+                let copy = build.ui.smoke_copy.unwrap();
+                let path = build
+                    .doc
+                    .layout
+                    .node(copy)
+                    .unwrap()
+                    .saved_model
+                    .clone()
+                    .unwrap();
+                let _ = std::fs::remove_file(build.project.folder.join(&path));
+                let _ = std::fs::remove_dir(build.project.folder.join(sa_scene::saved_model::DIR));
+            }
+            // Attributes and tags on the copy, shown in Properties.
+            152 => {
+                let build = self.build.as_mut().unwrap();
+                let copy = build.ui.smoke_copy.unwrap();
+                build.preview("Attributes", &[copy], |n| {
+                    use sa_scene::world_layout::Attribute;
+                    n.attributes
+                        .insert("Price".into(), Attribute::Number(250.0));
+                    n.attributes
+                        .insert("For sale".into(), Attribute::Bool(true));
+                    n.attributes
+                        .insert("Owner".into(), Attribute::Text("Nobody".into()));
+                    n.tags = vec!["Shop".into(), "Market".into()];
+                });
+                build.commit_preview();
+                let inside = build.doc.layout.descendants(copy)[0];
+                let played = sa_scene::world_logic::script_objects(&build.doc.layout.resolved());
+                let object = played
+                    .iter()
+                    .find(|o| o.id == inside)
+                    .expect("an object in the copy");
+                assert!(
+                    object.tags.contains(&"Shop".to_string())
+                        && object.attributes.contains_key("Price"),
+                    "scripts do not see the model's tags and attributes on what is inside it"
+                );
+                build.selection = vec![copy];
+            }
+            156 => capture(self, "build-attributes.png"),
+            // Arrange: three blocks lined up on the last one, spaced
+            // evenly, then nudged.
+            158 => {
+                let build = self.build.as_mut().unwrap();
+                let mut ids = Vec::new();
+                for (x, y, z) in [(30.0, 70.0, 2.0), (34.0, 73.0, 0.0), (45.0, 71.0, 5.0)] {
+                    let at = sa_scene::world_layout::Transform::at([x, y, z]);
+                    let (command, id) = sa_editor::ops::place(
+                        &mut build.doc,
+                        AssetRef::Builtin("part-block".into()),
+                        "Block",
+                        at,
+                        None,
+                    )
+                    .expect("placing a block");
+                    build.execute(command);
+                    ids.push(id);
+                }
+                build.selection = ids.clone();
+                build.ui.smoke_parts = ids;
+            }
+            160 => {
+                let build = self.build.as_mut().unwrap();
+                build.align(2, arrange::Edge::Min);
+                build.align(1, arrange::Edge::Center);
+            }
+            162 => {
+                let build = self.build.as_mut().unwrap();
+                let ids = build.ui.smoke_parts.clone();
+                for id in &ids {
+                    let p = build.doc.layout.world_transform(*id).position;
+                    assert!(
+                        (p[2] - 5.0).abs() < 0.01 && (p[1] - 71.0).abs() < 0.01,
+                        "block {id} is not lined up with the last one: {p:?}"
+                    );
+                }
+                build.distribute(0);
+                let x: Vec<f32> = ids
+                    .iter()
+                    .map(|id| build.doc.layout.world_transform(*id).position[0])
+                    .collect();
+                assert!((x[1] - 37.5).abs() < 0.01, "not spaced evenly: {x:?}");
+                build.snap.enabled = true;
+                build.snap.step = 1.0;
+                build.nudge(glam::Vec3::Z);
+                let z = build.doc.layout.world_transform(ids[0]).position[2];
+                assert!(
+                    (z - 6.0).abs() < 0.01,
+                    "nudge up did not move one step: {z}"
+                );
+                build.undo();
+            }
+            // The command bar: paint the three blocks and mark them.
+            164 => {
+                let build = self.build.as_mut().unwrap();
+                build.selection = build.ui.smoke_parts.clone();
+                build.ui.bottom_open = true;
+                build.run_command(
+                    "for _, o in ipairs(selection()) do o.color = rgb(0.2, 0.4, 1) o:set('Row', true) end print('painted', #selection())",
+                );
+                for id in build.ui.smoke_parts.clone() {
+                    let node = build.doc.layout.node(id).unwrap();
+                    assert_eq!(node.part.as_ref().unwrap().color, [0.2, 0.4, 1.0]);
+                    assert!(node.attributes.contains_key("Row"));
+                }
+                assert!(
+                    build.log.iter().any(|l| l.text == "painted  3"),
+                    "the command's print is not in Output"
+                );
+                build.focus_selection();
+            }
+            166 => self.build.as_mut().unwrap().ui.ribbon = panels::RibbonTab::Test,
+            168 => capture(self, "build-command.png"),
+            169 => self.build.as_mut().unwrap().ui.ribbon = panels::RibbonTab::Model,
+            // Physics: the three blocks let go, one lifted high; in the
+            // playtest they fall and come to rest.
+            170 => {
+                let build = self.build.as_mut().unwrap();
+                let ids = build.ui.smoke_parts.clone();
+                // A floor to land on.
+                let (command, floor) = sa_editor::ops::place(
+                    &mut build.doc,
+                    AssetRef::Builtin("part-block".into()),
+                    "Floor",
+                    sa_scene::world_layout::Transform::at([37.0, 71.0, 0.0]),
+                    None,
+                )
+                .expect("placing a floor");
+                build.execute(command);
+                build.preview("Floor", &[floor], |n| {
+                    n.part.as_mut().unwrap().size = [40.0, 20.0, 1.0];
+                });
+                build.preview("Unanchor", &ids, |n| n.anchored = false);
+                build.preview("Lift", &ids[..1], |n| n.transform.position[2] = 11.0);
+                build.commit_preview();
+                build.selection.clear();
+                build.ui.smoke_fall = Some((Instant::now(), f32::MAX));
+                self.toggle_playtest();
+                assert!(self.build.as_ref().unwrap().playtesting);
+            }
+            f if self
+                .build
+                .as_ref()
+                .and_then(|b| b.ui.smoke_shot)
+                .is_some_and(|shot| f as u64 >= shot + 4) =>
+            {
+                self.toggle_playtest();
+                return true;
+            }
+            f if f > 170
+                && self
+                    .build
+                    .as_ref()
+                    .is_some_and(|b| b.ui.smoke_fall.is_some()) =>
+            {
+                let lifted = self.build.as_ref().unwrap().ui.smoke_parts[0];
+                let play = self.play_logic.as_ref().expect("playtest logic");
+                let z = play
+                    .logic
+                    .shared()
+                    .moved()
+                    .find(|(n, _)| *n == lifted)
+                    .map_or(11.0, |(_, p)| p.position[2]);
+                let (started, last) = self.build.as_ref().unwrap().ui.smoke_fall.unwrap();
+                let waited = started.elapsed().as_secs_f32();
+                if waited > 2.5 && (z - last).abs() < 1e-4 {
+                    assert!(z < 10.0, "the unanchored block did not fall: {z}");
+                    capture(self, "playtest-physics.png");
+                    let build = self.build.as_mut().unwrap();
+                    build.ui.smoke_fall = None;
+                    build.ui.smoke_shot = Some(f as u64);
+                    return false;
+                }
+                assert!(waited < 15.0, "the falling block never came to rest: {z}");
+                self.build.as_mut().unwrap().ui.smoke_fall = Some((started, z));
+            }
+            _ => {}
+        }
+        false
+    }
+
+    /// Put the player on the ground at a Blender-axes point.
+    pub(crate) fn smoke_stand_at(&mut self, at: [f32; 3]) {
+        let eye = crate::play_logic::blender_to_render(at) + Vec3::Y * 2.0;
+        if let Some(collision) = &self.collision {
+            let player = sa_scene::collision::Player::spawn(collision, eye);
+            self.position = player.eye();
+            self.player = Some(player);
+        }
+    }
 }

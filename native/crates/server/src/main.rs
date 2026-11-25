@@ -12,6 +12,7 @@ mod script;
 mod template;
 mod update;
 mod vehicles;
+mod world;
 
 use anyhow::{Context, Result};
 use console::Console;
@@ -258,6 +259,8 @@ fn boot(commands: Vec<Vec<String>>, resources_dir: PathBuf) -> Result<Server> {
     share.manifest.content_pack = content_pack(&shared.borrow().convars);
     if let Some(pack) = &share.manifest.content_pack {
         out(&shared, format!("World: content pack {pack}"));
+        let server_root = resources_dir.parent().unwrap_or(Path::new("."));
+        world::load(&shared, server_root, pack);
     }
     out(
         &shared,
@@ -430,9 +433,13 @@ fn pump(
         if vehicles::handle_event(shared, event.source, &event.name, &args) {
             continue;
         }
+        if world::handle_event(shared, event.source, &event.name, &args) {
+            continue;
+        }
         script::dispatch(shared, &event.name, event.source, &args, true);
     }
     script::tick(shared);
+    world::tick(shared);
     vehicles::track(shared);
     script::replicate_entities(shared);
     for _ in 0..64 {
@@ -617,6 +624,8 @@ mod rp_tests;
 mod sarebox_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod world_tests;
 #[cfg(test)]
 mod content_pack_tests {
     #[test]

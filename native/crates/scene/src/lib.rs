@@ -11,12 +11,17 @@ pub mod mlo;
 mod mods;
 mod mta_map;
 pub mod pack_vehicle;
+pub mod part;
+pub mod physics;
+pub mod saved_model;
 pub use mods::{share_resource_folders, share_resources};
 pub use mta_map::{MapPickup, PickupKind};
 pub mod ped;
 pub mod ped_list;
+pub mod road;
 pub mod roads;
 mod roadsign;
+pub mod terrain;
 pub mod testbed;
 mod texture;
 pub mod vehicle;
@@ -24,6 +29,9 @@ pub mod vehicle_list;
 pub mod water;
 pub mod weapon_list;
 pub mod world_layout;
+pub mod world_logic;
+#[cfg(feature = "scripts")]
+pub mod world_scripts;
 use anyhow::{ensure, Context, Result};
 use sa_assets::{decode_dff, decode_txd, Geometry, Img, Texture};
 use std::{

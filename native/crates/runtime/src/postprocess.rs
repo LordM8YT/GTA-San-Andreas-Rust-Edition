@@ -15,10 +15,12 @@ pub struct Reflections {
     /// The camera the scene was drawn with when temporal anti-aliasing
     /// jittered it; `view_projection` stays unjittered.
     pub jittered: Option<Mat4>,
+    /// The world's own colour look, over the player's settings.
+    pub look: Option<sa_scene::world_layout::WorldLook>,
 }
 /// Floats in the finishing controls uniform: three vec4s, two matrices and
-/// two more vec4s.
-const CONTROLS: usize = 12 + 16 + 16 + 4 + 4;
+/// three more vec4s.
+const CONTROLS: usize = 12 + 16 + 16 + 4 + 4 + 4;
 
 pub const SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 pub struct PostProcess {
@@ -363,15 +365,19 @@ impl PostProcess {
         display: [u32; 2],
         reflections: &Reflections,
     ) {
+        // A world's look works on top of the player's own picture: bloom the
+        // player turned off stays off.
+        let look = reflections.look.unwrap_or_default();
+        let tint = look.tint();
         let mut params = [
             1.0 / self.size[0] as f32,
             1.0 / self.size[1] as f32,
             settings.sharpness,
             f32::from(settings.fxaa),
-            settings.bloom,
-            settings.exposure,
-            settings.saturation,
-            settings.vignette,
+            settings.bloom * look.bloom,
+            settings.exposure * look.exposure,
+            settings.saturation * look.saturation,
+            (settings.vignette + look.vignette).min(0.9),
             1.0 / display[0].max(1) as f32,
             1.0 / display[1].max(1) as f32,
             f32::from(settings.fsr1),
@@ -382,6 +388,7 @@ impl PostProcess {
         params.extend(reflections.view_projection.to_cols_array());
         params.extend(reflections.eye.extend(reflections.wetness).to_array());
         params.extend(reflections.sky.extend(0.0).to_array());
+        params.extend([tint[0], tint[1], tint[2], look.contrast]);
         debug_assert_eq!(params.len(), CONTROLS);
         queue.write_buffer(&self.params, 0, bytemuck::cast_slice(&params));
         let scene = match reflections.jittered.filter(|_| settings.temporal_aa) {

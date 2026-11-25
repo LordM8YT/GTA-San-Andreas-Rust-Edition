@@ -1,3 +1,63 @@
+**SARE 0.60: My Models 💾 (pending release)**
+
+💾 **My Models:** save any model to the Toolbox and place it again and again. Change one copy, hit *Save to all copies*, and every house on the street updates.
+
+---
+
+**SARE 0.59: models with a pivot 📦 (pending release)**
+
+📦 **Models:** group anything into a model with Ctrl+G. Click it to pick it up whole, turn it about its own pivot and everything inside comes along. Alt+click to grab one piece inside.
+
+---
+
+**SARE 0.58: build with parts 🧱 (pending release)**
+
+🧱 **Parts:** blocks, balls, cylinders, wedges and corner wedges you size in metres, paint any colour and give a material: brick, wood, concrete, tiles, metal, glass and more. Pull a side to make a wall longer.
+
+---
+
+**SARE 0.57: scripts make copies 📦 (pending release)**
+
+📦 **Copies from scripts:** `object:clone()` drops a copy of any object while your world plays, and `copy:destroy()` takes it away. Copies are solid, can move and change colour, and everyone on the server sees them.
+
+---
+
+**SARE 0.56: world looks and real lamp light 🌆 (pending release)**
+
+🎨 **A look for your world:** Natural, Vivid, Cinematic, Sunset, Cold night, Dreamy or Noir, or tune your own. Everyone sees your world that way.
+💡 **Lamps light the night:** walls, ground and people near a lamp catch its light. Slower PC? Turn off Lamp lighting in the graphics settings.
+
+---
+
+**SARE 0.55: world scripts 📜 (pending release)**
+
+📜 **Scripts in your world:** give any object a Lua script in Build Mode and make it do what you want: timed doors, lifts, sliding doors, scores, welcome messages.
+🛗 **Moving objects:** scripts move and turn objects smoothly, and players standing on them ride along.
+✍️ **Script editor** with colours, error checks as you type, examples and help.
+🌐 Works the same in Play, from the launcher and on servers, where everyone sees the same lifts and doors.
+
+✅ Tested on Windows with automatic runs in Build Mode and from the launcher, plus server tests with several players.
+
+---
+
+**SARE 0.54: gameplay in Build Mode 🚪 (pending release)**
+
+🚪 **Doors that open with E**, doors and pads that teleport you somewhere else, and trigger zones that show messages or change the time and weather.
+🏁 **Checkpoint courses** with a timer: drop the checkpoints in and they number themselves.
+🧭 Give any object a behaviour in the Properties panel, and see every zone and teleport link in the viewport.
+🎮 Try it all in **Gameplay Sample**, in Build Mode with F6 Playtest or from the launcher. No GTA needed.
+
+🧰 **A familiar editor:** Build Mode now has a ribbon with Home, Model, Test and View tabs, plus Toolbox, Explorer, Properties and Output panels. Insert a Part, copy and paste, Ctrl+1 to 4 for the tools and F5 to play.
+🎨 **Paint the ground** with grass, dirt, sand, rock or snow, and cut holes for caves.
+🛣️ **Roads along points:** drag the points or click to draw, and the road bends and climbs with them, or joins back into a loop.
+💻 **Runs on slower PCs:** the editor switches to light graphics on integrated graphics, or pick it yourself under View → Performance.
+⛰️ **Terrain and lights:** sculpt hills with the new Sculpt tool, and lamps glow at night.
+🌐 **Multiplayer worlds:** host your Build Mode world and everyone shares the same doors, time and weather. The server decides, and your Lua scripts can react to zones and races.
+
+✅ Tested on Windows with automatic runs in Build Mode, from the launcher and joined to a local server, plus server tests with several players; builds pass on Windows, Linux and macOS.
+
+---
+
 **SARE 0.45 + 0.46: make your own stuff, no GTA needed 🛠️**
 
 🌍 **Your own worlds.** Build a map in Blender, export it as `.glb`, drop it in the new `content/` folder, and it gets its own Play button in the launcher. It runs **without GTA San Andreas installed**, so anyone can play it.

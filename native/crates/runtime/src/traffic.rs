@@ -991,7 +991,8 @@ impl State {
             self.traffic_meshes.clear();
             return;
         };
-        let limit = if self.interior == 0 {
+        // No traffic while editing: it would drive through the work.
+        let limit = if self.interior == 0 && !self.build_mode_editing() {
             self.menu.settings.traffic_cars as usize
         } else {
             0
