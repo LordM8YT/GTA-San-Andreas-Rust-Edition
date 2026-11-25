@@ -133,6 +133,24 @@ a script or teleport elsewhere in the world that points at one of them
 points at nothing afterwards (scripts that find objects by name keep
 working).
 
+## Attributes and tags
+
+Every object and group has **Attributes** and **Tags** in its Properties.
+
+- An attribute is a value of your own with a name: a number (a price, a
+  speed), a text (a team, an owner), true/false (for sale) or a vector
+  (a spot, a size, a colour). Type a name, pick the kind and press *Add*;
+  the trash button removes one. Scripts read them with
+  `object:get('Price')` and may change them while the world runs.
+- A tag is a label that sorts objects into sets: `Lamp`, `Coin`,
+  `Shop`. Scripts find every object with one with `world.tagged('Coin')`.
+  Type `#coin` in the Explorer's filter to see them all.
+
+A group's attributes and tags apply to everything inside it (an object's
+own attribute of the same name comes first), so tagging a model tags its
+parts. Copies of a saved model carry them too; on the copy itself they
+count as a change to the saved model.
+
 ## Parts
 
 Parts are the shapes you build with: walls, floors, steps, pillars,
@@ -453,6 +471,7 @@ pipeline or project format.
 | Part | Where | Notes |
 | --- | --- | --- |
 | Layout format | `sa-scene::world_layout` | Serde types, validation, migration hook, atomic writes, Blender-to-glTF transform maths |
+| Attributes and tags | `world_layout::Attribute`, `Node.attributes`/`tags`, `build_mode/attributes_ui.rs`, `sa-lua` world API | `Layout::effective_attributes`/`effective_tags` merge a node's groups'; `world_logic::script_objects` hands them to scripts; unknown kinds from a newer SARE are kept (`Attribute::Other`) and hidden from scripts |
 | My Models | `sa-scene::saved_model`, `sa-editor::ops`, `build_mode/saved_models.rs` | `SavedModel::capture` takes a model out of the layout (pivot at the origin, ids from 1), `matches` compares a copy with the file; `AssetResolver` draws a saved model as one model (Toolbox picture, placement preview); `ops::place_saved` and `ops::update_copies` place copies and replace their contents as one undo step; a node's `saved_model` names its file |
 | Parts | `sa-scene::part` | `model` builds a part's shape (origin in the middle of its base, faces outwards, closed), baked side shading and planar texture coordinates in metres; `texture` generates each material's pattern in code. The editor uploads one mesh per look (`gpu::mesh_key`), so parts that look the same share it and script colours tint it |
 | Terrain | `sa-scene::terrain` | `Terrain` heights on a node, `model` (drawn + solid), `height_at`, brushes `raise`/`smooth`/`flatten`; `content_pack::node_model` gives every path (pack, Playtest, editor) the terrain instead of the asset; the Sculpt tool is in `build_mode/viewport.rs` |

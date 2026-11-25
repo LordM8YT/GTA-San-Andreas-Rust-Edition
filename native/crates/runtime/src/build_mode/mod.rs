@@ -9,6 +9,7 @@
 //!
 //! Start it with `sa-runtime --build <pack id | folder | new:Name>`.
 //! See docs/build-mode.md.
+mod attributes_ui;
 mod gameplay_ui;
 pub mod gpu;
 mod pacing;
@@ -1534,7 +1535,36 @@ impl State {
                 let _ = std::fs::remove_file(build.project.folder.join(&path));
                 let _ = std::fs::remove_dir(build.project.folder.join(sa_scene::saved_model::DIR));
             }
-            152 => return true,
+            // Attributes and tags on the copy, shown in Properties.
+            152 => {
+                let build = self.build.as_mut().unwrap();
+                let copy = build.ui.smoke_copy.unwrap();
+                build.preview("Attributes", &[copy], |n| {
+                    use sa_scene::world_layout::Attribute;
+                    n.attributes
+                        .insert("Price".into(), Attribute::Number(250.0));
+                    n.attributes
+                        .insert("For sale".into(), Attribute::Bool(true));
+                    n.attributes
+                        .insert("Owner".into(), Attribute::Text("Nobody".into()));
+                    n.tags = vec!["Shop".into(), "Market".into()];
+                });
+                build.commit_preview();
+                let inside = build.doc.layout.descendants(copy)[0];
+                let played = sa_scene::world_logic::script_objects(&build.doc.layout.resolved());
+                let object = played
+                    .iter()
+                    .find(|o| o.id == inside)
+                    .expect("an object in the copy");
+                assert!(
+                    object.tags.contains(&"Shop".to_string())
+                        && object.attributes.contains_key("Price"),
+                    "scripts do not see the model's tags and attributes on what is inside it"
+                );
+                build.selection = vec![copy];
+            }
+            156 => capture(self, "build-attributes.png"),
+            158 => return true,
             _ => {}
         }
         false

@@ -44,6 +44,30 @@ pub struct Source {
     pub object: Option<u64>,
 }
 
+/// Most attributes and tags an object has (the layout's limits).
+const MAX_ATTRIBUTES: usize = 64;
+const MAX_TAGS: usize = 32;
+/// Longest attribute or tag name and attribute text, bytes.
+const MAX_NAME: usize = 64;
+const MAX_TEXT: usize = 1024;
+
+fn valid_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= MAX_NAME
+        && name.trim() == name
+        && !name.chars().any(char::is_control)
+}
+
+/// One of an object's own values (see `object:get`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Attribute {
+    Bool(bool),
+    Number(f64),
+    Text(String),
+    /// x, y, z.
+    Vector([f64; 3]),
+}
+
 /// An object of the world as scripts see it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ObjectInfo {
@@ -61,6 +85,11 @@ pub struct ObjectInfo {
     pub paintable: bool,
     /// Shown as the world starts.
     pub visible: bool,
+    /// Its attributes, with its groups' (scripts may change them while
+    /// the world runs).
+    pub attributes: std::collections::BTreeMap<String, Attribute>,
+    /// Its tags, with its groups'.
+    pub tags: Vec<String>,
 }
 
 /// A player in the world.
@@ -461,7 +490,11 @@ impl WorldScripts {
                 if inner.copies.contains_key(&copy) {
                     continue;
                 }
-                let Some(name) = inner.objects.get(&source).map(|o| o.name.clone()) else {
+                let Some((name, attributes, tags)) = inner
+                    .objects
+                    .get(&source)
+                    .map(|o| (o.name.clone(), o.attributes.clone(), o.tags.clone()))
+                else {
                     continue;
                 };
                 let (position, heading) =
@@ -476,6 +509,8 @@ impl WorldScripts {
                         changeable: true,
                         paintable: true,
                         visible: true,
+                        attributes,
+                        tags,
                     },
                 );
                 inner.order.push(copy);
@@ -893,6 +928,8 @@ fn create_state(shared: &Shared, source: &Source, limit: &Rc<Limit>) -> mlua::Re
             changeable: true,
             paintable: true,
             visible: true,
+            attributes: object.attributes.clone(),
+            tags: object.tags.clone(),
         };
         if let Err(e) = inner.request(Request::Copy {
             source: id,
@@ -997,6 +1034,143 @@ fn create_state(shared: &Shared, source: &Source, limit: &Rc<Limit>) -> mlua::Re
             },
         )
     });
+    func!("attribute", |lua, inner, (id, name): (u64, String)| {
+        let value = inner
+            .objects
+            .get(&id)
+            .and_then(|o| o.attributes.get(&name))
+            .cloned();
+        Ok(match value {
+            None => (mlua::Value::Nil, None, None),
+            Some(Attribute::Bool(b)) => (mlua::Value::Boolean(b), None, None),
+            Some(Attribute::Number(n)) => (mlua::Value::Number(n), None, None),
+            Some(Attribute::Text(t)) => (mlua::Value::String(lua.create_string(&t)?), None, None),
+            Some(Attribute::Vector([x, y, z])) => (mlua::Value::Number(x), Some(y), Some(z)),
+        })
+    });
+    func!("set_attribute", |_lua,
+                            inner,
+                            (id, name, value, y, z): (
+        u64,
+        String,
+        mlua::Value,
+        Option<f64>,
+        Option<f64>
+    )| {
+        if !valid_name(&name) {
+            return Ok((false, Some(format!(
+                "an attribute name is 1 to {MAX_NAME} characters, without line breaks or spaces at the ends"
+            ))));
+        }
+        let number = |v: &mlua::Value| match v {
+            mlua::Value::Number(n) => Some(*n),
+            mlua::Value::Integer(n) => Some(*n as f64),
+            _ => None,
+        };
+        let value =
+            match (&value, y, z) {
+                (mlua::Value::Nil, _, _) => None,
+                (mlua::Value::Boolean(b), _, _) => Some(Attribute::Bool(*b)),
+                (v, Some(y), Some(z)) if number(v).is_some() => {
+                    Some(Attribute::Vector([number(v).unwrap_or_default(), y, z]))
+                }
+                (v, _, _) if number(v).is_some() => {
+                    Some(Attribute::Number(number(v).unwrap_or_default()))
+                }
+                (mlua::Value::String(t), _, _) => {
+                    let t = t.to_str()?.to_string();
+                    if t.len() > MAX_TEXT {
+                        return Ok((
+                            false,
+                            Some(format!("an attribute text is at most {MAX_TEXT} bytes")),
+                        ));
+                    }
+                    Some(Attribute::Text(t))
+                }
+                _ => return Ok((
+                    false,
+                    Some(
+                        "an attribute is true/false, a number, a text or a vector (nil removes it)"
+                            .to_string(),
+                    ),
+                )),
+            };
+        let finite = match &value {
+            Some(Attribute::Number(n)) => n.is_finite(),
+            Some(Attribute::Vector(v)) => v.iter().all(|n| n.is_finite()),
+            _ => true,
+        };
+        if !finite {
+            return Ok((
+                false,
+                Some("an attribute number must be finite".to_string()),
+            ));
+        }
+        let Some(object) = inner.objects.get_mut(&id) else {
+            return Ok((false, Some("that object is not in the world".to_string())));
+        };
+        match value {
+            None => {
+                object.attributes.remove(&name);
+            }
+            Some(value) => {
+                if !object.attributes.contains_key(&name)
+                    && object.attributes.len() >= MAX_ATTRIBUTES
+                {
+                    return Ok((
+                        false,
+                        Some(format!("an object has at most {MAX_ATTRIBUTES} attributes")),
+                    ));
+                }
+                object.attributes.insert(name, value);
+            }
+        }
+        Ok((true, None))
+    });
+    func!("tags", |_lua, inner, id: u64| Ok(inner
+        .objects
+        .get(&id)
+        .map(|o| o.tags.clone())
+        .unwrap_or_default()));
+    func!("has_tag", |_lua, inner, (id, tag): (u64, String)| Ok(inner
+        .objects
+        .get(&id)
+        .is_some_and(|o| o.tags.contains(&tag))));
+    func!(
+        "set_tag",
+        |_lua, inner, (id, tag, on): (u64, String, bool)| {
+            if !valid_name(&tag) {
+                return Ok((
+                    false,
+                    Some(format!(
+                "a tag is 1 to {MAX_NAME} characters, without line breaks or spaces at the ends"
+            )),
+                ));
+            }
+            let Some(object) = inner.objects.get_mut(&id) else {
+                return Ok((false, Some("that object is not in the world".to_string())));
+            };
+            let has = object.tags.contains(&tag);
+            if on && !has {
+                if object.tags.len() >= MAX_TAGS {
+                    return Ok((
+                        false,
+                        Some(format!("an object has at most {MAX_TAGS} tags")),
+                    ));
+                }
+                object.tags.push(tag);
+            } else if !on && has {
+                object.tags.retain(|t| *t != tag);
+            }
+            Ok((true, None))
+        }
+    );
+    func!("tagged", |_lua, inner, tag: String| Ok(inner
+        .order
+        .iter()
+        .filter(|id| inner.objects.get(id).is_some_and(|o| o.tags.contains(&tag)))
+        .copied()
+        .collect::<Vec<u64>>()));
     func!("set_visible", |_lua, inner, (id, visible): (u64, bool)| {
         let Some(object) = inner.objects.get(&id) else {
             return Ok((false, Some("that object is not in the world".to_string())));
@@ -1263,6 +1437,13 @@ mod tests {
                 changeable: true,
                 paintable: true,
                 visible: true,
+                attributes: [
+                    ("Price".to_string(), Attribute::Number(5.0)),
+                    ("Owner".to_string(), Attribute::Text("Ada".into())),
+                    ("Spot".to_string(), Attribute::Vector([1.0, 2.0, 3.0])),
+                ]
+                .into(),
+                tags: vec!["Shop".into()],
             },
             ObjectInfo {
                 id: 2,
@@ -1272,6 +1453,8 @@ mod tests {
                 changeable: false,
                 paintable: true,
                 visible: true,
+                attributes: Default::default(),
+                tags: Vec::new(),
             },
         ]
     }
@@ -1383,6 +1566,47 @@ mod tests {
             texts(&mut host),
             ["Spawner: vector(5.00, 0.00, 0.00)  true  false"]
         );
+    }
+
+    #[test]
+    fn scripts_read_and_change_attributes_and_tags() {
+        let mut host = host_with(
+            "Shop",
+            r#"
+            local door, pad = world.find('Door'), world.find('Pad')
+            print(door:get('Price'), door:get('Owner'), door:get('Spot'), door:get('Nope'))
+            door:set('Price', door:get('Price') + 1)
+            door:set('Open', true)
+            door:set('Owner', nil)
+            print(door:get('Price'), door:get('Open'), door:get('Owner'))
+            print(door:hasTag('Shop'), pad:hasTag('Shop'), #world.tagged('Shop'))
+            pad:addTag('Shop')
+            print(#world.tagged('Shop'), world.tagged('Shop')[2].name, pad.tags[1])
+            door:removeTag('Shop')
+            print(#world.tagged('Shop'), #door.tags)
+            print(pcall(function() door:set('Bad', {}) end))
+            print(pcall(function() door:set('', 1) end))
+            local copy = door:clone(vector(1, 1, 1), 0)
+            print(copy:get('Price'))
+            "#,
+        );
+        let out = texts(&mut host);
+        assert_eq!(out[0], "Shop: 5.0  Ada  vector(1.00, 2.00, 3.00)  nil");
+        assert_eq!(out[1], "Shop: 6.0  true  nil");
+        assert_eq!(out[2], "Shop: true  false  1");
+        assert_eq!(out[3], "Shop: 2  Pad  Shop");
+        assert_eq!(out[4], "Shop: 1  0");
+        assert!(
+            out[5].contains("false") && out[5].contains("true/false, a number"),
+            "{}",
+            out[5]
+        );
+        assert!(
+            out[6].contains("false") && out[6].contains("1 to 64"),
+            "{}",
+            out[6]
+        );
+        assert_eq!(out[7], "Shop: 6.0");
     }
 
     #[test]

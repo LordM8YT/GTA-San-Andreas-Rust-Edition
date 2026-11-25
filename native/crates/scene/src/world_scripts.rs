@@ -49,6 +49,12 @@ impl Scripts {
                 changeable: o.changeable,
                 paintable: o.paintable,
                 visible: o.visible,
+                attributes: o
+                    .attributes
+                    .into_iter()
+                    .filter_map(|(name, value)| Some((name, script_attribute(value)?)))
+                    .collect(),
+                tags: o.tags,
             })
             .collect();
         let changeable = objects
@@ -60,23 +66,22 @@ impl Scripts {
         let poses: std::collections::HashMap<_, _> = shared.moved().collect();
         let mut copies = Vec::new();
         for (copy, source) in shared.copies() {
-            let (Some(name), Some(pose)) = (
-                objects
-                    .iter()
-                    .find(|o| o.id == *source)
-                    .map(|o| o.name.clone()),
+            let (Some(original), Some(pose)) = (
+                objects.iter().find(|o| o.id == *source).cloned(),
                 poses.get(copy),
             ) else {
                 continue;
             };
             objects.push(host::ObjectInfo {
                 id: *copy,
-                name,
+                name: original.name,
                 position: pose.position,
                 heading: pose.heading,
                 changeable: true,
                 paintable: true,
                 visible: true,
+                attributes: original.attributes,
+                tags: original.tags,
             });
             copies.push((*copy, *source));
         }
@@ -204,6 +209,18 @@ impl Scripts {
 }
 
 /// A player's gameplay moment as a script event.
+/// An attribute as scripts see it (kinds from a newer SARE they do not).
+fn script_attribute(value: crate::world_layout::Attribute) -> Option<host::Attribute> {
+    use crate::world_layout::Attribute;
+    Some(match value {
+        Attribute::Bool(b) => host::Attribute::Bool(b),
+        Attribute::Number(n) => host::Attribute::Number(n),
+        Attribute::Text(t) => host::Attribute::Text(t),
+        Attribute::Vector(v) => host::Attribute::Vector(v),
+        Attribute::Other(_) => return None,
+    })
+}
+
 pub fn event(player: u32, happened: Happened) -> host::Event {
     match happened {
         Happened::Entered(object) => host::Event::Enter { player, object },

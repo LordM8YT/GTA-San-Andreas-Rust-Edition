@@ -1772,6 +1772,9 @@ pub struct ScriptObject {
     /// object without a model).
     pub paintable: bool,
     pub visible: bool,
+    /// Its attributes and tags, with its groups'.
+    pub attributes: std::collections::BTreeMap<String, crate::world_layout::Attribute>,
+    pub tags: Vec<String>,
 }
 /// Every object of the layout (not groups), in layout order.
 pub fn script_objects(layout: &Layout) -> Vec<ScriptObject> {
@@ -1789,6 +1792,8 @@ pub fn script_objects(layout: &Layout) -> Vec<ScriptObject> {
             changeable: changeable.contains(&n.id),
             paintable: is_model(n),
             visible: flags.get(&n.id).is_none_or(|f| f.visible),
+            attributes: layout.effective_attributes(n.id),
+            tags: layout.effective_tags(n.id).into_iter().collect(),
         })
         .collect()
 }

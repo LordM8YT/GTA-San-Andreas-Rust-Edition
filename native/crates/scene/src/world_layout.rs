@@ -19,7 +19,7 @@ use anyhow::{bail, ensure, Context, Result};
 use glam::{EulerRot, Mat3, Mat4, Quat, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 
 /// Value of the `format` field, so other JSON files are not mistaken for a layout.
@@ -294,6 +294,16 @@ pub struct Node {
     /// with scripts of their own, or named in a script, are always.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub scriptable: bool,
+    /// The creator's own named values (a price, a team, a speed), read by
+    /// scripts with `object:get`. A group's apply to everything inside it
+    /// that has none of the same name.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub attributes: BTreeMap<String, Attribute>,
+    /// Words that sort objects into sets (`Lamp`, `Coin`), found by
+    /// scripts with `world.tagged`. A group's tags apply to everything
+    /// inside it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     /// Fields from a newer SARE or a hand edit, written back unchanged.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -323,6 +333,8 @@ impl Node {
             part: None,
             scripts: Vec::new(),
             scriptable: false,
+            attributes: BTreeMap::new(),
+            tags: Vec::new(),
             extra: Map::new(),
         }
     }
@@ -345,11 +357,53 @@ impl Node {
             part: None,
             scripts: Vec::new(),
             scriptable: false,
+            attributes: BTreeMap::new(),
+            tags: Vec::new(),
             extra: Map::new(),
         }
     }
     pub fn is_group(&self) -> bool {
         self.asset.is_none()
+    }
+}
+
+/// One of a node's own values: true or false, a number, a text or a
+/// vector (three numbers: a position, a size, or a colour from 0 to 1).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Attribute {
+    Bool(bool),
+    Number(f64),
+    Text(String),
+    Vector([f64; 3]),
+    /// A kind a newer SARE added: kept, not shown to scripts.
+    Other(Value),
+}
+impl Attribute {
+    /// Most attributes on one node.
+    pub const MAX_PER_NODE: usize = 64;
+    /// Most tags on one node.
+    pub const MAX_TAGS: usize = 32;
+    /// Longest attribute or tag name, bytes.
+    pub const MAX_NAME: usize = 64;
+    /// Longest text value, bytes.
+    pub const MAX_TEXT: usize = 1024;
+
+    pub fn is_valid(&self) -> bool {
+        match self {
+            Self::Bool(_) | Self::Other(_) => true,
+            Self::Number(n) => n.is_finite(),
+            Self::Text(t) => t.len() <= Self::MAX_TEXT,
+            Self::Vector(v) => v.iter().all(|n| n.is_finite()),
+        }
+    }
+    /// A name for an attribute or tag: not empty, not too long, no line
+    /// breaks or control characters, no space at either end.
+    pub fn valid_name(name: &str) -> bool {
+        !name.is_empty()
+            && name.len() <= Self::MAX_NAME
+            && name.trim() == name
+            && !name.chars().any(char::is_control)
     }
 }
 
@@ -1034,6 +1088,27 @@ impl Layout {
                 node.name
             );
             ensure!(
+                node.attributes.len() <= Attribute::MAX_PER_NODE
+                    && node
+                        .attributes
+                        .iter()
+                        .all(|(name, value)| Attribute::valid_name(name) && value.is_valid()),
+                "object {} ({}) has more than {} attributes, a bad attribute name, a number that is not finite or a text over {} bytes",
+                node.id,
+                node.name,
+                Attribute::MAX_PER_NODE,
+                Attribute::MAX_TEXT
+            );
+            ensure!(
+                node.tags.len() <= Attribute::MAX_TAGS
+                    && node.tags.iter().all(|t| Attribute::valid_name(t))
+                    && node.tags.iter().collect::<HashSet<_>>().len() == node.tags.len(),
+                "object {} ({}) has more than {} tags, a bad tag or the same tag twice",
+                node.id,
+                node.name,
+                Attribute::MAX_TAGS
+            );
+            ensure!(
                 node.terrain.as_ref().is_none_or(Terrain::is_valid),
                 "object {} ({}) has terrain with a bad size, grid, heights or paint",
                 node.id,
@@ -1105,6 +1180,23 @@ impl Layout {
     /// Shown in game: the node and every group above it are visible.
     pub fn effective_visible(&self, id: NodeId) -> bool {
         self.ancestry(id).all(|n| n.visible)
+    }
+    /// The node's attributes with those of the groups it is in: its own
+    /// first, then the nearest group's, and so on.
+    pub fn effective_attributes(&self, id: NodeId) -> BTreeMap<String, Attribute> {
+        let mut all = BTreeMap::new();
+        for node in self.ancestry(id) {
+            for (name, value) in &node.attributes {
+                all.entry(name.clone()).or_insert_with(|| value.clone());
+            }
+        }
+        all
+    }
+    /// The node's tags with those of the groups it is in.
+    pub fn effective_tags(&self, id: NodeId) -> BTreeSet<String> {
+        self.ancestry(id)
+            .flat_map(|n| n.tags.iter().cloned())
+            .collect()
     }
     /// Locked itself or inside a locked group.
     pub fn effective_locked(&self, id: NodeId) -> bool {
@@ -1501,5 +1593,59 @@ mod tests {
             layout.resolved().node(2).unwrap().transform,
             layout.nodes[1].transform
         );
+    }
+
+    #[test]
+    fn attributes_and_tags_pass_down_from_groups_and_survive_a_round_trip() {
+        let mut layout = Layout::default();
+        let mut street = Node::group(1, "Street");
+        street.tags = vec!["Lamp".into()];
+        street
+            .attributes
+            .insert("Team".into(), Attribute::Text("Blue".into()));
+        street
+            .attributes
+            .insert("Speed".into(), Attribute::Number(2.0));
+        let mut lamp = Node::object(
+            2,
+            "Lamp",
+            AssetRef::Builtin("cube".into()),
+            Transform::default(),
+        );
+        lamp.parent = Some(1);
+        lamp.tags = vec!["Light".into()];
+        lamp.attributes
+            .insert("Speed".into(), Attribute::Number(7.5));
+        lamp.attributes.insert("On".into(), Attribute::Bool(true));
+        lamp.attributes
+            .insert("Tint".into(), Attribute::Vector([1.0, 0.5, 0.0]));
+        layout.nodes = vec![street, lamp];
+        layout.next_id = 3;
+        let all = layout.effective_attributes(2);
+        assert_eq!(all["Speed"], Attribute::Number(7.5), "its own come first");
+        assert_eq!(all["Team"], Attribute::Text("Blue".into()));
+        assert_eq!(
+            layout.effective_tags(2).into_iter().collect::<Vec<_>>(),
+            ["Lamp", "Light"]
+        );
+        let text = layout.to_json().unwrap();
+        assert!(text.contains("\"Tint\": [") && text.contains("\"tags\": ["));
+        assert_eq!(Layout::from_json(&text).unwrap(), layout);
+        // A kind from a newer SARE is kept.
+        let newer = text.replace("\"On\": true", "\"On\": {\"curve\": [1, 2]}");
+        let read = Layout::from_json(&newer).unwrap();
+        assert!(matches!(
+            read.nodes[1].attributes["On"],
+            Attribute::Other(_)
+        ));
+        assert!(read.to_json().unwrap().contains("curve"));
+        // Bad names and repeated tags are refused.
+        layout.nodes[1].tags.push("Light".into());
+        assert!(layout.validate().is_err());
+        layout.nodes[1].tags.pop();
+        layout.nodes[1]
+            .attributes
+            .insert(" Padded".into(), Attribute::Bool(false));
+        assert!(layout.validate().is_err());
     }
 }

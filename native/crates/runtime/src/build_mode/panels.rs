@@ -114,6 +114,8 @@ pub struct UiState {
     pub smoke_model: Option<(NodeId, (glam::Vec3, glam::Vec3))>,
     /// `--smoke-build`: the saved model's copy.
     pub smoke_copy: Option<NodeId>,
+    /// A new attribute or tag being typed in the Properties panel.
+    pub attributes: super::attributes_ui::Draft,
     /// `--smoke-build`: the painted terrain and its triangles before a hole.
     pub smoke_paint: Option<(NodeId, usize)>,
     /// Asset Browser pictures; None when one could not be made.
@@ -1843,7 +1845,7 @@ fn explorer(build: &mut BuildMode, ui: &mut Ui) {
     ui.horizontal(|ui| {
         ui.add(
             egui::TextEdit::singleline(&mut build.ui.outliner_search)
-                .hint_text("🔍 Filter workspace…")
+                .hint_text("🔍 Name or #tag…")
                 .desired_width(150.0),
         );
         if ui
@@ -1931,7 +1933,14 @@ fn explorer(build: &mut BuildMode, ui: &mut Ui) {
                     .layout
                     .nodes
                     .iter()
-                    .filter(|n| n.name.to_lowercase().contains(&filter))
+                    // By name, or by tag: "#lamp" finds everything tagged Lamp.
+                    .filter(|n| match filter.strip_prefix('#') {
+                        Some(tag) => n.tags.iter().any(|t| t.to_lowercase() == tag),
+                        None => {
+                            n.name.to_lowercase().contains(&filter)
+                                || n.tags.iter().any(|t| t.to_lowercase() == filter)
+                        }
+                    })
                     .map(|n| n.id)
                     .collect();
                 for id in matches {
@@ -3246,6 +3255,7 @@ fn object(build: &mut BuildMode, ui: &mut Ui, id: NodeId) {
         road_section(build, ui, id, &node);
         super::script_ui::object_section(build, ui, id, &node);
     }
+    super::attributes_ui::section_ui(build, ui, id, &node, locked);
     if let Some(asset) = &node.asset {
         section(ui, "Asset");
         ui.label(RichText::new(asset.to_string()).monospace().small());

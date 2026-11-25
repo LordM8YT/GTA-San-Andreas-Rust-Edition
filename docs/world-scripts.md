@@ -75,6 +75,9 @@ east, y north, z up. Headings are degrees, and 0 faces north.
 | `object:turnTo(heading, seconds)` | Turn, the short way round. A new move replaces the one on its way and keeps the half it does not change: `moveTo` keeps where it was turning to, `turnTo` where it was going. |
 | `object:on(event, fn)` | `world.on(event, object, fn)`. |
 | `object:clone([vector], [heading])` | A copy of the object, where it is now or at the given place and heading. It is shown, in the object's colour, and scripts can show, hide, move, colour and destroy it like the object itself. A copy has no zones, scripts or light of its own and is not saved: copies go when the world starts again. A world can have at most 200 copies at once. Works on models, not on terrain or roads. |
+| `object:get(name)`, `object:set(name, value)` | The object's attributes (Properties > Attributes): true/false, a number, a text or a vector, or nil when it has none. An object without one of that name gets its group's. `set` changes or adds one (nil removes it) while the world runs; the world's file is not changed. At most 64 per object, names up to 64 characters, texts up to 1024 bytes. |
+| `object.tags`, `object:hasTag(tag)`, `object:addTag(tag)`, `object:removeTag(tag)` | The object's tags, with those of the groups it is in. Adding and removing lasts while the world runs. |
+| `world.tagged(tag)` | Every object with that tag, in world order: `for _, coin in ipairs(world.tagged('Coin')) do ... end`. |
 | `object:destroy()` | Remove a copy for good. Objects placed in the world cannot be destroyed; hide them instead. |
 | `object.original`, `.exists` | The object a copy was made from (nil for placed objects), and whether the object is still in the world (false once destroyed). |
 | `player.id`, `.name`, `.position`, `.driving` | `position` is nil until the player has spawned. |

@@ -270,6 +270,8 @@ ObjectMeta.__index = function(o, key)
     return object(native.original(id))
   elseif key == 'exists' then
     return native.object_name(id) ~= nil
+  elseif key == 'tags' then
+    return native.tags(id)
   end
   return Object[key]
 end
@@ -323,6 +325,46 @@ ObjectMeta.__newindex = function(o, key, value)
 end
 ObjectMeta.__tostring = function(o)
   return 'object ' .. o.name
+end
+-- The creator's own values (Properties > Attributes); a group's apply to
+-- what is inside it. Changes last while the world runs.
+function Object:get(name)
+  local a, y, z = native.attribute(rawget(self, '__object'), tostring(name))
+  if z ~= nil then
+    return vector(a, y, z)
+  end
+  return a
+end
+function Object:set(name, value)
+  if type(name) ~= 'string' then
+    error('an attribute name is a text', 2)
+  end
+  local id, ok, message = rawget(self, '__object'), nil, nil
+  if is_vector(value) then
+    ok, message = native.set_attribute(id, name, value.x, value.y, value.z)
+  elseif value == nil or type(value) == 'boolean' or type(value) == 'number' or type(value) == 'string' then
+    ok, message = native.set_attribute(id, name, value)
+  else
+    error('an attribute is true/false, a number, a text or a vector (nil removes it)', 2)
+  end
+  if not ok then
+    error(message, 2)
+  end
+end
+function Object:hasTag(name)
+  return native.has_tag(rawget(self, '__object'), tostring(name))
+end
+local function tag(o, name, on)
+  local ok, message = native.set_tag(rawget(o, '__object'), tostring(name), on)
+  if not ok then
+    error(message, 3)
+  end
+end
+function Object:addTag(name)
+  tag(self, name, true)
+end
+function Object:removeTag(name)
+  tag(self, name, false)
 end
 function Object:show()
   self.visible = true
@@ -455,6 +497,13 @@ end
 function world.objects()
   local list = {}
   for _, id in ipairs(native.objects()) do
+    list[#list + 1] = object(id)
+  end
+  return list
+end
+function world.tagged(name)
+  local list = {}
+  for _, id in ipairs(native.tagged(tostring(name))) do
     list[#list + 1] = object(id)
   end
   return list

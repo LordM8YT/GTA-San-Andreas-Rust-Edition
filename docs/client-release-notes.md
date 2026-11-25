@@ -1,5 +1,8 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.61.0 (in progress: the big SARE Studio update):
+- Build Mode: attributes and tags. Give any object or group values of your own (number, text, true/false, vector) and tags in its Properties. Scripts read and change them with `object:get`/`object:set`, check tags with `object:hasTag` and find every tagged object with `world.tagged`. A group's attributes and tags apply to everything inside it. Type `#tag` in the Explorer filter to find tagged objects.
+
 Version 0.60.0:
 - Build Mode: My Models. Save a model to My Models from its Properties (or right-click in the Explorer) and place it again from the Toolbox as often as you like. Copies stay linked: change one and press *Save to all copies*, and every copy gets the change while keeping its own place. *Revert* throws away a copy's changes and *Unlink* makes it an ordinary model. Saved models live in the world's `models/` folder; copies play like any other objects.
 
