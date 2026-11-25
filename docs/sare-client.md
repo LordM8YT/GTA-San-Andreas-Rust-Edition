@@ -34,11 +34,16 @@ status. SARE has no accounts or social backend yet, so Friends and Messages
 explain that and point to what works today (servers and join codes). The
 profile uses the local player name from Settings.
 
+## Pages
+
+Home has a featured banner (worlds with their own cover first) and shelves.
+Every tile opens the experience page: cover, description, About (type,
+version, licence, folder) and Play, Continue (San Andreas with a saved
+position), Set up, Edit in Build Mode and Open folder.
+
 ## Next steps
 
-1. Home: featured banner and card rows built from the experience list.
-2. Experience detail page (cover, description, creator, version, licence,
-   Play/Edit), ready for server lists and update history later.
-3. Optional cover image and categories for content packs (manifest fields
-   must stay readable by older clients, which reject unknown fields).
-4. Recently played and favorites for worlds, stored in the launcher config.
+1. Covers for the Gameplay Sample and the testbed (in-engine captures).
+2. Recently played and favorites for worlds, stored in the launcher config.
+3. Optional categories for content packs (manifest fields must stay readable
+   by older clients, which reject unknown fields).

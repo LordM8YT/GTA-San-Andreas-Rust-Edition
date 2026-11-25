@@ -3777,8 +3777,12 @@ impl ApplicationHandler for App {
                 let launch_args: Vec<_> = std::env::args().collect();
                 state.auto_enter = launch_args.iter().any(|a| a == "--play");
                 state.culling_enabled = !launch_args.iter().any(|arg| arg == "--no-culling");
-                if launch_args.iter().any(|arg| arg == "--smoke-culling") {
-                    // Omit egui area fade-in from exact world-image comparisons.
+                if launch_args
+                    .iter()
+                    .any(|arg| arg == "--smoke-culling" || arg == "--smoke-view")
+                {
+                    // Omit egui area fade-in from exact world-image comparisons
+                    // and keep view captures (such as world covers) clean.
                     state.menu.settings.show_hud = false;
                 }
                 state.resource_game_dir = self.game_dir.clone();

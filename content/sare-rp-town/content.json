@@ -4,7 +4,7 @@
   "version": "1.1.0",
   "license": "CC0-1.0",
   "author": "SARE contributors",
-  "description": "A small original roleplay town: police, hospital, bank, shops, garage, car dealer, houses. Made in Blender by tools/blender/make_rp_town.py.",
+  "description": "A small original roleplay town: police, hospital, bank, shops, garage, car dealer, houses.",
   "world": {
     "scene": "world.glb",
     "spawn": [

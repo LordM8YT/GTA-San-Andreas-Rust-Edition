@@ -195,6 +195,7 @@ pub fn page_icon(page: Page, active: bool) -> &'static str {
         (Page::Settings, true) => fill::GEAR_SIX,
         (Page::Help, false) => icons::QUESTION,
         (Page::Help, true) => fill::QUESTION,
+        (Page::Details, active) => page_icon(Page::Discover, active),
     }
 }
 
@@ -226,14 +227,17 @@ pub fn sidebar(ui: &mut egui::Ui, current: Page) -> Option<Page> {
         );
     });
     ui.add_space(14.);
-    for (title, pages) in SECTIONS {
-        if !title.is_empty() {
-            ui.add_space(12.);
-            ui.horizontal(|ui| {
-                ui.add_space(12.);
-                ui.label(RichText::new(*title).font(semibold(12.)).color(MUTED));
-            });
-            ui.add_space(2.);
+    for (group, (_, pages)) in SECTIONS.iter().enumerate() {
+        if group > 0 {
+            ui.add_space(8.);
+            let y = ui.cursor().top();
+            let x = ui.max_rect().x_range();
+            ui.painter().hline(
+                (x.min + 12.)..=(x.max - 12.),
+                y,
+                egui::Stroke::new(1., BORDER),
+            );
+            ui.add_space(9.);
         }
         for (page, label) in pages.iter() {
             if nav_item(ui, *page, label, current == *page).clicked() {
@@ -387,11 +391,34 @@ fn tint(seed: &str, value: f32, saturation: f32) -> Color32 {
 #[derive(Default)]
 pub struct Covers {
     textures: HashMap<String, (egui::TextureHandle, bool)>,
+    fade: Option<egui::TextureHandle>,
 }
 
 impl Covers {
     pub fn clear(&mut self) {
         self.textures.clear();
+    }
+    /// Dark fade laid over banners: strong at the left and bottom.
+    fn fade(&mut self, ctx: &egui::Context) -> egui::TextureHandle {
+        self.fade
+            .get_or_insert_with(|| {
+                let (w, h) = (64usize, 32usize);
+                let pixels = (0..w * h)
+                    .map(|i| {
+                        let (x, y) = ((i % w) as f32 / w as f32, (i / w) as f32 / h as f32);
+                        let left = (1. - x / 0.7).clamp(0., 1.).powf(1.3) * 0.82;
+                        let bottom = ((y - 0.35) / 0.65).clamp(0., 1.).powf(1.5) * 0.75;
+                        let alpha = (left + bottom - left * bottom).max(0.12);
+                        Color32::from_rgba_unmultiplied(8, 9, 12, (alpha * 255.) as u8)
+                    })
+                    .collect();
+                ctx.load_texture(
+                    "banner-fade",
+                    egui::ColorImage::new([w, h], pixels),
+                    egui::TextureOptions::LINEAR,
+                )
+            })
+            .clone()
     }
     /// The cover and whether it is the pack's own image.
     fn get(&mut self, ctx: &egui::Context, experience: &Experience) -> (egui::TextureHandle, bool) {
@@ -464,6 +491,11 @@ pub fn cover(
     covers: &mut Covers,
     hero: Option<&egui::TextureHandle>,
 ) {
+    if experience.kind == Kind::SanAndreas && hero.is_none() {
+        // Original artwork; nothing from the game is shown before launch.
+        crate::artwork::background(ui, rect, None);
+        return;
+    }
     let (texture, own) = match hero.filter(|_| experience.kind == Kind::SanAndreas) {
         Some(hero) => (hero.clone(), true),
         None => covers.get(ui.ctx(), experience),
@@ -481,7 +513,8 @@ pub fn cover(
         .uv(uv)
         .corner_radius(10)
         .paint_at(ui, rect);
-    if !own {
+    // Small tiles without art get their kind's icon; banners stay clean.
+    if !own && rect.height() < 200. {
         ui.painter().text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
@@ -492,183 +525,248 @@ pub fn cover(
     }
 }
 
-/// What a card's buttons asked for.
-pub enum CardAction {
-    Play,
-    Edit,
-    Setup,
+/// Columns that fit tiles of at least `min` points with `gap` between them.
+fn columns(available: f32, min: f32, gap: f32) -> (usize, f32) {
+    let columns = ((available + gap) / (min + gap)).floor().max(1.) as usize;
+    let width = ((available - gap * (columns - 1) as f32) / columns as f32).floor();
+    (columns, width)
 }
 
-/// Per-card state the page works out: can it start now, does it need setup.
-#[derive(Clone, Copy)]
-pub struct CardState {
-    pub can_play: bool,
-    pub needs_setup: bool,
-}
+const GAP: f32 = 16.;
+const TILE: f32 = 210.;
 
-/// Width-filling grid of experience tiles.
+/// Width-filling grid of tiles. Returns the index of the tile clicked.
 pub fn card_grid(
     ui: &mut egui::Ui,
-    list: &[(&Experience, CardState)],
+    list: &[&Experience],
     covers: &mut Covers,
     hero: Option<&egui::TextureHandle>,
-) -> Option<(usize, CardAction)> {
-    let gap = 18.;
-    let available = ui.available_width();
-    let columns = ((available + gap) / (220. + gap)).floor().max(1.) as usize;
-    let width = ((available - gap * (columns - 1) as f32) / columns as f32).floor();
-    let mut action = None;
+) -> Option<usize> {
+    let (columns, width) = columns(ui.available_width(), TILE, GAP);
+    let mut clicked = None;
     for (row, chunk) in list.chunks(columns).enumerate() {
         ui.horizontal_top(|ui| {
-            ui.spacing_mut().item_spacing.x = gap;
-            for (column, (experience, state)) in chunk.iter().enumerate() {
-                let index = row * columns + column;
-                ui.allocate_ui_with_layout(
-                    egui::vec2(width, 0.),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        ui.set_width(width);
-                        if let Some(chosen) = card(ui, experience, *state, covers, hero) {
-                            action = Some((index, chosen));
-                        }
-                    },
-                );
+            ui.spacing_mut().item_spacing.x = GAP;
+            for (column, experience) in chunk.iter().enumerate() {
+                if tile(ui, width, experience, covers, hero) {
+                    clicked = Some(row * columns + column);
+                }
             }
         });
-        ui.add_space(gap);
+        ui.add_space(GAP);
     }
+    clicked
+}
+
+/// What a row header or tile asked for.
+pub enum RowAction {
+    Open(usize),
+    SeeAll,
+}
+
+/// One row of tiles under a heading, like a shelf. Shows what fits and a
+/// "See all" link when there is more.
+pub fn shelf(
+    ui: &mut egui::Ui,
+    heading: &str,
+    list: &[&Experience],
+    covers: &mut Covers,
+    hero: Option<&egui::TextureHandle>,
+) -> Option<RowAction> {
+    let (columns, width) = columns(ui.available_width(), TILE, GAP);
+    let mut action = None;
+    ui.add_space(14.);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(heading).font(semibold(18.)).color(TEXT));
+        if list.len() > columns {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add(
+                        egui::Button::new(
+                            RichText::new("See all").font(semibold(13.5)).color(MUTED),
+                        )
+                        .frame(false),
+                    )
+                    .clicked()
+                {
+                    action = Some(RowAction::SeeAll);
+                }
+            });
+        }
+    });
+    ui.add_space(4.);
+    ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing.x = GAP;
+        for (index, experience) in list.iter().take(columns).enumerate() {
+            if tile(ui, width, experience, covers, hero) {
+                action = Some(RowAction::Open(index));
+            }
+        }
+    });
     action
 }
 
-/// One tile: the cover carries it, text sits underneath without a box.
-fn card(
+/// One tile: the cover carries it, the name and creator sit underneath.
+/// The whole tile is one button that opens the experience page.
+fn tile(
     ui: &mut egui::Ui,
+    width: f32,
     experience: &Experience,
-    state: CardState,
     covers: &mut Covers,
     hero: Option<&egui::TextureHandle>,
-) -> Option<CardAction> {
-    let width = ui.available_width();
-    let mut action = None;
-    ui.spacing_mut().item_spacing.y = 3.;
+) -> bool {
+    let image = egui::vec2(width, (width * 9. / 16.).round());
     let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(width, width * 9. / 16.), egui::Sense::hover());
-    cover(ui, rect, experience, covers, hero);
-    if response.hovered() {
+        ui.allocate_exact_size(image + egui::vec2(0., 46.), egui::Sense::click());
+    let cover_rect = egui::Rect::from_min_size(rect.min, image);
+    cover(ui, cover_rect, experience, covers, hero);
+    let hot = response.hovered() || response.has_focus();
+    if hot {
+        ui.painter()
+            .rect_filled(cover_rect, 10, Color32::from_white_alpha(14));
         ui.painter().rect_stroke(
-            rect,
+            cover_rect,
             10,
-            egui::Stroke::new(2., Color32::from_white_alpha(150)),
+            egui::Stroke::new(2., Color32::from_white_alpha(200)),
             egui::StrokeKind::Inside,
         );
     }
-    response.on_hover_text(&experience.description);
-    ui.add_space(6.);
-    ui.add(egui::Label::new(RichText::new(&experience.name).font(semibold(15.))).truncate());
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 6.;
-        ui.add(
-            egui::Label::new(RichText::new(&experience.creator).size(12.5).color(MUTED)).truncate(),
-        );
-        if let Some(version) = &experience.version {
-            ui.label(RichText::new("·").size(12.5).color(MUTED));
-            ui.add(
-                egui::Label::new(RichText::new(format!("v{version}")).size(12.5).color(MUTED))
-                    .extend(),
-            );
-        }
+    let painter = ui.painter().with_clip_rect(rect);
+    let name = painter.layout_no_wrap(experience.name.clone(), semibold(14.5), TEXT);
+    painter.galley(
+        egui::pos2(rect.left(), cover_rect.bottom() + 8.),
+        truncate(
+            &painter,
+            &experience.name,
+            semibold(14.5),
+            TEXT,
+            width,
+            name,
+        ),
+        TEXT,
+    );
+    let meta = match &experience.version {
+        Some(version) => format!("{} · v{version}", experience.creator),
+        None => experience.creator.clone(),
+    };
+    let meta_font = FontId::proportional(12.5);
+    let galley = painter.layout_no_wrap(meta.clone(), meta_font.clone(), MUTED);
+    painter.galley(
+        egui::pos2(rect.left(), cover_rect.bottom() + 28.),
+        truncate(&painter, &meta, meta_font, MUTED, width, galley),
+        MUTED,
+    );
+    let response = response.on_hover_text(&experience.description);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &experience.name)
     });
-    ui.add_space(6.);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 6.;
-        if state.needs_setup {
-            if ui
-                .add(egui::Button::new((
-                    icon(icons::FOLDER_OPEN, TEXT),
-                    "Set up",
-                )))
-                .on_hover_text("Choose your own San Andreas installation in Settings")
-                .clicked()
-            {
-                action = Some(CardAction::Setup);
-            }
-        } else if ui
-            .add_enabled(
-                state.can_play,
-                egui::Button::new((
-                    RichText::new(fill::PLAY)
-                        .font(icon_font(14., true))
-                        .color(BACKGROUND),
-                    RichText::new("Play").font(semibold(14.)).color(BACKGROUND),
-                ))
-                .fill(ACCENT)
-                .min_size(egui::vec2(84., 32.)),
-            )
-            .on_disabled_hover_text("Close the running game first")
-            .clicked()
-        {
-            action = Some(CardAction::Play);
-        }
-        if experience.editable
-            && ui
-                .add_enabled(
-                    state.can_play,
-                    egui::Button::new((icon(icons::PENCIL_SIMPLE, TEXT), "Edit")),
-                )
-                .on_hover_text("Open in Build Mode")
-                .clicked()
-        {
-            action = Some(CardAction::Edit);
-        }
-    });
-    action
+    response.clicked()
 }
 
-/// A page heading with an optional line under it.
-pub fn title(ui: &mut egui::Ui, text: &str, subtitle: &str) {
-    ui.add_space(6.);
-    ui.label(RichText::new(text).font(display(28.)).color(TEXT));
-    if !subtitle.is_empty() {
-        ui.label(RichText::new(subtitle).color(MUTED));
+/// Cut a single line with an ellipsis when it is wider than `width`.
+fn truncate(
+    painter: &egui::Painter,
+    text: &str,
+    font: FontId,
+    color: Color32,
+    width: f32,
+    full: std::sync::Arc<egui::Galley>,
+) -> std::sync::Arc<egui::Galley> {
+    if full.size().x <= width {
+        return full;
     }
-    ui.add_space(16.);
+    let mut job = egui::text::LayoutJob::simple_singleline(text.to_owned(), font, color);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(width);
+    painter.layout_job(job)
+}
+
+/// Large banner for one experience, with the text on a dark fade.
+/// Returns true when the banner itself (not a button) was clicked.
+pub fn banner(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    experience: &Experience,
+    covers: &mut Covers,
+    hero: Option<&egui::TextureHandle>,
+) -> egui::Response {
+    let response = ui.interact(
+        rect,
+        ui.id().with(("banner", &experience.id)),
+        egui::Sense::click(),
+    );
+    cover(ui, rect, experience, covers, hero);
+    // Fade from the left and the bottom so white text always reads. A small
+    // texture keeps the banner's rounded corners.
+    let fade = covers.fade(ui.ctx());
+    egui::Image::from_texture(&fade)
+        .corner_radius(10)
+        .paint_at(ui, rect);
+    response
+}
+
+/// The big gold action.
+pub fn play_button(label: &str) -> egui::Button<'_> {
+    egui::Button::new((
+        RichText::new(fill::PLAY)
+            .font(icon_font(16., true))
+            .color(BACKGROUND),
+        RichText::new(label).font(semibold(15.)).color(BACKGROUND),
+    ))
+    .fill(ACCENT)
+    .corner_radius(8)
+    .min_size(egui::vec2(132., 42.))
+}
+
+/// A quieter button with an icon in front.
+pub fn icon_button<'a>(glyph: &'a str, label: &'a str) -> egui::Button<'a> {
+    egui::Button::new((icon(glyph, TEXT), RichText::new(label).font(semibold(14.))))
+        .corner_radius(8)
+        .min_size(egui::vec2(0., 42.))
+}
+
+/// A page heading.
+pub fn title(ui: &mut egui::Ui, text: &str) {
+    ui.add_space(4.);
+    ui.label(RichText::new(text).font(display(30.)).color(TEXT));
+    ui.add_space(10.);
 }
 
 /// Section heading inside a page.
 pub fn section(ui: &mut egui::Ui, text: &str) {
-    ui.add_space(10.);
+    ui.add_space(14.);
     ui.label(RichText::new(text).font(semibold(18.)).color(TEXT));
     ui.add_space(6.);
 }
 
-/// An honest empty state: what is missing, why, and what works today.
+/// A short, centred empty state: what is missing and what works today.
 /// Returns true when the optional button was clicked.
 pub fn empty_state(
     ui: &mut egui::Ui,
-    page: Page,
+    glyph: &str,
     heading: &str,
     body: &str,
     button: Option<&str>,
 ) -> bool {
     let mut clicked = false;
-    egui::Frame::new()
-        .fill(SURFACE)
-        .corner_radius(12)
-        .inner_margin(egui::Margin::symmetric(28, 26))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width().min(620.));
-            ui.label(
-                RichText::new(page_icon(page, false))
-                    .font(icon_font(30., false))
-                    .color(MUTED),
-            );
-            ui.add_space(4.);
-            ui.label(RichText::new(heading).font(semibold(17.)));
-            ui.label(RichText::new(body).color(MUTED));
-            if let Some(label) = button {
-                ui.add_space(8.);
-                clicked = ui.button(label).clicked();
-            }
-        });
+    ui.add_space(40.);
+    ui.vertical_centered(|ui| {
+        ui.set_max_width(440.);
+        ui.label(
+            RichText::new(glyph)
+                .font(icon_font(44., false))
+                .color(MUTED),
+        );
+        ui.add_space(6.);
+        ui.label(RichText::new(heading).font(semibold(18.)).color(TEXT));
+        ui.label(RichText::new(body).color(MUTED));
+        if let Some(label) = button {
+            ui.add_space(10.);
+            clicked = ui
+                .add(egui::Button::new(RichText::new(label).font(semibold(14.))).corner_radius(8))
+                .clicked();
+        }
+    });
     clicked
 }
+
+pub use egui_phosphor::regular as glyph;

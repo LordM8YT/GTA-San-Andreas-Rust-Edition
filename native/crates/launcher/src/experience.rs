@@ -25,9 +25,12 @@ pub struct Experience {
     pub creator: String,
     pub description: String,
     pub version: Option<String>,
+    pub license: Option<String>,
     pub kind: Kind,
     /// The pack has a Build Mode layout, so Create can open it.
     pub editable: bool,
+    /// The pack brings its own characters or vehicles (featured first).
+    pub rich: bool,
 }
 
 impl Experience {
@@ -65,8 +68,10 @@ pub fn local(packs: &[(PathBuf, sa_scene::content_pack::Manifest)]) -> Vec<Exper
                 .clone()
                 .unwrap_or_else(|| "A standalone SARE world.".into()),
             version: Some(manifest.version.clone()),
+            license: Some(manifest.license.clone()),
             kind: Kind::Pack(folder.clone()),
             editable: manifest.world.layout.is_some(),
+            rich: manifest.characters.is_some() || !manifest.vehicles.is_empty(),
         })
         .collect();
     list.push(Experience {
@@ -76,18 +81,22 @@ pub fn local(packs: &[(PathBuf, sa_scene::content_pack::Manifest)]) -> Vec<Exper
         description:
             "A small built-in world for walking, jumping and driving. No game files needed.".into(),
         version: None,
+        license: None,
         kind: Kind::Testbed,
         editable: false,
+        rich: false,
     });
     list.push(Experience {
         id: "san-andreas".into(),
         name: "San Andreas free roam".into(),
-        creator: "Your own game installation".into(),
+        creator: "Uses your own copy of the PC game".into(),
         description:
             "Free roam across the state, read at runtime from your own copy of the PC game.".into(),
         version: None,
+        license: None,
         kind: Kind::SanAndreas,
         editable: false,
+        rich: false,
     });
     list
 }
@@ -101,7 +110,7 @@ mod tests {
         let list = local(&[]);
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].kind, Kind::Testbed);
-        assert!(list[1].matches("own game"));
+        assert!(list[1].matches("own copy"));
         assert!(!list[1].matches("racing"));
         assert!(list[1].matches("  "));
     }
