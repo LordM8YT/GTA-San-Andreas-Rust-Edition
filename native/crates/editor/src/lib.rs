@@ -986,4 +986,78 @@ mod tests {
             [20.0, 20.0, 0.0]
         ));
     }
+
+    #[test]
+    fn saved_model_copies_follow_the_file() {
+        use sa_scene::saved_model::SavedModel;
+        let (mut doc, model, [a, _]) = model_doc();
+        let path = "models/house.model.json";
+        let saved = SavedModel::capture(&doc.layout, model).unwrap();
+        ops::link_saved(&doc, model, path)
+            .unwrap()
+            .apply(&mut doc)
+            .unwrap();
+        // Two more copies, one turned.
+        let mut placed = Vec::new();
+        for (x, turn) in [(40.0, 0.0), (80.0, 90.0)] {
+            let mut at = Transform::at([x, 0.0, 0.0]);
+            at.rotation[2] = turn;
+            let (command, id) = ops::place_saved(&mut doc, &saved, path, at, None).unwrap();
+            command.apply(&mut doc).unwrap();
+            placed.push(id);
+        }
+        assert_eq!(ops::copies_of(&doc, path).len(), 3);
+        let copy = placed[1];
+        assert!(saved.matches(&doc.layout, copy));
+        assert_ne!(
+            doc.layout.node(copy).unwrap().name,
+            "House",
+            "copies get their own names"
+        );
+        // A block 2 m west of the pivot, turned 90°: 2 m south of it.
+        let inside = doc.layout.descendants(copy);
+        assert_eq!(inside.len(), 2);
+        let west = inside
+            .iter()
+            .map(|id| doc.layout.world_transform(*id).position)
+            .any(|p| near(p, [80.0, -2.0, 0.0]));
+        assert!(west, "the copy's contents turn with it");
+
+        // Change the first copy (move a block) and save it to all copies.
+        ops::modify(&doc, "Move", &[a], |n| n.transform.position[2] = 3.0)
+            .unwrap()
+            .apply(&mut doc)
+            .unwrap();
+        assert!(!saved.matches(&doc.layout, model));
+        let changed = SavedModel::capture(&doc.layout, model).unwrap();
+        let mut history = History::default();
+        let before = doc.clone();
+        let others: Vec<_> = ops::copies_of(&doc, path)
+            .into_iter()
+            .filter(|id| *id != model)
+            .collect();
+        let command = ops::update_copies(&mut doc, &changed, &others)
+            .unwrap()
+            .expect("two copies to update");
+        history.execute(&mut doc, command).unwrap();
+        for id in ops::copies_of(&doc, path) {
+            assert!(
+                changed.matches(&doc.layout, id),
+                "copy {id} was not updated"
+            );
+        }
+        let node = doc.layout.node(copy).unwrap();
+        assert_eq!(node.transform.rotation[2], 90.0, "copies keep their place");
+        assert_eq!(node.saved_model.as_deref(), Some(path));
+        assert!(doc.layout.validate().is_ok());
+        // One undo step puts everything back.
+        history.undo(&mut doc).unwrap();
+        assert_eq!(doc.layout.nodes, before.layout.nodes);
+        // Unlinked, a copy is left alone.
+        ops::unlink_saved(&doc, copy)
+            .unwrap()
+            .apply(&mut doc)
+            .unwrap();
+        assert_eq!(ops::copies_of(&doc, path).len(), 2);
+    }
 }

@@ -143,6 +143,47 @@ fn category_for(relative: &str) -> String {
     }
 }
 
+/// The world's saved models ("My Models": `models/*.model.json`).
+pub struct SavedModels {
+    pub root: PathBuf,
+}
+/// Category and source the Toolbox shows saved models under.
+pub const MY_MODELS: &str = "My Models";
+
+impl AssetProvider for SavedModels {
+    fn scan(&self) -> Vec<AssetEntry> {
+        let folder = self.root.join(sa_scene::saved_model::DIR);
+        let Ok(entries) = std::fs::read_dir(&folder) else {
+            return Vec::new();
+        };
+        let mut files: Vec<String> = entries
+            .flatten()
+            .filter_map(|e| e.file_name().to_str().map(str::to_owned))
+            .filter(|name| sa_scene::saved_model::is_saved_model(name) && !name.starts_with('.'))
+            .collect();
+        files.sort();
+        files
+            .into_iter()
+            .take(MAX_FILES)
+            .map(|file| {
+                let relative = format!("{}/{file}", sa_scene::saved_model::DIR);
+                let read = sa_scene::saved_model::SavedModel::read(&folder.join(&file));
+                let (label, status) = match read {
+                    Ok(saved) => (saved.name().to_owned(), AssetStatus::Ready),
+                    Err(error) => (file.clone(), AssetStatus::Invalid(format!("{error:#}"))),
+                };
+                AssetEntry {
+                    reference: AssetRef::Own(relative),
+                    label,
+                    category: MY_MODELS.into(),
+                    source: MY_MODELS.into(),
+                    status,
+                }
+            })
+            .collect()
+    }
+}
+
 /// All assets the browser shows.
 pub struct Catalog {
     pub entries: Vec<AssetEntry>,
@@ -161,6 +202,9 @@ impl Catalog {
         pack_dirs: &[PathBuf],
     ) -> Vec<Box<dyn AssetProvider>> {
         let mut providers: Vec<Box<dyn AssetProvider>> = vec![
+            Box::new(SavedModels {
+                root: project.to_path_buf(),
+            }),
             Box::new(Builtins),
             Box::new(Folder {
                 root: project.to_path_buf(),

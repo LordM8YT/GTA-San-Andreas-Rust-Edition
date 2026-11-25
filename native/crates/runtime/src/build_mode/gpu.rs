@@ -345,6 +345,13 @@ impl Gpu {
             }
         }
     }
+    /// Upload `asset` again the next time it is drawn (its file changed).
+    pub fn forget(&mut self, asset: &AssetRef) {
+        self.assets.remove(asset);
+        if self.ghost.as_ref().is_some_and(|g| &g.asset == asset) {
+            self.ghost = None;
+        }
+    }
     pub fn is_placeholder(&self, asset: &AssetRef) -> bool {
         self.assets.get(asset).is_some_and(|a| a.placeholder)
     }

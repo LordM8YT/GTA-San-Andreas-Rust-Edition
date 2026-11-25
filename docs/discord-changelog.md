@@ -1,3 +1,9 @@
+**SARE 0.60: My Models 💾 (pending release)**
+
+💾 **My Models:** save any model to the Toolbox and place it again and again. Change one copy, hit *Save to all copies*, and every house on the street updates.
+
+---
+
 **SARE 0.59: models with a pivot 📦 (pending release)**
 
 📦 **Models:** group anything into a model with Ctrl+G. Click it to pick it up whole, turn it about its own pivot and everything inside comes along. Alt+click to grab one piece inside.

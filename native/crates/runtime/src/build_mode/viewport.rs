@@ -554,7 +554,11 @@ fn place(build: &mut BuildMode, transform: Transform, keep_placing: bool) {
         .ui
         .place_into
         .filter(|g| build.doc.layout.node(*g).is_some_and(Node::is_group));
-    match ops::place(&mut build.doc, asset, &label, transform, parent) {
+    let placed = match sa_scene::saved_model::path_of(&asset) {
+        Some(path) => build.place_saved(path, transform, parent),
+        None => ops::place(&mut build.doc, asset, &label, transform, parent),
+    };
+    match placed {
         Ok((command, id)) => {
             build.execute(command);
             build.selection = vec![id];

@@ -440,6 +440,8 @@ pub struct AssetResolver {
         world_layout::AssetRef,
         std::result::Result<std::sync::Arc<gltf_model::Model>, String>,
     >,
+    /// Saved models being put together now: one inside itself is refused.
+    composing: Vec<world_layout::AssetRef>,
 }
 impl AssetResolver {
     /// Resolve `self:` paths in `own_folder` and `pack:` ids in the usual
@@ -456,6 +458,7 @@ impl AssetResolver {
             own: own_folder.to_path_buf(),
             pack_dirs,
             cache: HashMap::new(),
+            composing: Vec::new(),
         }
     }
     pub fn own_folder(&self) -> &Path {
@@ -485,7 +488,12 @@ impl AssetResolver {
         if let Some(cached) = self.cache.get(asset) {
             return cached.clone().map_err(anyhow::Error::msg);
         }
-        let loaded = self.load(asset).map(std::sync::Arc::new);
+        let loaded = if crate::saved_model::path_of(asset).is_some() {
+            self.compose(asset)
+        } else {
+            self.load(asset)
+        }
+        .map(std::sync::Arc::new);
         let stored = loaded
             .as_ref()
             .map(Clone::clone)
@@ -496,6 +504,25 @@ impl AssetResolver {
     /// Forget cached models, so files changed on disk load again.
     pub fn clear(&mut self) {
         self.cache.clear();
+    }
+    /// Forget one cached model (a saved model that was just written).
+    pub fn forget(&mut self, asset: &world_layout::AssetRef) {
+        self.cache.remove(asset);
+    }
+    /// A saved model as one model: everything in it, about its pivot.
+    fn compose(&mut self, asset: &world_layout::AssetRef) -> Result<gltf_model::Model> {
+        ensure!(!self.composing.contains(asset), "{asset} contains itself");
+        let path = self.path(asset)?.context("a saved model is a file")?;
+        let saved = crate::saved_model::SavedModel::read(&path)?;
+        self.composing.push(asset.clone());
+        let mut model = gltf_model::Model::default();
+        let report = place_layout(&mut model, &saved.layout.resolved(), self);
+        self.composing.pop();
+        // A missing piece leaves a gap; nothing at all is an error.
+        if let (0, Some(problem)) = (report.placed, report.problems.first()) {
+            anyhow::bail!("{problem}");
+        }
+        Ok(model)
     }
     fn load(&self, asset: &world_layout::AssetRef) -> Result<gltf_model::Model> {
         match self.path(asset)? {

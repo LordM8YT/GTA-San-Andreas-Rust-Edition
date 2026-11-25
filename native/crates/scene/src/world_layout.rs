@@ -247,6 +247,11 @@ pub struct Node {
     /// inside). Other groups are folders: a click picks the object.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub model: bool,
+    /// A copy of a saved model ("My Models"): the file in the world's
+    /// folder it was placed from, e.g. `models/house.model.json` (see
+    /// [`crate::saved_model`]). Its contents are ordinary objects.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saved_model: Option<String>,
     /// The model this object shows. None makes the node a group.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asset: Option<AssetRef>,
@@ -305,6 +310,7 @@ impl Node {
             name: name.into(),
             parent: None,
             model: false,
+            saved_model: None,
             asset: Some(asset),
             transform,
             visible: true,
@@ -326,6 +332,7 @@ impl Node {
             name: name.into(),
             parent: None,
             model: false,
+            saved_model: None,
             asset: None,
             transform: Transform::default(),
             visible: true,
@@ -1016,6 +1023,15 @@ impl Layout {
                 node.name,
                 Part::MIN_SIZE,
                 Part::MAX_SIZE
+            );
+            ensure!(
+                node.saved_model.as_deref().is_none_or(|path| {
+                    node.is_group() && crate::saved_model::is_saved_model(path)
+                        && AssetRef::parse(&format!("self:{path}")).is_ok()
+                }),
+                "object {} ({}) links to a saved model, but is not a group or the path is not a .model.json file in the world's folder",
+                node.id,
+                node.name
             );
             ensure!(
                 node.terrain.as_ref().is_none_or(Terrain::is_valid),

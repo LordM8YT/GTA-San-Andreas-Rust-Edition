@@ -3,6 +3,7 @@
 //! from the layout, so ids are never reused even after an undo.
 use crate::history::{Command, Document};
 use anyhow::{ensure, Context, Result};
+use sa_scene::saved_model::SavedModel;
 use sa_scene::world_layout::{AssetRef, Node, NodeId, Transform};
 use sa_scene::world_logic;
 use std::collections::{HashMap, HashSet};
@@ -612,4 +613,151 @@ pub fn center_pivot(doc: &Document, group: NodeId) -> Result<Command> {
     let mut pivot = pivot_for(doc, &[group]);
     pivot.rotation = doc.layout.world_transform(group).rotation;
     set_pivot(doc, group, pivot, "Centre pivot")
+}
+
+/// Place a copy of a saved model ("My Models") where `transform` says in
+/// the world: a model group linked to the file at `path`, with the file's
+/// contents. Returns the command and the copy's id.
+pub fn place_saved(
+    doc: &mut Document,
+    saved: &SavedModel,
+    path: &str,
+    transform: Transform,
+    parent: Option<NodeId>,
+) -> Result<(Command, NodeId)> {
+    ensure!(transform.is_valid(), "that position is outside the world");
+    let mut nodes = saved.layout.nodes.clone();
+    let root = &mut nodes[0];
+    root.transform = Transform {
+        scale: [1.0; 3],
+        ..transform
+    };
+    root.parent = parent;
+    root.model = true;
+    root.saved_model = Some(path.to_owned());
+    let (command, roots) = paste(doc, &nodes, [0.0; 3])?;
+    Ok((command, roots[0]))
+}
+
+/// Link the model `group` to the saved model at `path`.
+pub fn link_saved(doc: &Document, group: NodeId, path: &str) -> Result<Command> {
+    ensure!(
+        doc.layout.node(group).is_some_and(Node::is_group),
+        "only a model can be saved"
+    );
+    modify(doc, "Save to My Models", &[group], |n| {
+        n.model = true;
+        n.saved_model = Some(path.to_owned());
+    })
+}
+
+/// Make a copy of a saved model an ordinary model: later changes to the
+/// file no longer reach it.
+pub fn unlink_saved(doc: &Document, group: NodeId) -> Result<Command> {
+    modify(doc, "Unlink from My Models", &[group], |n| {
+        n.saved_model = None
+    })
+}
+
+/// The copies of the saved model at `path` in the world, in tree order.
+pub fn copies_of(doc: &Document, path: &str) -> Vec<NodeId> {
+    doc.layout
+        .nodes
+        .iter()
+        .filter(|n| n.saved_model.as_deref() == Some(path))
+        .map(|n| n.id)
+        .collect()
+}
+
+/// Give `copies` (copies of a saved model, see [`copies_of`]) the saved
+/// model's contents: what was inside them is replaced, while each copy
+/// keeps its own name, place and pivot. One undo step; None when there is
+/// no copy.
+pub fn update_copies(
+    doc: &mut Document,
+    saved: &SavedModel,
+    copies: &[NodeId],
+) -> Result<Option<Command>> {
+    if copies.is_empty() {
+        return Ok(None);
+    }
+    // Built step by step on a scratch copy, so each step's indices hold
+    // when the steps are applied in order.
+    let mut scratch = doc.clone();
+    let mut commands = Vec::new();
+    for copy in copies {
+        let inside = scratch.layout.descendants(*copy);
+        if !inside.is_empty() {
+            let command = delete(&scratch, &inside)?;
+            command.apply(&mut scratch)?;
+            commands.push(command);
+        }
+        // The file's root takes the copy's place; its contents go in.
+        let mut nodes = saved.layout.nodes.clone();
+        nodes[0].parent = None;
+        let (pasted, roots) = paste(&mut scratch, &nodes, [0.0; 3])?;
+        let Command::Insert(pasted) = pasted else {
+            unreachable!("paste inserts")
+        };
+        let stand_in = roots[0];
+        let start = scratch.layout.nodes.len();
+        let mut root = None;
+        let mut contents = Vec::new();
+        for (_, mut node) in pasted {
+            retarget(&mut node, stand_in, *copy);
+            if node.id == stand_in {
+                root = Some(node);
+                continue;
+            }
+            if node.parent == Some(stand_in) {
+                node.parent = Some(*copy);
+            }
+            contents.push((start + contents.len(), node));
+        }
+        let command = Command::Insert(contents);
+        command.apply(&mut scratch)?;
+        commands.push(command);
+        // The copy itself: the file's look and behaviour, its own name,
+        // place, link and flags.
+        let mut file_root = root.context("the saved model has no group")?;
+        let command = modify(&scratch, "Update copy", &[*copy], |n| {
+            file_root.id = n.id;
+            file_root.name = n.name.clone();
+            file_root.parent = n.parent;
+            file_root.transform = n.transform;
+            file_root.visible = n.visible;
+            file_root.locked = n.locked;
+            file_root.saved_model = n.saved_model.clone();
+            *n = file_root.clone();
+        })?;
+        command.apply(&mut scratch)?;
+        commands.push(command);
+    }
+    doc.layout.next_id = doc.layout.next_id.max(scratch.layout.next_id);
+    let label = match copies.len() {
+        1 => format!("Update {}", saved.name()),
+        n => format!("Update {n} copies of {}", saved.name()),
+    };
+    Ok(Some(Command::Batch { label, commands }))
+}
+
+/// Behaviour that points at `from` points at `to` instead.
+fn retarget(node: &mut Node, from: NodeId, to: NodeId) {
+    let Some(world_logic::Kept::Known(component)) = &mut node.gameplay else {
+        return;
+    };
+    for list in component.action_lists_mut() {
+        for action in list.iter_mut().filter_map(world_logic::Kept::known_mut) {
+            let target = match action {
+                world_logic::Action::Teleport { target } => target,
+                world_logic::Action::Show { node }
+                | world_logic::Action::Hide { node }
+                | world_logic::Action::Toggle { node } => node,
+                _ => continue,
+            };
+            if *target == Some(from) {
+                *target = Some(to);
+            }
+        }
+    }
 }

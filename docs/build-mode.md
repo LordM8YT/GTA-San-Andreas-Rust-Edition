@@ -107,6 +107,32 @@ playable at its spawn point with every object's collision. F6 (or *Back to
 Build Mode*) returns to the editor with the camera, selection and undo
 history as they were. Nothing is restarted.
 
+## My Models
+
+A model you will want again (a lamp post with its light, a market stall, a
+house) can be saved: select it and press **Save to My Models** in its
+Properties (or right-click it in the Explorer). It is written to the world's
+`models/` folder and shows in the Toolbox under **My Models**, with a
+picture, to place as often as you like. The model you saved is its first
+copy.
+
+Copies stay linked to the saved model. Change one (move a wall, paint it,
+add a door) and its Properties say *Changed here*: **Save to all copies**
+writes it to My Models and gives every other copy the same contents, each
+keeping its own place, turn and name. **Revert** throws the changes to one
+copy away; **Unlink** makes a copy an ordinary model that later saves no
+longer touch. Undo puts the copies back as they were; the saved file keeps
+the change until it is saved again.
+
+Inside the world a copy is an ordinary model: players, servers, scripts and
+older SARE versions see its objects like any others. Behaviour inside a
+saved model that points at objects inside it (a teleport, a door to open)
+points at the copy's own objects; pointing at things outside the model is
+not saved. Objects inside a copy get new ids when the copy is updated, so
+a script or teleport elsewhere in the world that points at one of them
+points at nothing afterwards (scripts that find objects by name keep
+working).
+
 ## Parts
 
 Parts are the shapes you build with: walls, floors, steps, pillars,
@@ -332,6 +358,7 @@ content/my-town/
   content.json        # name, id, licence, spawn, "world": { "layout": "layout.json" }
   layout.json         # the placed objects (this format)
   assets/<category>/  # models you imported (File → Import model)
+  models/*.model.json # My Models: saved models, each a layout with one model group
   world.glb           # optional: a base scene made in Blender, shown under the objects
   .autosave.json      # unsaved work; removed by Save
 ```
@@ -426,6 +453,7 @@ pipeline or project format.
 | Part | Where | Notes |
 | --- | --- | --- |
 | Layout format | `sa-scene::world_layout` | Serde types, validation, migration hook, atomic writes, Blender-to-glTF transform maths |
+| My Models | `sa-scene::saved_model`, `sa-editor::ops`, `build_mode/saved_models.rs` | `SavedModel::capture` takes a model out of the layout (pivot at the origin, ids from 1), `matches` compares a copy with the file; `AssetResolver` draws a saved model as one model (Toolbox picture, placement preview); `ops::place_saved` and `ops::update_copies` place copies and replace their contents as one undo step; a node's `saved_model` names its file |
 | Parts | `sa-scene::part` | `model` builds a part's shape (origin in the middle of its base, faces outwards, closed), baked side shading and planar texture coordinates in metres; `texture` generates each material's pattern in code. The editor uploads one mesh per look (`gpu::mesh_key`), so parts that look the same share it and script colours tint it |
 | Terrain | `sa-scene::terrain` | `Terrain` heights on a node, `model` (drawn + solid), `height_at`, brushes `raise`/`smooth`/`flatten`; `content_pack::node_model` gives every path (pack, Playtest, editor) the terrain instead of the asset; the Sculpt tool is in `build_mode/viewport.rs` |
 | Built-in assets | `sa-scene::builtin_assets` | Original shapes generated in code (glTF space); `editor_only` markers are neither drawn nor solid in play |
@@ -492,6 +520,9 @@ collision without rebuilding the world (also used by Playtest).
 
 Milestone 1 and part of milestone 2 are in. Still to come, roughly in order:
 
+- My Models shared between worlds (today each world has its own), copies
+  that keep some of their own changes when the others are updated, and
+  saved models inside saved models (they are saved as plain models).
 - Dragging a model's pivot in the world (today: type it in, or Centre
   pivot), and scaling a whole model to a size.
 - Multiplayer: server checks of teleport destinations against the player's

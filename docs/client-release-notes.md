@@ -1,5 +1,8 @@
 SARE free-roam test client, built and tested from the linked commit.
 
+Version 0.60.0:
+- Build Mode: My Models. Save a model to My Models from its Properties (or right-click in the Explorer) and place it again from the Toolbox as often as you like. Copies stay linked: change one and press *Save to all copies*, and every copy gets the change while keeping its own place. *Revert* throws away a copy's changes and *Unlink* makes it an ordinary model. Saved models live in the world's `models/` folder; copies play like any other objects.
+
 Version 0.59.0:
 - Build Mode: models. *Group* (Ctrl+G) now makes the selection a model with a pivot of its own: move or turn the model and everything in it comes along, turning about the pivot. A click on any part of a model selects the whole model, Alt+click the object inside. Properties show the pivot's position and rotation and *Centre pivot*; untick *Model* to make a group a plain folder again. Objects keep their place when they move into or out of a model, and copies of a model are models too. Worlds without models still open in older SARE versions.
 

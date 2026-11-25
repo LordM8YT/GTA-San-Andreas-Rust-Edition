@@ -13,6 +13,7 @@ mod gameplay_ui;
 pub mod gpu;
 mod pacing;
 mod panels;
+mod saved_models;
 mod script_ui;
 mod viewport;
 
@@ -197,6 +198,9 @@ pub struct BuildMode {
     /// `--smoke-build`: its test edits must not replace a real autosave.
     pub autosave_off: bool,
     ui: panels::UiState,
+    /// Saved models read from the world's folder (My Models), by path.
+    saved_models:
+        std::collections::HashMap<String, Result<sa_scene::saved_model::SavedModel, String>>,
     /// Draw only when something changes while editing (see `pacing`).
     pacing: pacing::Pacing,
 }
@@ -282,6 +286,7 @@ impl BuildMode {
             autosaved_revision: 0,
             autosave_off: false,
             ui: panels::UiState::default(),
+            saved_models: std::collections::HashMap::new(),
             pacing: pacing::Pacing::default(),
             history: History::default(),
             project,
@@ -324,6 +329,7 @@ impl BuildMode {
     }
 
     pub fn refresh_catalog(&mut self) {
+        self.saved_models.clear();
         let providers = Catalog::providers_for(
             &self.project.folder,
             &self.project.id,
@@ -1450,9 +1456,85 @@ impl State {
                 let played = self.build.as_ref().unwrap().doc.layout.resolved();
                 let wall = self.build.as_ref().unwrap().ui.smoke_parts[0];
                 let at = played.node(wall).unwrap().transform;
-                assert_eq!(at.rotation[2].round(), 90.0, "the played wall is not turned: {at:?}");
+                assert_eq!(
+                    at.rotation[2].round(),
+                    90.0,
+                    "the played wall is not turned: {at:?}"
+                );
             }
-            144 => return true,
+            // Saved to My Models, placed again, changed there and saved to
+            // every copy.
+            144 => {
+                let build = self.build.as_mut().unwrap();
+                let (model, _) = build.ui.smoke_model.unwrap();
+                build.save_to_my_models(model);
+                let path = build.doc.layout.node(model).unwrap().saved_model.clone();
+                let path = path.expect("the model is linked to its saved file");
+                assert!(build.project.folder.join(&path).is_file());
+                assert!(
+                    build.catalog.find(&AssetRef::Own(path.clone())).is_some(),
+                    "the saved model is not in the Toolbox"
+                );
+                let at = sa_scene::world_layout::Transform {
+                    position: [-2.0, 56.0, 0.0],
+                    ..Default::default()
+                };
+                let (command, copy) = build.place_saved(&path, at, None).expect("placing a copy");
+                build.execute(command);
+                build.ui.smoke_copy = Some(copy);
+                build.ui.category = Some(sa_editor::catalog::MY_MODELS.into());
+            }
+            146 => {
+                let build = self.build.as_mut().unwrap();
+                let (model, _) = build.ui.smoke_model.unwrap();
+                let copy = build.ui.smoke_copy.unwrap();
+                let wall = build
+                    .doc
+                    .layout
+                    .descendants(copy)
+                    .into_iter()
+                    .find(|id| build.doc.layout.node(*id).is_some_and(|n| n.part.is_some()))
+                    .expect("a part in the copy");
+                build.preview("Edit part", &[wall], |n| {
+                    n.part.as_mut().expect("a part").color = [0.8, 0.1, 0.1];
+                });
+                build.commit_preview();
+                build.save_to_all_copies(copy);
+                let path = build
+                    .doc
+                    .layout
+                    .node(copy)
+                    .unwrap()
+                    .saved_model
+                    .clone()
+                    .unwrap();
+                let saved = build.saved_model(&path).expect("the saved model");
+                assert!(
+                    saved.matches(&build.doc.layout, model),
+                    "the first copy was not updated"
+                );
+                assert!(saved.matches(&build.doc.layout, copy));
+                build.selection = vec![model, copy];
+                build.focus_selection();
+                build.selection = vec![copy];
+            }
+            150 => {
+                capture(self, "build-saved-models.png");
+                // The smoke run leaves the sample world as it found it.
+                let build = self.build.as_ref().unwrap();
+                let copy = build.ui.smoke_copy.unwrap();
+                let path = build
+                    .doc
+                    .layout
+                    .node(copy)
+                    .unwrap()
+                    .saved_model
+                    .clone()
+                    .unwrap();
+                let _ = std::fs::remove_file(build.project.folder.join(&path));
+                let _ = std::fs::remove_dir(build.project.folder.join(sa_scene::saved_model::DIR));
+            }
+            152 => return true,
             _ => {}
         }
         false

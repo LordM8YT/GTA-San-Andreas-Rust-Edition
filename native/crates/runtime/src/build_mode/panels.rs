@@ -72,7 +72,7 @@ pub struct UiState {
     bottom: BottomTab,
     bottom_open: bool,
     asset_search: String,
-    category: Option<String>,
+    pub category: Option<String>,
     outliner_search: String,
     collapsed: HashSet<NodeId>,
     renaming: Option<(NodeId, String)>,
@@ -112,6 +112,8 @@ pub struct UiState {
     pub smoke_road: Option<(NodeId, f32, usize)>,
     pub smoke_parts: Vec<NodeId>,
     pub smoke_model: Option<(NodeId, (glam::Vec3, glam::Vec3))>,
+    /// `--smoke-build`: the saved model's copy.
+    pub smoke_copy: Option<NodeId>,
     /// `--smoke-build`: the painted terrain and its triangles before a hole.
     pub smoke_paint: Option<(NodeId, usize)>,
     /// Asset Browser pictures; None when one could not be made.
@@ -1984,6 +1986,8 @@ enum OutlinerAction {
     Drop(Vec<NodeId>, ops::Drop),
     Focus(NodeId),
     PlaceInto(Option<NodeId>),
+    /// Save to My Models, or a copy's changes to all copies.
+    SaveModel(NodeId),
 }
 
 fn row(
@@ -2191,6 +2195,15 @@ fn row_single(
                     actions.push(OutlinerAction::PlaceInto(Some(id)));
                     ui.close();
                 }
+                let save = if node.saved_model.is_some() {
+                    "Save to all copies"
+                } else {
+                    "Save to My Models"
+                };
+                if ui.button(save).clicked() {
+                    actions.push(OutlinerAction::SaveModel(id));
+                    ui.close();
+                }
             }
             ui.menu_button("Move to group", |ui| {
                 if ui.button("(top level)").clicked() {
@@ -2275,6 +2288,18 @@ fn apply_outliner(build: &mut BuildMode, action: OutlinerAction) {
         OutlinerAction::Focus(id) => {
             build.selection = vec![id];
             build.focus_selection();
+        }
+        OutlinerAction::SaveModel(id) => {
+            if build
+                .doc
+                .layout
+                .node(id)
+                .is_some_and(|n| n.saved_model.is_some())
+            {
+                build.save_to_all_copies(id);
+            } else {
+                build.save_to_my_models(id);
+            }
         }
         OutlinerAction::PlaceInto(group) => {
             build.ui.place_into = group;
@@ -2465,6 +2490,76 @@ fn pivot_section(build: &mut BuildMode, ui: &mut Ui, id: NodeId, node: &Node, lo
                         n.transform.rotation = [0.0; 3]
                     }),
                 );
+            }
+        });
+    });
+}
+
+/// A model saved to My Models, or a copy of one: save, keep the copies
+/// the same, or go back to the saved version.
+fn saved_model_section(build: &mut BuildMode, ui: &mut Ui, id: NodeId, node: &Node, locked: bool) {
+    section(ui, "My Models");
+    let Some(path) = node.saved_model.clone() else {
+        ui.add_enabled_ui(!locked, |ui| {
+            if ui
+                .button("💾 Save to My Models")
+                .on_hover_text("Saves this model to the Toolbox (My Models) to place it again. Copies stay linked: change one and save, and all of them change.")
+                .clicked()
+            {
+                build.save_to_my_models(id);
+            }
+        });
+        return;
+    };
+    let copies = ops::copies_of(&build.doc, &path).len();
+    let saved = build.saved_model(&path);
+    match &saved {
+        Ok(saved) => {
+            ui.label(format!("Copy of {} · {copies} in this world", saved.name()))
+                .on_hover_text(&path);
+        }
+        Err(error) => {
+            ui.label(
+                RichText::new(format!("The saved model is missing or broken: {error}"))
+                    .small()
+                    .color(WARNING),
+            );
+        }
+    }
+    let changed = saved
+        .as_ref()
+        .is_ok_and(|s| !s.matches(&build.doc.layout, id));
+    if changed {
+        ui.label(
+            RichText::new("Changed here: save to update every copy, or revert")
+                .small()
+                .color(WARNING),
+        );
+    }
+    ui.add_enabled_ui(!locked, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            if (changed || saved.is_err())
+                && ui
+                    .small_button("Save to all copies")
+                    .on_hover_text("Writes this copy to My Models and gives every other copy the same contents; each keeps its own place")
+                    .clicked()
+            {
+                build.save_to_all_copies(id);
+            }
+            if changed
+                && ui
+                    .small_button("Revert")
+                    .on_hover_text("Throws away the changes made to this copy")
+                    .clicked()
+            {
+                build.revert_copy(id);
+            }
+            if ui
+                .small_button("Unlink")
+                .on_hover_text("Makes this an ordinary model: saving other copies no longer changes it")
+                .clicked()
+            {
+                build.unlink_copy(id);
             }
         });
     });
@@ -3125,6 +3220,7 @@ fn object(build: &mut BuildMode, ui: &mut Ui, id: NodeId) {
     }
     if node.is_group() {
         pivot_section(build, ui, id, &node, locked);
+        saved_model_section(build, ui, id, &node, locked);
     }
     section(ui, "Object");
     let mut flags = (node.visible, node.locked, node.collision);
