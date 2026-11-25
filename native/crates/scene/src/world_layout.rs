@@ -889,21 +889,40 @@ pub struct Script {
     /// Off: kept, but not run.
     #[serde(default = "yes", skip_serializing_if = "Clone::clone")]
     pub enabled: bool,
+    /// `lua` (when not written) or `javascript`. Both have the same API.
+    #[serde(default = "lua", skip_serializing_if = "is_lua")]
+    pub language: String,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+fn lua() -> String {
+    Script::LUA.into()
+}
+fn is_lua(language: &String) -> bool {
+    language == Script::LUA
 }
 impl Script {
     /// Longest source, bytes.
     pub const MAX_SOURCE: usize = 64 * 1024;
     /// Most scripts in one world.
     pub const MAX_SCRIPTS: usize = 64;
+    pub const LUA: &'static str = "lua";
+    pub const JAVASCRIPT: &'static str = "javascript";
     pub fn new(name: impl Into<String>, source: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             source: source.into(),
             enabled: true,
+            language: Self::LUA.into(),
             extra: Map::new(),
         }
+    }
+    pub fn is_javascript(&self) -> bool {
+        self.language == Self::JAVASCRIPT
+    }
+    /// A language this SARE runs (a newer one's are kept, not run).
+    pub fn is_known_language(&self) -> bool {
+        self.language == Self::LUA || self.is_javascript()
     }
 }
 
@@ -1657,5 +1676,32 @@ mod tests {
             .attributes
             .insert(" Padded".into(), Attribute::Bool(false));
         assert!(layout.validate().is_err());
+    }
+
+    #[test]
+    fn scripts_say_their_language_and_lua_stays_unwritten() {
+        let mut layout = Layout::default();
+        let mut js = Script::new("Door", "print('hi');");
+        js.language = Script::JAVASCRIPT.into();
+        layout.settings.scripts = vec![Script::new("Old", "print('hi')"), js];
+        let text = layout.to_json().unwrap();
+        assert_eq!(
+            text.matches("\"language\"").count(),
+            1,
+            "only JavaScript says so"
+        );
+        let read = Layout::from_json(&text).unwrap();
+        assert!(!read.settings.scripts[0].is_javascript());
+        assert!(read.settings.scripts[1].is_javascript());
+        let sources = crate::world_logic::script_sources(&read);
+        assert_eq!(
+            sources.iter().map(|s| s.javascript).collect::<Vec<_>>(),
+            [false, true]
+        );
+        // A language from a newer SARE is kept but not run.
+        let newer = text.replace("\"javascript\"", "\"python\"");
+        let read = Layout::from_json(&newer).unwrap();
+        assert_eq!(read.settings.scripts[1].language, "python");
+        assert_eq!(crate::world_logic::script_sources(&read).len(), 1);
     }
 }

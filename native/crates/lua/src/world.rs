@@ -42,6 +42,15 @@ pub struct Source {
     pub source: String,
     /// The object it is on (`script.object`), or None for a world script.
     pub object: Option<u64>,
+    pub language: Language,
+}
+
+/// What a script is written in. Both get the same API and natives.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Language {
+    #[default]
+    Lua,
+    JavaScript,
 }
 
 /// Most attributes and tags an object has (the layout's limits).
@@ -332,7 +341,9 @@ type Shared = Rc<RefCell<Inner>>;
 
 struct Script {
     name: String,
+    /// The Lua state; for a JS script only its natives, which `js` calls.
     lua: Lua,
+    js: Option<crate::js::JsScript>,
     /// False after its body failed to load or it ran too long: it is not
     /// called again.
     running: bool,
@@ -397,11 +408,49 @@ impl WorldScripts {
         };
         for source in config.scripts {
             host.shared.borrow_mut().current = source.name.clone();
-            match create_state(&host.shared, &source, &host.limit) {
+            let javascript = source.language == Language::JavaScript;
+            match create_state(&host.shared, &source, &host.limit, !javascript) {
+                Ok(lua) if javascript => {
+                    let limit = host.limit.clone();
+                    let over = move || {
+                        let over = limit.passed.get()
+                            || limit
+                                .until
+                                .get()
+                                .is_some_and(|until| Instant::now() > until);
+                        if over {
+                            limit.passed.set(true);
+                        }
+                        over
+                    };
+                    let mut script = Script {
+                        name: source.name.clone(),
+                        lua: lua.clone(),
+                        js: None,
+                        running: true,
+                    };
+                    match crate::js::JsScript::new(&lua, MEMORY_LIMIT, over) {
+                        Ok(js) => {
+                            host.limit.until.set(Some(Instant::now() + CALL_LIMIT));
+                            let started = js.start(&source.source);
+                            host.limit.until.set(None);
+                            script.js = Some(js);
+                            host.after_js(&mut script, started);
+                        }
+                        Err(error) => {
+                            script.running = false;
+                            host.shared
+                                .borrow_mut()
+                                .line(format!("could not start: {error}"), true);
+                        }
+                    }
+                    host.scripts.push(script);
+                }
                 Ok(lua) => {
                     let mut script = Script {
                         name: source.name.clone(),
                         lua,
+                        js: None,
                         running: true,
                     };
                     let loaded = script
@@ -543,6 +592,24 @@ impl WorldScripts {
         for script in scripts.iter_mut() {
             // One budget for all of this script's calls this frame.
             self.limit.until.set(Some(Instant::now() + CALL_LIMIT));
+            if script.js.is_some() {
+                for event in &events {
+                    self.call_js(script, "__world_event", &event_args(event));
+                }
+                for (name, values) in &emits {
+                    let mut args = vec![
+                        serde_json::json!(name),
+                        serde_json::Value::Null,
+                        serde_json::Value::Null,
+                    ];
+                    if let serde_json::Value::Array(values) = values {
+                        args.extend(values.iter().cloned());
+                    }
+                    self.call_js(script, "__world_event", &serde_json::Value::Array(args));
+                }
+                self.call_js(script, "__world_tick", &serde_json::json!([time]));
+                continue;
+            }
             for event in &events {
                 self.call(script, |lua| dispatch(lua, event));
             }
@@ -607,6 +674,37 @@ impl WorldScripts {
         lines
     }
 
+    fn call_js(&self, script: &mut Script, name: &str, args: &serde_json::Value) {
+        if !script.running {
+            return;
+        }
+        self.shared.borrow_mut().current = script.name.clone();
+        self.limit.passed.set(false);
+        let result = match &script.js {
+            Some(js) => js.call(name, args),
+            None => Ok(()),
+        };
+        self.after_js(script, result);
+    }
+
+    /// Report a JS call's result; a script that ran too long stops.
+    fn after_js(&self, script: &mut Script, result: Result<(), String>) {
+        if self.limit.passed.replace(false) {
+            script.running = false;
+            self.shared.borrow_mut().line(
+                format!(
+                    "ran for more than {} ms in one frame without await wait() and was stopped until the world starts again",
+                    CALL_LIMIT.as_millis()
+                ),
+                true,
+            );
+            return;
+        }
+        if let Err(error) = result {
+            self.shared.borrow_mut().line(error, true);
+        }
+    }
+
     fn call(&self, script: &mut Script, body: impl FnOnce(&Lua) -> mlua::Result<()>) {
         if !script.running {
             return;
@@ -629,6 +727,31 @@ impl WorldScripts {
         if let Err(error) = result {
             self.shared.borrow_mut().line(clean(&error), true);
         }
+    }
+}
+
+/// An event as `__world_event` arguments, for JS scripts.
+fn event_args(event: &Event) -> serde_json::Value {
+    use serde_json::{json, Value as J};
+    match event {
+        Event::Enter { player, object } => json!(["enter", object, player]),
+        Event::Leave { player, object } => json!(["leave", object, player]),
+        Event::Use { player, object } => json!(["use", object, player]),
+        Event::Checkpoint {
+            player,
+            race,
+            index,
+            total,
+        } => {
+            json!(["checkpoint", J::Null, player, race, index, total])
+        }
+        Event::Finish {
+            player,
+            race,
+            seconds,
+        } => json!(["finish", J::Null, player, race, seconds]),
+        Event::Join { player } => json!(["join", J::Null, player]),
+        Event::Quit { player } => json!(["quit", J::Null, player]),
     }
 }
 
@@ -663,7 +786,7 @@ fn dispatch(lua: &Lua, event: &Event) -> mlua::Result<()> {
 
 /// An error as a creator wants to read it: `Script name:12: what went
 /// wrong`, without mlua's wrapping and Rust tracebacks.
-fn clean(error: &mlua::Error) -> String {
+pub(crate) fn clean(error: &mlua::Error) -> String {
     let text = match error {
         mlua::Error::CallbackError { cause, .. } => return clean(cause),
         mlua::Error::SyntaxError { message, .. } => message.clone(),
@@ -701,7 +824,14 @@ fn g_set_stopped(lua: &Lua, stopped: impl Fn() -> bool + 'static) -> mlua::Resul
     )
 }
 
-fn create_state(shared: &Shared, source: &Source, limit: &Rc<Limit>) -> mlua::Result<Lua> {
+/// A script's Lua state with the natives; `prelude` runs world.lua on
+/// them (a JS script keeps them for its bridge instead).
+fn create_state(
+    shared: &Shared,
+    source: &Source,
+    limit: &Rc<Limit>,
+    prelude: bool,
+) -> mlua::Result<Lua> {
     let lua = Lua::new_with(
         StdLib::TABLE | StdLib::STRING | StdLib::MATH | StdLib::UTF8 | StdLib::COROUTINE,
         LuaOptions::new(),
@@ -1412,7 +1542,9 @@ fn create_state(shared: &Shared, source: &Source, limit: &Rc<Limit>) -> mlua::Re
         Ok((true, None))
     });
     g.set("__world", native)?;
-    lua.load(PRELUDE).set_name("=world").exec()?;
+    if prelude {
+        lua.load(PRELUDE).set_name("=world").exec()?;
+    }
     Ok(lua)
 }
 
@@ -1477,6 +1609,7 @@ mod tests {
                     name: name.to_string(),
                     source: source.to_string(),
                     object: *object,
+                    language: Language::Lua,
                 })
                 .collect(),
             objects: objects(),
@@ -2107,5 +2240,102 @@ print(x",
         assert_eq!(texts(&mut host), ["Goal: Lap  12.5"]);
         host.tick(frame(0.1), vec![]);
         assert_eq!(texts(&mut host), ["Score: Alice scored, total 3"]);
+    }
+
+    fn js_host(source: &str, object: Option<u64>) -> WorldScripts {
+        WorldScripts::new(Config {
+            scripts: vec![Source {
+                name: "Door.js".into(),
+                source: source.into(),
+                object,
+                language: Language::JavaScript,
+            }],
+            objects: objects(),
+            weathers: vec!["clear".into(), "rain".into()],
+            hour: Some(12),
+            weather: None,
+            first_copy: 1000,
+            max_copies: 3,
+            copies: Vec::new(),
+        })
+    }
+
+    #[test]
+    fn javascript_scripts_use_the_same_world() {
+        let mut host = js_host(
+            r#"
+            const door = script.object;
+            print('ready', door.name, door.visible, door.get('Price'), door.hasTag('Shop'));
+            print(world.find('Pad').position.toString(), world.tagged('Shop').length);
+            door.set('Price', door.get('Price') + 1);
+            door.on('use', async (player) => {
+              door.hide();
+              player.message('Open for 2 seconds');
+              await wait(2);
+              door.show();
+              print('closed', door.get('Price'));
+            });
+            "#,
+            Some(1),
+        );
+        assert_eq!(
+            texts(&mut host),
+            [
+                "Door.js: ready  Door  true  5  true",
+                "Door.js: vector(10.00, 0.00, 0.00)  1",
+            ]
+        );
+        let used = host.tick(
+            frame(0.1),
+            vec![Event::Use {
+                player: 7,
+                object: 1,
+            }],
+        );
+        assert!(
+            used.contains(&Request::Visible {
+                object: 1,
+                visible: false
+            }),
+            "{used:?}"
+        );
+        assert!(used.iter().any(|r| matches!(
+            r,
+            Request::Message {
+                player: Some(7),
+                ..
+            }
+        )));
+        // The game reports the door hidden from now on.
+        let hidden = |dt| Frame {
+            visible: vec![(1, false)],
+            ..frame(dt)
+        };
+        assert!(host.tick(hidden(1.0), vec![]).is_empty());
+        let later = host.tick(hidden(1.5), vec![]);
+        assert_eq!(
+            later,
+            [Request::Visible {
+                object: 1,
+                visible: true
+            }]
+        );
+        assert_eq!(texts(&mut host), ["Door.js: closed  6"]);
+    }
+
+    #[test]
+    fn javascript_errors_name_their_line_and_runaway_loops_stop() {
+        let mut host = js_host("print('one');\nnull.x = 1;", None);
+        let out = texts(&mut host);
+        assert_eq!(out[0], "Door.js: one");
+        assert!(
+            out[1].starts_with("!Door.js:") && out[1].contains("line 2"),
+            "{out:?}"
+        );
+        let mut host = js_host("while (true) {}", None);
+        let out = texts(&mut host);
+        assert!(out.iter().any(|l| l.contains("was stopped")), "{out:?}");
+        assert!(crate::js::check("let x = ;").is_some());
+        assert!(crate::js::check("await wait(1); print('ok')").is_none());
     }
 }

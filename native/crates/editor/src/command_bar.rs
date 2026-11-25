@@ -50,6 +50,7 @@ pub fn run(doc: &mut Document, line: &str, selected: &[NodeId]) -> Result<Outcom
             name: "Command".into(),
             source,
             object: None,
+            language: host::Language::Lua,
         }],
         objects,
         weathers: Vec::new(),

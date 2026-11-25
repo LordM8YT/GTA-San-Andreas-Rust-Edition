@@ -1,6 +1,8 @@
 SARE free-roam test client, built and tested from the linked commit.
 
 Version 0.61.0 (in progress: the big SARE Studio update):
+- World scripts in JavaScript: pick a *(JavaScript)* example under *+ Add script*. Same API as Lua (`world.find`, `door.moveTo`, `world.on`), with `await wait(seconds)` to pause; both languages share one world.
+- Build Mode: a toolbar on the 3D view (tools, World/Local, Pivot, Snap, grid, Focus) and an axis gizmo in its corner (click an axis to look along it). Pivot mode (P) moves or turns a model's pivot without moving what is inside. F1 shows every control.
 - Build Mode: attributes and tags. Give any object or group values of your own (number, text, true/false, vector) and tags in its Properties. Scripts read and change them with `object:get`/`object:set`, check tags with `object:hasTag` and find every tagged object with `world.tagged`. A group's attributes and tags apply to everything inside it. Type `#tag` in the Explorer filter to find tagged objects.
 - Build Mode: Test › Publish. Put the saved world on a SARE server folder and make it the world players join (server.cfg is updated); restart the server to play it.
 - Build Mode: Test › Server. Start the world (saved or not) on a server on this computer with 1 to 4 player windows joined to it; the server's and players' messages show in Output, and Stop closes them all.
