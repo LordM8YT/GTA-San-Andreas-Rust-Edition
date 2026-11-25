@@ -15,6 +15,10 @@ pub enum Kind {
     Pack(PathBuf),
 }
 
+/// Example packs that ship with SARE. Create offers them as templates
+/// (copied into a new world) instead of listing them as games.
+pub const TEMPLATES: &[&str] = &["example-town", "gameplay-sample", "sare-rp-town"];
+
 /// Creator shown for worlds without an author, such as new Build Mode worlds.
 pub const LOCAL_CREATOR: &str = "Made on this PC";
 
@@ -31,6 +35,8 @@ pub struct Experience {
     pub editable: bool,
     /// The pack brings its own characters or vehicles (featured first).
     pub rich: bool,
+    /// A bundled example, offered as a starting point in Create.
+    pub template: bool,
 }
 
 impl Experience {
@@ -72,6 +78,7 @@ pub fn local(packs: &[(PathBuf, sa_scene::content_pack::Manifest)]) -> Vec<Exper
             kind: Kind::Pack(folder.clone()),
             editable: manifest.world.layout.is_some(),
             rich: manifest.characters.is_some() || !manifest.vehicles.is_empty(),
+            template: TEMPLATES.contains(&manifest.id.as_str()),
         })
         .collect();
     list.push(Experience {
@@ -85,6 +92,7 @@ pub fn local(packs: &[(PathBuf, sa_scene::content_pack::Manifest)]) -> Vec<Exper
         kind: Kind::Testbed,
         editable: false,
         rich: false,
+        template: false,
     });
     list.push(Experience {
         id: "san-andreas".into(),
@@ -97,6 +105,7 @@ pub fn local(packs: &[(PathBuf, sa_scene::content_pack::Manifest)]) -> Vec<Exper
         kind: Kind::SanAndreas,
         editable: false,
         rich: false,
+        template: false,
     });
     list
 }

@@ -6,7 +6,7 @@ use crate::{
     local_mods,
     shell::{
         self, glyph,
-        palette::{ACCENT, BACKGROUND, BORDER, MUTED, SURFACE, TEXT},
+        palette::{ACCENT, BACKGROUND, MUTED, SURFACE, TEXT},
         RowAction,
     },
     Launcher, Page,
@@ -15,6 +15,14 @@ use eframe::egui::{self, Color32, RichText};
 use sa_client::launch::Session;
 
 impl Launcher {
+    /// Everything to play; bundled examples live under Create as templates.
+    fn games(&self) -> Vec<Experience> {
+        self.experiences
+            .iter()
+            .filter(|e| !e.template)
+            .cloned()
+            .collect()
+    }
     fn find(&self, id: &str) -> Option<Experience> {
         self.experiences.iter().find(|e| e.id == id).cloned()
     }
@@ -83,7 +91,7 @@ impl Launcher {
 
     pub(super) fn home(&mut self, ui: &mut egui::Ui) {
         // Featured: worlds with their own cover first, then the rest.
-        let mut featured: Vec<Experience> = self.experiences.clone();
+        let mut featured: Vec<Experience> = self.games();
         featured.sort_by_key(|e| {
             let own_cover = e
                 .pack_folder()
@@ -223,9 +231,8 @@ impl Launcher {
         }
 
         let (worlds, built_in): (Vec<Experience>, Vec<Experience>) = self
-            .experiences
-            .iter()
-            .cloned()
+            .games()
+            .into_iter()
             .partition(|e| matches!(e.kind, Kind::Pack(_)));
         self.shelf(ui, "Worlds on this PC", &worlds, Page::Library);
         self.shelf(ui, "Built in", &built_in, Page::Library);
@@ -276,7 +283,11 @@ impl Launcher {
             )
             .clicked()
         {
-            self.page = Page::Home;
+            self.page = if experience.template {
+                Page::Create
+            } else {
+                Page::Home
+            };
         }
         ui.add_space(6.);
         let width = ui.available_width();
@@ -347,6 +358,37 @@ impl Launcher {
         };
         let actions = |this: &mut Self, ui: &mut egui::Ui| {
             ui.spacing_mut().item_spacing.y = 8.;
+            if let (true, Some(folder)) = (experience.template, experience.pack_folder()) {
+                if ui
+                    .add_enabled(
+                        this.testbed_ready(),
+                        egui::Button::new((
+                            shell::icon(glyph::PLUS, BACKGROUND),
+                            RichText::new("Use this template")
+                                .font(shell::semibold(15.))
+                                .color(BACKGROUND),
+                        ))
+                        .fill(ACCENT)
+                        .corner_radius(8)
+                        .min_size(egui::vec2(132., 42.)),
+                    )
+                    .on_hover_text("Copy it into a new world and open it in Build Mode")
+                    .on_disabled_hover_text("Close the running game first")
+                    .clicked()
+                {
+                    this.create_from(Some(folder.clone()), &experience.name);
+                }
+                if ui
+                    .add_enabled(
+                        this.testbed_ready(),
+                        shell::icon_button(glyph::PLAY, "Play"),
+                    )
+                    .clicked()
+                {
+                    this.play(&experience);
+                }
+                return;
+            }
             let label = if checkpoint.is_some() {
                 "Continue"
             } else {
@@ -428,15 +470,14 @@ impl Launcher {
         ui.add_space(14.);
         let filter = self.discover_filter;
         let found: Vec<Experience> = self
-            .experiences
-            .iter()
+            .games()
+            .into_iter()
             .filter(|e| e.matches(&self.catalog_search))
             .filter(|e| match filter {
                 1 => matches!(e.kind, Kind::Pack(_)),
                 2 => !matches!(e.kind, Kind::Pack(_)),
                 _ => true,
             })
-            .cloned()
             .collect();
         if !self.catalog_search.trim().is_empty() {
             ui.horizontal(|ui| {
@@ -498,9 +539,8 @@ impl Launcher {
             });
         });
         let (worlds, built_in): (Vec<Experience>, Vec<Experience>) = self
-            .experiences
-            .iter()
-            .cloned()
+            .games()
+            .into_iter()
             .partition(|e| matches!(e.kind, Kind::Pack(_)));
         shell::section(ui, "Worlds");
         if worlds.is_empty() {
@@ -522,81 +562,71 @@ impl Launcher {
 
     pub(super) fn create(&mut self, ui: &mut egui::Ui) {
         shell::title(ui, "Create");
-        egui::Frame::new()
-            .fill(SURFACE)
-            .stroke(egui::Stroke::new(1., BORDER))
-            .corner_radius(12)
-            .inner_margin(egui::Margin::symmetric(22, 20))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.label(RichText::new("New world").font(shell::semibold(17.)));
-                ui.label(
-                    RichText::new(
-                        "Opens in SARE Studio (Build Mode) with flat ground to build on.",
-                    )
-                    .color(MUTED),
-                );
-                ui.add_space(8.);
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.new_world_name)
-                            .hint_text("World name")
-                            .desired_width(280.)
-                            .margin(egui::vec2(12., 10.))
-                            .char_limit(64),
-                    );
-                    let create = ui
-                        .add_enabled(
-                            self.testbed_ready(),
-                            egui::Button::new((
-                                shell::icon(glyph::PLUS, BACKGROUND),
-                                RichText::new("Create")
-                                    .font(shell::semibold(14.5))
-                                    .color(BACKGROUND),
-                            ))
-                            .fill(ACCENT)
-                            .corner_radius(8)
-                            .min_size(egui::vec2(0., 40.)),
-                        )
-                        .on_disabled_hover_text("Close the running game first");
-                    if create.clicked() {
-                        self.create_world();
-                    }
-                });
-            });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Name").color(MUTED));
+            ui.add(
+                egui::TextEdit::singleline(&mut self.new_world_name)
+                    .hint_text("My World")
+                    .desired_width(280.)
+                    .margin(egui::vec2(12., 9.))
+                    .char_limit(64),
+            )
+            .on_hover_text("Name for the next world you start");
+        });
+        shell::section(ui, "Start a new world");
+        let templates: Vec<Experience> = self
+            .experiences
+            .iter()
+            .filter(|e| e.template)
+            .cloned()
+            .collect();
+        let refs: Vec<&Experience> = templates.iter().collect();
+        match shell::template_grid(ui, &refs, &mut self.covers) {
+            Some(shell::TemplatePick::Blank) if self.testbed_ready() => {
+                self.create_from(None, "My World")
+            }
+            Some(shell::TemplatePick::Blank) => {
+                self.message = "Close the running game first.".into()
+            }
+            Some(shell::TemplatePick::Open(index)) => {
+                let id = templates[index].id.clone();
+                self.open_experience(&id);
+            }
+            None => {}
+        }
         let projects: Vec<Experience> = self
             .experiences
             .iter()
-            .filter(|e| e.editable)
+            .filter(|e| e.editable && !e.template)
             .cloned()
             .collect();
-        shell::section(ui, "Worlds you can edit");
+        shell::section(ui, "Your worlds");
         if projects.is_empty() {
-            shell::empty_state(
-                ui,
-                glyph::CUBE,
-                "Nothing to edit yet",
-                "Worlds made in Build Mode show up here.",
-                None,
-            );
+            ui.label(RichText::new("Worlds you make show up here.").color(MUTED));
         } else {
             self.grid(ui, &projects);
         }
     }
 
-    /// Make a new Build Mode world and open it.
-    pub(super) fn create_world(&mut self) {
+    /// Make a new world, blank or copied from a template folder, and open
+    /// it in Build Mode. `fallback` names it when the name field is empty.
+    pub(super) fn create_from(&mut self, template: Option<std::path::PathBuf>, fallback: &str) {
         let name = match self.new_world_name.trim() {
-            "" => "My World".to_owned(),
+            "" => fallback.to_owned(),
             name => name.to_owned(),
         };
         let root = local_mods::content_root();
         let id = sa_editor::project::new_id(&name, &root);
-        match sa_editor::project::Project::create(&root.join(&id), &id, &name) {
-            Ok((project, _)) => {
+        let folder = root.join(&id);
+        let made = match &template {
+            None => sa_editor::project::Project::create(&folder, &id, &name).map(|_| ()),
+            Some(source) => copy_template(source, &folder, &id, &name),
+        };
+        match made {
+            Ok(()) => {
                 self.new_world_name.clear();
                 self.scan_packs();
-                self.edit_world(project.folder);
+                self.edit_world(folder);
             }
             Err(error) => self.message = format!("Could not create the world: {error:#}"),
         }
@@ -674,5 +704,58 @@ impl Launcher {
             "" => "Player",
             _ => self.config.player.as_str(),
         }
+    }
+}
+
+/// Copy a template pack into `folder` as a new world of the player's own:
+/// new id and name, no author (so it counts as made on this PC).
+fn copy_template(
+    source: &std::path::Path,
+    folder: &std::path::Path,
+    id: &str,
+    name: &str,
+) -> anyhow::Result<()> {
+    let (project, mut document) = sa_editor::project::Project::open(source)?;
+    document.info.name = name.to_owned();
+    project.save_as(&document, folder, id)?;
+    let manifest_path = folder.join(sa_scene::content_pack::MANIFEST);
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path)?)?;
+    if let Some(fields) = manifest.as_object_mut() {
+        fields.remove("author");
+        fields.insert("version".into(), "0.1.0".into());
+    }
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&manifest)? + "\n",
+    )?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::copy_template;
+    use std::path::Path;
+
+    #[test]
+    fn a_template_becomes_a_new_world_and_the_template_is_untouched() {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../content/example-town");
+        let before = std::fs::read(source.join("content.json")).unwrap();
+        let root = std::env::temp_dir().join(format!("sare-template-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let folder = root.join("my-town");
+        copy_template(&source, &folder, "my-town", "My Town").unwrap();
+        let manifest = sa_scene::content_pack::Manifest::read(&folder).unwrap();
+        assert_eq!(manifest.id, "my-town");
+        assert_eq!(manifest.name, "My Town");
+        assert!(manifest.author.is_none());
+        assert!(
+            manifest.world.layout.is_some(),
+            "the copy opens in Build Mode"
+        );
+        assert!(folder.join("world.glb").is_file());
+        assert_eq!(std::fs::read(source.join("content.json")).unwrap(), before);
+        assert!(!source.join("layout.json").exists());
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

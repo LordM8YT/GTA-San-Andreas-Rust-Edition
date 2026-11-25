@@ -558,6 +558,86 @@ pub fn card_grid(
     clicked
 }
 
+/// What the Create template grid asked for.
+pub enum TemplatePick {
+    Blank,
+    Open(usize),
+}
+
+/// Templates grid with a blank world first, like a new-project picker.
+pub fn template_grid(
+    ui: &mut egui::Ui,
+    list: &[&Experience],
+    covers: &mut Covers,
+) -> Option<TemplatePick> {
+    let (columns, width) = columns(ui.available_width(), TILE, GAP);
+    let mut pick = None;
+    let total = list.len() + 1;
+    for row in 0..total.div_ceil(columns) {
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = GAP;
+            for slot in row * columns..(row * columns + columns).min(total) {
+                if slot == 0 {
+                    if blank_tile(ui, width) {
+                        pick = Some(TemplatePick::Blank);
+                    }
+                } else if tile(ui, width, list[slot - 1], covers, None) {
+                    pick = Some(TemplatePick::Open(slot - 1));
+                }
+            }
+        });
+        ui.add_space(GAP);
+    }
+    pick
+}
+
+fn blank_tile(ui: &mut egui::Ui, width: f32) -> bool {
+    let image = egui::vec2(width, (width * 9. / 16.).round());
+    let (rect, response) =
+        ui.allocate_exact_size(image + egui::vec2(0., 46.), egui::Sense::click());
+    let cover_rect = egui::Rect::from_min_size(rect.min, image);
+    let hot = response.hovered() || response.has_focus();
+    ui.painter()
+        .rect_filled(cover_rect, 10, if hot { SURFACE_HIGH } else { SURFACE });
+    ui.painter().rect_stroke(
+        cover_rect,
+        10,
+        egui::Stroke::new(
+            if hot { 2. } else { 1. },
+            if hot {
+                Color32::from_white_alpha(200)
+            } else {
+                BORDER
+            },
+        ),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter().text(
+        cover_rect.center(),
+        egui::Align2::CENTER_CENTER,
+        icons::PLUS,
+        icon_font(cover_rect.height() * 0.3, false),
+        TEXT,
+    );
+    ui.painter().text(
+        egui::pos2(rect.left(), cover_rect.bottom() + 8.),
+        egui::Align2::LEFT_TOP,
+        "Blank world",
+        semibold(14.5),
+        TEXT,
+    );
+    ui.painter().text(
+        egui::pos2(rect.left(), cover_rect.bottom() + 28.),
+        egui::Align2::LEFT_TOP,
+        "Flat ground to build on",
+        FontId::proportional(12.5),
+        MUTED,
+    );
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Blank world"));
+    response.clicked()
+}
+
 /// What a row header or tile asked for.
 pub enum RowAction {
     Open(usize),
