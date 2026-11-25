@@ -119,6 +119,8 @@ pub struct UiState {
     pub smoke_fall: Option<(std::time::Instant, f32)>,
     /// `--smoke-build`: the frame the physics shot was taken.
     pub smoke_shot: Option<u64>,
+    /// Player windows Test › Server + players opens (0: two).
+    pub test_players: usize,
     /// A new attribute or tag being typed in the Properties panel.
     pub attributes: super::attributes_ui::Draft,
     /// The command bar under Output.
@@ -813,6 +815,7 @@ fn ribbon(build: &mut BuildMode, ui: &mut Ui) {
                         }
                         RibbonTab::Test => {
                             play_group(build, ui);
+                            server_group(build, ui);
                             spawn_group(build, ui);
                             world_group(build, ui);
                         }
@@ -1196,6 +1199,64 @@ fn play_group(build: &mut BuildMode, ui: &mut Ui) {
         if big_button(ui, "💾", "Save", false, true, "Save the world (Ctrl+S)").clicked() {
             build.save();
         }
+    });
+}
+
+/// Test › Server + players: the world on a local server with player
+/// windows, as players will meet it.
+fn server_group(build: &mut BuildMode, ui: &mut Ui) {
+    use super::local_test::MAX_PLAYERS;
+    let running = build.local_test_players();
+    ribbon_group(ui, "Server", |ui| {
+        if build.ui.test_players == 0 {
+            build.ui.test_players = 2;
+        }
+        let start = big_button(
+            ui,
+            "🖧",
+            if running.is_some() { "Restart" } else { "Start" },
+            running.is_some(),
+            true,
+            "Start a server on this computer with the world as it is now (saved or not) and player windows joined to it. Each window is a player; their messages show in Output.",
+        );
+        if start.clicked() {
+            let players = build.ui.test_players;
+            build.start_local_test(players);
+        }
+        ui.vertical(|ui| {
+            egui::ComboBox::from_id_salt("test-players")
+                .width(92.0)
+                .selected_text(match build.ui.test_players {
+                    1 => "1 player".to_string(),
+                    n => format!("{n} players"),
+                })
+                .show_ui(ui, |ui| {
+                    for n in 1..=MAX_PLAYERS {
+                        let label = if n == 1 {
+                            "1 player".to_string()
+                        } else {
+                            format!("{n} players")
+                        };
+                        ui.selectable_value(&mut build.ui.test_players, n, label);
+                    }
+                });
+            if small_button(
+                ui,
+                "■",
+                "Stop",
+                running.is_some(),
+                "Close the test server and its player windows",
+            ) {
+                build.stop_local_test();
+            }
+            if let Some(players) = running {
+                ui.label(
+                    RichText::new(format!("Running: {players} player(s)"))
+                        .small()
+                        .color(SUCCESS),
+                );
+            }
+        });
     });
 }
 

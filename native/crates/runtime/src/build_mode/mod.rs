@@ -14,6 +14,7 @@ mod attributes_ui;
 mod command;
 mod gameplay_ui;
 pub mod gpu;
+pub mod local_test;
 mod pacing;
 mod panels;
 mod saved_models;
@@ -201,6 +202,8 @@ pub struct BuildMode {
     /// `--smoke-build`: its test edits must not replace a real autosave.
     pub autosave_off: bool,
     ui: panels::UiState,
+    /// Test › Server + players, while it runs.
+    local_test: Option<local_test::LocalTest>,
     /// Saved models read from the world's folder (My Models), by path.
     saved_models:
         std::collections::HashMap<String, Result<sa_scene::saved_model::SavedModel, String>>,
@@ -290,6 +293,7 @@ impl BuildMode {
             autosave_off: false,
             ui: panels::UiState::default(),
             saved_models: std::collections::HashMap::new(),
+            local_test: None,
             pacing: pacing::Pacing::default(),
             history: History::default(),
             project,
@@ -700,6 +704,7 @@ impl State {
             self.daycycle.minutes = f32::from(hour.min(23)) * 60.0;
         }
         build.autosave_if_due();
+        build.poll_local_test();
         build.ui.performance = self.menu.settings.editor_performance;
         build.ui.light = self
             .menu

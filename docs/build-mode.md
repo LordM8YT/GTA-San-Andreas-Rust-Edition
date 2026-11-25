@@ -133,6 +133,19 @@ a script or teleport elsewhere in the world that points at one of them
 points at nothing afterwards (scripts that find objects by name keep
 working).
 
+## Testing with a server and players
+
+*Test › Server* starts the world as it is now (saved or not) on a SARE
+server on this computer and opens one to four player windows joined to it,
+as players will meet it: the server runs the gameplay, scripts and
+physics, and each window is a player. What the server and each player
+print shows in Output as `[Server]`, `[Player 1]` and so on. *Stop* closes
+them all; *Restart* starts again with the world as it is then.
+
+The server gets a copy of the world in a test folder (`sare-studio-test-<id>`
+in the temp folder), so your files are not touched and the server is not
+listed publicly.
+
 ## Physics
 
 A part's Properties have **Anchored** (on for every part placed). Untick
@@ -517,6 +530,7 @@ pipeline or project format.
 | Part | Where | Notes |
 | --- | --- | --- |
 | Layout format | `sa-scene::world_layout` | Serde types, validation, migration hook, atomic writes, Blender-to-glTF transform maths |
+| Local server test | `build_mode/local_test.rs` | `prepare` writes `content/<id>` (via `Project::save_as` with the same id), `resources/` and `test.cfg`; `sa-server +exec test.cfg` and `sa-runtime --play --content <id> --content-dir … --join 127.0.0.1:<port> --name "Player n"` run beside SARE; their output goes to Output through a channel |
 | Physics | `sa-scene::physics`, `world_logic::Shared::settle` | `Physics::new` takes the solid, fixed objects (`place_layout`) as a `CollisionWorld` and each unanchored part's box; `settle` lands parts lowest first (so they stack) and starts a `Motion` with `fall` (gravity easing, sent as `g` in snapshots). `Logic::advance` and the server's loop call it |
 | Command bar | `sa-editor::command_bar`, `build_mode/command.rs` | Runs the line in a `sa_lua::world` host built from the resolved layout (everything changeable), then turns its requests and changed attributes/tags into one `Command::Batch`; copies are pasted first so later requests find them |
 | Arranging | `build_mode/arrange.rs` | `nudge`, `align`, `distribute` on world boxes from the GPU meshes (a group: everything in it); one `Command::Modify` each, written back relative to each object's group |
