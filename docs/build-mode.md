@@ -133,6 +133,20 @@ a script or teleport elsewhere in the world that points at one of them
 points at nothing afterwards (scripts that find objects by name keep
 working).
 
+## Arranging
+
+- **Nudge:** the arrow keys move the selection one grid step (10 cm with
+  snapping off) along the ground: up goes the way the camera looks, along
+  the nearest world axis. Page Up and Page Down move it up and down. Each
+  press is one undo step.
+- **Align** (Model tab › Arrange): lines the selection up with the last
+  object selected: west, east or north sides, middles, bottoms or tops.
+- **Space evenly**: three or more objects get the same distance between
+  their middles along an axis; the two at the ends stay where they are.
+
+Both work in the world, by what is drawn (a model counts as everything in
+it), and move models by their pivots.
+
 ## Attributes and tags
 
 Every object and group has **Attributes** and **Tags** in its Properties.
@@ -471,6 +485,7 @@ pipeline or project format.
 | Part | Where | Notes |
 | --- | --- | --- |
 | Layout format | `sa-scene::world_layout` | Serde types, validation, migration hook, atomic writes, Blender-to-glTF transform maths |
+| Arranging | `build_mode/arrange.rs` | `nudge`, `align`, `distribute` on world boxes from the GPU meshes (a group: everything in it); one `Command::Modify` each, written back relative to each object's group |
 | Attributes and tags | `world_layout::Attribute`, `Node.attributes`/`tags`, `build_mode/attributes_ui.rs`, `sa-lua` world API | `Layout::effective_attributes`/`effective_tags` merge a node's groups'; `world_logic::script_objects` hands them to scripts; unknown kinds from a newer SARE are kept (`Attribute::Other`) and hidden from scripts |
 | My Models | `sa-scene::saved_model`, `sa-editor::ops`, `build_mode/saved_models.rs` | `SavedModel::capture` takes a model out of the layout (pivot at the origin, ids from 1), `matches` compares a copy with the file; `AssetResolver` draws a saved model as one model (Toolbox picture, placement preview); `ops::place_saved` and `ops::update_copies` place copies and replace their contents as one undo step; a node's `saved_model` names its file |
 | Parts | `sa-scene::part` | `model` builds a part's shape (origin in the middle of its base, faces outwards, closed), baked side shading and planar texture coordinates in metres; `texture` generates each material's pattern in code. The editor uploads one mesh per look (`gpu::mesh_key`), so parts that look the same share it and script colours tint it |

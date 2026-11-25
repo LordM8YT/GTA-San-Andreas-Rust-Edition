@@ -444,6 +444,26 @@ fn shortcuts(build: &mut BuildMode, ui: &mut Ui) {
     if pressed(ui, Key::L) {
         build.local = !build.local;
     }
+    // Arrow keys nudge the selection (not while placing or orbiting).
+    if build.placing.is_none() && !build.selection.is_empty() {
+        for (key, forward, sign) in [
+            (Key::ArrowUp, true, 1.0),
+            (Key::ArrowDown, true, -1.0),
+            (Key::ArrowRight, false, 1.0),
+            (Key::ArrowLeft, false, -1.0),
+        ] {
+            if pressed(ui, key) {
+                let direction = build.arrow_direction(forward, sign);
+                build.nudge(direction);
+            }
+        }
+        if pressed(ui, Key::PageUp) {
+            build.nudge(glam::Vec3::Z);
+        }
+        if pressed(ui, Key::PageDown) {
+            build.nudge(-glam::Vec3::Z);
+        }
+    }
     if let Some(placing) = &mut build.placing {
         let step = build.snap.angle.max(1.0);
         if pressed(ui, Key::OpenBracket) {
@@ -777,6 +797,7 @@ fn ribbon(build: &mut BuildMode, ui: &mut Ui) {
                         RibbonTab::Model => {
                             tools_group(build, ui);
                             snap_group(build, ui);
+                            arrange_group(build, ui);
                             terrain_group(build, ui);
                             insert_group(build, ui);
                             effects_group(build, ui);
@@ -1194,6 +1215,56 @@ fn world_group(build: &mut BuildMode, ui: &mut Ui) {
                 build.ui.hide_properties = false;
             }
         }
+    });
+}
+
+/// Align, space evenly; the arrow keys nudge.
+fn arrange_group(build: &mut BuildMode, ui: &mut Ui) {
+    use super::arrange::{Edge, AXES};
+    let two = build.selection.len() >= 2;
+    let three = build.selection.len() >= 3;
+    ribbon_group(ui, "Arrange", |ui| {
+        ui.vertical(|ui| {
+            ui.add_enabled_ui(two, |ui| {
+                ui.menu_button("Align...", |ui| {
+                    ui.label(
+                        RichText::new("To the last one selected")
+                            .small()
+                            .color(MUTED),
+                    );
+                    let names = [
+                        ["West sides", "Middles east-west", "East sides"],
+                        ["South sides", "Middles north-south", "North sides"],
+                        ["Bottoms", "Middles up-down", "Tops"],
+                    ];
+                    for (axis, row) in names.iter().enumerate() {
+                        ui.separator();
+                        for (edge, name) in [Edge::Min, Edge::Center, Edge::Max].into_iter().zip(row) {
+                            if ui.button(*name).clicked() {
+                                build.align(axis, edge);
+                                ui.close();
+                            }
+                        }
+                    }
+                })
+                .response
+                .on_hover_text("Line the selection up with the last object selected");
+            });
+            ui.add_enabled_ui(three, |ui| {
+                ui.menu_button("Space evenly...", |ui| {
+                    for (axis, name) in AXES.iter().enumerate() {
+                        if ui.button(format!("Along {name}")).clicked() {
+                            build.distribute(axis);
+                            ui.close();
+                        }
+                    }
+                })
+                .response
+                .on_hover_text("Even gaps between three or more objects, the two at the ends stay");
+            });
+            ui.label(RichText::new("Arrows, PgUp/PgDn: nudge").small().color(MUTED))
+                .on_hover_text("Move the selection one grid step (10 cm with snapping off): the arrow keys along the ground, the way the camera looks, Page Up and Page Down up and down");
+        });
     });
 }
 

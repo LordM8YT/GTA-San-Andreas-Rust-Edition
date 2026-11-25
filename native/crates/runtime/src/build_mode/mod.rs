@@ -9,6 +9,7 @@
 //!
 //! Start it with `sa-runtime --build <pack id | folder | new:Name>`.
 //! See docs/build-mode.md.
+mod arrange;
 mod attributes_ui;
 mod gameplay_ui;
 pub mod gpu;
@@ -1564,7 +1565,59 @@ impl State {
                 build.selection = vec![copy];
             }
             156 => capture(self, "build-attributes.png"),
-            158 => return true,
+            // Arrange: three blocks lined up on the last one, spaced
+            // evenly, then nudged.
+            158 => {
+                let build = self.build.as_mut().unwrap();
+                let mut ids = Vec::new();
+                for (x, y, z) in [(30.0, 70.0, 2.0), (34.0, 73.0, 0.0), (45.0, 71.0, 5.0)] {
+                    let at = sa_scene::world_layout::Transform::at([x, y, z]);
+                    let (command, id) = sa_editor::ops::place(
+                        &mut build.doc,
+                        AssetRef::Builtin("part-block".into()),
+                        "Block",
+                        at,
+                        None,
+                    )
+                    .expect("placing a block");
+                    build.execute(command);
+                    ids.push(id);
+                }
+                build.selection = ids.clone();
+                build.ui.smoke_parts = ids;
+            }
+            160 => {
+                let build = self.build.as_mut().unwrap();
+                build.align(2, arrange::Edge::Min);
+                build.align(1, arrange::Edge::Center);
+            }
+            162 => {
+                let build = self.build.as_mut().unwrap();
+                let ids = build.ui.smoke_parts.clone();
+                for id in &ids {
+                    let p = build.doc.layout.world_transform(*id).position;
+                    assert!(
+                        (p[2] - 5.0).abs() < 0.01 && (p[1] - 71.0).abs() < 0.01,
+                        "block {id} is not lined up with the last one: {p:?}"
+                    );
+                }
+                build.distribute(0);
+                let x: Vec<f32> = ids
+                    .iter()
+                    .map(|id| build.doc.layout.world_transform(*id).position[0])
+                    .collect();
+                assert!((x[1] - 37.5).abs() < 0.01, "not spaced evenly: {x:?}");
+                build.snap.enabled = true;
+                build.snap.step = 1.0;
+                build.nudge(glam::Vec3::Z);
+                let z = build.doc.layout.world_transform(ids[0]).position[2];
+                assert!(
+                    (z - 6.0).abs() < 0.01,
+                    "nudge up did not move one step: {z}"
+                );
+                build.undo();
+            }
+            164 => return true,
             _ => {}
         }
         false
