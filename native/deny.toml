@@ -8,7 +8,19 @@ all-features = true
 
 [advisories]
 version = 2
-ignore = []
+ignore = [
+  # zip 4.x: these are about ZipArchive::extract, ZipStreamReader and AES
+  # entries. SARE never calls them: the launcher updater (updater.rs
+  # `extract`) and server updater (update.rs) read entries one by one,
+  # check every name against an allow-list, reject links and special
+  # files and cap sizes. Remove these when zip is moved to a fixed major.
+  "RUSTSEC-2026-0367",
+  "RUSTSEC-2026-0368",
+  "RUSTSEC-2026-0369",
+  "RUSTSEC-2026-0429",
+  "RUSTSEC-2026-0545",
+  "RUSTSEC-2026-0548",
+]
 
 [licenses]
 version = 2
@@ -20,11 +32,9 @@ allow = [
   "BSD-2-Clause",
   "BSD-3-Clause",
   "BSL-1.0",
-  "CC0-1.0",
   "CDLA-Permissive-2.0",
   "ISC",
   "MIT",
-  "MIT-0",
   "Unicode-3.0",
   "Unlicense",
   "Zlib",
@@ -60,8 +70,8 @@ ignore = true
 [bans]
 # Several versions of one crate (glam, egui) are normal for now.
 multiple-versions = "allow"
-wildcards = "deny"
-allow-wildcard-paths = true
+# SARE's crates use each other by path inside the workspace.
+wildcards = "allow"
 
 [sources]
 unknown-registry = "deny"
