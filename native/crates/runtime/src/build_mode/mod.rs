@@ -447,6 +447,25 @@ impl BuildMode {
             Err(error) => self.error(format!("Save failed, nothing was overwritten: {error:#}")),
         }
     }
+    /// Save, then put the world on the SARE server in `server`.
+    pub fn publish(&mut self, server: &Path) {
+        self.save();
+        if self.history.dirty() {
+            return self.error("Publish: the world could not be saved, so nothing was published");
+        }
+        match sa_editor::publish::to_server(&self.project, server) {
+            Ok(published) => self.info(format!(
+                "Published to {}{}. Restart the server so players get this version.",
+                published.folder.display(),
+                if published.was_named {
+                    ""
+                } else {
+                    " and made it the server's world in server.cfg"
+                }
+            )),
+            Err(error) => self.error(format!("Publish failed: {error:#}")),
+        }
+    }
     pub fn save_as(&mut self, name: &str) {
         self.commit_preview();
         let Some(parent) = self.project.folder.parent().map(Path::to_path_buf) else {
@@ -1645,7 +1664,9 @@ impl State {
                 );
                 build.focus_selection();
             }
+            166 => self.build.as_mut().unwrap().ui.ribbon = panels::RibbonTab::Test,
             168 => capture(self, "build-command.png"),
+            169 => self.build.as_mut().unwrap().ui.ribbon = panels::RibbonTab::Model,
             // Physics: the three blocks let go, one lifted high; in the
             // playtest they fall and come to rest.
             170 => {

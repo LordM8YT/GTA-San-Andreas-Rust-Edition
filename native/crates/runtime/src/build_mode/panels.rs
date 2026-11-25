@@ -47,7 +47,7 @@ pub enum BottomTab {
 
 #[derive(Default)]
 pub struct UiState {
-    ribbon: RibbonTab,
+    pub ribbon: RibbonTab,
     pub world_page: WorldPage,
     /// The script open in the script editor.
     pub script: Option<super::script_ui::Editor>,
@@ -121,6 +121,8 @@ pub struct UiState {
     pub smoke_shot: Option<u64>,
     /// Player windows Test › Server + players opens (0: two).
     pub test_players: usize,
+    /// The server folder Publish puts the world in.
+    pub publish_folder: String,
     /// A new attribute or tag being typed in the Properties panel.
     pub attributes: super::attributes_ui::Draft,
     /// The command bar under Output.
@@ -1257,6 +1259,32 @@ fn server_group(build: &mut BuildMode, ui: &mut Ui) {
                 );
             }
         });
+        ui.vertical(|ui| {
+            ui.menu_button("🌐 Publish...", |ui| {
+                ui.set_min_width(320.0);
+                ui.label("Put this world on a SARE server: players who join it play this world.");
+                ui.label(
+                    RichText::new("The server folder is the one with server.cfg. The world is saved first; restart the server afterwards.")
+                        .small()
+                        .color(MUTED),
+                );
+                ui.add(
+                    egui::TextEdit::singleline(&mut build.ui.publish_folder)
+                        .hint_text("C:\\SARE Server")
+                        .desired_width(300.0),
+                );
+                let folder = build.ui.publish_folder.trim().to_owned();
+                if ui
+                    .add_enabled(!folder.is_empty(), egui::Button::new("Publish"))
+                    .clicked()
+                {
+                    build.publish(std::path::Path::new(&folder));
+                    ui.close();
+                }
+            })
+            .response
+            .on_hover_text("Put the saved world on a SARE server folder and make it the world players join");
+        });
     });
 }
 
@@ -1346,7 +1374,7 @@ fn snap_group(build: &mut BuildMode, ui: &mut Ui) {
                 .on_hover_text("Place new objects on the surface under the mouse");
         });
         egui::Grid::new("snap-steps").num_columns(2).show(ui, |ui| {
-            ui.label("Move");
+            ui.add(egui::Label::new("Move").extend());
             egui::ComboBox::from_id_salt("grid-step")
                 .width(70.0)
                 .selected_text(format!("{} m", build.snap.step))
@@ -1356,7 +1384,7 @@ fn snap_group(build: &mut BuildMode, ui: &mut Ui) {
                     }
                 });
             ui.end_row();
-            ui.label("Rotate");
+            ui.add(egui::Label::new("Rotate").extend());
             egui::ComboBox::from_id_salt("angle-step")
                 .width(70.0)
                 .selected_text(format!("{}°", build.snap.angle))

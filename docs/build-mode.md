@@ -146,6 +146,15 @@ The server gets a copy of the world in a test folder (`sare-studio-test-<id>`
 in the temp folder), so your files are not touched and the server is not
 listed publicly.
 
+## Publishing
+
+*Test › Publish...* puts the world on a SARE server: type the server's
+folder (the one with `server.cfg`) and press *Publish*. The world is saved,
+copied to the server's `content/<id>/` (an older copy there is replaced;
+a failed copy leaves it as it was) and `server.cfg` gets
+`sets content_pack <id>`, so players who join play this world. Restart the
+server for players to get the new version.
+
 ## Physics
 
 A part's Properties have **Anchored** (on for every part placed). Untick
@@ -530,6 +539,7 @@ pipeline or project format.
 | Part | Where | Notes |
 | --- | --- | --- |
 | Layout format | `sa-scene::world_layout` | Serde types, validation, migration hook, atomic writes, Blender-to-glTF transform maths |
+| Publish | `sa-editor::publish` | `to_server` copies the saved project into `content/.<id>-publishing`, checks it opens, swaps it in, and sets the one `content_pack` line in `server.cfg` |
 | Local server test | `build_mode/local_test.rs` | `prepare` writes `content/<id>` (via `Project::save_as` with the same id), `resources/` and `test.cfg`; `sa-server +exec test.cfg` and `sa-runtime --play --content <id> --content-dir … --join 127.0.0.1:<port> --name "Player n"` run beside SARE; their output goes to Output through a channel |
 | Physics | `sa-scene::physics`, `world_logic::Shared::settle` | `Physics::new` takes the solid, fixed objects (`place_layout`) as a `CollisionWorld` and each unanchored part's box; `settle` lands parts lowest first (so they stack) and starts a `Motion` with `fall` (gravity easing, sent as `g` in snapshots). `Logic::advance` and the server's loop call it |
 | Command bar | `sa-editor::command_bar`, `build_mode/command.rs` | Runs the line in a `sa_lua::world` host built from the resolved layout (everything changeable), then turns its requests and changed attributes/tags into one `Command::Batch`; copies are pasted first so later requests find them |
