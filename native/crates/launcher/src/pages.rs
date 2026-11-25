@@ -4,8 +4,11 @@
 use crate::{
     experience::{self, Experience, Kind},
     local_mods,
-    shell::{self, CardAction},
-    ui_theme::{MUTED, SURFACE, TEXT},
+    shell::{
+        self,
+        palette::{MUTED, SURFACE, TEXT},
+        CardAction, CardState,
+    },
     Launcher, Page,
 };
 use eframe::egui::{self, RichText};
@@ -23,14 +26,19 @@ impl Launcher {
     }
     /// Show a grid and carry out what the player clicked.
     fn grid(&mut self, ui: &mut egui::Ui, list: &[Experience]) {
-        let refs: Vec<&Experience> = list.iter().collect();
-        let chosen = shell::card_grid(
-            ui,
-            &refs,
-            self.hero.as_ref(),
-            |e| self.can_play(e),
-            |e| self.needs_setup(e),
-        );
+        let cards: Vec<(&Experience, CardState)> = list
+            .iter()
+            .map(|e| {
+                (
+                    e,
+                    CardState {
+                        can_play: self.can_play(e),
+                        needs_setup: self.needs_setup(e),
+                    },
+                )
+            })
+            .collect();
+        let chosen = shell::card_grid(ui, &cards, &mut self.covers, self.hero.as_ref());
         if let Some((index, action)) = chosen {
             let experience = list[index].clone();
             self.act(&experience, action);
@@ -100,7 +108,11 @@ impl Launcher {
             .partition(|e| matches!(e.kind, Kind::Pack(_)));
         ui.add_space(8.);
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Worlds").size(20.).strong().color(TEXT));
+            ui.label(
+                RichText::new("Worlds")
+                    .font(shell::semibold(18.))
+                    .color(TEXT),
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .button("Open content folder")

@@ -16,6 +16,17 @@ experience among others, not the identity of the app.
 - `pages.rs`: Discover, Library, Create, Profile, Friends and Messages.
   Home, Servers, Mods, Settings and Help are the existing pages.
 
+## Look
+
+Type is Inter (SIL Open Font License, `crates/launcher/assets/fonts`, licence
+text beside the files); the SARE wordmark stays Archivo Black. Icons come from
+Phosphor through the `egui-phosphor` crate (MIT). Icon fonts live in their own
+font families because Inter has glyphs in the same private-use range, so put
+icons in buttons as a separate part: `Button::new((shell::icon(..), "Label"))`.
+Colours are in `shell::palette`: neutral greys, gold only for the main action
+and the active page. A content pack can ship `cover.png` (16:9) as its card
+image; without one it gets a generated gradient.
+
 ## Data rules
 
 Nothing is invented. No player counts, ratings, friend activity or online

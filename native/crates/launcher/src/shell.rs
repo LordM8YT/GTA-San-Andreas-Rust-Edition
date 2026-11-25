@@ -1,14 +1,145 @@
-//! SARE Client shell: the persistent sidebar, the compact header and the
-//! shared pieces pages are built from (experience cards, empty states).
-//! Pure presentation: callers get back what the player chose.
+//! SARE Client shell: fonts, colours, the persistent sidebar, the compact
+//! header and the shared pieces pages are built from (experience cards,
+//! empty states). Pure presentation: callers get back what the player chose.
+//!
+//! Type is Inter (SIL OFL, `assets/fonts`), icons are Phosphor (MIT, via
+//! `egui-phosphor`). Only the SARE wordmark keeps Archivo Black.
 use crate::{
     experience::{Experience, Kind},
-    ui_theme::{ACCENT, MUTED, SURFACE, SURFACE_HIGH, TEXT},
     Page,
 };
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, Color32, FontFamily, FontId, RichText};
+use egui_phosphor::{fill, regular as icons};
+use palette::*;
+use std::collections::HashMap;
 
-pub const SIDEBAR: Color32 = Color32::from_rgb(15, 20, 26);
+/// Launcher colours: neutral greys with one accent, so images carry the colour.
+pub mod palette {
+    use eframe::egui::Color32;
+    pub const BACKGROUND: Color32 = Color32::from_rgb(14, 16, 20);
+    pub const SIDEBAR: Color32 = Color32::from_rgb(18, 20, 25);
+    pub const SURFACE: Color32 = Color32::from_rgb(24, 27, 33);
+    pub const SURFACE_HIGH: Color32 = Color32::from_rgb(34, 38, 46);
+    pub const HOVER: Color32 = Color32::from_rgb(43, 48, 58);
+    pub const BORDER: Color32 = Color32::from_rgb(40, 44, 52);
+    pub const TEXT: Color32 = Color32::from_rgb(236, 238, 242);
+    pub const MUTED: Color32 = Color32::from_rgb(142, 148, 158);
+    /// SARE gold, used sparingly: the primary action and the active page.
+    pub const ACCENT: Color32 = Color32::from_rgb(232, 182, 72);
+}
+
+const SEMIBOLD: &str = "inter-semibold";
+const DISPLAY: &str = "inter-display";
+const ICONS: &str = "phosphor";
+const ICONS_FILL: &str = "phosphor-fill";
+
+pub fn semibold(size: f32) -> FontId {
+    FontId::new(size, FontFamily::Name(SEMIBOLD.into()))
+}
+pub fn display(size: f32) -> FontId {
+    FontId::new(size, FontFamily::Name(DISPLAY.into()))
+}
+
+/// Register Inter, the wordmark font and Phosphor icons.
+pub fn install_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    for (name, bytes) in [
+        (
+            "inter",
+            &include_bytes!("../assets/fonts/Inter-Regular.ttf")[..],
+        ),
+        (
+            SEMIBOLD,
+            &include_bytes!("../assets/fonts/Inter-SemiBold.ttf")[..],
+        ),
+        (
+            DISPLAY,
+            &include_bytes!("../assets/fonts/InterDisplay-Bold.ttf")[..],
+        ),
+        (
+            "title",
+            &include_bytes!("../../runtime/assets/ArchivoBlack-Regular.ttf")[..],
+        ),
+    ] {
+        fonts
+            .font_data
+            .insert(name.into(), egui::FontData::from_static(bytes).into());
+    }
+    let proportional = fonts.families.entry(FontFamily::Proportional).or_default();
+    proportional.insert(0, "inter".into());
+    let fallback = proportional.clone();
+    for name in [SEMIBOLD, DISPLAY, "title"] {
+        let mut family = vec![name.to_owned()];
+        family.extend(fallback.iter().cloned());
+        fonts.families.insert(FontFamily::Name(name.into()), family);
+    }
+    // Icon families hold only Phosphor: Inter has glyphs of its own in the
+    // private-use range Phosphor uses, so icons are never mixed into text.
+    for (name, variant) in [
+        (ICONS, egui_phosphor::Variant::Regular),
+        (ICONS_FILL, egui_phosphor::Variant::Fill),
+    ] {
+        fonts.font_data.insert(
+            name.into(),
+            egui::FontData::from_static(variant.font_bytes()).into(),
+        );
+        fonts
+            .families
+            .insert(FontFamily::Name(name.into()), vec![name.to_owned()]);
+    }
+    ctx.set_fonts(fonts);
+}
+
+/// Client look on top of the shared SARE theme: flat, neutral surfaces,
+/// no outlines on buttons, gold only where it means something.
+pub fn apply_style(ctx: &egui::Context) {
+    let mut style = (*ctx.style_of(egui::Theme::Dark)).clone();
+    let v = &mut style.visuals;
+    v.override_text_color = Some(TEXT);
+    v.panel_fill = BACKGROUND;
+    v.window_fill = SURFACE;
+    v.extreme_bg_color = Color32::from_rgb(10, 11, 14);
+    v.faint_bg_color = SURFACE;
+    v.code_bg_color = SURFACE_HIGH;
+    v.selection.bg_fill = ACCENT.gamma_multiply(0.45);
+    v.selection.stroke = egui::Stroke::new(1.0, ACCENT);
+    v.hyperlink_color = ACCENT;
+    v.window_corner_radius = egui::CornerRadius::same(10);
+    v.widgets.noninteractive.bg_fill = SURFACE;
+    v.widgets.noninteractive.weak_bg_fill = SURFACE;
+    v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, BORDER);
+    v.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, MUTED);
+    for (widget, fill) in [
+        (&mut v.widgets.inactive, SURFACE_HIGH),
+        (&mut v.widgets.hovered, HOVER),
+        (&mut v.widgets.active, Color32::from_rgb(52, 58, 70)),
+        (&mut v.widgets.open, SURFACE_HIGH),
+    ] {
+        widget.bg_fill = fill;
+        widget.weak_bg_fill = fill;
+        widget.bg_stroke = egui::Stroke::NONE;
+        widget.fg_stroke = egui::Stroke::new(1.0, TEXT);
+        widget.corner_radius = egui::CornerRadius::same(6);
+        widget.expansion = 0.0;
+    }
+    // Text fields keep a quiet border so they read as inputs.
+    v.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, BORDER);
+    v.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, HOVER);
+    v.widgets.active.bg_stroke = egui::Stroke::new(1.0, ACCENT.gamma_multiply(0.7));
+    style.spacing.item_spacing = egui::vec2(8.0, 8.0);
+    style.spacing.button_padding = egui::vec2(14.0, 7.0);
+    style.spacing.interact_size.y = 32.0;
+    for (kind, font) in [
+        (egui::TextStyle::Heading, display(24.0)),
+        (egui::TextStyle::Body, FontId::proportional(14.5)),
+        (egui::TextStyle::Button, semibold(14.0)),
+        (egui::TextStyle::Small, FontId::proportional(12.0)),
+        (egui::TextStyle::Monospace, FontId::monospace(13.0)),
+    ] {
+        style.text_styles.insert(kind, font);
+    }
+    ctx.set_style_of(egui::Theme::Dark, style);
+}
 
 /// Sidebar groups. Add a page here to give it a place in the navigation.
 pub const SECTIONS: &[(&str, &[(Page, &str)])] = &[
@@ -22,15 +153,15 @@ pub const SECTIONS: &[(&str, &[(Page, &str)])] = &[
         ],
     ),
     (
-        "SOCIAL",
+        "Social",
         &[(Page::Friends, "Friends"), (Page::Messages, "Messages")],
     ),
     (
-        "YOU",
+        "You",
         &[(Page::Profile, "Profile"), (Page::Create, "Create")],
     ),
     (
-        "SYSTEM",
+        "System",
         &[
             (Page::Resources, "Mods"),
             (Page::Settings, "Settings"),
@@ -39,31 +170,70 @@ pub const SECTIONS: &[(&str, &[(Page, &str)])] = &[
     ),
 ];
 
+/// Phosphor icon for a page: outline normally, filled when active.
+pub fn page_icon(page: Page, active: bool) -> &'static str {
+    match (page, active) {
+        (Page::Home, false) => icons::HOUSE,
+        (Page::Home, true) => fill::HOUSE,
+        (Page::Discover, false) => icons::COMPASS,
+        (Page::Discover, true) => fill::COMPASS,
+        (Page::Library, false) => icons::SQUARES_FOUR,
+        (Page::Library, true) => fill::SQUARES_FOUR,
+        (Page::Multiplayer, false) => icons::HARD_DRIVES,
+        (Page::Multiplayer, true) => fill::HARD_DRIVES,
+        (Page::Friends, false) => icons::USERS,
+        (Page::Friends, true) => fill::USERS,
+        (Page::Messages, false) => icons::CHAT_CIRCLE,
+        (Page::Messages, true) => fill::CHAT_CIRCLE,
+        (Page::Profile, false) => icons::USER_CIRCLE,
+        (Page::Profile, true) => fill::USER_CIRCLE,
+        (Page::Create, false) => icons::PLUS_SQUARE,
+        (Page::Create, true) => fill::PLUS_SQUARE,
+        (Page::Resources, false) => icons::PUZZLE_PIECE,
+        (Page::Resources, true) => fill::PUZZLE_PIECE,
+        (Page::Settings, false) => icons::GEAR_SIX,
+        (Page::Settings, true) => fill::GEAR_SIX,
+        (Page::Help, false) => icons::QUESTION,
+        (Page::Help, true) => fill::QUESTION,
+    }
+}
+
+pub fn icon_font(size: f32, filled: bool) -> FontId {
+    FontId::new(
+        size,
+        FontFamily::Name(if filled { ICONS_FILL } else { ICONS }.into()),
+    )
+}
+
+/// An icon to put in front of a button or label.
+pub fn icon(glyph: &str, color: Color32) -> RichText {
+    RichText::new(glyph)
+        .font(icon_font(15., false))
+        .color(color)
+}
+
 /// Draw the sidebar and return the page the player picked, if any.
 pub fn sidebar(ui: &mut egui::Ui, current: Page) -> Option<Page> {
     let mut chosen = None;
     ui.spacing_mut().item_spacing.y = 2.;
-    ui.add_space(4.);
+    ui.add_space(6.);
     ui.horizontal(|ui| {
         ui.add_space(10.);
         ui.label(
             RichText::new("SARE")
-                .font(egui::FontId::new(
-                    26.,
-                    egui::FontFamily::Name("title".into()),
-                ))
-                .color(ACCENT),
+                .font(FontId::new(24., FontFamily::Name("title".into())))
+                .color(TEXT),
         );
-        ui.label(RichText::new("CLIENT").size(11.).color(MUTED));
     });
-    ui.add_space(10.);
+    ui.add_space(14.);
     for (title, pages) in SECTIONS {
         if !title.is_empty() {
-            ui.add_space(6.);
+            ui.add_space(12.);
             ui.horizontal(|ui| {
                 ui.add_space(12.);
-                ui.label(RichText::new(*title).size(11.).color(MUTED).strong());
+                ui.label(RichText::new(*title).font(semibold(12.)).color(MUTED));
             });
+            ui.add_space(2.);
         }
         for (page, label) in pages.iter() {
             if nav_item(ui, *page, label, current == *page).clicked() {
@@ -76,49 +246,43 @@ pub fn sidebar(ui: &mut egui::Ui, current: Page) -> Option<Page> {
 
 fn nav_item(ui: &mut egui::Ui, page: Page, label: &str, active: bool) -> egui::Response {
     let width = ui.available_width();
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 34.), egui::Sense::click());
-    let focused = response.has_focus();
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 36.), egui::Sense::click());
+    let hovered = response.hovered() || response.has_focus();
     let fill = if active {
         SURFACE_HIGH
-    } else if response.hovered() || focused {
+    } else if hovered {
         SURFACE
     } else {
         Color32::TRANSPARENT
     };
     let painter = ui.painter();
-    painter.rect_filled(rect, 6, fill);
-    if active {
-        painter.rect_filled(
-            egui::Rect::from_min_size(rect.left_top() + egui::vec2(0., 8.), egui::vec2(3., 18.)),
-            2,
-            ACCENT,
-        );
-    }
-    if focused {
+    painter.rect_filled(rect, 8, fill);
+    if response.has_focus() {
         painter.rect_stroke(
             rect,
-            6,
-            egui::Stroke::new(1., ACCENT),
+            8,
+            egui::Stroke::new(1., ACCENT.gamma_multiply(0.6)),
             egui::StrokeKind::Inside,
         );
     }
-    let color = if active { ACCENT } else { MUTED };
-    icon(
-        painter,
-        rect.left_center() + egui::vec2(22., 0.),
-        page,
-        color,
+    let color = if active || hovered { TEXT } else { MUTED };
+    painter.text(
+        rect.left_center() + egui::vec2(14., 0.),
+        egui::Align2::LEFT_CENTER,
+        page_icon(page, active),
+        icon_font(19., active),
+        if active { ACCENT } else { color },
     );
     painter.text(
-        rect.left_center() + egui::vec2(42., 0.),
+        rect.left_center() + egui::vec2(44., 0.),
         egui::Align2::LEFT_CENTER,
         label,
-        egui::FontId::proportional(15.),
         if active {
-            TEXT
+            semibold(14.5)
         } else {
-            MUTED.gamma_multiply(1.15)
+            FontId::proportional(14.5)
         },
+        color,
     );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
     response
@@ -137,10 +301,22 @@ pub fn header(ui: &mut egui::Ui, search: &mut String, player: &str) -> Option<He
     ui.horizontal(|ui| {
         let search_box = ui.add(
             egui::TextEdit::singleline(search)
-                .hint_text("Search experiences")
-                .desired_width((ui.available_width() - 180.).clamp(120., 420.))
-                .margin(egui::vec2(12., 8.))
+                .hint_text("Search worlds and games")
+                .desired_width((ui.available_width() - 180.).clamp(120., 440.))
+                .margin(egui::Margin {
+                    left: 36,
+                    right: 12,
+                    top: 8,
+                    bottom: 8,
+                })
                 .char_limit(80),
+        );
+        ui.painter().text(
+            search_box.rect.left_center() + egui::vec2(13., 0.),
+            egui::Align2::LEFT_CENTER,
+            icons::MAGNIFYING_GLASS,
+            icon_font(16., false),
+            MUTED,
         );
         if search_box.changed()
             || (search_box.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
@@ -149,15 +325,19 @@ pub fn header(ui: &mut egui::Ui, search: &mut String, player: &str) -> Option<He
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
-                .add(egui::Button::new(RichText::new("⚙").size(17.)).frame(false))
+                .add(
+                    egui::Button::new(RichText::new(icons::GEAR_SIX).font(icon_font(19., false)))
+                        .frame(false),
+                )
                 .on_hover_text("Settings")
                 .clicked()
             {
                 action = Some(HeaderAction::Settings);
             }
+            ui.add_space(4.);
             let profile = ui
                 .add(
-                    egui::Button::new(RichText::new(player).size(14.))
+                    egui::Button::new(RichText::new(player).font(semibold(14.)))
                         .wrap_mode(egui::TextWrapMode::Truncate)
                         .frame(false)
                         .min_size(egui::vec2(0., 32.)),
@@ -165,11 +345,11 @@ pub fn header(ui: &mut egui::Ui, search: &mut String, player: &str) -> Option<He
                 .on_hover_text("Profile");
             avatar(
                 ui.painter(),
-                profile.rect.left_center() - egui::vec2(16., 0.),
-                13.,
+                profile.rect.left_center() - egui::vec2(19., 0.),
+                14.,
                 player,
             );
-            ui.add_space(26.);
+            ui.add_space(36.);
             if profile.clicked() {
                 action = Some(HeaderAction::Profile);
             }
@@ -180,68 +360,136 @@ pub fn header(ui: &mut egui::Ui, search: &mut String, player: &str) -> Option<He
 
 /// Round avatar with the player's initial. There are no account pictures yet.
 pub fn avatar(painter: &egui::Painter, center: egui::Pos2, radius: f32, name: &str) {
-    painter.circle_filled(center, radius, tint(name, 0.55));
+    painter.circle_filled(center, radius, tint(name, 0.62, 0.35));
     let initial: String = name.chars().next().unwrap_or('P').to_uppercase().collect();
     painter.text(
         center,
         egui::Align2::CENTER_CENTER,
         initial,
-        egui::FontId::proportional(radius * 1.05),
-        TEXT,
+        semibold(radius),
+        Color32::WHITE,
     );
 }
 
-/// A stable, muted colour per name, so covers stay the same between runs.
-fn tint(seed: &str, light: f32) -> Color32 {
+/// A stable colour per name, so covers stay the same between runs.
+fn tint(seed: &str, value: f32, saturation: f32) -> Color32 {
     let hash = seed.bytes().fold(2166136261u32, |h, b| {
         (h ^ u32::from(b)).wrapping_mul(16777619)
     });
     let hue = (hash % 360) as f32 / 360.;
-    let rgb = egui::ecolor::Hsva::new(hue, 0.45, light, 1.).to_srgb();
+    let rgb = egui::ecolor::Hsva::new(hue, saturation, value, 1.).to_srgb();
     Color32::from_rgb(rgb[0], rgb[1], rgb[2])
 }
 
-/// Original cover art for an experience: San Andreas uses the player's own
-/// Home artwork (or the default scene), other worlds a gradient and monogram.
+/// Cover images, loaded the first time a card is drawn and kept until the
+/// worlds are scanned again. A pack can ship `cover.png` (16:9 works best);
+/// without one it gets a generated gradient.
+#[derive(Default)]
+pub struct Covers {
+    textures: HashMap<String, (egui::TextureHandle, bool)>,
+}
+
+impl Covers {
+    pub fn clear(&mut self) {
+        self.textures.clear();
+    }
+    /// The cover and whether it is the pack's own image.
+    fn get(&mut self, ctx: &egui::Context, experience: &Experience) -> (egui::TextureHandle, bool) {
+        if let Some(found) = self.textures.get(&experience.id) {
+            return found.clone();
+        }
+        let own = experience
+            .pack_folder()
+            .map(|folder| folder.join("cover.png"))
+            .filter(|path| path.is_file())
+            .and_then(|path| crate::artwork::load(&path).ok());
+        let is_own = own.is_some();
+        let texture = ctx.load_texture(
+            format!("cover-{}", experience.id),
+            own.unwrap_or_else(|| gradient(experience)),
+            egui::TextureOptions::LINEAR,
+        );
+        self.textures
+            .insert(experience.id.clone(), (texture.clone(), is_own));
+        (texture, is_own)
+    }
+}
+
+/// A soft two-colour cover with a light glow in one corner.
+fn gradient(experience: &Experience) -> egui::ColorImage {
+    let (a, b) = match experience.kind {
+        Kind::SanAndreas => (
+            Color32::from_rgb(214, 128, 70),
+            Color32::from_rgb(38, 30, 58),
+        ),
+        Kind::Testbed => (
+            Color32::from_rgb(70, 150, 170),
+            Color32::from_rgb(24, 40, 56),
+        ),
+        Kind::Pack(_) => (
+            tint(&experience.id, 0.78, 0.55),
+            tint(&experience.name, 0.22, 0.6),
+        ),
+    };
+    let (w, h) = (128usize, 72usize);
+    let mix = |x: Color32, y: Color32, t: f32| {
+        let l = |p: u8, q: u8| (p as f32 + (q as f32 - p as f32) * t) as u8;
+        Color32::from_rgb(l(x.r(), y.r()), l(x.g(), y.g()), l(x.b(), y.b()))
+    };
+    let pixels = (0..w * h)
+        .map(|i| {
+            let (x, y) = ((i % w) as f32 / w as f32, (i / w) as f32 / h as f32);
+            let t = (x * 0.35 + y * 0.65).clamp(0., 1.);
+            let glow = (1. - ((x - 0.85).powi(2) + (y - 0.1).powi(2)).sqrt() * 1.6).max(0.);
+            mix(mix(a, b, t), Color32::WHITE, glow * 0.18)
+        })
+        .collect();
+    egui::ColorImage::new([w, h], pixels)
+}
+
+fn kind_icon(kind: &Kind) -> &'static str {
+    match kind {
+        Kind::SanAndreas => icons::MAP_TRIFOLD,
+        Kind::Testbed => icons::CUBE,
+        Kind::Pack(_) => icons::BUILDINGS,
+    }
+}
+
+/// Paint a cover into `rect` with rounded corners, cropped to fill it.
+/// San Andreas uses the player's own Home artwork when one is chosen.
 pub fn cover(
-    ui: &egui::Ui,
+    ui: &mut egui::Ui,
     rect: egui::Rect,
     experience: &Experience,
+    covers: &mut Covers,
     hero: Option<&egui::TextureHandle>,
 ) {
-    if experience.kind == Kind::SanAndreas {
-        crate::artwork::background(ui, rect, hero);
-        return;
+    let (texture, own) = match hero.filter(|_| experience.kind == Kind::SanAndreas) {
+        Some(hero) => (hero.clone(), true),
+        None => covers.get(ui.ctx(), experience),
+    };
+    let size = texture.size_vec2();
+    let (aspect, target) = (size.x / size.y, rect.width() / rect.height());
+    let uv = if aspect > target {
+        let half = target / aspect * 0.5;
+        egui::Rect::from_min_max(egui::pos2(0.5 - half, 0.), egui::pos2(0.5 + half, 1.))
+    } else {
+        let half = aspect / target * 0.5;
+        egui::Rect::from_min_max(egui::pos2(0., 0.5 - half), egui::pos2(1., 0.5 + half))
+    };
+    egui::Image::from_texture(&texture)
+        .uv(uv)
+        .corner_radius(10)
+        .paint_at(ui, rect);
+    if !own {
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            kind_icon(&experience.kind),
+            icon_font(rect.height() * 0.38, false),
+            Color32::from_white_alpha(70),
+        );
     }
-    let painter = ui.painter().with_clip_rect(rect);
-    let mut mesh = egui::Mesh::default();
-    let top = tint(&experience.id, 0.42);
-    let bottom = tint(&experience.name, 0.16);
-    for (pos, color) in [
-        (rect.left_top(), top),
-        (rect.right_top(), top.gamma_multiply(0.8)),
-        (rect.right_bottom(), bottom),
-        (rect.left_bottom(), bottom),
-    ] {
-        mesh.colored_vertex(pos, color);
-    }
-    mesh.add_triangle(0, 1, 2);
-    mesh.add_triangle(0, 2, 3);
-    painter.add(egui::Shape::mesh(mesh));
-    let monogram: String = experience
-        .name
-        .split_whitespace()
-        .filter_map(|w| w.chars().next())
-        .take(2)
-        .collect::<String>()
-        .to_uppercase();
-    painter.text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        monogram,
-        egui::FontId::new(rect.height() * 0.36, egui::FontFamily::Name("title".into())),
-        Color32::from_rgba_unmultiplied(255, 255, 255, 60),
-    );
 }
 
 /// What a card's buttons asked for.
@@ -251,36 +499,36 @@ pub enum CardAction {
     Setup,
 }
 
-/// Width-filling grid of experience cards.
+/// Per-card state the page works out: can it start now, does it need setup.
+#[derive(Clone, Copy)]
+pub struct CardState {
+    pub can_play: bool,
+    pub needs_setup: bool,
+}
+
+/// Width-filling grid of experience tiles.
 pub fn card_grid(
     ui: &mut egui::Ui,
-    list: &[&Experience],
+    list: &[(&Experience, CardState)],
+    covers: &mut Covers,
     hero: Option<&egui::TextureHandle>,
-    can_play: impl Fn(&Experience) -> bool,
-    needs_setup: impl Fn(&Experience) -> bool,
 ) -> Option<(usize, CardAction)> {
-    let gap = 16.;
+    let gap = 18.;
     let available = ui.available_width();
-    let columns = ((available + gap) / (230. + gap)).floor().max(1.) as usize;
+    let columns = ((available + gap) / (220. + gap)).floor().max(1.) as usize;
     let width = ((available - gap * (columns - 1) as f32) / columns as f32).floor();
     let mut action = None;
     for (row, chunk) in list.chunks(columns).enumerate() {
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = gap;
-            for (column, experience) in chunk.iter().enumerate() {
+            for (column, (experience, state)) in chunk.iter().enumerate() {
                 let index = row * columns + column;
                 ui.allocate_ui_with_layout(
                     egui::vec2(width, 0.),
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| {
                         ui.set_width(width);
-                        if let Some(chosen) = card(
-                            ui,
-                            experience,
-                            hero,
-                            can_play(experience),
-                            needs_setup(experience),
-                        ) {
+                        if let Some(chosen) = card(ui, experience, *state, covers, hero) {
                             action = Some((index, chosen));
                         }
                     },
@@ -292,115 +540,104 @@ pub fn card_grid(
     action
 }
 
+/// One tile: the cover carries it, text sits underneath without a box.
 fn card(
     ui: &mut egui::Ui,
     experience: &Experience,
+    state: CardState,
+    covers: &mut Covers,
     hero: Option<&egui::TextureHandle>,
-    can_play: bool,
-    needs_setup: bool,
 ) -> Option<CardAction> {
     let width = ui.available_width();
     let mut action = None;
-    let frame = egui::Frame::new()
-        .fill(SURFACE)
-        .corner_radius(8)
-        .show(ui, |ui| {
-            ui.set_width(width);
-            let (rect, _) =
-                ui.allocate_exact_size(egui::vec2(width, width * 9. / 16.), egui::Sense::hover());
-            cover(ui, rect, experience, hero);
-            egui::Frame::new()
-                .inner_margin(egui::Margin::symmetric(12, 10))
-                .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = 4.;
-                    ui.add(
-                        egui::Label::new(RichText::new(&experience.name).size(16.).strong())
-                            .truncate(),
-                    );
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(&experience.creator).size(12.5).color(MUTED),
-                        )
-                        .truncate(),
-                    );
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(&experience.description)
-                                .size(13.)
-                                .color(MUTED),
-                        )
-                        .truncate(),
-                    )
-                    .on_hover_text(&experience.description);
-                    ui.add_space(6.);
-                    ui.horizontal(|ui| {
-                        if needs_setup {
-                            if ui
-                                .button("Set up")
-                                .on_hover_text(
-                                    "Choose your own San Andreas installation in Settings",
-                                )
-                                .clicked()
-                            {
-                                action = Some(CardAction::Setup);
-                            }
-                        } else if ui
-                            .add_enabled(can_play, crate::primary("Play"))
-                            .on_disabled_hover_text("Close the running game first")
-                            .clicked()
-                        {
-                            action = Some(CardAction::Play);
-                        }
-                        if experience.editable
-                            && ui
-                                .add_enabled(can_play, egui::Button::new("Edit"))
-                                .on_hover_text("Open in Build Mode")
-                                .clicked()
-                        {
-                            action = Some(CardAction::Edit);
-                        }
-                        if let Some(version) = &experience.version {
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    ui.add(
-                                        egui::Label::new(
-                                            RichText::new(format!("v{version}"))
-                                                .size(12.)
-                                                .color(MUTED),
-                                        )
-                                        .extend(),
-                                    );
-                                },
-                            );
-                        }
-                    });
-                });
-        });
-    if frame.response.hovered() {
+    ui.spacing_mut().item_spacing.y = 3.;
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(width, width * 9. / 16.), egui::Sense::hover());
+    cover(ui, rect, experience, covers, hero);
+    if response.hovered() {
         ui.painter().rect_stroke(
-            frame.response.rect,
-            8,
-            egui::Stroke::new(1., ACCENT.gamma_multiply(0.6)),
+            rect,
+            10,
+            egui::Stroke::new(2., Color32::from_white_alpha(150)),
             egui::StrokeKind::Inside,
         );
     }
+    response.on_hover_text(&experience.description);
+    ui.add_space(6.);
+    ui.add(egui::Label::new(RichText::new(&experience.name).font(semibold(15.))).truncate());
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.;
+        ui.add(
+            egui::Label::new(RichText::new(&experience.creator).size(12.5).color(MUTED)).truncate(),
+        );
+        if let Some(version) = &experience.version {
+            ui.label(RichText::new("·").size(12.5).color(MUTED));
+            ui.add(
+                egui::Label::new(RichText::new(format!("v{version}")).size(12.5).color(MUTED))
+                    .extend(),
+            );
+        }
+    });
+    ui.add_space(6.);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.;
+        if state.needs_setup {
+            if ui
+                .add(egui::Button::new((
+                    icon(icons::FOLDER_OPEN, TEXT),
+                    "Set up",
+                )))
+                .on_hover_text("Choose your own San Andreas installation in Settings")
+                .clicked()
+            {
+                action = Some(CardAction::Setup);
+            }
+        } else if ui
+            .add_enabled(
+                state.can_play,
+                egui::Button::new((
+                    RichText::new(fill::PLAY)
+                        .font(icon_font(14., true))
+                        .color(BACKGROUND),
+                    RichText::new("Play").font(semibold(14.)).color(BACKGROUND),
+                ))
+                .fill(ACCENT)
+                .min_size(egui::vec2(84., 32.)),
+            )
+            .on_disabled_hover_text("Close the running game first")
+            .clicked()
+        {
+            action = Some(CardAction::Play);
+        }
+        if experience.editable
+            && ui
+                .add_enabled(
+                    state.can_play,
+                    egui::Button::new((icon(icons::PENCIL_SIMPLE, TEXT), "Edit")),
+                )
+                .on_hover_text("Open in Build Mode")
+                .clicked()
+        {
+            action = Some(CardAction::Edit);
+        }
+    });
     action
 }
 
 /// A page heading with an optional line under it.
 pub fn title(ui: &mut egui::Ui, text: &str, subtitle: &str) {
-    ui.label(RichText::new(text).size(30.).strong().color(TEXT));
+    ui.add_space(6.);
+    ui.label(RichText::new(text).font(display(28.)).color(TEXT));
     if !subtitle.is_empty() {
         ui.label(RichText::new(subtitle).color(MUTED));
     }
-    ui.add_space(14.);
+    ui.add_space(16.);
 }
 
 /// Section heading inside a page.
 pub fn section(ui: &mut egui::Ui, text: &str) {
-    ui.add_space(8.);
-    ui.label(RichText::new(text).size(20.).strong().color(TEXT));
+    ui.add_space(10.);
+    ui.label(RichText::new(text).font(semibold(18.)).color(TEXT));
     ui.add_space(6.);
 }
 
@@ -416,15 +653,17 @@ pub fn empty_state(
     let mut clicked = false;
     egui::Frame::new()
         .fill(SURFACE)
-        .corner_radius(10)
-        .inner_margin(egui::Margin::symmetric(28, 28))
+        .corner_radius(12)
+        .inner_margin(egui::Margin::symmetric(28, 26))
         .show(ui, |ui| {
-            ui.set_width(ui.available_width().min(640.));
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(44., 44.), egui::Sense::hover());
-            ui.painter().circle_filled(rect.center(), 22., SURFACE_HIGH);
-            icon(ui.painter(), rect.center(), page, ACCENT);
-            ui.add_space(6.);
-            ui.label(RichText::new(heading).size(19.).strong());
+            ui.set_width(ui.available_width().min(620.));
+            ui.label(
+                RichText::new(page_icon(page, false))
+                    .font(icon_font(30., false))
+                    .color(MUTED),
+            );
+            ui.add_space(4.);
+            ui.label(RichText::new(heading).font(semibold(17.)));
             ui.label(RichText::new(body).color(MUTED));
             if let Some(label) = button {
                 ui.add_space(8.);
@@ -432,126 +671,4 @@ pub fn empty_state(
             }
         });
     clicked
-}
-
-/// Original outline icons, drawn so no icon font or image is needed.
-pub fn icon(painter: &egui::Painter, center: egui::Pos2, page: Page, color: Color32) {
-    let stroke = egui::Stroke::new(1.5, color);
-    let p = |x, y| center + egui::vec2(x, y);
-    let line = |points: Vec<egui::Pos2>| {
-        painter.add(egui::Shape::line(points, stroke));
-    };
-    match page {
-        Page::Home => {
-            line(vec![p(-8., 0.), p(0., -7.), p(8., 0.)]);
-            line(vec![p(-6., -1.), p(-6., 7.), p(6., 7.), p(6., -1.)]);
-        }
-        Page::Discover => {
-            painter.circle_stroke(center, 8., stroke);
-            painter.add(egui::Shape::convex_polygon(
-                vec![p(4., -4.), p(1.5, 1.5), p(-4., 4.), p(-1.5, -1.5)],
-                color,
-                egui::Stroke::NONE,
-            ));
-        }
-        Page::Library => {
-            for x in [-6., -1.5] {
-                painter.rect_stroke(
-                    egui::Rect::from_min_size(p(x, -7.), egui::vec2(3.5, 14.)),
-                    1,
-                    stroke,
-                    egui::StrokeKind::Inside,
-                );
-            }
-            line(vec![
-                p(3., -6.),
-                p(6.5, -7.),
-                p(8., 6.5),
-                p(4.5, 7.5),
-                p(3., -6.),
-            ]);
-        }
-        Page::Multiplayer => {
-            for y in [-6., 2.] {
-                painter.rect_stroke(
-                    egui::Rect::from_min_size(p(-7., y), egui::vec2(14., 5.)),
-                    1,
-                    stroke,
-                    egui::StrokeKind::Inside,
-                );
-                painter.circle_filled(p(4., y + 2.5), 1., color);
-            }
-        }
-        Page::Friends => {
-            painter.circle_stroke(p(-3., -3.), 3., stroke);
-            line(vec![
-                p(-8., 7.),
-                p(-7., 3.),
-                p(-3., 1.5),
-                p(1., 3.),
-                p(2., 7.),
-            ]);
-            painter.circle_stroke(p(4.5, -4.), 2.5, stroke);
-            line(vec![p(4., 1.), p(7., 2.), p(8., 6.)]);
-        }
-        Page::Messages => {
-            line(vec![
-                p(-8., -6.),
-                p(8., -6.),
-                p(8., 4.),
-                p(-2., 4.),
-                p(-6., 8.),
-                p(-6., 4.),
-                p(-8., 4.),
-                p(-8., -6.),
-            ]);
-        }
-        Page::Profile => {
-            painter.circle_stroke(p(0., -3.), 3.5, stroke);
-            line(vec![
-                p(-6., 8.),
-                p(-5., 3.),
-                p(0., 1.),
-                p(5., 3.),
-                p(6., 8.),
-            ]);
-        }
-        Page::Create => {
-            painter.rect_stroke(
-                egui::Rect::from_center_size(center, egui::vec2(16., 16.)),
-                3,
-                stroke,
-                egui::StrokeKind::Inside,
-            );
-            painter.line_segment([p(0., -4.), p(0., 4.)], stroke);
-            painter.line_segment([p(-4., 0.), p(4., 0.)], stroke);
-        }
-        Page::Resources => {
-            painter.add(egui::Shape::closed_line(
-                vec![
-                    p(-7., -4.),
-                    p(0., -8.),
-                    p(7., -4.),
-                    p(7., 5.),
-                    p(0., 9.),
-                    p(-7., 5.),
-                ],
-                stroke,
-            ));
-            painter.line_segment([p(-7., -4.), p(0., 0.)], stroke);
-            painter.line_segment([p(7., -4.), p(0., 0.)], stroke);
-            painter.line_segment([p(0., 0.), p(0., 9.)], stroke);
-        }
-        Page::Settings => {
-            for (x, y) in [(-5., -3.), (0., 4.), (5., -1.)] {
-                painter.line_segment([p(x, -8.), p(x, 8.)], stroke);
-                painter.circle_filled(p(x, y), 2.5, color);
-            }
-        }
-        Page::Help => {
-            painter.circle_stroke(center, 8., stroke);
-            painter.line_segment([p(0., -1.), p(0., 5.)], stroke);
-            painter.circle_filled(p(0., -4.), 1., color);
-        }
-    }
 }

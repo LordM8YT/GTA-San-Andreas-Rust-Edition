@@ -21,7 +21,7 @@ mod shell;
 #[path = "../../../ui/theme.rs"]
 mod ui_theme;
 mod updater;
-use ui_theme::{ACCENT, BACKGROUND, MUTED, SURFACE, SURFACE_HIGH, TEXT};
+use shell::palette::{ACCENT, BACKGROUND, MUTED, SURFACE, SURFACE_HIGH, TEXT};
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
     Home,
@@ -91,6 +91,8 @@ struct Launcher {
     experiences: Vec<experience::Experience>,
     /// Header search text; Discover filters by it.
     catalog_search: String,
+    /// Card cover textures, loaded when first shown.
+    covers: shell::Covers,
     /// Build Mode: the name typed for a new world, and the world the next
     /// launch opens in the editor.
     new_world_name: String,
@@ -117,19 +119,9 @@ impl Launcher {
         settings: Settings,
         detect: bool,
     ) -> Self {
-        let mut fonts = egui::FontDefinitions::default();
-        fonts.font_data.insert(
-            "title".into(),
-            egui::FontData::from_static(include_bytes!(
-                "../../runtime/assets/ArchivoBlack-Regular.ttf"
-            ))
-            .into(),
-        );
-        fonts
-            .families
-            .insert(egui::FontFamily::Name("title".into()), vec!["title".into()]);
-        ctx.set_fonts(fonts);
+        shell::install_fonts(ctx);
         ui_theme::apply(ctx);
+        shell::apply_style(ctx);
         ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(egui::SystemTheme::Dark));
 
         if config.player.is_empty() {
@@ -186,6 +178,7 @@ impl Launcher {
             packs: Vec::new(),
             experiences: experience::local(&[]),
             catalog_search: String::new(),
+            covers: shell::Covers::default(),
             new_world_name: String::new(),
             build_target: None,
             join_pack: None,
@@ -451,6 +444,7 @@ impl Launcher {
     fn scan_packs(&mut self) {
         let found = sa_scene::content_pack::list(&local_mods::content_root());
         self.experiences = experience::local(&found);
+        self.covers.clear();
         self.packs = found
             .into_iter()
             .map(|(folder, manifest)| (folder, manifest.name))
@@ -1389,9 +1383,13 @@ fn input_limit(ui: &mut egui::Ui, value: &mut String, hint: &str, limit: usize) 
     )
 }
 fn primary(label: &str) -> egui::Button<'_> {
-    egui::Button::new(RichText::new(label).color(BACKGROUND).strong())
-        .fill(ACCENT)
-        .min_size(egui::vec2(100., 40.))
+    egui::Button::new(
+        RichText::new(label)
+            .font(shell::semibold(14.5))
+            .color(BACKGROUND),
+    )
+    .fill(ACCENT)
+    .min_size(egui::vec2(100., 38.))
 }
 fn surface(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::new()
@@ -1540,7 +1538,7 @@ impl Launcher {
             .resizable(false)
             .frame(
                 egui::Frame::new()
-                    .fill(shell::SIDEBAR)
+                    .fill(shell::palette::SIDEBAR)
                     .inner_margin(egui::Margin::symmetric(12, 14)),
             )
             .show(ui, |ui| {

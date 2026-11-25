@@ -31,6 +31,12 @@ pub struct Experience {
 }
 
 impl Experience {
+    pub fn pack_folder(&self) -> Option<&PathBuf> {
+        match &self.kind {
+            Kind::Pack(folder) => Some(folder),
+            _ => None,
+        }
+    }
     /// Text the search box matches against.
     pub fn matches(&self, query: &str) -> bool {
         let query = query.trim().to_lowercase();
