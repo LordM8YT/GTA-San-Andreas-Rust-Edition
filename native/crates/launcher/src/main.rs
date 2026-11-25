@@ -12,8 +12,12 @@ use std::{
     time::{Duration, Instant},
 };
 mod artwork;
+mod experience;
 mod local_mods;
+mod pages;
 mod servers;
+mod shell;
+#[allow(dead_code)]
 #[path = "../../../ui/theme.rs"]
 mod ui_theme;
 mod updater;
@@ -21,7 +25,15 @@ use ui_theme::{ACCENT, BACKGROUND, MUTED, SURFACE, SURFACE_HIGH, TEXT};
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
     Home,
+    Discover,
+    Library,
+    /// The server browser, shown as "Servers".
     Multiplayer,
+    Friends,
+    Messages,
+    Profile,
+    Create,
+    /// Mods and the resource cache, shown as "Mods".
     Resources,
     Settings,
     Help,
@@ -75,6 +87,10 @@ struct Launcher {
     mods: Vec<local_mods::Entry>,
     /// Content packs found in `content/`: folder and display name.
     packs: Vec<(PathBuf, String)>,
+    /// Everything the client can show and start (see `experience`).
+    experiences: Vec<experience::Experience>,
+    /// Header search text; Discover filters by it.
+    catalog_search: String,
     /// Build Mode: the name typed for a new world, and the world the next
     /// launch opens in the editor.
     new_world_name: String,
@@ -168,6 +184,8 @@ impl Launcher {
             cache: None,
             mods: Vec::new(),
             packs: Vec::new(),
+            experiences: experience::local(&[]),
+            catalog_search: String::new(),
             new_world_name: String::new(),
             build_target: None,
             join_pack: None,
@@ -190,6 +208,12 @@ impl Launcher {
                 "resources" => Page::Resources,
                 "multiplayer" => Page::Multiplayer,
                 "help" => Page::Help,
+                "discover" => Page::Discover,
+                "library" => Page::Library,
+                "friends" => Page::Friends,
+                "messages" => Page::Messages,
+                "profile" => Page::Profile,
+                "create" => Page::Create,
                 _ => Page::Home,
             };
             app.resource_tab = std::env::var("SARE_PREVIEW_RESOURCE_TAB")
@@ -412,52 +436,6 @@ impl Launcher {
     }
     /// Offline play in a content pack, without game files.
     /// Build Mode: make a new world or edit a pack. No game files needed.
-    fn build_mode_row(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("Build Mode:").color(MUTED));
-            ui.add(
-                egui::TextEdit::singleline(&mut self.new_world_name)
-                    .hint_text("New world name")
-                    .desired_width(160.0),
-            );
-            let new = ui
-                .add_enabled(self.testbed_ready(), egui::Button::new("Create world"))
-                .on_hover_text("Make a new world in content/ and open it in Build Mode")
-                .on_disabled_hover_text("Close the running game first");
-            if new.clicked() {
-                let name = match self.new_world_name.trim() {
-                    "" => "My World".to_owned(),
-                    name => name.to_owned(),
-                };
-                let root = local_mods::content_root();
-                let id = sa_editor::project::new_id(&name, &root);
-                match sa_editor::project::Project::create(&root.join(&id), &id, &name) {
-                    Ok((project, _)) => {
-                        self.new_world_name.clear();
-                        self.scan_packs();
-                        self.edit_world(project.folder);
-                    }
-                    Err(error) => self.message = format!("Could not create the world: {error:#}"),
-                }
-            }
-            let mut chosen = None;
-            for (folder, name) in &self.packs {
-                if ui
-                    .add_enabled(
-                        self.testbed_ready(),
-                        egui::Button::new(format!("Edit {name}")),
-                    )
-                    .on_hover_text(format!("Open {} in Build Mode", folder.display()))
-                    .clicked()
-                {
-                    chosen = Some(folder.clone());
-                }
-            }
-            if let Some(folder) = chosen {
-                self.edit_world(folder);
-            }
-        });
-    }
     fn edit_world(&mut self, folder: PathBuf) {
         self.build_target = Some(folder.clone());
         self.message = "Build Mode is starting.".into();
@@ -471,7 +449,9 @@ impl Launcher {
     }
     /// Find content packs again (on start and from the Home page).
     fn scan_packs(&mut self) {
-        self.packs = sa_scene::content_pack::list(&local_mods::content_root())
+        let found = sa_scene::content_pack::list(&local_mods::content_root());
+        self.experiences = experience::local(&found);
+        self.packs = found
             .into_iter()
             .map(|(folder, manifest)| (folder, manifest.name))
             .collect();
@@ -834,7 +814,19 @@ impl Launcher {
             });
         }
         ui.add_space(6.0);
-        self.build_mode_row(ui);
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("Build Mode:").color(MUTED));
+            if ui
+                .button("Create a world")
+                .on_hover_text("Make your own world in SARE Studio")
+                .clicked()
+            {
+                self.page = Page::Create;
+            }
+            if ui.button("Browse all worlds").clicked() {
+                self.page = Page::Library;
+            }
+        });
         ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
             ui_theme::key_hint(ui, "Enter", "Select");
@@ -1499,13 +1491,6 @@ impl Launcher {
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.page = Page::Home;
         }
-        let pages = [
-            (Page::Home, "Home"),
-            (Page::Multiplayer, "Multiplayer"),
-            (Page::Resources, "Resources"),
-            (Page::Settings, "Settings"),
-            (Page::Help, "Help"),
-        ];
         egui::Panel::bottom("footer")
             .frame(
                 egui::Frame::new()
@@ -1544,96 +1529,61 @@ impl Launcher {
                     }
                 });
             });
-        // FiveM-style top bar: logo, page tabs with an accent underline, and
-        // the player name on the right. Tabs stay keyboard/controller focusable.
-        egui::Panel::top("topbar")
+        // SARE Client shell: a persistent sidebar and a compact header. The
+        // sidebar comes first so keyboard/controller focus starts in it.
+        egui::Panel::left("sidebar")
+            .exact_size(if ui.available_width() < 760. {
+                176.
+            } else {
+                220.
+            })
+            .resizable(false)
+            .frame(
+                egui::Frame::new()
+                    .fill(shell::SIDEBAR)
+                    .inner_margin(egui::Margin::symmetric(12, 14)),
+            )
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("sidebar")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        if let Some(page) = shell::sidebar(ui, self.page) {
+                            self.page = page;
+                        }
+                    });
+            });
+        egui::Panel::top("header")
             .frame(
                 egui::Frame::new()
                     .fill(BACKGROUND)
-                    .inner_margin(egui::Margin::symmetric(24, 10)),
+                    .inner_margin(egui::Margin {
+                        left: 28,
+                        right: 20,
+                        top: 12,
+                        bottom: 8,
+                    }),
             )
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new("SARE")
-                            .font(egui::FontId::new(
-                                32.,
-                                egui::FontFamily::Name("title".into()),
-                            ))
-                            .color(ACCENT),
-                    );
-                    ui.add_space(18.);
-                    let compact = ui.available_width() < 760.;
-                    for (page, label) in pages {
-                        let active = self.page == page;
-                        let text = if compact {
-                            label.to_string()
-                        } else {
-                            format!("        {label}")
-                        };
-                        let response = ui.add(
-                            egui::Button::new(RichText::new(text).size(16.).color(if active {
-                                TEXT
-                            } else {
-                                MUTED
-                            }))
-                            .frame(false)
-                            .min_size(egui::vec2(0., 40.)),
-                        );
-                        if !compact {
-                            nav_icon(
-                                ui,
-                                response.rect.left_center() + egui::vec2(12., 0.),
-                                page,
-                                if active { ACCENT } else { MUTED },
-                            );
-                        }
-                        if active {
-                            let r = response.rect;
-                            ui.painter().rect_filled(
-                                egui::Rect::from_min_max(
-                                    egui::pos2(r.left(), r.bottom() + 6.),
-                                    egui::pos2(r.right(), r.bottom() + 9.),
-                                ),
-                                1,
-                                ACCENT,
-                            );
-                        }
-                        if response.clicked() {
-                            self.page = page;
-                        }
-                    }
-                    if !compact {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let name = if self.config.player.trim().is_empty() {
-                                "Player"
-                            } else {
-                                self.config.player.as_str()
-                            };
-                            egui::Frame::new()
-                                .fill(SURFACE_HIGH)
-                                .corner_radius(16)
-                                .inner_margin(egui::Margin::symmetric(12, 6))
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        let (dot, _) = ui.allocate_exact_size(
-                                            egui::vec2(8., 8.),
-                                            egui::Sense::hover(),
-                                        );
-                                        ui.painter().circle_filled(
-                                            dot.center(),
-                                            4.,
-                                            ui_theme::SUCCESS,
-                                        );
-                                        ui.label(RichText::new(name).size(14.));
-                                    });
-                                });
-                        });
-                    }
-                });
+                let player = self.player_name().to_owned();
+                match shell::header(ui, &mut self.catalog_search, &player) {
+                    Some(shell::HeaderAction::Search) => self.page = Page::Discover,
+                    Some(shell::HeaderAction::Profile) => self.page = Page::Profile,
+                    Some(shell::HeaderAction::Settings) => self.page = Page::Settings,
+                    None => {}
+                }
             });
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(BACKGROUND).inner_margin(28))
+            .frame(
+                egui::Frame::new()
+                    .fill(BACKGROUND)
+                    .inner_margin(egui::Margin {
+                        left: 28,
+                        right: 28,
+                        top: 10,
+                        bottom: 28,
+                    }),
+            )
             .show(ui, |ui| {
                 egui::ScrollArea::vertical()
                     .id_salt(("launcher-body", self.page as u8))
@@ -1644,6 +1594,12 @@ impl Launcher {
                         Page::Resources => self.resources(ui),
                         Page::Settings => self.settings_ui(ui),
                         Page::Help => self.help(ui),
+                        Page::Discover => self.discover(ui),
+                        Page::Library => self.library(ui),
+                        Page::Friends => self.friends(ui),
+                        Page::Messages => self.messages(ui),
+                        Page::Profile => self.profile(ui),
+                        Page::Create => self.create(ui),
                     });
             });
         if self.worker.is_some()
@@ -1711,61 +1667,6 @@ fn save_preview(path: &std::path::Path, image: &egui::ColorImage) -> anyhow::Res
             .collect::<Vec<_>>(),
     )?;
     Ok(())
-}
-fn nav_icon(ui: &egui::Ui, center: egui::Pos2, page: Page, color: Color32) {
-    let painter = ui.painter();
-    let stroke = egui::Stroke::new(1.5, color);
-    let p = |x, y| center + egui::vec2(x, y);
-    match page {
-        Page::Home => {
-            painter.add(egui::Shape::line(
-                vec![p(-8., 0.), p(0., -7.), p(8., 0.)],
-                stroke,
-            ));
-            painter.add(egui::Shape::line(
-                vec![p(-6., -1.), p(-6., 7.), p(6., 7.), p(6., -1.)],
-                stroke,
-            ));
-        }
-        Page::Multiplayer => {
-            for y in [-5., 3.] {
-                painter.rect_stroke(
-                    egui::Rect::from_min_size(p(-7., y), egui::vec2(14., 5.)),
-                    1,
-                    stroke,
-                    egui::StrokeKind::Inside,
-                );
-                painter.circle_filled(p(4., y + 2.5), 1., color);
-            }
-        }
-        Page::Resources => {
-            painter.add(egui::Shape::closed_line(
-                vec![
-                    p(-7., -4.),
-                    p(0., -8.),
-                    p(7., -4.),
-                    p(7., 5.),
-                    p(0., 9.),
-                    p(-7., 5.),
-                ],
-                stroke,
-            ));
-            painter.line_segment([p(-7., -4.), p(0., 0.)], stroke);
-            painter.line_segment([p(7., -4.), p(0., 0.)], stroke);
-            painter.line_segment([p(0., 0.), p(0., 9.)], stroke);
-        }
-        Page::Settings => {
-            for (x, y) in [(-5., -3.), (0., 4.), (5., -1.)] {
-                painter.line_segment([p(x, -8.), p(x, 8.)], stroke);
-                painter.circle_filled(p(x, y), 2.5, color);
-            }
-        }
-        Page::Help => {
-            painter.circle_stroke(center, 8., stroke);
-            painter.line_segment([p(0., -1.), p(0., 5.)], stroke);
-            painter.circle_filled(p(0., -4.), 1., color);
-        }
-    }
 }
 fn preview_size() -> egui::Vec2 {
     if std::env::var_os("SARE_SCREENSHOT_TO").is_some() {
@@ -2021,7 +1922,7 @@ mod tests {
         }
         frame(vec![controller_event(gilrs::Button::South, true).unwrap()]);
         frame(vec![controller_event(gilrs::Button::South, false).unwrap()]);
-        assert!(app.page == Page::Multiplayer);
+        assert!(app.page == Page::Discover);
         let mut output = context.run_ui(
             egui::RawInput {
                 events: vec![controller_event(gilrs::Button::East, true).unwrap()],
