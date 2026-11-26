@@ -18,6 +18,7 @@ pub mod history;
 pub mod ops;
 pub mod project;
 pub mod publish;
+pub mod share;
 pub mod thumbnail;
 pub mod viewport;
 pub mod world_position;
@@ -35,11 +36,7 @@ mod tests {
     fn doc() -> Document {
         Document {
             layout: Layout::default(),
-            info: WorldInfo {
-                name: "Test".into(),
-                description: String::new(),
-                spawn: [0.0, 0.0, 1.0],
-            },
+            info: WorldInfo::new("Test", "", [0.0, 0.0, 1.0]),
         }
     }
     fn temp(name: &str) -> PathBuf {
