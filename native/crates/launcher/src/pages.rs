@@ -750,6 +750,9 @@ impl Launcher {
             ui.vertical(|ui| {
                 ui.add_space(16.);
                 ui.label(RichText::new(&name).font(shell::display(30.)).color(TEXT));
+                if let Ok(code) = &self.friends.code {
+                    ui.label(RichText::new(format!("Friend code {code}")).color(MUTED));
+                }
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Local player").color(MUTED));
                     ui.label(RichText::new("·").color(MUTED));
@@ -783,14 +786,195 @@ impl Launcher {
 
     pub(super) fn friends(&mut self, ui: &mut egui::Ui) {
         shell::title(ui, "Friends");
-        if shell::empty_state(
-            ui,
-            glyph::USERS,
-            "No friends list yet",
-            "Friends need SARE accounts, which don't exist yet. You can still play together: host a server or share a join code.",
-            Some("Open Servers"),
-        ) {
-            self.page = Page::Multiplayer;
+        let url = crate::friends::directory_url(&self.config.directory);
+        // Your code.
+        egui::Frame::new()
+            .fill(SURFACE)
+            .corner_radius(6)
+            .inner_margin(16)
+            .show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                ui.label(RichText::new("Your friend code").color(MUTED).size(12.5));
+                match self.friends.code.clone() {
+                    Ok(code) => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(&code).font(shell::display(26.)).color(TEXT));
+                            if ui.button("Copy").clicked() {
+                                ui.ctx().copy_text(code.clone());
+                                self.friends_message = Some("Friend code copied.".into());
+                            }
+                        });
+                        ui.label(
+                            RichText::new("Give it to friends and add theirs. You see each other once you have both added the other. Servers never see this code.")
+                                .size(12.5)
+                                .color(MUTED),
+                        );
+                    }
+                    Err(error) => {
+                        ui.label(format!("No SARE ID: {error}"));
+                    }
+                }
+            });
+        ui.add_space(10.);
+        // Add a friend.
+        ui.horizontal_wrapped(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.friend_code_input)
+                    .hint_text("Friend code (XXXX-XXXX-XXXX)")
+                    .margin(egui::vec2(10., 8.))
+                    .desired_width(220.),
+            );
+            ui.add(
+                egui::TextEdit::singleline(&mut self.friend_name_input)
+                    .hint_text("Name (optional)")
+                    .margin(egui::vec2(10., 8.))
+                    .desired_width(180.),
+            );
+            if ui.button("Add friend").clicked() {
+                self.add_friend();
+            }
+        });
+        if let Some(message) = &self.friends_message {
+            ui.label(RichText::new(message).color(ACCENT));
+        }
+        ui.add_space(6.);
+        if url.is_empty() {
+            ui.label(
+                RichText::new("Online status needs a SARE directory, and none is set up yet. You can already swap codes; set a directory under Settings when one runs.")
+                    .size(12.5)
+                    .color(MUTED),
+            );
+        } else if let Some(error) = &self.friends.error {
+            ui.label(RichText::new(error).size(12.5).color(MUTED));
+        }
+        if self.config.friends.is_empty() {
+            if shell::empty_state(
+                ui,
+                glyph::USERS,
+                "No friends added yet",
+                "Add a friend's code above. Until then you can still play together: host a server or share a join code.",
+                Some("Open Servers"),
+            ) {
+                self.page = Page::Multiplayer;
+            }
+            return;
+        }
+        shell::section(ui, "Your friends");
+        let mut remove = None;
+        let mut join = None;
+        for (index, friend) in self.config.friends.clone().iter().enumerate() {
+            let online = self
+                .friends
+                .online
+                .iter()
+                .find(|f| f.code == friend.code)
+                .cloned();
+            egui::Frame::new()
+                .fill(SURFACE)
+                .corner_radius(6)
+                .inner_margin(12)
+                .show(ui, |ui| {
+                    ui.set_min_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        let shown = if friend.name.is_empty() {
+                            online
+                                .as_ref()
+                                .map(|o| o.name.clone())
+                                .unwrap_or_else(|| friend.code.clone())
+                        } else {
+                            friend.name.clone()
+                        };
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::vec2(36., 36.), egui::Sense::hover());
+                        shell::avatar(ui.painter(), rect.center(), 18., &shown);
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new(&shown).font(shell::semibold(15.)));
+                            let status = match &online {
+                                Some(o) => match &o.playing {
+                                    Some(p) => format!("Online · playing {}", p.world),
+                                    None => "Online".into(),
+                                },
+                                None if url.is_empty() => friend.code.clone(),
+                                None => {
+                                    format!("Offline, or has not added you yet · {}", friend.code)
+                                }
+                            };
+                            let color = if online.is_some() {
+                                Color32::from_rgb(120, 205, 130)
+                            } else {
+                                MUTED
+                            };
+                            ui.label(RichText::new(status).size(12.5).color(color));
+                        });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("Remove").clicked() {
+                                remove = Some(index);
+                            }
+                            if let Some(server) = online
+                                .as_ref()
+                                .and_then(|o| o.playing.as_ref()?.server.clone())
+                            {
+                                if ui
+                                    .add_enabled(self.join_ready(), egui::Button::new("Join"))
+                                    .clicked()
+                                {
+                                    join = Some(server);
+                                }
+                            }
+                        });
+                    });
+                });
+            ui.add_space(4.);
+        }
+        if let Some(index) = remove {
+            self.config.friends.remove(index);
+            self.save_friends();
+        }
+        if let Some(server) = join {
+            self.start(Session::Direct(server));
+        }
+    }
+
+    fn add_friend(&mut self) {
+        let Some(code) = sa_net::directory::normalize_code(&self.friend_code_input) else {
+            self.friends_message =
+                Some("That is not a friend code. It looks like XXXX-XXXX-XXXX.".into());
+            return;
+        };
+        if self.friends.code.as_deref() == Ok(code.as_str()) {
+            self.friends_message = Some("That is your own code.".into());
+            return;
+        }
+        if self.config.friends.iter().any(|f| f.code == code) {
+            self.friends_message = Some("You already added this friend.".into());
+            return;
+        }
+        if self.config.friends.len() >= sa_net::directory::MAX_FRIENDS {
+            self.friends_message = Some("Your friends list is full.".into());
+            return;
+        }
+        let name: String = self
+            .friend_name_input
+            .trim()
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(24)
+            .collect();
+        self.config
+            .friends
+            .push(sa_client::FriendEntry { code, name });
+        self.friend_code_input.clear();
+        self.friend_name_input.clear();
+        self.friends_message = Some("Friend added.".into());
+        self.save_friends();
+        self.heartbeat(true);
+    }
+
+    fn save_friends(&mut self) {
+        if let Err(error) = self.config.save() {
+            let error = format!("Could not save friends: {error}");
+            crate::log_error(&error);
+            self.friends_message = Some(error);
         }
     }
 
@@ -800,7 +984,7 @@ impl Launcher {
             ui,
             glyph::CHAT_CIRCLE,
             "No messages",
-            "Private messages need SARE accounts, which don't exist yet. Chat works inside servers.",
+            "Private messages are not built yet. Chat works inside servers, and Friends shows who is online.",
             Some("Open Servers"),
         ) {
             self.page = Page::Multiplayer;

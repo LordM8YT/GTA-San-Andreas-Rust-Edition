@@ -30,8 +30,8 @@ image; without one it gets a generated gradient.
 ## Data rules
 
 Nothing is invented. No player counts, ratings, friend activity or online
-status. SARE has no accounts or social backend yet, so Friends and Messages
-explain that and point to what works today (servers and join codes). The
+status. Friends only shows a friend online when the directory says so; Messages
+explains that private messages are not built yet. The
 profile uses the local player name from Settings.
 
 ## Pages
@@ -79,12 +79,18 @@ on their own:
    files), checks `content.json` and moves it to `content/<id>` with a
    `.sare-catalog` marker. Only marked folders are ever replaced (Update).
    Next: cover images for worlds that are not installed yet.
-4. **SARE ID and friends.** A public friend code derived from the player's
-   existing `identity.key`, a local friends list and joining a friend by code.
-5. **Online service (`sare-directory`).** Presence, live server heartbeats and
-   messages. Open source, so anyone can run one; the client can use several.
-   Accounts are the player's key, with no password or e-mail. Where the
-   official instance runs is still to be decided.
+4. **SARE ID and friends (done).** `sa_net::directory`: a SARE ID derived
+   from `identity.key` with its own domain (servers never see it), a friend
+   code `XXXX-XXXX-XXXX` (60-bit hash of the key, Crockford base32, forgiving
+   input), and friends kept in `launcher.json`. Friends shows the code, Add
+   friend, each friend's status and Join (when they joined a server by IP).
+   `friends.rs` sends a signed heartbeat about once a minute.
+5. **Online service (`sa-directory`, built).** In-memory only, answers with
+   friends who are online and added the player back. See
+   [sare-directory.md](sare-directory.md) for the API, privacy and the Oracle
+   Cloud Always Free setup. `friends::DEFAULT_DIRECTORY` stays empty until the
+   official instance runs; the setting or `SARE_DIRECTORY` points elsewhere.
+   Next: private messages, invites, and live server heartbeats.
 
 ## Next steps
 

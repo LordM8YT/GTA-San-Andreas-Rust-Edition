@@ -2,6 +2,7 @@
 //! Host assigns identities and relays poses; movement is client-authoritative.
 use serde::{Deserialize, Serialize};
 pub mod appearance;
+pub mod directory;
 pub mod entities;
 pub mod identity;
 pub mod passengers;
