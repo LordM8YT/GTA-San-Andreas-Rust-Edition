@@ -71,8 +71,14 @@ on their own:
    fall back to the player's own copy, as before. Known gap: a player who
    already has a pack with the same id open joins with that copy, even if the
    server's differs.
-3. **World catalog in Discover.** A community list of worlds with one-click
-   install.
+3. **World catalog in Discover (done).** `community/worlds.json` lists shared
+   worlds as ZIP links with size and SHA-256 (`world_catalog.rs`,
+   `SARE_WORLD_LIST` overrides the source). Discover shows them under *From
+   the community*; Install downloads, checks the hash, unpacks into
+   `content/.<id>-installing` (no paths outside the folder, 256 MiB, 1024
+   files), checks `content.json` and moves it to `content/<id>` with a
+   `.sare-catalog` marker. Only marked folders are ever replaced (Update).
+   Next: cover images for worlds that are not installed yet.
 4. **SARE ID and friends.** A public friend code derived from the player's
    existing `identity.key`, a local friends list and joining a friend by code.
 5. **Online service (`sare-directory`).** Presence, live server heartbeats and
