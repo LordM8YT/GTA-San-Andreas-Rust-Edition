@@ -81,6 +81,8 @@ pub struct UiState {
     import: Option<(String, String)>,
     world_name: Option<String>,
     world_description: Option<String>,
+    world_author: Option<String>,
+    world_version: Option<String>,
     settings_before: Option<WorldSettings>,
     show_help: bool,
     confirm_quit: bool,
@@ -117,6 +119,8 @@ pub struct UiState {
     /// `--smoke-build`: when the physics playtest started, and the
     /// lifted block's height last frame.
     pub smoke_fall: Option<(std::time::Instant, f32)>,
+    /// `--smoke-build`: whether the world had a cover before the cover test.
+    pub smoke_cover: Option<bool>,
     /// `--smoke-build`: the frame the physics shot was taken.
     pub smoke_shot: Option<u64>,
     /// Player windows Test › Server + players opens (0: two).
@@ -518,6 +522,13 @@ fn menu_bar(build: &mut BuildMode, ui: &mut Ui) {
             }
             if ui.button("Save As…").clicked() {
                 build.ui.save_as = Some(format!("{} copy", build.doc.info.name));
+            }
+            if ui
+                .button("Export world (ZIP)…")
+                .on_hover_text("Pack the saved world into one ZIP for friends or Discover")
+                .clicked()
+            {
+                build.export_world();
             }
             ui.separator();
             if ui.button("Import model (.glb)…").clicked() {
@@ -3546,6 +3557,7 @@ fn world_settings(build: &mut BuildMode, ui: &mut Ui) {
             after,
         });
     }
+    sharing(build, ui, &info);
     ui.label(
         RichText::new(format!(
             "Pack id: {} (folder {})",
@@ -3598,6 +3610,97 @@ fn world_settings(build: &mut BuildMode, ui: &mut Ui) {
             let focus = sa_scene::world_layout::gltf_to_blender(build.camera.focus);
             let heading = crate::play_logic::heading_for(build.camera.yaw);
             build.set_spawn([focus[0], focus[1], focus[2].max(0.0)], heading);
+        }
+    });
+}
+
+/// Workspace › Sharing: who made the world, its version and licence, its
+/// cover picture and Export world.
+fn sharing(build: &mut BuildMode, ui: &mut Ui, info: &WorldInfo) {
+    use sa_editor::share::{COVER, LICENSES};
+    section(ui, "Sharing");
+    let mut after = info.clone();
+    ui.label("Author");
+    let author = build
+        .ui
+        .world_author
+        .get_or_insert_with(|| info.author.clone());
+    if ui
+        .add(
+            egui::TextEdit::singleline(author)
+                .hint_text("Your name or team")
+                .char_limit(48),
+        )
+        .lost_focus()
+    {
+        after.author = author.trim().to_owned();
+        build.ui.world_author = None;
+    }
+    ui.label("Version");
+    let version = build
+        .ui
+        .world_version
+        .get_or_insert_with(|| info.version.clone());
+    if ui
+        .add(
+            egui::TextEdit::singleline(version)
+                .hint_text("1.0.0")
+                .char_limit(24),
+        )
+        .on_hover_text("Raise it each time you share a new version; Discover offers an Update")
+        .lost_focus()
+    {
+        if !version.trim().is_empty() {
+            after.version = version.trim().to_owned();
+        }
+        build.ui.world_version = None;
+    }
+    ui.horizontal(|ui| {
+        ui.label("Licence");
+        egui::ComboBox::from_id_salt("world-licence")
+            .selected_text(after.license.clone())
+            .show_ui(ui, |ui| {
+                for (id, meaning) in LICENSES {
+                    ui.selectable_value(&mut after.license, (*id).to_owned(), *id)
+                        .on_hover_text(*meaning);
+                }
+            })
+            .response
+            .on_hover_text("Who may copy and share your world");
+    });
+    if let Some((_, meaning)) = LICENSES.iter().find(|(id, _)| *id == after.license) {
+        ui.label(RichText::new(*meaning).small().color(MUTED));
+    }
+    if after != *info {
+        build.execute(Command::Info {
+            before: info.clone(),
+            after,
+        });
+    }
+    let has_cover = build.project.folder.join(COVER).is_file();
+    ui.label(
+        RichText::new(if has_cover {
+            "Cover picture: cover.png (shown on the world's card in SARE Client)"
+        } else {
+            "No cover picture yet: SARE Client shows a plain card"
+        })
+        .small()
+        .color(MUTED),
+    );
+    ui.horizontal_wrapped(|ui| {
+        if ui
+            .button("📷 Use this view as cover")
+            .on_hover_text("Saves what the viewport shows now, without the panels, as cover.png (16:9)")
+            .clicked()
+        {
+            build.request_cover();
+        }
+        if ui
+            .button("📦 Export world…")
+            .on_hover_text("Save, check and pack the world into one ZIP to send to friends or list in Discover")
+            .clicked()
+        {
+            build.export_world();
         }
     });
 }
@@ -3806,6 +3909,84 @@ fn switch_world(build: &mut BuildMode, folder: std::path::PathBuf) {
     }
 }
 
+/// What Export world made: where the ZIP is, its checksum, the Discover
+/// entry to copy and the world's checks.
+fn export_dialog(build: &mut BuildMode, ctx: &egui::Context) {
+    let Some(report) = &build.export else { return };
+    let mut close = false;
+    egui::Window::new("Export world")
+        .collapsible(false)
+        .resizable(false)
+        .default_width(460.0)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            compact(ui);
+            match &report.result {
+                Ok(done) => {
+                    ui.label(RichText::new("Your world is packed and ready to share.").strong());
+                    ui.label(
+                        RichText::new(done.zip.display().to_string())
+                            .monospace()
+                            .small(),
+                    );
+                    ui.label(format!(
+                        "{} files, {:.1} MB, SHA-256 {}…",
+                        done.files,
+                        done.bytes as f64 / 1_000_000.0,
+                        &done.sha256[..16]
+                    ));
+                    ui.label(
+                        RichText::new(
+                            "Send the ZIP to friends: they unpack it into SARE's content folder. To list it in Discover, upload the ZIP (for example to a GitHub release), put its link in the entry and add the entry to community/worlds.json with a pull request. The steps are also in the .share.txt file beside the ZIP.",
+                        )
+                        .small()
+                        .color(MUTED),
+                    );
+                    ui.horizontal(|ui| {
+                        if ui.button("Copy Discover entry").clicked() {
+                            ui.ctx().copy_text(done.entry.clone());
+                        }
+                        if ui.button("Open folder").clicked() {
+                            if let Some(folder) = done.zip.parent() {
+                                open_folder(folder);
+                            }
+                        }
+                    });
+                }
+                Err(error) => {
+                    ui.label(RichText::new(format!("Export failed: {error}")).color(ERROR));
+                }
+            }
+            if !report.warnings.is_empty() {
+                section(ui, "Before you share");
+                for warning in &report.warnings {
+                    ui.label(RichText::new(format!("• {warning}")).color(WARNING));
+                }
+            }
+            ui.add_space(4.0);
+            if ui.button("Close").clicked() {
+                close = true;
+            }
+        });
+    if close {
+        build.export = None;
+    }
+}
+
+/// Show a folder in the system's file manager.
+fn open_folder(folder: &std::path::Path) {
+    let program = if cfg!(windows) {
+        "explorer.exe"
+    } else if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    if let Err(error) = std::process::Command::new(program).arg(folder).spawn() {
+        crate::runtime_log::line(format!("Could not open {}: {error}", folder.display()));
+    }
+}
+
 fn world_dialogs(build: &mut BuildMode, ctx: &egui::Context) {
     if let Some(name) = &mut build.ui.new_world {
         let mut action = None;
@@ -3935,6 +4116,7 @@ fn dialogs(build: &mut BuildMode, root: &mut Ui) {
     super::script_ui::window(build, &root.ctx().clone());
     let ctx = root.ctx().clone();
     world_dialogs(build, &ctx);
+    export_dialog(build, &ctx);
     if let Some(recovery) = &build.recovery {
         let saved = recovery.document.layout.nodes.len();
         let mut choice = None;

@@ -166,6 +166,26 @@ pub enum Request {
     Quit,
 }
 
+/// "Use this view as cover": one frame drawn without the editor's panels
+/// is read back and written as the world's `cover.png`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Cover {
+    #[default]
+    Idle,
+    /// Asked for; the next frame is read back.
+    Requested,
+    /// This frame is drawn without panels and read back.
+    Hiding,
+    /// Waiting for the read-back frame.
+    Reading,
+}
+
+/// What Export world made (or why it failed), with the world's checks.
+pub struct ExportReport {
+    pub result: Result<sa_editor::share::Exported, String>,
+    pub warnings: Vec<String>,
+}
+
 pub struct BuildMode {
     pub project: Project,
     pub doc: Document,
@@ -213,6 +233,9 @@ pub struct BuildMode {
         std::collections::HashMap<String, Result<sa_scene::saved_model::SavedModel, String>>,
     /// Draw only when something changes while editing (see `pacing`).
     pacing: pacing::Pacing,
+    pub cover: Cover,
+    /// The last Export world, shown until closed.
+    pub export: Option<ExportReport>,
 }
 
 /// Find or create the project named by `--build`: a pack id, a pack
@@ -298,6 +321,8 @@ impl BuildMode {
             autosaved_revision: 0,
             autosave_off: false,
             ui: panels::UiState::default(),
+            cover: Cover::Idle,
+            export: None,
             saved_models: std::collections::HashMap::new(),
             local_test: None,
             pacing: pacing::Pacing::default(),
@@ -472,6 +497,118 @@ impl BuildMode {
             Err(error) => self.error(format!("Publish failed: {error:#}")),
         }
     }
+    /// Things to fix or know before sharing the world, in plain words.
+    pub fn world_warnings(&self) -> Vec<String> {
+        let info = &self.doc.info;
+        let mut warnings = Vec::new();
+        if info.license.trim() == sa_editor::share::DEFAULT_LICENSE {
+            warnings.push(
+                "Licence is \"All rights reserved\": players may play it, but nobody may share copies. Pick a licence under Workspace › Sharing.".into(),
+            );
+        }
+        if info.author.trim().is_empty() {
+            warnings.push("No author: Discover shows the world without a maker.".into());
+        }
+        if info.description.trim().is_empty() {
+            warnings.push("No description: add a line about the world under Workspace.".into());
+        }
+        if !self.project.folder.join(sa_editor::share::COVER).is_file() {
+            warnings.push(
+                "No cover picture: SARE Client shows a plain card. Use Workspace › Use this view as cover.".into(),
+            );
+        }
+        let gameplay = sa_scene::world_logic::check(&self.doc.layout).len();
+        if gameplay > 0 {
+            warnings.push(format!(
+                "{gameplay} gameplay problem(s): see Output › Errors and warnings."
+            ));
+        }
+        let mut missing: Vec<String> = Vec::new();
+        for node in &self.doc.layout.nodes {
+            let Some(asset) = &node.asset else { continue };
+            let bad = match self.catalog.find(asset).map(|e| &e.status) {
+                Some(sa_editor::catalog::AssetStatus::Ready) => false,
+                Some(_) => true,
+                None => self.gpu.is_placeholder(asset),
+            };
+            if bad && !missing.contains(&node.name) {
+                missing.push(node.name.clone());
+            }
+        }
+        if !missing.is_empty() {
+            let shown: Vec<_> = missing.iter().take(5).cloned().collect();
+            warnings.push(format!(
+                "{} object(s) show a missing or broken model ({}{}). Players see a placeholder.",
+                missing.len(),
+                shown.join(", "),
+                if missing.len() > 5 { ", ..." } else { "" }
+            ));
+        }
+        if self
+            .doc
+            .layout
+            .nodes
+            .iter()
+            .any(|n| matches!(&n.asset, Some(AssetRef::Pack { .. })))
+        {
+            warnings.push(
+                "Uses models from other content packs: players need those packs too, and the export does not include them.".into(),
+            );
+        }
+        warnings
+    }
+
+    /// Save, then pack the world into a Discover-ready ZIP in `exports/`.
+    pub fn export_world(&mut self) {
+        self.save();
+        let warnings = self.world_warnings();
+        let result = if self.history.dirty() {
+            Err("the world could not be saved, so nothing was exported".to_owned())
+        } else {
+            let content = self
+                .project
+                .folder
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_default();
+            sa_editor::share::export(
+                &self.project.folder,
+                &sa_editor::share::exports_dir(&content),
+            )
+            .map_err(|e| format!("{e:#}"))
+        };
+        match &result {
+            Ok(done) => self.info(format!(
+                "Exported {} ({} files, {:.1} MB)",
+                done.zip.display(),
+                done.files,
+                done.bytes as f64 / 1_000_000.0
+            )),
+            Err(error) => self.error(format!("Export failed: {error}")),
+        }
+        self.export = Some(ExportReport { result, warnings });
+    }
+
+    pub fn request_cover(&mut self) {
+        self.cover = Cover::Requested;
+    }
+
+    /// The read-back frame for "Use this view as cover".
+    fn write_cover(&mut self, size: [u32; 2], rgba: &[u8]) {
+        let path = self.project.folder.join(sa_editor::share::COVER);
+        let written = sa_editor::share::cover_png(size[0], size[1], rgba).and_then(|png| {
+            sa_scene::world_layout::write_atomic(&path, &png)?;
+            Ok(())
+        });
+        match written {
+            Ok(()) => self.info(format!(
+                "Cover saved: {}. SARE Client shows it on the world's card.",
+                path.display()
+            )),
+            Err(error) => self.error(format!("Cover failed: {error:#}")),
+        }
+    }
+
     pub fn save_as(&mut self, name: &str) {
         self.commit_preview();
         let Some(parent) = self.project.folder.parent().map(Path::to_path_buf) else {
@@ -768,7 +905,8 @@ impl State {
         let busy = loading
             || build.ui.flying
             || build.drag.is_some()
-            || build.placing.as_ref().is_some_and(|p| p.dragged);
+            || build.placing.as_ref().is_some_and(|p| p.dragged)
+            || build.cover != Cover::Idle;
         Some(build.pacing.frame_drawn(Instant::now(), fps_limit, busy))
     }
 
@@ -814,7 +952,12 @@ impl State {
                 view_projection: self.reflections.view_projection,
                 eye: self.reflections.eye,
             };
-            panels::draw(&mut build, ui, &frame);
+            if build.cover == Cover::Hiding {
+                // The cover frame: the world alone, no panels or gizmos.
+                build.cover = Cover::Reading;
+            } else {
+                panels::draw(&mut build, ui, &frame);
+            }
             true
         };
         self.build = Some(build);
@@ -831,6 +974,7 @@ impl State {
         if !build.playtesting && self.captured {
             self.capture(false);
         }
+<<<<<<< HEAD
         // The window (and taskbar) names the editor and the world; * marks
         // unsaved changes.
         let title = if build.playtesting {
@@ -842,6 +986,21 @@ impl State {
         if build.ui.window_title != title {
             self.window.set_title(&title);
             build.ui.window_title = title;
+=======
+        match build.cover {
+            Cover::Requested => {
+                // Read back the next frame, drawn without panels.
+                self.capture_raw = true;
+                build.cover = Cover::Hiding;
+            }
+            Cover::Reading => {
+                if let Some((size, rgba)) = self.captured_frame.take() {
+                    build.cover = Cover::Idle;
+                    build.write_cover(size, &rgba);
+                }
+            }
+            Cover::Idle | Cover::Hiding => {}
+>>>>>>> origin/main
         }
         let performance_changed = build.ui.performance != self.menu.settings.editor_performance;
         if performance_changed {
@@ -1740,12 +1899,39 @@ impl State {
                 build.focus_selection();
             }
             166 => self.build.as_mut().unwrap().ui.ribbon = panels::RibbonTab::Test,
+            // Use this view as cover: one frame without panels is read
+            // back into cover.png (removed again unless the world had one).
+            165 => {
+                let build = self.build.as_mut().unwrap();
+                let cover = build.project.folder.join(sa_editor::share::COVER);
+                build.ui.smoke_cover = Some(cover.is_file());
+                build.request_cover();
+            }
             168 => capture(self, "build-command.png"),
             169 => self.build.as_mut().unwrap().ui.ribbon = panels::RibbonTab::Model,
             // Physics: the three blocks let go, one lifted high; in the
             // playtest they fall and come to rest.
             170 => {
                 let build = self.build.as_mut().unwrap();
+                assert_eq!(
+                    build.cover,
+                    Cover::Idle,
+                    "the cover frame was never read back"
+                );
+                let cover = build.project.folder.join(sa_editor::share::COVER);
+                let png = std::fs::read(&cover).expect("cover.png written");
+                let info = png::Decoder::new(std::io::Cursor::new(png))
+                    .read_info()
+                    .expect("cover.png is a PNG")
+                    .info()
+                    .clone();
+                assert_eq!(info.width * 9, info.height * 16, "the cover is 16:9");
+                if let Some(dir) = captures {
+                    let _ = std::fs::copy(&cover, dir.join("build-cover.png"));
+                }
+                if build.ui.smoke_cover == Some(false) {
+                    let _ = std::fs::remove_file(&cover);
+                }
                 let ids = build.ui.smoke_parts.clone();
                 // A floor to land on.
                 let (command, floor) = sa_editor::ops::place(
