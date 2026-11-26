@@ -8,8 +8,9 @@ button in the launcher.
 A pack holds one world (geometry, textures and collision) and, optionally,
 customisable [characters](#characters) and drivable [vehicles](#vehicles).
 Sounds and traffic come in later versions (see [the plan](STANDALONE.md)).
-Without characters the player is SARE's blocky stand-in; without vehicles
-F9 spawns SARE Kart.
+Without characters the player is SARE's default character (the same
+dressable bodies as SARE RP Town, built into SARE); without vehicles F9
+spawns SARE Kart.
 
 ## Quick start: play the example
 
@@ -132,6 +133,12 @@ each. Servers store and share the look (`SetPlayerAppearance`, see
 
 [`tools/blender/make_rp_characters.py`](../tools/blender/make_rp_characters.py)
 builds the RP Town set from code and is a good starting point.
+
+A pack without `characters` (and SARE Testbed) uses SARE's default
+character: that same set, built into SARE
+(`native/assets/characters/sare-default.glb`, CC0), so every world has a
+proper player out of the box. If a pack's own file fails to load, the
+default is used and the reason is written to `sare-runtime.log`.
 
 ## Vehicles
 

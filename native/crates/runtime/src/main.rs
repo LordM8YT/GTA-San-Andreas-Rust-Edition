@@ -6035,6 +6035,8 @@ fn run() -> Result<()> {
         Some(sa_scene::content::ContentSource::Pack(folder)) => {
             pack_actors::PackAssets::load(folder)
         }
+        // SARE Testbed gets the default character too.
+        Some(sa_scene::content::ContentSource::Testbed) => pack_actors::PackAssets::testbed(),
         _ => pack_actors::PackAssets::default(),
     };
     let mut pack_vehicles = std::mem::take(&mut pack_assets.vehicles);
