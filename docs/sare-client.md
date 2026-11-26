@@ -58,9 +58,19 @@ on their own:
    answered before any join and without taking a slot). `SARE_SERVER_LIST`
    points the client at another URL or a local file. Hosts older than this
    build drop the query and show as offline.
-2. **Download the world on join.** The server streams its content pack like it
-   already streams resources, so joining a server with a custom world needs no
-   manual copy.
+2. **Download the world on join (done).** A server on a content pack
+   (`sets content_pack`, or a player hosting in a pack) shares that pack's
+   folder: `Share::add_world` lists its files (scenes, textures, JSON, Lua,
+   text; hidden files and other types are left out; up to 1024 files and
+   256 MiB). A joining player who is in another world asks with
+   `WorldQuery`, fetches the inventory by hash, checks every path and hash,
+   and stores the world in `server-worlds/<id>-<hash>/` beside the mod cache,
+   reusing identical files from their own copy. SARE then restarts in that
+   folder. The player's own `content/` is never written to; the eight most
+   recent server worlds are kept. Older servers that do not share their world
+   fall back to the player's own copy, as before. Known gap: a player who
+   already has a pack with the same id open joins with that copy, even if the
+   server's differs.
 3. **World catalog in Discover.** A community list of worlds with one-click
    install.
 4. **SARE ID and friends.** A public friend code derived from the player's
