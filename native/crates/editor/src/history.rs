@@ -17,6 +17,26 @@ pub struct WorldInfo {
     pub description: String,
     /// Spawn point [east, north, up] in metres.
     pub spawn: [f32; 3],
+    /// Who made it (empty: not given).
+    pub author: String,
+    /// The world's own version, e.g. "1.0.0"; shown in Discover.
+    pub version: String,
+    /// Who may share it, e.g. "CC-BY-4.0" or "All rights reserved".
+    pub license: String,
+}
+
+impl WorldInfo {
+    /// A world with only a name, description and spawn (tests, new worlds).
+    pub fn new(name: &str, description: &str, spawn: [f32; 3]) -> Self {
+        Self {
+            name: name.to_owned(),
+            description: description.to_owned(),
+            spawn,
+            author: String::new(),
+            version: "0.1.0".into(),
+            license: crate::share::DEFAULT_LICENSE.into(),
+        }
+    }
 }
 
 /// Everything Build Mode edits.
