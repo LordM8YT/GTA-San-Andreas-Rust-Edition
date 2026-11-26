@@ -156,19 +156,17 @@ fn unpack(zip: &[u8], target: &Path) -> Result<(), String> {
     let root = if names.iter().any(|(p, _)| p == manifest) {
         PathBuf::new()
     } else {
-        let tops: std::collections::HashSet<_> = names
+        // Exactly one top folder may hold the world's content.json.
+        let mut tops: Vec<PathBuf> = names
             .iter()
-            .filter_map(|(p, _)| p.components().next())
+            .filter(|(p, _)| p.components().count() == 2 && p.ends_with(manifest))
+            .filter_map(|(p, _)| p.parent().map(Path::to_path_buf))
             .collect();
-        match tops.into_iter().next() {
-            Some(top)
-                if names
-                    .iter()
-                    .any(|(p, _)| *p == Path::new(&top).join(manifest)) =>
-            {
-                PathBuf::from(&top)
-            }
-            _ => return Err("The ZIP has no content.json.".into()),
+        tops.dedup();
+        match tops.as_slice() {
+            [top] => top.clone(),
+            [] => return Err("The ZIP has no content.json.".into()),
+            _ => return Err("The ZIP holds more than one world.".into()),
         }
     };
     let mut total = 0_u64;
