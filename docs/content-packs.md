@@ -9,7 +9,8 @@ A pack holds one world (geometry, textures and collision) and, optionally,
 customisable [characters](#characters) and drivable [vehicles](#vehicles).
 Sounds and traffic come in later versions (see [the plan](STANDALONE.md)).
 Without characters the player is SARE's blocky stand-in; without vehicles
-F9 spawns SARE Kart.
+F9 spawns SARE Kart. Worlds start empty, as their maker built them: the
+player's own car only appears when F9 (or the car menu) brings it.
 
 ## Quick start: play the example
 

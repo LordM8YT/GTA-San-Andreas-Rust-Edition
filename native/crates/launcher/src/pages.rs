@@ -343,7 +343,7 @@ impl Launcher {
                 rows.push(("Folder", folder.display().to_string()));
             }
             if experience.editable {
-                rows.push(("Build Mode", "Can be edited".into()));
+                rows.push(("SARE Studio", "Can be edited".into()));
             }
             egui::Grid::new(("about", &experience.id))
                 .num_columns(2)
@@ -372,7 +372,7 @@ impl Launcher {
                         .corner_radius(8)
                         .min_size(egui::vec2(132., 42.)),
                     )
-                    .on_hover_text("Copy it into a new world and open it in Build Mode")
+                    .on_hover_text("Copy it into a new world and open it in SARE Studio")
                     .on_disabled_hover_text("Close the running game first")
                     .clicked()
                 {
@@ -411,7 +411,7 @@ impl Launcher {
                     && ui
                         .add_enabled(
                             this.testbed_ready(),
-                            shell::icon_button(glyph::PENCIL_SIMPLE, "Edit in Build Mode"),
+                            shell::icon_button(glyph::PENCIL_SIMPLE, "Edit in Studio"),
                         )
                         .clicked()
                 {
@@ -1043,7 +1043,7 @@ mod tests {
         assert!(manifest.author.is_none());
         assert!(
             manifest.world.layout.is_some(),
-            "the copy opens in Build Mode"
+            "the copy opens in SARE Studio"
         );
         assert!(folder.join("world.glb").is_file());
         assert_eq!(std::fs::read(source.join("content.json")).unwrap(), before);

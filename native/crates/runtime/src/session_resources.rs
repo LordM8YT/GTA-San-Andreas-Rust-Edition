@@ -758,8 +758,7 @@ impl State {
                             self.position = player.eye();
                             self.player = Some(player);
                         }
-                        self.place_car();
-                        self.driving = false;
+                        self.car_at_start();
                         (endpoint, share, fingerprint)
                     } else {
                         installing.connection()
