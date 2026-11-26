@@ -869,12 +869,22 @@ impl Launcher {
                 ui.label(error);
             });
         }
-        let inspect = ui
-            .add_enabled(
-                self.worker.is_none() && self.resource_tab != 1,
-                egui::Button::new("Refresh resources"),
-            )
-            .clicked();
+        let mut inspect = false;
+        ui.horizontal(|ui| {
+            inspect = ui
+                .add_enabled(
+                    self.worker.is_none() && self.resource_tab != 1,
+                    egui::Button::new("Refresh resources"),
+                )
+                .clicked();
+            if ui
+                .button("Open mods folder")
+                .on_hover_text("Add a mod by putting its folder here, then Refresh")
+                .clicked()
+            {
+                open_folder(local_mods::root(), &mut self.message);
+            }
+        });
         if self.worker.is_none()
             && (inspect
                 || (self.resource_error.is_none()

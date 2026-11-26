@@ -25,6 +25,11 @@ Always the newest: <https://github.com/LordM8YT/SARE/releases/latest/download/SA
 | Your own mods | `%LOCALAPPDATA%\SARE\mods` |
 | Settings, logs, server cache | `%LOCALAPPDATA%\SAFreeroam` |
 
+Players never need to type these paths: in SARE Client, **Library › Content
+folder** opens the worlds folder (drop a content pack's folder in, then
+Refresh), each world's page has **Open folder**, **Mods › Open mods folder**
+opens the mods folder, and **Help** opens the logs.
+
 Uninstalling removes the programs, the bundled worlds' files and the update
 folder. It keeps your own worlds and mods, and the settings and cache in
 `%LOCALAPPDATA%\SAFreeroam`; delete those folders by hand for a clean slate.
