@@ -1,0 +1,12 @@
+# Render Blueprint for the official SARE directory (friends and online
+# status). See docs/sare-directory.md. Free plan, no card needed.
+services:
+  - type: web
+    name: sare-directory
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerContext: ./native
+    dockerfilePath: ./native/crates/net/directory.Dockerfile
+    healthCheckPath: /health
+    autoDeploy: false

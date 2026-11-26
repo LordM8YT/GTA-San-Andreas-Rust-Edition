@@ -37,7 +37,44 @@ cargo run --release -p sa-net --bin sa-directory -- 127.0.0.1:7780
 Set **Settings › Friends** to `http://127.0.0.1:7780` (plain `http://` is
 only accepted for `127.0.0.1` and `localhost`) and open Friends.
 
-## Host the official directory on Oracle Cloud Always Free
+## Host the official directory on Render (free, no card)
+
+The repository has a Render Blueprint (`render.yaml`) that builds
+`sa-directory` from `native/crates/net/directory.Dockerfile`. Render gives it
+an `https://….onrender.com` address with a certificate, so no VM, domain or
+reverse proxy is needed. Without an argument, `sa-directory` listens on
+`0.0.0.0:$PORT`, which Render sets.
+
+1. Sign in at [render.com](https://render.com) with **GitHub**. The free plan
+   needs no card.
+2. *New › Blueprint*, give Render access to the SARE repository and pick it.
+   Render reads `render.yaml` and shows one free web service,
+   `sare-directory`. Press **Deploy Blueprint**. The first build takes a few
+   minutes.
+3. **Check**: open `https://sare-directory.onrender.com/health` (Render shows
+   the exact address on the service page). It answers `{"online":0}`.
+4. **Make it the default**: set `DEFAULT_DIRECTORY` in
+   `native/crates/launcher/src/friends.rs` to that address and release a
+   client.
+
+A free Render service sleeps after 15 minutes with no requests and takes
+about half a minute to wake up; the client waits up to 45 seconds for a
+heartbeat, and every open client sends one each minute, so it stays awake
+while anyone is online. Sleeping forgets everyone, which is fine: players
+reappear with their next heartbeat. To update, press *Manual Deploy* on the
+service page (`autoDeploy` is off so pushes to `main` do not restart it).
+
+The same container runs anywhere Docker does:
+
+```text
+cd native
+docker build -f crates/net/directory.Dockerfile -t sa-directory .
+docker run -p 7780:7780 sa-directory
+```
+
+## Host it on Oracle Cloud Always Free (a VM of your own)
+
+An alternative to Render that never sleeps, at the cost of running a VM.
 
 The service speaks plain HTTP on a local port. A reverse proxy in front of it
 adds HTTPS; Caddy does that with a free Let's Encrypt certificate and no
