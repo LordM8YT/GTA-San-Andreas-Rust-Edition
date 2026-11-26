@@ -238,6 +238,14 @@ pub struct BuildMode {
     pub export: Option<ExportReport>,
 }
 
+/// Where File › Open world keeps the recent worlds: beside the settings.
+pub fn recent_file() -> PathBuf {
+    sa_client::settings::Settings::path()
+        .parent()
+        .map(|p| p.join(sa_editor::recent::FILE))
+        .unwrap_or_else(|| PathBuf::from(sa_editor::recent::FILE))
+}
+
 /// Find or create the project named by `--build`: a pack id, a pack
 /// folder, or `new:<Name>` for a new world in the content folder.
 pub fn resolve_project(argument: &str) -> Result<PathBuf> {
@@ -271,6 +279,9 @@ pub fn resolve_project(argument: &str) -> Result<PathBuf> {
 impl BuildMode {
     pub fn open(folder: &Path) -> Result<Self> {
         let (project, doc) = Project::open(folder)?;
+        if let Err(error) = sa_editor::recent::remember(&recent_file(), folder) {
+            crate::runtime_log::line(format!("Build Mode: recent worlds not saved: {error:#}"));
+        }
         let recovery = match project.recovery(&doc) {
             Ok(found) => found,
             Err(error) => {

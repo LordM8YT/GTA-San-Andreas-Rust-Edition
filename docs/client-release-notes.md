@@ -1,6 +1,7 @@
 SARE free-roam test client, built and tested from the linked commit.
 
 Version 0.61.0 (in progress: the big SARE Studio update):
+- SARE Studio: File › Open world now shows your recent worlds first, and *Browse for a world folder…* opens a world from anywhere on your PC (it tells you if the folder is not a world).
 - Worlds start empty. SARE's own worlds (every Studio world, content packs, Testbed) no longer drop a car next to the player at the start or when joining a server; F9 or the car menu still brings your car. San Andreas is unchanged.
 - Build Mode is now called SARE Studio everywhere you see it: the editor, its window title (with * for unsaved changes), Back to Studio in playtest, and Edit in Studio in SARE Client.
 - Every world now has a real player character. Worlds without their own characters (every new Studio world, Gameplay Sample, SARE Testbed) used a blocky stand-in; they now use SARE's default character: male and female bodies with hair, tops, trousers and shoes to pick and colour, and idle, walk, run, sit and fall animations (the CC0 set from SARE RP Town, built into SARE). Worlds can still bring their own `characters.glb`.
