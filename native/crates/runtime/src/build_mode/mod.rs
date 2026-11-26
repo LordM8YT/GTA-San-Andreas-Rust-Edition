@@ -181,6 +181,8 @@ pub struct BuildMode {
     pub sculpt: Sculpt,
     pub camera: EditorCamera,
     pub placing: Option<Placing>,
+    /// "Set spawn" is waiting for a click in the viewport.
+    pub placing_spawn: bool,
     pub playtesting: bool,
     pub log: Vec<LogLine>,
     pub recovery: Option<Recovery>,
@@ -277,6 +279,7 @@ impl BuildMode {
             sculpt: Sculpt::default(),
             camera: EditorCamera::default(),
             placing: None,
+            placing_spawn: false,
             playtesting: false,
             log: Vec::new(),
             recovery,
@@ -592,6 +595,60 @@ impl BuildMode {
         }
     }
 
+    /// The Spawn point object players start at, if the world has one: the
+    /// first in the World Outliner, as in play.
+    pub fn spawn_object(&self) -> Option<NodeId> {
+        self.doc
+            .layout
+            .nodes
+            .iter()
+            .find(|n| {
+                matches!(
+                    n.gameplay.as_ref().and_then(|g| g.known()),
+                    Some(sa_scene::world_logic::Component::Spawn(_))
+                )
+            })
+            .map(|n| n.id)
+    }
+
+    /// Move the spawn to `at` (Blender axes), facing `heading` degrees
+    /// (0 = north). A Spawn point object wins over the world's own spawn,
+    /// so that is what moves when there is one; the world's spawn in
+    /// `content.json` has no heading.
+    pub fn set_spawn(&mut self, at: [f32; 3], heading: f32) {
+        if let Some(id) = self.spawn_object() {
+            let layout = &self.doc.layout;
+            let Some(before) = layout.node(id).cloned() else {
+                return;
+            };
+            let mut world = layout.world_transform(id);
+            world.position = at;
+            world.rotation[2] = heading;
+            let mut after = before.clone();
+            after.transform = layout.local_in(before.parent, &world);
+            self.execute(Command::Modify {
+                label: format!("Move {}", before.name),
+                changes: vec![(before, after)],
+            });
+        } else {
+            let before = self.doc.info.clone();
+            let after = sa_editor::history::WorldInfo {
+                spawn: at,
+                ..before.clone()
+            };
+            self.execute(Command::Info { before, after });
+        }
+        self.info("Spawn moved. Players start here.");
+    }
+
+    /// Where players start, in Blender axes: the Spawn point object if
+    /// there is one, else the world's spawn.
+    pub fn spawn_position(&self) -> [f32; 3] {
+        self.spawn_object()
+            .map(|id| self.doc.layout.world_transform(id).position)
+            .unwrap_or(self.doc.info.spawn)
+    }
+
     /// Spawn point in render space.
     pub fn spawn_render(&self) -> Vec3 {
         gpu::render_matrix(&Default::default())
@@ -873,6 +930,7 @@ impl State {
         script_ui::flush(build);
         build.commit_preview();
         build.placing = None;
+        build.placing_spawn = false;
         build.drag = None;
         // Checkpoint: unsaved work is on disk before the game takes over.
         if build.history.dirty() {
@@ -895,6 +953,7 @@ impl State {
             ),
             None => (build.spawn_render(), build.camera.yaw),
         };
+        self.world_spawn = Some((feet + Vec3::Y * 2.0, yaw));
         let player = sa_scene::collision::Player::spawn(&collision, feet + Vec3::Y * 2.0);
         let standing = collision.standing_at(feet, feet.y + 2.0).is_some();
         build.playtesting = true;
@@ -1742,5 +1801,49 @@ impl State {
             self.position = player.eye();
             self.player = Some(player);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BuildMode;
+    use std::path::PathBuf;
+
+    #[test]
+    fn set_spawn_moves_the_worlds_spawn_and_undoes() {
+        let base = std::env::temp_dir().join(format!("sare-set-spawn-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let folder = base.join("world");
+        sa_editor::project::Project::create(&folder, "spawn-world", "Spawn world").unwrap();
+        let mut build = BuildMode::open(&folder).unwrap();
+        assert!(build.spawn_object().is_none());
+        let before = build.doc.info.spawn;
+        build.set_spawn([4.0, 5.0, 1.0], 90.0);
+        assert_eq!(build.doc.info.spawn, [4.0, 5.0, 1.0]);
+        assert_eq!(build.spawn_position(), [4.0, 5.0, 1.0]);
+        build.undo();
+        assert_eq!(build.doc.info.spawn, before);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn set_spawn_moves_a_spawn_point_object_when_there_is_one() {
+        // The sample has a Spawn point object; it wins over content.json's
+        // spawn, so that is what must move (nothing is saved here).
+        let folder = PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../content/gameplay-sample"
+        ));
+        let mut build = BuildMode::open(&folder).unwrap();
+        let id = build.spawn_object().expect("the sample has a Spawn point");
+        let info = build.doc.info.clone();
+        build.set_spawn([10.0, -3.0, 0.5], 45.0);
+        assert_eq!(build.doc.info, info, "content.json's spawn is untouched");
+        let world = build.doc.layout.world_transform(id);
+        assert_eq!(world.position, [10.0, -3.0, 0.5]);
+        assert!((world.rotation[2] - 45.0).abs() < 1e-3);
+        let logic = sa_scene::world_logic::Logic::new(&build.doc.layout.resolved());
+        assert_eq!(logic.spawn().unwrap().position, [10.0, -3.0, 0.5]);
+        assert_eq!(build.spawn_position(), [10.0, -3.0, 0.5]);
     }
 }

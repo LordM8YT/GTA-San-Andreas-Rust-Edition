@@ -176,6 +176,32 @@ pub fn show(build: &mut BuildMode, ui: &mut Ui, frame: &Frame) {
         draw_selection(build, &view, &painter);
         return;
     }
+    // "Set spawn": the next click on the ground or an object moves the
+    // spawn there, facing the way the camera looks.
+    if build.placing.is_some() {
+        build.placing_spawn = false; // Picking an asset ends "Set spawn".
+    }
+    if build.placing_spawn {
+        if let Some(pointer) = pointer {
+            let at = placement_at(build, &view, pointer).position;
+            spawn_marker(
+                &view,
+                &painter,
+                crate::play_logic::blender_to_render(at),
+                "Click to set spawn",
+                ui_theme::ACCENT,
+            );
+            if response.clicked_by(egui::PointerButton::Primary) {
+                let heading = crate::play_logic::heading_for(build.camera.yaw);
+                build.set_spawn(at, heading);
+                build.placing_spawn = false;
+            }
+        }
+        if response.clicked_by(egui::PointerButton::Secondary) {
+            build.placing_spawn = false;
+        }
+        return;
+    }
     if build.placing.is_some() {
         if let Some(pointer) = pointer {
             let transform = placement_at(build, &view, pointer);
@@ -1454,26 +1480,30 @@ fn draw_grid(build: &BuildMode, view: &View, painter: &egui::Painter) {
 
 fn draw_spawn(build: &BuildMode, view: &View, painter: &egui::Painter) {
     // A Spawn point object replaces the world's spawn; its marker shows it.
-    let has_spawn_object = build.doc.layout.nodes.iter().any(|n| {
-        matches!(
-            n.gameplay.as_ref().and_then(|g| g.known()),
-            Some(Component::Spawn(_))
-        )
-    });
-    if has_spawn_object {
+    if build.spawn_object().is_some() {
         return;
     }
-    let spawn = build.spawn_render();
-    let top = spawn + Vec3::Y * 1.8;
-    if let Some(segment) = view.segment(spawn, top) {
-        painter.line_segment(segment, Stroke::new(3.0, ui_theme::SUCCESS));
-        painter.circle_stroke(segment[0], 5.0, Stroke::new(2.0, ui_theme::SUCCESS));
+    spawn_marker(
+        view,
+        painter,
+        build.spawn_render(),
+        "Spawn",
+        ui_theme::SUCCESS,
+    );
+}
+
+/// A flag on a pole where players start.
+fn spawn_marker(view: &View, painter: &egui::Painter, at: Vec3, label: &str, color: Color32) {
+    let top = at + Vec3::Y * 1.8;
+    if let Some(segment) = view.segment(at, top) {
+        painter.line_segment(segment, Stroke::new(3.0, color));
+        painter.circle_stroke(segment[0], 5.0, Stroke::new(2.0, color));
         painter.text(
             segment[1] + egui::vec2(6.0, 0.0),
             egui::Align2::LEFT_CENTER,
-            "Spawn",
+            label,
             egui::FontId::proportional(12.0),
-            ui_theme::SUCCESS,
+            color,
         );
     }
 }

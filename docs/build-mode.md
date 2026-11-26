@@ -107,6 +107,13 @@ playable at its spawn point with every object's collision. F6 (or *Back to
 Build Mode*) returns to the editor with the camera, selection and undo
 history as they were. Nothing is restarted.
 
+Spawn: *Set spawn* (Test ribbon, or *Click to set spawn* under Workspace in
+Properties) waits for a click in the viewport and puts the spawn on the
+ground or object under the mouse, facing the way the camera looks.
+Right-click or Esc cancels. If the world has a Spawn point object, that
+object moves (it wins over the world's own spawn). While a world is played,
+R and falling below the world put the player back at the spawn.
+
 ## My Models
 
 A model you will want again (a lamp post with its light, a market stall, a
