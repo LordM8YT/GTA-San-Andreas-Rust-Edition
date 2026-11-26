@@ -42,8 +42,8 @@ impl Project {
             "id": id,
             "name": name,
             "version": "0.1.0",
-            "license": "All rights reserved",
-            "description": "Made in SARE Build Mode.",
+            "license": crate::share::DEFAULT_LICENSE,
+            "description": "Made in SARE Studio.",
             "world": { "layout": world_layout::FILE, "spawn": [0.0, -6.0, 0.5] }
         });
         // Validate before touching the disk.
@@ -68,11 +68,7 @@ impl Project {
         };
         let document = Document {
             layout,
-            info: WorldInfo {
-                name: name.to_owned(),
-                description: "Made in SARE Build Mode.".into(),
-                spawn: [0.0, -6.0, 0.5],
-            },
+            info: WorldInfo::new(name, "Made in SARE Studio.", [0.0, -6.0, 0.5]),
         };
         project.save(&document)?;
         Ok((project, document))
@@ -109,6 +105,9 @@ impl Project {
                 name: parsed.name.clone(),
                 description: parsed.description.clone().unwrap_or_default(),
                 spawn: parsed.world.spawn,
+                author: parsed.author.clone().unwrap_or_default(),
+                version: parsed.version.clone(),
+                license: parsed.license.clone(),
             },
         };
         Ok((
@@ -145,6 +144,14 @@ impl Project {
                 Value::from(document.info.description.trim()),
             );
         }
+        let author = document.info.author.trim();
+        if author.is_empty() {
+            object.remove("author");
+        } else {
+            object.insert("author".into(), Value::from(author));
+        }
+        object.insert("version".into(), Value::from(document.info.version.trim()));
+        object.insert("license".into(), Value::from(document.info.license.trim()));
         let world = object
             .entry("world")
             .or_insert_with(|| json!({}))
@@ -192,7 +199,10 @@ impl Project {
         let doc = json!({
             "format": "sare-build-autosave",
             "saved_at": unix_seconds(),
-            "info": { "name": info.name, "description": info.description, "spawn": info.spawn },
+            "info": {
+                "name": info.name, "description": info.description, "spawn": info.spawn,
+                "author": info.author, "version": info.version, "license": info.license,
+            },
             "layout": serde_json::to_value(&document.layout)?,
         });
         write_atomic(
@@ -224,6 +234,10 @@ impl Project {
                     .unwrap_or_default()
                     .to_owned(),
                 spawn,
+                // Autosaves from before these fields keep the saved ones.
+                author: text_or(&doc["info"]["author"], &saved.info.author),
+                version: text_or(&doc["info"]["version"], &saved.info.version),
+                license: text_or(&doc["info"]["license"], &saved.info.license),
             },
         };
         if &document == saved {
@@ -287,6 +301,10 @@ impl Project {
             .with_context(|| format!("copying {} into the world", source.display()))?;
         Ok(AssetRef::Own(relative))
     }
+}
+
+fn text_or(value: &Value, fallback: &str) -> String {
+    value.as_str().unwrap_or(fallback).to_owned()
 }
 
 fn check(manifest: &Manifest) -> Result<()> {
