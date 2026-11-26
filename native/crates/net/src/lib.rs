@@ -318,6 +318,15 @@ enum Message {
     /// older than 0.62 drop the connection instead.
     Info,
     InfoReply(ServerInfo),
+    /// Before joining: which world files does the host share? The answer is
+    /// the inventory's hash and size, fetched with `ResourceFile`.
+    WorldQuery {
+        version: u32,
+    },
+    WorldOffer {
+        sha256: String,
+        bytes: usize,
+    },
 }
 /// What any host tells a server browser before a player joins.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -954,6 +963,15 @@ fn host_worker(
                         let _ = guest.wire.flush();
                         return false;
                     }
+                    Message::WorldQuery { version } if !guest.hello && !guest.assets && version == VERSION => {
+                        guest.assets = true;
+                        let Some((sha256, bytes)) = share.world_offer() else {
+                            let _ = guest.wire.queue(&Message::Reject("This server does not share its world.".into()));
+                            let _ = guest.wire.flush();
+                            return false;
+                        };
+                        if guest.wire.queue(&Message::WorldOffer { sha256, bytes }).is_err() { return false; }
+                    }
                     Message::ResourceQuery { version } if !guest.hello && !guest.assets && version == VERSION => {
                         guest.assets = true;
                         if guest.wire.queue(&Message::ResourceManifest(share.manifest.clone())).is_err() { return false; }
@@ -1075,16 +1093,21 @@ fn host_worker(
                     guest.transfer = Some((sha256, data.unwrap_or_else(|| Arc::from([])), 0));
                 }
             }
-            if let Some((sha256, data, offset)) = &mut guest.transfer {
-                // One bounded chunk per iteration, alongside ordinary gameplay.
-                if guest.wire.outgoing.len() - guest.wire.sent < MAX_FRAME {
-                    let end = (*offset + 2048).min(data.len());
-                    let done = end == data.len();
-                    if guest.wire.queue(&Message::ResourceChunk { sha256: sha256.clone(), offset: *offset, data: data[*offset..end].to_vec(), done }).is_err() { return false; }
-                    *offset = end;
-                    guest.wire.last = Instant::now();
-                    if done { guest.transfer = None; }
+            // One bounded chunk per iteration alongside gameplay; a few more
+            // while a player is still downloading before joining.
+            let chunks = if guest.hello { 1 } else { 8 };
+            for _ in 0..chunks {
+                let Some((sha256, data, offset)) = &mut guest.transfer else { break };
+                if guest.wire.outgoing.len() - guest.wire.sent >= MAX_FRAME {
+                    break;
                 }
+                let end = (*offset + 2048).min(data.len());
+                let done = end == data.len();
+                if guest.wire.queue(&Message::ResourceChunk { sha256: sha256.clone(), offset: *offset, data: data[*offset..end].to_vec(), done }).is_err() { return false; }
+                *offset = end;
+                guest.wire.last = Instant::now();
+                if done { guest.transfer = None; }
+                if guest.wire.flush().is_err() { return false; }
             }
             guest.wire.flush().is_ok()
         });
