@@ -14,6 +14,7 @@ use std::{
 mod artwork;
 mod community;
 mod experience;
+mod friends;
 mod local_mods;
 mod pages;
 mod servers;
@@ -84,6 +85,11 @@ struct Launcher {
     /// A world being installed from the catalog, and the last outcome.
     world_install: Option<(String, mpsc::Receiver<Result<PathBuf, String>>)>,
     world_install_message: Option<String>,
+    /// SARE ID, friend list status and the Add friend form.
+    friends: friends::Friends,
+    friend_code_input: String,
+    friend_name_input: String,
+    friends_message: Option<String>,
     connection_error: Option<String>,
     browser_initialized: bool,
     search: String,
@@ -138,6 +144,8 @@ impl Launcher {
         let mut app = Self::configured(ctx, LauncherConfig::load(), Settings::load(), true);
         app.community_source = Some(community::source());
         app.world_list_source = Some(world_catalog::source());
+        app.friends =
+            friends::Friends::new(sa_client::identity_secret().map_err(|e| e.to_string()));
         app.scan_packs();
         app
     }
@@ -193,6 +201,10 @@ impl Launcher {
             world_list_requested: false,
             world_install: None,
             world_install_message: None,
+            friends: friends::Friends::new(Err("Not loaded".into())),
+            friend_code_input: String::new(),
+            friend_name_input: String::new(),
+            friends_message: None,
             connection_error: None,
             browser_initialized: false,
             search: String::new(),
@@ -310,7 +322,22 @@ impl Launcher {
             && !self.updates.restarting
             && !self.updates.recovery_blocked
     }
+    /// Codes of the friends the player added, for the directory.
+    fn friend_codes(&self) -> Vec<String> {
+        self.config.friends.iter().map(|f| f.code.clone()).collect()
+    }
+    fn heartbeat(&mut self, now: bool) {
+        let url = friends::directory_url(&self.config.directory);
+        let name = self.config.player.clone();
+        let codes = self.friend_codes();
+        if self.child.is_none() {
+            self.friends.playing = None;
+        }
+        self.friends.tick(&url, &name, codes, now);
+    }
     fn poll(&mut self) {
+        self.friends.poll();
+        self.heartbeat(false);
         if let Some(worker) = &self.world_list_worker {
             match worker.try_recv() {
                 Ok(Ok(list)) => {
@@ -573,6 +600,20 @@ impl Launcher {
                 "Choose and validate the installation, and close any running game first.".into();
             return;
         }
+        let playing_world = match &content {
+            Some(path) if path == "testbed" => "SARE Testbed".to_owned(),
+            Some(path) => self
+                .packs
+                .iter()
+                .find(|(folder, _)| folder.as_os_str() == path.as_os_str())
+                .map(|(_, name)| name.clone())
+                .unwrap_or_else(|| "A SARE world".into()),
+            None => "San Andreas".into(),
+        };
+        let playing_server = match &session {
+            Session::Direct(address) => Some(address.clone()),
+            _ => None,
+        };
         let recent = match &session {
             Session::Offline => None,
             Session::Direct(address) => Some(Favorite {
@@ -646,6 +687,11 @@ impl Launcher {
                 }
                 self.child = Some(child);
                 self.log = Some(log);
+                self.friends.playing = Some(sa_net::directory::Playing {
+                    world: playing_world,
+                    server: playing_server,
+                });
+                self.heartbeat(true);
                 if recent.is_some() {
                     self.config.last_session = recent;
                     if let Err(error) = self.config.save() {
@@ -983,6 +1029,20 @@ impl Launcher {
         if let Some(message) = &self.settings_message {
             ui.label(message);
         }
+        ui.add_space(8.);
+        ui.label(RichText::new("Friends").strong().size(21.));
+        ui.label("SARE directory for friends and online status");
+        ui.add(
+            egui::TextEdit::singleline(&mut self.config.directory)
+                .hint_text(if friends::DEFAULT_DIRECTORY.is_empty() {
+                    "https://... (none is set up yet)"
+                } else {
+                    friends::DEFAULT_DIRECTORY
+                })
+                .desired_width(ui.available_width().min(720.))
+                .margin(egui::vec2(12., 11.)),
+        );
+        ui.small("Leave empty for the official directory. Anyone can run their own (docs/sare-directory.md).");
         ui.add_space(8.);
         ui.label(RichText::new("Installation").strong().size(21.));
         ui.label("Original PC San Andreas folder");
@@ -1480,12 +1540,15 @@ impl Launcher {
             || self.community_worker.is_some()
             || self.world_list_worker.is_some()
             || self.world_install.is_some()
+            || self.friends.busy()
             || self.child.is_some()
             || self.gilrs.is_some()
             || self.updates.available()
         {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
+        // Wake now and then for the friends heartbeat.
+        ctx.request_repaint_after(Duration::from_secs(15));
     }
 }
 impl eframe::App for Launcher {

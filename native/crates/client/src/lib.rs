@@ -95,6 +95,16 @@ pub struct LauncherConfig {
     pub player: String,
     pub relay: String,
     pub favorites: Vec<Favorite>,
+    /// Friend codes the player added, with the name they gave each one.
+    pub friends: Vec<FriendEntry>,
+    /// SARE directory for friends and online status (`https://...`).
+    /// Empty: the built-in default, if there is one.
+    pub directory: String,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FriendEntry {
+    pub code: String,
+    pub name: String,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Favorite {
@@ -108,6 +118,7 @@ impl LauncherConfig {
     pub fn load() -> Self {
         let mut config: Self = read_json(&config_dir().join("launcher.json")).unwrap_or_default();
         config.favorites.truncate(32);
+        config.friends.truncate(200);
         config
     }
     pub fn save(&self) -> Result<()> {
