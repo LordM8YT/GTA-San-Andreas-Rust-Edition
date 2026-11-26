@@ -47,6 +47,29 @@ the chosen name, no author and version 0.1.0, then opened in Build Mode; the
 template itself is never changed. Templates stay playable from their page and
 servers can still use them as content packs, but they are not listed as games.
 
+## Social and discovery plan
+
+SARE has no service of its own yet, so this is built in steps that each work
+on their own:
+
+1. **Public server list (done).** `community/servers.json` in this repository
+   (see [its README](../community/README.md)). Servers asks every listed
+   server directly for its status with `sa_net::query` (`Message::Info`,
+   answered before any join and without taking a slot). `SARE_SERVER_LIST`
+   points the client at another URL or a local file. Hosts older than this
+   build drop the query and show as offline.
+2. **Download the world on join.** The server streams its content pack like it
+   already streams resources, so joining a server with a custom world needs no
+   manual copy.
+3. **World catalog in Discover.** A community list of worlds with one-click
+   install.
+4. **SARE ID and friends.** A public friend code derived from the player's
+   existing `identity.key`, a local friends list and joining a friend by code.
+5. **Online service (`sare-directory`).** Presence, live server heartbeats and
+   messages. Open source, so anyone can run one; the client can use several.
+   Accounts are the player's key, with no password or e-mail. Where the
+   official instance runs is still to be decided.
+
 ## Next steps
 
 1. Covers for the Gameplay Sample and the testbed (in-engine captures).

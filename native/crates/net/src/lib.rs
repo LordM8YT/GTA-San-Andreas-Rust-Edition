@@ -314,6 +314,73 @@ enum Message {
         owner: u32,
         cars: Vec<TrafficPose>,
     },
+    /// A server browser asks for the public status, then closes. Hosts
+    /// older than 0.62 drop the connection instead.
+    Info,
+    InfoReply(ServerInfo),
+}
+/// What any host tells a server browser before a player joins.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ServerInfo {
+    pub name: String,
+    pub players: usize,
+    pub capacity: usize,
+    /// Protocol version; a different one means one side needs an update.
+    pub version: u32,
+    /// The content pack the server plays on; `None`: the San Andreas map.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_pack: Option<String>,
+}
+impl ServerInfo {
+    fn valid(&self) -> bool {
+        self.name.chars().count() <= 24
+            && !self.name.chars().any(char::is_control)
+            && self.capacity >= 1
+            && self.capacity <= MAX_PLAYERS
+            && self.players <= self.capacity
+            && self
+                .content_pack
+                .as_deref()
+                .is_none_or(resources::valid_pack_id)
+    }
+}
+const QUERY_TIMEOUT: Duration = Duration::from_secs(3);
+/// Ask a host for its name, player count and world without joining it.
+pub fn query(address: SocketAddr) -> io::Result<ServerInfo> {
+    let mut stream = TcpStream::connect_timeout(&address, QUERY_TIMEOUT)?;
+    stream.set_nodelay(true)?;
+    stream.set_write_timeout(Some(QUERY_TIMEOUT))?;
+    let request = serde_json::to_vec(&Message::Info).map_err(|_| invalid())?;
+    stream.write_all(&(request.len() as u32).to_le_bytes())?;
+    stream.write_all(&request)?;
+    let deadline = Instant::now() + QUERY_TIMEOUT;
+    let mut read = |bytes: &mut [u8]| -> io::Result<()> {
+        let mut filled = 0;
+        while filled < bytes.len() {
+            let remaining = deadline
+                .checked_duration_since(Instant::now())
+                .ok_or(io::ErrorKind::TimedOut)?;
+            stream.set_read_timeout(Some(remaining.max(Duration::from_millis(1))))?;
+            match stream.read(&mut bytes[filled..])? {
+                0 => return Err(io::ErrorKind::UnexpectedEof.into()),
+                n => filled += n,
+            }
+        }
+        Ok(())
+    };
+    let mut size = [0; 4];
+    read(&mut size)?;
+    let size = u32::from_le_bytes(size) as usize;
+    if size == 0 || size > MAX_FRAME {
+        return Err(invalid());
+    }
+    let mut bytes = vec![0; size];
+    read(&mut bytes)?;
+    match serde_json::from_slice(&bytes).map_err(|_| invalid())? {
+        Message::InfoReply(info) if info.valid() => Ok(info),
+        Message::Reject(reason) => Err(io::Error::other(reason)),
+        _ => Err(invalid()),
+    }
 }
 fn safe_name(name: &str) -> String {
     let name: String = name.chars().filter(|c| !c.is_control()).take(24).collect();
@@ -874,6 +941,19 @@ fn host_worker(
             };
             for message in messages {
                 match message {
+                    Message::Info if !guest.hello && !guest.assets => {
+                        let capacity = mail.capacity();
+                        let info = ServerInfo {
+                            name: name.clone(),
+                            players: (admitted + usize::from(host_player)).min(capacity),
+                            capacity,
+                            version: VERSION,
+                            content_pack: share.manifest.content_pack.clone(),
+                        };
+                        let _ = guest.wire.queue(&Message::InfoReply(info));
+                        let _ = guest.wire.flush();
+                        return false;
+                    }
                     Message::ResourceQuery { version } if !guest.hello && !guest.assets && version == VERSION => {
                         guest.assets = true;
                         if guest.wire.queue(&Message::ResourceManifest(share.manifest.clone())).is_err() { return false; }
@@ -1648,6 +1728,35 @@ mod tests {
         let sender = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
         let receiver = Wire::new(listener.accept().unwrap().0).unwrap();
         (sender, receiver)
+    }
+    #[test]
+    fn server_browsers_read_live_status_without_joining() {
+        let mut share = resources::Share::default();
+        share.manifest.content_pack = Some("sare-rp-town".into());
+        let host = Session::dedicated_resources(address(), "Town RP", share).unwrap();
+        host.set_max_clients(8);
+        let info = query(host.address).unwrap();
+        assert_eq!(
+            info,
+            ServerInfo {
+                name: "Town RP".into(),
+                players: 0,
+                capacity: 8,
+                version: VERSION,
+                content_pack: Some("sare-rp-town".into()),
+            }
+        );
+        let guest = Session::join(host.address, "Guest").unwrap();
+        wait(|| report(&guest).connected);
+        wait(|| query(host.address).is_ok_and(|i| i.players == 1));
+        // A query is not a player and leaves no peer behind.
+        assert_eq!(report(&host).peers.len(), 1);
+        let player_host = Session::host(address(), "Sam").unwrap();
+        let info = query(player_host.address).unwrap();
+        assert_eq!(
+            (info.name.as_str(), info.players, info.content_pack),
+            ("Sam", 1, None)
+        );
     }
     #[test]
     fn fragmented_and_combined_frames_preserve_message_boundaries() {

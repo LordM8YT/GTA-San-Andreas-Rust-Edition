@@ -12,6 +12,7 @@ use std::{
     time::{Duration, Instant},
 };
 mod artwork;
+mod community;
 mod experience;
 mod local_mods;
 mod pages;
@@ -66,6 +67,13 @@ struct Launcher {
     browser_time: Option<Duration>,
     browser_worker: Option<mpsc::Receiver<BrowserReply>>,
     browser_error: Option<String>,
+    /// The community server list with each server's live status, the
+    /// download in progress, its last error, and where it comes from
+    /// (`None` in tests, so they never touch the network).
+    community: Vec<community::Server>,
+    community_worker: Option<mpsc::Receiver<Result<Vec<community::Server>, String>>>,
+    community_error: Option<String>,
+    community_source: Option<String>,
     connection_error: Option<String>,
     browser_initialized: bool,
     search: String,
@@ -118,6 +126,7 @@ struct Launcher {
 impl Launcher {
     fn new(ctx: &egui::Context) -> Self {
         let mut app = Self::configured(ctx, LauncherConfig::load(), Settings::load(), true);
+        app.community_source = Some(community::source());
         app.scan_packs();
         app
     }
@@ -162,6 +171,10 @@ impl Launcher {
             browser_time: None,
             browser_worker: None,
             browser_error: None,
+            community: Vec::new(),
+            community_worker: None,
+            community_error: None,
+            community_source: None,
             connection_error: None,
             browser_initialized: false,
             search: String::new(),
@@ -280,6 +293,29 @@ impl Launcher {
             && !self.updates.recovery_blocked
     }
     fn poll(&mut self) {
+        if let Some(worker) = &self.community_worker {
+            match worker.try_recv() {
+                Ok(result) => {
+                    self.community_worker = None;
+                    match result {
+                        Ok(servers) => {
+                            self.community = servers;
+                            self.community_error = None;
+                        }
+                        Err(error) => {
+                            log_error(&error);
+                            self.community_error = Some(error);
+                        }
+                    }
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.community_worker = None;
+                    self.community_error =
+                        Some("Server list task stopped. Retry the request.".into());
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
         if let Some(worker) = &self.browser_worker {
             match worker.try_recv() {
                 Ok((address, result, elapsed)) => {
@@ -610,6 +646,21 @@ impl Launcher {
             log_error(&error);
             self.connection_error = Some(error);
         }
+    }
+    /// Download the community server list and ask each server for its status.
+    fn browse_community(&mut self) {
+        let Some(source) = self.community_source.clone() else {
+            return;
+        };
+        if self.community_worker.is_some() {
+            return;
+        }
+        self.community_error = None;
+        let (tx, rx) = mpsc::channel();
+        self.community_worker = Some(rx);
+        std::thread::spawn(move || {
+            let _ = tx.send(community::load(&source));
+        });
     }
     fn browse(&mut self) {
         self.browser_initialized = true;
@@ -1205,6 +1256,7 @@ impl Launcher {
             if self.preview_frames >= 6
                 && self.worker.is_none()
                 && self.browser_worker.is_none()
+                && self.community_worker.is_none()
                 && (self.page != Page::Resources
                     || (self.resource_tab == 0 && self.mods_inspected)
                     || self.resource_tab == 1
@@ -1341,6 +1393,7 @@ impl Launcher {
             });
         if self.worker.is_some()
             || self.browser_worker.is_some()
+            || self.community_worker.is_some()
             || self.child.is_some()
             || self.gilrs.is_some()
             || self.updates.available()

@@ -244,6 +244,14 @@ at server start, because clients download them before joining; restart the
 server after changing them. Script resources can be restarted live. Only share
 mods you may redistribute.
 
+## Public server list
+
+To show your server to every SARE Client player, add it to the
+[community server list](../community/README.md) with a pull request. The client
+asks the server itself for its name (`sv_hostname`), player count
+(`sv_maxclients`), world (`sets content_pack`) and version, so keep those set
+in `server.cfg`. Servers that do not answer are shown as offline.
+
 ## Relay hosting
 
 Run a reachable `sa-relay` on a trusted LAN/VPN, as described in

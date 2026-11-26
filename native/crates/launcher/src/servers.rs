@@ -25,6 +25,10 @@ struct Row {
     detail: String,
     players: Option<(usize, usize)>,
     compatible: bool,
+    /// Listed in the community list but did not answer, and why.
+    offline: Option<String>,
+    /// The content pack the server plays on, when it said so.
+    world: Option<String>,
     session: Session,
     saved: Option<usize>,
 }
@@ -83,7 +87,11 @@ fn server_row(ui: &mut egui::Ui, row: &Row, selected: bool) -> egui::Response {
             egui::vec2(name_width.max(40.), rect.height()),
         ))
         .galley(egui::pos2(text_left, rect.top() + 9.), galley, TEXT);
-    painter.text(
+    let text_clip = egui::Rect::from_min_size(
+        egui::pos2(text_left, rect.top()),
+        egui::vec2(name_width.max(40.), rect.height()),
+    );
+    painter.with_clip_rect(text_clip).text(
         egui::pos2(text_left, rect.top() + 34.),
         egui::Align2::LEFT_TOP,
         &row.detail,
@@ -102,7 +110,9 @@ fn server_row(ui: &mut egui::Ui, row: &Row, selected: bool) -> egui::Response {
             egui::FontId::proportional(15.),
             TEXT,
         );
-        let (status, color) = if !row.compatible {
+        let (status, color) = if row.offline.is_some() {
+            ("Offline", Color32::from_rgb(170, 110, 100))
+        } else if !row.compatible {
             ("Update needed", Color32::from_rgb(230, 120, 90))
         } else if row.players.is_some_and(|(n, max)| n >= max) {
             ("Full", Color32::from_rgb(230, 170, 90))
@@ -124,18 +134,78 @@ fn server_row(ui: &mut egui::Ui, row: &Row, selected: bool) -> egui::Response {
 }
 
 impl Launcher {
+    /// A community list entry with the status its server gave.
+    fn community_row(&self, server: &crate::community::Server) -> Row {
+        let entry = &server.entry;
+        let about = if entry.description.is_empty() {
+            entry.address.clone()
+        } else {
+            format!("{} · {}", entry.description, entry.address)
+        };
+        match &server.status {
+            crate::community::Status::Online {
+                address,
+                info,
+                ping,
+            } => {
+                let world = info.content_pack.clone();
+                let detail = format!(
+                    "{about} · {} · {} ms",
+                    world.as_deref().unwrap_or("San Andreas"),
+                    ping.as_millis()
+                );
+                let address = address.to_string();
+                Row {
+                    key: format!("community:{}", entry.address),
+                    name: entry.name.clone(),
+                    detail,
+                    players: Some((info.players, info.capacity)),
+                    compatible: info.version == sa_net::VERSION,
+                    offline: None,
+                    world,
+                    saved: self
+                        .config
+                        .favorites
+                        .iter()
+                        .position(|f| !f.relay && f.address == address),
+                    session: Session::Direct(address),
+                }
+            }
+            crate::community::Status::Offline(reason) => Row {
+                key: format!("community:{}", entry.address),
+                name: entry.name.clone(),
+                detail: format!("{about} · {reason}"),
+                players: None,
+                compatible: true,
+                offline: Some(reason.clone()),
+                world: None,
+                saved: None,
+                session: Session::Offline,
+            },
+        }
+    }
+    /// Whether the content pack a server plays on is in `content/`.
+    fn has_pack(&self, id: &str) -> bool {
+        self.packs
+            .iter()
+            .any(|(folder, _)| folder.file_name().is_some_and(|name| name == id))
+    }
+
     fn rows(&self) -> Vec<Row> {
         let search = self.search.to_lowercase();
         let mut rows: Vec<Row> = match self.server_tab {
             ServerTab::All => self
-                .servers
+                .community
                 .iter()
-                .map(|server| Row {
+                .map(|server| self.community_row(server))
+                .chain(self.servers.iter().map(|server| Row {
                     key: format!("live:{}", server.code),
                     name: server.name.clone(),
                     detail: format!("Join code {} · relay {}", server.code, self.config.relay),
                     players: Some((server.players, server.capacity)),
                     compatible: server.version == sa_net::VERSION,
+                    offline: None,
+                    world: None,
                     session: Session::Relay {
                         address: self.config.relay.clone(),
                         code: server.code.clone(),
@@ -143,7 +213,7 @@ impl Launcher {
                     saved: self.config.favorites.iter().position(|f| {
                         f.relay && f.address == self.config.relay && f.code == server.code
                     }),
-                })
+                }))
                 .collect(),
             ServerTab::Favorites => self
                 .config
@@ -166,6 +236,7 @@ impl Launcher {
     pub(super) fn multiplayer(&mut self, ui: &mut egui::Ui) {
         if !self.browser_initialized {
             self.browser_initialized = true;
+            self.browse_community();
             if !self.config.relay.trim().is_empty() {
                 self.browse();
             }
@@ -210,14 +281,20 @@ impl Launcher {
                     self.relay_mode = false;
                     self.direct_open = true;
                 }
+                let relay = !self.config.relay.trim().is_empty();
                 if ui
                     .add_enabled(
-                        self.browser_worker.is_none() && !self.config.relay.trim().is_empty(),
+                        self.browser_worker.is_none()
+                            && self.community_worker.is_none()
+                            && (relay || self.community_source.is_some()),
                         egui::Button::new("⟳ Refresh"),
                     )
                     .clicked()
                 {
-                    self.browse();
+                    self.browse_community();
+                    if relay {
+                        self.browse();
+                    }
                 }
                 ui.add(
                     egui::TextEdit::singleline(&mut self.search)
@@ -257,7 +334,11 @@ impl Launcher {
                         if response.clicked() {
                             self.selected_server = Some(row.key.clone());
                         }
-                        if response.double_clicked() && row.compatible && self.join_ready() {
+                        if response.double_clicked()
+                            && row.compatible
+                            && row.offline.is_none()
+                            && self.join_ready()
+                        {
                             self.start(row.session.clone());
                         }
                     }
@@ -285,6 +366,24 @@ impl Launcher {
         if self.server_tab != ServerTab::All {
             return;
         }
+        if self.community_worker.is_some() {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Loading the community server list...");
+            });
+        } else if let Some(error) = self.community_error.clone() {
+            surface(ui, |ui| {
+                ui.colored_label(ACCENT, "The community server list could not be loaded.");
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Retry").clicked() {
+                        self.browse_community();
+                    }
+                });
+                ui.collapsing("Details", |ui| {
+                    ui.label(error);
+                });
+            });
+        }
         if self.browser_worker.is_some() {
             ui.horizontal(|ui| {
                 ui.spinner();
@@ -311,19 +410,12 @@ impl Launcher {
                 });
             });
         } else if self.config.relay.trim().is_empty() {
-            surface(ui, |ui| {
-                ui.label(RichText::new("No relay configured").strong());
-                ui.label("Enter a relay supplied by your host to browse its public servers. Direct IP connections also work without a directory.");
-                ui.horizontal_wrapped(|ui| {
-                    if ui.button("Configure relay").clicked() {
-                        self.relay_mode = true;
-                        self.direct_open = true;
-                    }
-                    if ui.button("Direct connect").clicked() {
-                        self.relay_mode = false;
-                        self.direct_open = true;
-                    }
-                });
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("Got a relay or join code from a host?").color(MUTED));
+                if ui.link("Configure relay").clicked() {
+                    self.relay_mode = true;
+                    self.direct_open = true;
+                }
             });
         } else if self.browser_time.is_none() {
             ui.label("Refresh to load servers from your configured relay.");
@@ -351,13 +443,18 @@ impl Launcher {
 
     fn empty_tab(&mut self, ui: &mut egui::Ui) {
         let text = match self.server_tab {
-            ServerTab::All if !self.search.is_empty() && !self.servers.is_empty() => {
+            ServerTab::All
+                if !self.search.is_empty()
+                    && !(self.servers.is_empty() && self.community.is_empty()) =>
+            {
                 "No servers match this search."
             }
-            ServerTab::All if self.browser_time.is_some() => {
-                "No public servers on this relay yet. A host can publish one from the game or sa-server."
+            ServerTab::All if self.community_worker.is_some() || self.browser_worker.is_some() => {
+                ""
             }
-            ServerTab::All => "",
+            ServerTab::All => {
+                "No public servers yet. Server owners can add theirs to the community list (community/servers.json in the SARE repository), or share an IP or join code."
+            }
             ServerTab::Favorites => "No favorites yet. Select a server and add it to favorites.",
             ServerTab::History => "Servers you join appear here.",
         };
@@ -391,6 +488,22 @@ impl Launcher {
                             .desired_height(6.),
                     );
                 }
+                if let Some(reason) = &row.offline {
+                    ui.colored_label(
+                        Color32::from_rgb(230, 120, 90),
+                        format!("This server did not answer: {reason}."),
+                    );
+                }
+                if let Some(world) = &row.world {
+                    if self.has_pack(world) {
+                        ui.label(format!("Plays on the world \"{world}\"."));
+                    } else {
+                        ui.colored_label(
+                            Color32::from_rgb(230, 170, 90),
+                            format!("Plays on the world \"{world}\", which you do not have yet. Copy its folder into SARE's content folder before you join."),
+                        );
+                    }
+                }
                 if !row.compatible {
                     ui.colored_label(
                         Color32::from_rgb(230, 120, 90),
@@ -405,7 +518,7 @@ impl Launcher {
                 ui.add_space(8.);
                 let full = row.players.is_some_and(|(n, max)| n >= max);
                 let connect = ui.add_enabled(
-                    row.compatible && !full && self.join_ready(),
+                    row.compatible && row.offline.is_none() && !full && self.join_ready(),
                     primary("CONNECT").min_size(egui::vec2(ui.available_width(), 48.)),
                 );
                 if connect.clicked() {
@@ -419,6 +532,7 @@ impl Launcher {
                     });
                 }
                 ui.horizontal_wrapped(|ui| match (row.saved, self.server_tab) {
+                    (None, _) if row.offline.is_some() => {}
                     (None, _) => {
                         if ui.button("☆ Add to favorites").clicked() {
                             self.save_row(&row);
@@ -613,6 +727,8 @@ fn saved_row(f: &sa_client::Favorite, saved: Option<usize>) -> Row {
         },
         players: None,
         compatible: true,
+        offline: None,
+        world: None,
         session: if f.relay {
             Session::Relay {
                 address: f.address.clone(),
