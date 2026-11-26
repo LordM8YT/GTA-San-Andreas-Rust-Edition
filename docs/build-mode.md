@@ -1,6 +1,6 @@
-# Build Mode: SARE's world editor
+# SARE Studio (Build Mode): SARE's world editor
 
-Build Mode lets you make and edit a SARE world inside SARE itself: place
+SARE Studio (called Build Mode in older versions and in the code) lets you make and edit a SARE world inside SARE itself: place
 objects, move, rotate and scale them, organise them, save, and playtest
 straight away. It needs **no GTA San Andreas files**: a clean machine with
 SARE is enough. Everything you make is a normal [content pack](content-packs.md),
@@ -51,7 +51,11 @@ the mouse; otherwise on the ground plane. With Snap on, positions snap to
 the grid (hold Ctrl while dragging to invert snapping).
 
 Other worlds: *File → New world* (Ctrl+N) makes a new world beside this one
-and *File → Open world* (Ctrl+O) lists every installed world. SARE restarts on
+and *File → Open world* (Ctrl+O) lists the worlds you opened recently first,
+then every installed world. *Browse for a world folder…* opens a world
+anywhere on your PC (pick the folder that holds its `content.json`); a
+folder that is not a world says so instead of failing later. The recent
+list (up to 10) is kept in `studio-recent.json` beside SARE's settings. SARE restarts on
 the chosen world (each world loads its own base scene at start-up), and asks
 first if there are unsaved changes.
 

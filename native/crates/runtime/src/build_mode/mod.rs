@@ -238,6 +238,14 @@ pub struct BuildMode {
     pub export: Option<ExportReport>,
 }
 
+/// Where File › Open world keeps the recent worlds: beside the settings.
+pub fn recent_file() -> PathBuf {
+    sa_client::settings::Settings::path()
+        .parent()
+        .map(|p| p.join(sa_editor::recent::FILE))
+        .unwrap_or_else(|| PathBuf::from(sa_editor::recent::FILE))
+}
+
 /// Find or create the project named by `--build`: a pack id, a pack
 /// folder, or `new:<Name>` for a new world in the content folder.
 pub fn resolve_project(argument: &str) -> Result<PathBuf> {
@@ -271,6 +279,9 @@ pub fn resolve_project(argument: &str) -> Result<PathBuf> {
 impl BuildMode {
     pub fn open(folder: &Path) -> Result<Self> {
         let (project, doc) = Project::open(folder)?;
+        if let Err(error) = sa_editor::recent::remember(&recent_file(), folder) {
+            crate::runtime_log::line(format!("Build Mode: recent worlds not saved: {error:#}"));
+        }
         let recovery = match project.recovery(&doc) {
             Ok(found) => found,
             Err(error) => {
@@ -974,6 +985,18 @@ impl State {
         if !build.playtesting && self.captured {
             self.capture(false);
         }
+        // The window (and taskbar) names the editor and the world; * marks
+        // unsaved changes.
+        let title = if build.playtesting {
+            format!("SARE Studio · {} (playtest)", build.doc.info.name)
+        } else {
+            let unsaved = if build.history.dirty() { " *" } else { "" };
+            format!("SARE Studio · {}{unsaved}", build.doc.info.name)
+        };
+        if build.ui.window_title != title {
+            self.window.set_title(&title);
+            build.ui.window_title = title;
+        }
         match build.cover {
             Cover::Requested => {
                 // Read back the next frame, drawn without panels.
@@ -1082,7 +1105,7 @@ impl State {
                 build.playtesting = false;
                 // Objects scripts moved are back where they were placed.
                 build.gpu.moved.clear();
-                build.info("Back in Build Mode. Your edits are as you left them.");
+                build.info("Back in Studio. Your edits are as you left them.");
             }
             return;
         }
@@ -1118,7 +1141,7 @@ impl State {
         let player = sa_scene::collision::Player::spawn(&collision, feet + Vec3::Y * 2.0);
         let standing = collision.standing_at(feet, feet.y + 2.0).is_some();
         build.playtesting = true;
-        build.info("Playtest started. Press F6 to return to Build Mode.");
+        build.info("Playtest started. Press F6 to return to Studio.");
         if !standing {
             build.warn("Nothing solid under the spawn point: the player may fall. Move the spawn or add ground.");
         }
