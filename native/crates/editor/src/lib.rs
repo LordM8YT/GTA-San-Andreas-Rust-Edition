@@ -18,6 +18,7 @@ pub mod history;
 pub mod ops;
 pub mod project;
 pub mod publish;
+pub mod recent;
 pub mod thumbnail;
 pub mod viewport;
 pub mod world_position;

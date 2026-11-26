@@ -94,6 +94,8 @@ pub struct UiState {
     new_world: Option<String>,
     /// Open world dialog: the worlds found, by folder.
     open_world: Option<Vec<(std::path::PathBuf, String)>>,
+    /// Open world dialog: recently opened worlds (not this one), newest first.
+    open_recent: Vec<(std::path::PathBuf, String)>,
     /// Another world to open once unsaved changes are dealt with.
     confirm_switch: Option<std::path::PathBuf>,
     /// Viewport: draw the bounds of solid objects.
@@ -353,7 +355,7 @@ fn shortcuts(build: &mut BuildMode, ui: &mut Ui) {
         build.ui.new_world = Some(String::new());
     }
     if consume(ctrl(Key::O)) {
-        build.ui.open_world = Some(worlds(build));
+        open_world_dialog(build);
     }
     if consume(ctrl_shift(Key::G)) {
         ungroup(build);
@@ -505,7 +507,7 @@ fn menu_bar(build: &mut BuildMode, ui: &mut Ui) {
                 .add(egui::Button::new("Open world…").shortcut_text("Ctrl+O"))
                 .clicked()
             {
-                build.ui.open_world = Some(worlds(build));
+                open_world_dialog(build);
             }
             ui.separator();
             if ui
@@ -3776,6 +3778,35 @@ fn worlds_folder(build: &BuildMode) -> std::path::PathBuf {
         .unwrap_or_else(|| sa_scene::content_pack::DEFAULT_DIR.into())
 }
 
+/// Fill and show File › Open world.
+fn open_world_dialog(build: &mut BuildMode) {
+    let here = std::fs::canonicalize(&build.project.folder).ok();
+    build.ui.open_recent = sa_editor::recent::load(&super::recent_file())
+        .into_iter()
+        .filter(|f| std::fs::canonicalize(f).ok() != here)
+        .filter_map(|f| {
+            let name = sa_scene::content_pack::Manifest::read(&f).ok()?.name;
+            Some((f, name))
+        })
+        .collect();
+    build.ui.open_world = Some(worlds(build));
+}
+
+/// A world folder picked with the system's folder picker, checked.
+fn browse_world(build: &mut BuildMode) -> Option<std::path::PathBuf> {
+    let folder = rfd::FileDialog::new()
+        .set_title("Open a world folder (the one with content.json)")
+        .set_directory(worlds_folder(build))
+        .pick_folder()?;
+    match sa_editor::recent::check_world(&folder) {
+        Ok(()) => Some(folder),
+        Err(error) => {
+            build.error(format!("Cannot open that folder: {error:#}"));
+            None
+        }
+    }
+}
+
 /// Every world (content pack) that can be opened, by name.
 fn worlds(build: &BuildMode) -> Vec<(std::path::PathBuf, String)> {
     let mut dirs = vec![worlds_folder(build)];
@@ -3855,7 +3886,9 @@ fn world_dialogs(build: &mut BuildMode, ctx: &egui::Context) {
         }
     }
     if let Some(found) = &build.ui.open_world {
+        let recent = &build.ui.open_recent;
         let mut chosen = None;
+        let mut browse = false;
         let mut open = true;
         egui::Window::new("Open world")
             .collapsible(false)
@@ -3863,15 +3896,35 @@ fn world_dialogs(build: &mut BuildMode, ctx: &egui::Context) {
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
                 compact(ui);
-                if found.is_empty() {
+                if found.is_empty() && recent.is_empty() {
                     ui.label(
                         RichText::new("No other worlds found. Make one with File → New world.")
                             .color(MUTED),
                     );
                 }
+                if ui
+                    .button("📂 Browse for a world folder…")
+                    .on_hover_text("Open a world anywhere on this PC: pick the folder that holds its content.json")
+                    .clicked()
+                {
+                    browse = true;
+                }
                 egui::ScrollArea::vertical()
                     .max_height(360.0)
                     .show(ui, |ui| {
+                        if !recent.is_empty() {
+                            section(ui, "Recent");
+                            for (folder, name) in recent {
+                                if ui
+                                    .add_sized([320.0, 24.0], egui::Button::new(name.as_str()))
+                                    .on_hover_text(folder.display().to_string())
+                                    .clicked()
+                                {
+                                    chosen = Some(folder.clone());
+                                }
+                            }
+                            section(ui, "All worlds");
+                        }
                         for (folder, name) in found {
                             let label = format!(
                                 "{name}   {}",
@@ -3890,6 +3943,9 @@ fn world_dialogs(build: &mut BuildMode, ctx: &egui::Context) {
                         }
                     });
             });
+        if browse {
+            chosen = browse_world(build);
+        }
         if let Some(folder) = chosen {
             build.ui.open_world = None;
             switch_world(build, folder);

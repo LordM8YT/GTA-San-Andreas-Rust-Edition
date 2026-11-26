@@ -51,7 +51,11 @@ the mouse; otherwise on the ground plane. With Snap on, positions snap to
 the grid (hold Ctrl while dragging to invert snapping).
 
 Other worlds: *File → New world* (Ctrl+N) makes a new world beside this one
-and *File → Open world* (Ctrl+O) lists every installed world. SARE restarts on
+and *File → Open world* (Ctrl+O) lists the worlds you opened recently first,
+then every installed world. *Browse for a world folder…* opens a world
+anywhere on your PC (pick the folder that holds its `content.json`); a
+folder that is not a world says so instead of failing later. The recent
+list (up to 10) is kept in `studio-recent.json` beside SARE's settings. SARE restarts on
 the chosen world (each world loads its own base scene at start-up), and asks
 first if there are unsaved changes.
 
