@@ -566,6 +566,31 @@ mod tests {
     }
 
     #[test]
+    fn the_studio_templates_are_clean_and_stand_on_ground() {
+        use sa_scene::world_logic::{self, Logic};
+        for id in ["obstacle-course", "racing-track"] {
+            let folder =
+                PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../content")).join(id);
+            let (_, doc) = Project::open(&folder).unwrap();
+            assert_eq!(world_logic::check(&doc.layout), Vec::new(), "{id}");
+            assert!(
+                Logic::new(&doc.layout).spawn().is_some(),
+                "{id} has a spawn"
+            );
+            let mut world = PackWorld::open(&folder).unwrap();
+            let origin = sa_scene::content_pack::ANCHOR;
+            let scene = world.load(origin, origin, 300.0).unwrap();
+            let collision = scene.collision.unwrap();
+            let [x, y, z] = world.spawn().unwrap();
+            let point = glam::Vec3::new(x - origin[0], z, origin[1] - y);
+            assert!(
+                collision.standing_at(point, z + 2.0).is_some(),
+                "{id}: the spawn has ground under it"
+            );
+        }
+    }
+
+    #[test]
     fn autosave_recovers_unsaved_work() {
         let root = temp("autosave");
         let (project, mut doc) = Project::create(&root.join("w"), "w", "W").unwrap();

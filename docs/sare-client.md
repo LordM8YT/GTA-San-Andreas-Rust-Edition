@@ -41,8 +41,9 @@ Every tile opens the experience page: cover, description, About (type,
 version, licence, folder) and Play, Continue (San Andreas with a saved
 position), Set up, Edit in Build Mode and Open folder.
 
-Create lists templates: Blank world plus the bundled example packs
-(`experience::TEMPLATES`). A template is copied into `content/<new id>` with
+Create lists templates: Blank world plus the bundled packs in
+`experience::TEMPLATES` (Obstacle Course and Racing Track from
+`tools/make-studio-templates.py`, Example Town, Gameplay Sample, SARE RP Town). A template is copied into `content/<new id>` with
 the chosen name, no author and version 0.1.0, then opened in Build Mode; the
 template itself is never changed. Templates stay playable from their page and
 servers can still use them as content packs, but they are not listed as games.

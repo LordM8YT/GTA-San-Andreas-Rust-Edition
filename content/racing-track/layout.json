@@ -1,0 +1,1404 @@
+{
+  "format": "sare-world-layout",
+  "version": 1,
+  "next_id": 55,
+  "settings": {
+    "hour": 17,
+    "weather": "clear",
+    "scripts": [
+      {
+        "name": "Race results",
+        "source": "-- Tells everyone each finish time of the course.\nworld.on('finish', function(player, race, seconds)\n  world.message(player.name .. ' finished in ' .. string.format('%.1f', seconds) .. ' s', 6)\nend)\n"
+      }
+    ]
+  },
+  "nodes": [
+    {
+      "id": 1,
+      "name": "Scenery"
+    },
+    {
+      "id": 2,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          -80,
+          -80,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 3,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          -80,
+          -48,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 4,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          -80,
+          -16,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 5,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          -80,
+          16,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 6,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          -80,
+          48,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 7,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          -80,
+          80,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 8,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          -48,
+          -80,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 9,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          -48,
+          -48,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 10,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          -48,
+          -16,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 11,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          -48,
+          16,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 12,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          -48,
+          48,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 13,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          -48,
+          80,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 14,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          -16,
+          -80,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 15,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          -16,
+          -48,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 16,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          -16,
+          -16,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 17,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          -16,
+          16,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 18,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          -16,
+          48,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 19,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          -16,
+          80,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 20,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          16,
+          -80,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 21,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          16,
+          -48,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 22,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          16,
+          -16,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 23,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          16,
+          16,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 24,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          16,
+          48,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 25,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          16,
+          80,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 26,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          48,
+          -80,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 27,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          48,
+          -48,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 28,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          48,
+          -16,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 29,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          48,
+          16,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 30,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          48,
+          48,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 31,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          48,
+          80,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 32,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          80,
+          -80,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 33,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          80,
+          -48,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 34,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          80,
+          -16,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 35,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          80,
+          16,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 36,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          80,
+          48,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 37,
+      "name": "Field",
+      "parent": 1,
+      "asset": "builtin:grass",
+      "transform": {
+        "position": [
+          80,
+          80,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 38,
+      "name": "Track",
+      "parent": 1,
+      "asset": "builtin:spline-road",
+      "transform": {
+        "position": [
+          0,
+          0,
+          0.02
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "road": {
+        "points": [
+          [
+            70.0,
+            0.0,
+            0.0
+          ],
+          [
+            64.67,
+            15.31,
+            0.0
+          ],
+          [
+            49.5,
+            28.28,
+            0.0
+          ],
+          [
+            26.79,
+            36.96,
+            0.0
+          ],
+          [
+            0.0,
+            40.0,
+            0.0
+          ],
+          [
+            -26.79,
+            36.96,
+            0.0
+          ],
+          [
+            -49.5,
+            28.28,
+            0.0
+          ],
+          [
+            -64.67,
+            15.31,
+            0.0
+          ],
+          [
+            -70.0,
+            0.0,
+            0.0
+          ],
+          [
+            -64.67,
+            -15.31,
+            0.0
+          ],
+          [
+            -49.5,
+            -28.28,
+            0.0
+          ],
+          [
+            -26.79,
+            -36.96,
+            0.0
+          ],
+          [
+            -0.0,
+            -40.0,
+            0.0
+          ],
+          [
+            26.79,
+            -36.96,
+            0.0
+          ],
+          [
+            49.5,
+            -28.28,
+            0.0
+          ],
+          [
+            64.67,
+            -15.31,
+            0.0
+          ]
+        ],
+        "width": 12,
+        "closed": true
+      }
+    },
+    {
+      "id": 39,
+      "name": "Tree",
+      "parent": 1,
+      "asset": "builtin:tree",
+      "transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 40,
+      "name": "Tree",
+      "parent": 1,
+      "asset": "builtin:tree",
+      "transform": {
+        "position": [
+          -30,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 41,
+      "name": "Tree",
+      "parent": 1,
+      "asset": "builtin:tree",
+      "transform": {
+        "position": [
+          30,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 42,
+      "name": "Tree",
+      "parent": 1,
+      "asset": "builtin:tree",
+      "transform": {
+        "position": [
+          0,
+          70,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 43,
+      "name": "Tree",
+      "parent": 1,
+      "asset": "builtin:tree",
+      "transform": {
+        "position": [
+          0,
+          -70,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 44,
+      "name": "Stand",
+      "parent": 1,
+      "asset": "builtin:platform",
+      "transform": {
+        "position": [
+          0,
+          -54,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 45,
+      "name": "Lamp post",
+      "parent": 1,
+      "asset": "builtin:lamp-post",
+      "transform": {
+        "position": [
+          -20,
+          -48,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "light": {
+        "color": [
+          1.0,
+          0.85,
+          0.6
+        ],
+        "size": 1.0,
+        "radius": 8.0,
+        "offset": [
+          0.0,
+          1.0,
+          4.25
+        ]
+      }
+    },
+    {
+      "id": 46,
+      "name": "Lamp post",
+      "parent": 1,
+      "asset": "builtin:lamp-post",
+      "transform": {
+        "position": [
+          20,
+          -48,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "light": {
+        "color": [
+          1.0,
+          0.85,
+          0.6
+        ],
+        "size": 1.0,
+        "radius": 8.0,
+        "offset": [
+          0.0,
+          1.0,
+          4.25
+        ]
+      }
+    },
+    {
+      "id": 47,
+      "name": "Gameplay"
+    },
+    {
+      "id": 48,
+      "name": "Start",
+      "parent": 47,
+      "asset": "builtin:marker-spawn",
+      "transform": {
+        "position": [
+          0,
+          -48,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "spawn"
+      }
+    },
+    {
+      "id": 49,
+      "name": "How to race",
+      "parent": 47,
+      "asset": "builtin:marker-trigger",
+      "transform": {
+        "position": [
+          0,
+          -48,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "trigger",
+        "size": [
+          10,
+          10,
+          4
+        ],
+        "once": true,
+        "on_enter": [
+          {
+            "do": "message",
+            "text": "Press F9 for your car, then drive through the checkpoints around the track.",
+            "seconds": 7
+          }
+        ]
+      }
+    },
+    {
+      "id": 50,
+      "name": "Start line",
+      "parent": 47,
+      "asset": "builtin:marker-checkpoint",
+      "transform": {
+        "position": [
+          -0.0,
+          -40.0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "checkpoint",
+        "size": [
+          14,
+          14,
+          5
+        ],
+        "race": "track",
+        "order": 1
+      }
+    },
+    {
+      "id": 51,
+      "name": "Checkpoint 2",
+      "parent": 47,
+      "asset": "builtin:marker-checkpoint",
+      "transform": {
+        "position": [
+          70.0,
+          0.0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "checkpoint",
+        "size": [
+          14,
+          14,
+          5
+        ],
+        "race": "track",
+        "order": 2
+      }
+    },
+    {
+      "id": 52,
+      "name": "Checkpoint 3",
+      "parent": 47,
+      "asset": "builtin:marker-checkpoint",
+      "transform": {
+        "position": [
+          0.0,
+          40.0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "checkpoint",
+        "size": [
+          14,
+          14,
+          5
+        ],
+        "race": "track",
+        "order": 3
+      }
+    },
+    {
+      "id": 53,
+      "name": "Checkpoint 4",
+      "parent": 47,
+      "asset": "builtin:marker-checkpoint",
+      "transform": {
+        "position": [
+          -70.0,
+          0.0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "checkpoint",
+        "size": [
+          14,
+          14,
+          5
+        ],
+        "race": "track",
+        "order": 4
+      }
+    },
+    {
+      "id": 54,
+      "name": "Finish",
+      "parent": 47,
+      "asset": "builtin:marker-checkpoint",
+      "transform": {
+        "position": [
+          -26.79,
+          -36.96,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "checkpoint",
+        "size": [
+          14,
+          14,
+          5
+        ],
+        "race": "track",
+        "order": 5
+      }
+    }
+  ]
+}
