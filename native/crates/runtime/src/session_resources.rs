@@ -82,7 +82,74 @@ struct Prepared {
     peds: Vec<(String, sa_scene::ped::Ped)>,
     names: Vec<String>,
     /// The server runs on this content pack, which is not the open world.
-    switch_to: Option<String>,
+    switch_to: Option<PackSwitch>,
+}
+#[derive(Debug, PartialEq)]
+struct PackSwitch {
+    id: String,
+    /// The world to restart in: the server's copy, downloaded, or else the
+    /// player's own copy. `None`: neither is available.
+    folder: Option<PathBuf>,
+    /// Why the server's copy could not be fetched.
+    problem: Option<String>,
+}
+/// The player's own copy of content pack `id`, if SARE can find one.
+fn local_pack(id: &str) -> Option<PathBuf> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match sa_scene::content::ContentSource::from_args(&pack_lookup_args(&args, id), None) {
+        Ok(sa_scene::content::ContentSource::Pack(folder)) => Some(folder),
+        _ => None,
+    }
+}
+/// Get the world `id` the server at `endpoint` plays on.
+fn fetch_world(
+    id: String,
+    endpoint: &Endpoint,
+    cache: &Path,
+    allow_download: bool,
+    cancel: &AtomicBool,
+    progress: &Mutex<String>,
+) -> PackSwitch {
+    let local = local_pack(&id);
+    let (address, code) = match endpoint {
+        Endpoint::Join(address) => (*address, None),
+        Endpoint::RelayJoin(address, code) => (*address, Some(code.as_str())),
+        Endpoint::Host(_) | Endpoint::RelayHost(..) => {
+            return PackSwitch {
+                id,
+                folder: local,
+                problem: None,
+            }
+        }
+    };
+    *progress.lock().unwrap() = format!("Getting the server's world \"{id}\"...");
+    match resources::download_world(
+        address,
+        code,
+        &id,
+        &resources::worlds_dir(cache),
+        local.as_deref(),
+        allow_download,
+        cancel,
+        |done, total| {
+            *progress.lock().unwrap() = format!(
+                "Downloading the server's world: {:.1} / {:.1} MiB",
+                done as f64 / 1048576.0,
+                total as f64 / 1048576.0
+            );
+        },
+    ) {
+        Ok(folder) => PackSwitch {
+            id,
+            folder: Some(folder),
+            problem: None,
+        },
+        Err(error) => PackSwitch {
+            id,
+            folder: local,
+            problem: Some(error.to_string()),
+        },
+    }
 }
 pub(super) fn cache_directory() -> PathBuf {
     sa_client::cache_dir()
@@ -127,8 +194,16 @@ fn prepare(
         Share::default()
     };
     if let OpenWorld::Standalone(Some(pack)) = open {
-        // A player hosting in a content pack tells joiners which world to use.
+        // A player hosting in a content pack tells joiners which world to
+        // use, and hands it to those who do not have it.
         share.manifest.content_pack = Some(pack.clone());
+        if endpoint.is_host() {
+            if let Some(folder) = local_pack(pack) {
+                if let Err(error) = share.add_world(pack, &folder) {
+                    eprintln!("Cannot share world {pack} with players: {error}");
+                }
+            }
+        }
     }
     let show_progress = |done: usize, total: usize| {
         *progress.lock().unwrap() = format!(
@@ -186,7 +261,9 @@ fn prepare(
         None
     } else {
         needs_pack(open, cached.manifest.content_pack.as_deref())
+            .map(|id| fetch_world(id, &endpoint, cache, allow_download, cancel, progress))
     };
+    cancelled(cancel)?;
     let game = match open {
         OpenWorld::Original(game) if switch_to.is_none() => game,
         // Content packs and the testbed have no San Andreas files to load;
@@ -607,17 +684,23 @@ impl State {
     }
     /// The server plays on a content pack that is not open here: start SARE
     /// again in that pack and join from there, or say how to get the pack.
-    fn switch_to_pack(&mut self, pack: String, endpoint: &Endpoint) {
+    fn switch_to_pack(&mut self, switch: PackSwitch, endpoint: &Endpoint) {
         self.menu.network_status = "Offline".into();
         self.menu.network_active = false;
         let args: Vec<String> = std::env::args().skip(1).collect();
-        let lookup = pack_lookup_args(&args, &pack);
-        if sa_scene::content::ContentSource::from_args(&lookup, None).is_err() {
+        let pack = switch.id;
+        let Some(folder) = switch.folder else {
             self.menu.message = format!(
-                "This server plays on the content pack \"{pack}\", which is not installed. Copy its folder into SARE's content folder and join again."
+                "This server plays on the world \"{pack}\", and it could not be downloaded ({}). Copy its folder into SARE's content folder and join again.",
+                switch.problem.as_deref().unwrap_or("the server does not share it")
             );
             crate::runtime_log::line(&self.menu.message);
             return;
+        };
+        if let Some(problem) = &switch.problem {
+            crate::runtime_log::line(format!(
+                "Using your own copy of \"{pack}\": the server's could not be downloaded ({problem})."
+            ));
         }
         let Some(join) = endpoint.join_args() else {
             return;
@@ -625,17 +708,18 @@ impl State {
         self.menu.message =
             format!("This server plays on \"{pack}\". Restarting SARE in that world...");
         crate::runtime_log::line(&self.menu.message);
-        self.pack_restart = Some(restart_args(&args, &pack, &join));
+        self.pack_restart = Some(restart_args(&args, &folder.to_string_lossy(), &join));
         self.quit_requested = true;
     }
     pub(super) fn update_session_resources(&mut self) {
         if let Some(job) = &self.resource_job {
             self.menu.network_status = job.progress.lock().unwrap().clone();
             match job.result.try_recv() {
-                Ok(Ok(prepared)) if prepared.switch_to.is_some() => {
+                Ok(Ok(mut prepared)) if prepared.switch_to.is_some() => {
                     self.resource_job = None;
-                    let pack = prepared.switch_to.clone().unwrap_or_default();
-                    self.switch_to_pack(pack, &prepared.endpoint);
+                    if let Some(switch) = prepared.switch_to.take() {
+                        self.switch_to_pack(switch, &prepared.endpoint);
+                    }
                 }
                 Ok(Ok(prepared)) => {
                     self.resource_installing = Some(Installing::new(prepared));
@@ -808,6 +892,24 @@ mod standalone_tests {
         let (endpoint, share, _) = installing.connection();
         assert!(endpoint.is_host());
         assert_eq!(share.manifest.content_pack.as_deref(), Some("rp-town"));
+        let _ = std::fs::remove_dir_all(cache);
+    }
+    #[test]
+    fn a_world_that_cannot_be_fetched_says_why() {
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = closed.local_addr().unwrap();
+        drop(closed);
+        let cache = std::env::temp_dir().join(format!("sare-world-fetch-{}", std::process::id()));
+        let switch = fetch_world(
+            "no-such-world-here".into(),
+            &Endpoint::Join(address),
+            &cache.join("server-cache"),
+            true,
+            &AtomicBool::new(false),
+            &Mutex::new(String::new()),
+        );
+        assert_eq!(switch.folder, None);
+        assert!(switch.problem.is_some());
         let _ = std::fs::remove_dir_all(cache);
     }
     #[test]

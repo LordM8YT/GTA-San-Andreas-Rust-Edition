@@ -161,8 +161,9 @@ listed publicly.
 folder (the one with `server.cfg`) and press *Publish*. The world is saved,
 copied to the server's `content/<id>/` (an older copy there is replaced;
 a failed copy leaves it as it was) and `server.cfg` gets
-`sets content_pack <id>`, so players who join play this world. Restart the
-server for players to get the new version.
+`sets content_pack <id>`, so players who join play this world. Players who
+do not have it download it when they join. Restart the server for players to
+get the new version.
 
 ## Physics
 
