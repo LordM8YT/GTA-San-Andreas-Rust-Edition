@@ -3375,6 +3375,7 @@ name = "sa-launcher"
 version = "0.61.0"
 dependencies = [
  "anyhow",
+ "ed25519-dalek",
  "eframe",
  "egui",
  "egui-phosphor",
