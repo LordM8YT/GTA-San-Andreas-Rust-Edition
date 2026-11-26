@@ -61,6 +61,15 @@ jobs:
       - name: Package review client
         working-directory: .
         run: python tools/package-client.py --platform ${{ matrix.platform }}
+      - name: Windows installer (build, silent install, verify, uninstall)
+        if: runner.os == 'Windows'
+        working-directory: .
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe") -and -not (Test-Path "$env:ProgramFiles\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+          }
+          python tools/build-installer.py --smoke-test
       - name: Package dedicated server
         if: runner.os != 'macOS'
         working-directory: .
@@ -68,7 +77,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: SARE-${{ matrix.platform }}-test
-          path: native/target/packages/*.zip
+          path: |
+            native/target/packages/*.zip
+            native/target/packages/SARE-Setup.exe
           if-no-files-found: error
   # Licences, crate sources and security advisories of every dependency
   # (native/deny.toml). A new advisory shows as a failed check but does not
@@ -111,6 +122,7 @@ jobs:
           # Do not publish an older concurrent build after main has advanced.
           test "$(gh api repos/$GITHUB_REPOSITORY/commits/main --jq .sha)" = "$GITHUB_SHA"
           test -f client-packages/SARE-windows-test.zip
+          test -f client-packages/SARE-Setup.exe
           test -f client-packages/SARE-linux-test.zip
           test -f client-packages/SARE-macos-aarch64-test.zip
           test -f client-packages/SARE-macos-x86_64-test.zip
@@ -126,7 +138,7 @@ jobs:
           if [ "$existing" != "true" ]; then
             gh release create "$tag" --target "$GITHUB_SHA" --title "SARE client ${GITHUB_SHA:0:12}" --draft --notes-file docs/client-release-notes.md
           fi
-          gh release upload "$tag" --clobber client-packages/SARE-windows-test.zip client-packages/SARE-linux-test.zip \
+          gh release upload "$tag" --clobber client-packages/SARE-Setup.exe client-packages/SARE-windows-test.zip client-packages/SARE-linux-test.zip \
             client-packages/SARE-server-windows.zip client-packages/SARE-server-linux.zip \
             client-packages/SARE-macos-aarch64-test.zip client-packages/SARE-macos-x86_64-test.zip
           gh release edit "$tag" --draft=false --latest
@@ -134,7 +146,7 @@ jobs:
             base="https://github.com/$GITHUB_REPOSITORY/releases/download/$tag"
             message=$(printf '%s\n' \
               "**New SARE build \`${GITHUB_SHA:0:12}\`**" \
-              "Client: [Windows]($base/SARE-windows-test.zip) · [Linux]($base/SARE-linux-test.zip)" \
+              "Client: [Windows installer]($base/SARE-Setup.exe) · [Windows ZIP]($base/SARE-windows-test.zip) · [Linux]($base/SARE-linux-test.zip)" \
               "Server: [Windows]($base/SARE-server-windows.zip) · [Linux]($base/SARE-server-linux.zip)" \
               "Release notes: https://github.com/$GITHUB_REPOSITORY/releases/tag/$tag")
             # An announcement failure must not fail an already-published release.
