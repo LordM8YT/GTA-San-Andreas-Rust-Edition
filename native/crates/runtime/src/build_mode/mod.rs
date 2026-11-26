@@ -974,7 +974,6 @@ impl State {
         if !build.playtesting && self.captured {
             self.capture(false);
         }
-<<<<<<< HEAD
         // The window (and taskbar) names the editor and the world; * marks
         // unsaved changes.
         let title = if build.playtesting {
@@ -986,7 +985,7 @@ impl State {
         if build.ui.window_title != title {
             self.window.set_title(&title);
             build.ui.window_title = title;
-=======
+        }
         match build.cover {
             Cover::Requested => {
                 // Read back the next frame, drawn without panels.
@@ -1000,7 +999,6 @@ impl State {
                 }
             }
             Cover::Idle | Cover::Hiding => {}
->>>>>>> origin/main
         }
         let performance_changed = build.ui.performance != self.menu.settings.editor_performance;
         if performance_changed {
