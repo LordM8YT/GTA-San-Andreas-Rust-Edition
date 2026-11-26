@@ -24,6 +24,32 @@ pub const REVOKED: &str = "__sare:vehicleRevoked";
 /// How close a server vehicle must be for F to ask for it.
 const REACH: f32 = 4.5;
 
+/// SARE's own player character, used by every world that does not bring
+/// its own `characters` (instead of the blocky stand-in): male and female
+/// bodies with hair, tops, trousers and shoes to pick and colour, and idle,
+/// walk, run, sit and fall clips. Generated from code by
+/// `tools/blender/make_rp_characters.py` (CC0), the same set as SARE RP Town.
+pub const DEFAULT_CHARACTERS: &[u8] = include_bytes!("../../../assets/characters/sare-default.glb");
+
+/// The built-in character set; None (with a log line) if it does not load.
+pub fn default_characters() -> Option<CharacterModel> {
+    match CharacterModel::parse(DEFAULT_CHARACTERS, Path::new(".")) {
+        Ok(model) => {
+            crate::runtime_log::line(format!(
+                "Characters: SARE default ({} vertices)",
+                model.vertex_count()
+            ));
+            Some(model)
+        }
+        Err(error) => {
+            crate::runtime_log::line(format!(
+                "SARE default characters FAILED, using the stand-in: {error:#}"
+            ));
+            None
+        }
+    }
+}
+
 /// What a content pack adds besides its world.
 #[derive(Default)]
 pub struct PackAssets {
@@ -31,6 +57,14 @@ pub struct PackAssets {
     pub vehicles: Vec<(VehicleSpec, Scene)>,
 }
 impl PackAssets {
+    /// A world without a pack (SARE Testbed): the default character only.
+    pub fn testbed() -> Self {
+        Self {
+            characters: default_characters(),
+            vehicles: Vec::new(),
+        }
+    }
+
     pub fn load(folder: &Path) -> Self {
         use crate::runtime_log::line;
         let manifest = match sa_scene::content_pack::Manifest::read(folder) {
@@ -50,10 +84,12 @@ impl PackAssets {
                 ));
                 Some(model)
             }
-            Ok(None) => None,
+            Ok(None) => default_characters(),
             Err(error) => {
-                line(format!("Characters FAILED, using the stand-in: {error:#}"));
-                None
+                line(format!(
+                    "Characters FAILED, using SARE's default character: {error:#}"
+                ));
+                default_characters()
             }
         };
         let (vehicles, failed) = sa_scene::content_pack::load_vehicles_reporting(folder, &manifest);
@@ -408,6 +444,20 @@ impl State {
             _ => return false,
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod default_character_tests {
+    #[test]
+    fn the_default_character_loads_with_its_clips() {
+        let model =
+            super::CharacterModel::parse(super::DEFAULT_CHARACTERS, std::path::Path::new("."))
+                .expect("the built-in characters load");
+        let clips = model.clip_names();
+        for clip in ["idle", "walk", "run", "sit", "fall"] {
+            assert!(clips.contains(&clip), "missing clip {clip}: {clips:?}");
+        }
     }
 }
 
