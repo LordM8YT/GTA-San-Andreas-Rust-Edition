@@ -1,6 +1,7 @@
 # Automatic client updates
 
-Download and extract a complete Windows/Linux/macOS client ZIP once, into a writable
+On Windows, run `SARE-Setup.exe` once ([Windows installer](windows-installer.md)),
+or download and extract a complete Windows/Linux/macOS client ZIP once, into a writable
 folder outside the original San Andreas installation. Subsequent packaged
 launchers check GitHub automatically at startup and every 30 minutes while open.
 They download and verify updates in the background, save client settings, wait

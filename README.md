@@ -14,7 +14,8 @@ build ID to distinguish builds. Existing commit-based release tags stay valid.
 
 [![Join the SARE Discord](https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/F8KwXJqw6D)
 [![Build status](https://img.shields.io/github/actions/workflow/status/LordM8YT/SARE/native.yml?branch=main&style=for-the-badge&label=build)](https://github.com/LordM8YT/SARE/actions/workflows/native.yml)
-[![Latest client](https://img.shields.io/badge/Download-latest%20client-2ea44f?style=for-the-badge)](https://github.com/LordM8YT/SARE/releases/latest)
+[![Download for Windows](https://img.shields.io/badge/Download-Windows%20installer-2ea44f?style=for-the-badge)](https://github.com/LordM8YT/SARE/releases/latest/download/SARE-Setup.exe)
+[![Latest client](https://img.shields.io/badge/Download-all%20platforms-2ea44f?style=for-the-badge)](https://github.com/LordM8YT/SARE/releases/latest)
 
 > **💬 Join the community on Discord: <https://discord.gg/F8KwXJqw6D>**
 > Get help, report bugs, find people to play with and follow development.
@@ -71,7 +72,8 @@ round-trip time is measured on the gameplay connection. F3 shows frame/CPU timin
 and resident memory. GPU timestamp profiling is not implemented.
 
 See [launcher setup and limits](docs/launcher.md) and [package instructions](docs/client-package.md).
-Every successful main-branch CI build publishes Windows/Linux and separate
+Every successful main-branch CI build publishes a Windows installer
+(`SARE-Setup.exe`, see [Windows installer](docs/windows-installer.md)), Windows/Linux and separate
 Apple Silicon/Intel macOS client ZIPs. Packaged
 launchers automatically download tested updates and restart after the game closes.
 Source checkouts continue to use Git/Cargo. See [automatic updates](docs/client-updates.md).
