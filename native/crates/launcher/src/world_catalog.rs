@@ -250,9 +250,12 @@ mod tests {
     impl Temp {
         fn new(name: &str) -> Self {
             let path = std::env::temp_dir().join(format!(
-                "sare-world-catalog-{name}-{}-{:?}",
+                "sare-world-catalog-{name}-{}-{}",
                 std::process::id(),
                 std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
             ));
             std::fs::create_dir_all(&path).unwrap();
             Self(path)
