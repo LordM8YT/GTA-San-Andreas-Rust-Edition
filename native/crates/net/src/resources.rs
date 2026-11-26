@@ -12,6 +12,9 @@ use std::{
 #[path = "cache_admin.rs"]
 mod admin;
 pub use admin::{cleanup_cache, inspect_cache, CachePack, CachePlan};
+#[path = "world_transfer.rs"]
+mod world;
+pub use world::{download_world, worlds_dir, WorldInventory};
 
 pub const MAX_FILE_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_PACK_BYTES: usize = 128 * 1024 * 1024;
@@ -33,6 +36,18 @@ fn valid_hash(value: &str) -> bool {
 
 /// Reject paths with Windows devices/ADS as well as Unix/Windows traversal.
 pub fn validate_path(value: &str) -> io::Result<()> {
+    safe_relative_path(value)?;
+    let extension = value.rsplit('.').next().unwrap().to_ascii_lowercase();
+    if !["dff", "txd", "png", "col", "ifp", "map", "glb"].contains(&extension.as_str())
+        && value != "mod.json"
+        && value != "resource.json"
+    {
+        return Err(error("Only supported native data files may be shared"));
+    }
+    Ok(())
+}
+/// A short relative `/` path that stays inside its folder on every OS.
+fn safe_relative_path(value: &str) -> io::Result<()> {
     if value.is_empty() || value.len() > 128 || !value.is_ascii() || value.split('/').count() > 8 {
         return Err(error("Invalid resource path"));
     }
@@ -57,13 +72,6 @@ pub fn validate_path(value: &str) -> io::Result<()> {
         {
             return Err(error("Windows device path rejected"));
         }
-    }
-    let extension = value.rsplit('.').next().unwrap().to_ascii_lowercase();
-    if !["dff", "txd", "png", "col", "ifp", "map", "glb"].contains(&extension.as_str())
-        && value != "mod.json"
-        && value != "resource.json"
-    {
-        return Err(error("Only supported native data files may be shared"));
     }
     Ok(())
 }
@@ -183,6 +191,8 @@ pub struct Input {
 pub struct Share {
     pub manifest: Manifest,
     blobs: HashMap<String, Arc<[u8]>>,
+    /// The shared world's inventory blob: SHA-256 and size (`add_world`).
+    world: Option<(String, usize)>,
 }
 impl Share {
     pub fn build(inputs: Vec<Input>) -> io::Result<Self> {
@@ -377,6 +387,88 @@ pub struct Cached {
     pub downloaded_bytes: usize,
     pub reused_files: usize,
 }
+fn open_wire(address: std::net::SocketAddr, join_code: Option<&str>) -> io::Result<super::Wire> {
+    let stream = if let Some(code) = join_code {
+        super::relay::open_tunnel(address, code)?
+    } else {
+        std::net::TcpStream::connect_timeout(&address, std::time::Duration::from_secs(3))?
+    };
+    super::Wire::new(stream)
+}
+/// The next message from a preparing connection; a `Reject` is an error.
+fn next_message(
+    wire: &mut super::Wire,
+    pending: &mut std::collections::VecDeque<super::Message>,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> io::Result<super::Message> {
+    use std::sync::atomic::Ordering;
+    use std::time::{Duration, Instant};
+    let started = Instant::now();
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(error("Join cancelled"));
+        }
+        if let Some(message) = pending.pop_front() {
+            if let super::Message::Reject(reason) = message {
+                return Err(error(&reason));
+            }
+            return Ok(message);
+        }
+        if started.elapsed() >= super::TIMEOUT {
+            return Err(error("Server mod transfer timed out"));
+        }
+        wire.flush()?;
+        pending.extend(wire.read()?);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+/// Ask for one file by hash and collect its chunks; `progress` gets the
+/// bytes received so far. The caller checks the hash.
+fn fetch_file(
+    wire: &mut super::Wire,
+    pending: &mut std::collections::VecDeque<super::Message>,
+    cancel: &std::sync::atomic::AtomicBool,
+    file: &File,
+    mut progress: impl FnMut(usize),
+) -> io::Result<Vec<u8>> {
+    use super::Message;
+    use std::time::{Duration, Instant};
+    wire.queue(&Message::ResourceFile {
+        sha256: file.sha256.clone(),
+    })?;
+    let mut bytes = Vec::with_capacity(file.bytes);
+    let started = Instant::now();
+    loop {
+        if started.elapsed() > Duration::from_secs(180) {
+            return Err(error("Server resource exceeded transfer deadline"));
+        }
+        let Message::ResourceChunk {
+            sha256,
+            offset,
+            data,
+            done,
+        } = next_message(wire, pending, cancel)?
+        else {
+            return Err(error("Invalid resource transfer message"));
+        };
+        if sha256 != file.sha256
+            || offset != bytes.len()
+            || data.len() > 2048
+            || bytes.len().saturating_add(data.len()) > file.bytes
+            || (data.is_empty() && !done)
+        {
+            return Err(error("Invalid resource chunk size or offset"));
+        }
+        bytes.extend(data);
+        progress(bytes.len());
+        if done {
+            if bytes.len() != file.bytes {
+                return Err(error("Incomplete resource download"));
+            }
+            return Ok(bytes);
+        }
+    }
+}
 /// The separate preflight connection closes before the renderer changes worlds.
 /// A subsequent game handshake pins the inventory fingerprint against races.
 pub fn download(
@@ -387,43 +479,11 @@ pub fn download(
     cancel: &std::sync::atomic::AtomicBool,
     progress: impl FnMut(usize, usize),
 ) -> io::Result<Cached> {
-    use super::{Message, Wire, TIMEOUT, VERSION};
-    use std::collections::VecDeque;
-    use std::sync::atomic::Ordering;
-    use std::time::{Duration, Instant};
-    let stream = if let Some(code) = join_code {
-        super::relay::open_tunnel(address, code)?
-    } else {
-        std::net::TcpStream::connect_timeout(&address, Duration::from_secs(3))?
-    };
-    let mut wire = Wire::new(stream)?;
-    let mut pending = VecDeque::new();
-    fn next(
-        wire: &mut Wire,
-        pending: &mut VecDeque<Message>,
-        cancel: &std::sync::atomic::AtomicBool,
-    ) -> io::Result<Message> {
-        let started = Instant::now();
-        loop {
-            if cancel.load(Ordering::Relaxed) {
-                return Err(error("Join cancelled"));
-            }
-            if let Some(message) = pending.pop_front() {
-                if let Message::Reject(reason) = message {
-                    return Err(error(&reason));
-                }
-                return Ok(message);
-            }
-            if started.elapsed() >= TIMEOUT {
-                return Err(error("Server mod transfer timed out"));
-            }
-            wire.flush()?;
-            pending.extend(wire.read()?);
-            std::thread::sleep(Duration::from_millis(2));
-        }
-    }
+    use super::{Message, VERSION};
+    let mut wire = open_wire(address, join_code)?;
+    let mut pending = std::collections::VecDeque::new();
     wire.queue(&Message::ResourceQuery { version: VERSION })?;
-    let Message::ResourceManifest(manifest) = next(&mut wire, &mut pending, cancel)? else {
+    let Message::ResourceManifest(manifest) = next_message(&mut wire, &mut pending, cancel)? else {
         return Err(error("Server does not support native resource downloads"));
     };
     manifest.validate()?;
@@ -439,41 +499,9 @@ pub fn download(
                     "Missing server mods. Enable automatic downloads or use an existing cache.",
                 ));
             }
-            wire.queue(&Message::ResourceFile {
-                sha256: file.sha256.clone(),
-            })?;
-            let mut bytes = Vec::with_capacity(file.bytes);
-            let started = Instant::now();
-            loop {
-                if started.elapsed() > Duration::from_secs(180) {
-                    return Err(error("Server resource exceeded transfer deadline"));
-                }
-                let Message::ResourceChunk {
-                    sha256,
-                    offset,
-                    data,
-                    done,
-                } = next(&mut wire, &mut pending, cancel)?
-                else {
-                    return Err(error("Invalid resource transfer message"));
-                };
-                if sha256 != file.sha256
-                    || offset != bytes.len()
-                    || data.len() > 2048
-                    || bytes.len().saturating_add(data.len()) > file.bytes
-                    || (data.is_empty() && !done)
-                {
-                    return Err(error("Invalid resource chunk size or offset"));
-                }
-                bytes.extend(data);
-                progress.borrow_mut()(completed.get() + bytes.len(), manifest.total_bytes());
-                if done {
-                    if bytes.len() != file.bytes {
-                        return Err(error("Incomplete resource download"));
-                    }
-                    return Ok(bytes);
-                }
-            }
+            fetch_file(&mut wire, &mut pending, cancel, file, |bytes| {
+                progress.borrow_mut()(completed.get() + bytes, manifest.total_bytes())
+            })
         },
         |done, total| {
             completed.set(done);
