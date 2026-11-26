@@ -165,6 +165,38 @@ a failed copy leaves it as it was) and `server.cfg` gets
 do not have it download it when they join. Restart the server for players to
 get the new version.
 
+## Sharing your world
+
+Click **Workspace** in the Explorer. Under *Sharing*:
+
+- **Author**, **Version** and **Licence** go into the world's
+  `content.json` and show on its page in SARE Client and in Discover. A new
+  world is *All rights reserved*: players may play it, but nobody may share
+  copies. Pick CC0, CC-BY, CC-BY-SA, CC-BY-NC or MIT to let others share it
+  (hover a licence to see what it allows). Each change is one undo step and
+  is saved with the world.
+- **Use this view as cover** saves what the viewport shows (without the
+  panels, gizmos or grid) as `cover.png`, the middle 16:9 of the window at
+  up to 1280 × 720. SARE Client shows it on the world's card and page.
+- **Export world…** (also *File → Export world (ZIP)…*) saves the world,
+  then packs its folder into `exports/<id>-<version>.zip` beside the
+  content folder. Hidden files (the autosave) stay out; Discover's limits
+  (1024 files, 256 MiB) are checked first. The window shows the ZIP's size
+  and SHA-256, **Copy Discover entry** copies the ready-made entry for
+  `community/worlds.json` (only the download link is left to fill in), and
+  **Open folder** shows the ZIP. The same steps are written to a
+  `.share.txt` file next to it.
+
+Before it packs, Export checks the world and lists what to fix first: no
+licence to share under, no author or description, no cover, gameplay
+problems, objects whose model is missing, and models borrowed from other
+content packs (players need those packs too).
+
+Send the ZIP to friends (they unpack it into their `content/` folder), or
+upload it and add the entry to `community/worlds.json` with a pull request
+so everyone can install it from Discover (see
+[community/README.md](../community/README.md)).
+
 ## Physics
 
 A part's Properties have **Anchored** (on for every part placed). Untick

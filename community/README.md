@@ -58,6 +58,10 @@ newer catalog version replaces an older catalog install.
 
 ### Share your world
 
+In SARE Studio, *Workspace › Sharing › Export world* does steps 1 and 3
+for you: it makes the ZIP, its size and SHA-256, and copies the entry below
+with only the download link left to fill in.
+
 1. Zip the world folder (the folder with `content.json`; the ZIP may hold the
    folder itself or its contents). Up to 256 MiB, 1024 files.
 2. Upload the ZIP somewhere that serves it over `https://` without a login,
