@@ -426,6 +426,8 @@ fn shortcuts(build: &mut BuildMode, ui: &mut Ui) {
             build.ui.road_draw = None;
         } else if build.placing.is_some() {
             build.placing = None;
+        } else if build.placing_spawn {
+            build.placing_spawn = false;
         } else {
             build.selection.clear();
         }
@@ -1406,19 +1408,17 @@ fn spawn_group(build: &mut BuildMode, ui: &mut Ui) {
             "Set spawn",
             false,
             true,
-            "Players start where the camera is looking",
+            "Click in the world where players should start. They face the way the camera looks. Esc cancels.",
         )
         .clicked()
         {
-            let info = build.doc.info.clone();
-            let focus = sa_scene::world_layout::gltf_to_blender(build.camera.focus);
-            let spawn = [focus[0], focus[1], focus[2].max(0.0)];
-            build.execute(Command::Info {
-                before: info.clone(),
-                after: WorldInfo { spawn, ..info },
-            });
+            build.placing = None;
+            build.placing_spawn = !build.placing_spawn;
+            if build.placing_spawn {
+                build.info("Click where players should start (right-click or Esc cancels).");
+            }
         }
-        let [x, y, z] = build.doc.info.spawn;
+        let [x, y, z] = build.spawn_position();
         ui.label(RichText::new(format!("Spawn\n{x:.1}, {y:.1}, {z:.1}")).color(MUTED));
     });
 }
@@ -3554,24 +3554,50 @@ fn world_settings(build: &mut BuildMode, ui: &mut Ui) {
         .color(MUTED),
     );
     section(ui, "Spawn point");
-    let mut spawn = info.spawn;
-    if axis_row(ui, "Spawn", &mut spawn, 0.1, " m") && spawn.iter().all(|v| v.is_finite()) {
-        build.execute(Command::Info {
-            before: info.clone(),
-            after: WorldInfo {
-                spawn,
-                ..info.clone()
-            },
-        });
+    if let Some(id) = build.spawn_object() {
+        let name = build
+            .doc
+            .layout
+            .node(id)
+            .map(|n| n.name.clone())
+            .unwrap_or_default();
+        ui.label(
+            RichText::new(format!(
+                "The Spawn point object \"{name}\" decides where players start."
+            ))
+            .small()
+            .color(MUTED),
+        );
+        if ui.button("Select it").clicked() {
+            build.selection = vec![id];
+        }
+    } else {
+        let mut spawn = info.spawn;
+        if axis_row(ui, "Spawn", &mut spawn, 0.1, " m") && spawn.iter().all(|v| v.is_finite()) {
+            build.execute(Command::Info {
+                before: info.clone(),
+                after: WorldInfo {
+                    spawn,
+                    ..info.clone()
+                },
+            });
+        }
     }
-    if ui.button("Set spawn at camera focus").clicked() {
-        let focus = sa_scene::world_layout::gltf_to_blender(build.camera.focus);
-        let spawn = [focus[0], focus[1], focus[2].max(0.0)];
-        build.execute(Command::Info {
-            before: info.clone(),
-            after: WorldInfo { spawn, ..info },
-        });
-    }
+    ui.horizontal(|ui| {
+        if ui
+            .button("🚩 Click to set spawn")
+            .on_hover_text("Click in the world where players should start")
+            .clicked()
+        {
+            build.placing = None;
+            build.placing_spawn = true;
+        }
+        if ui.button("Set at camera focus").clicked() {
+            let focus = sa_scene::world_layout::gltf_to_blender(build.camera.focus);
+            let heading = crate::play_logic::heading_for(build.camera.yaw);
+            build.set_spawn([focus[0], focus[1], focus[2].max(0.0)], heading);
+        }
+    });
 }
 
 /// The world's colour look: a ready-made one, fine-tuned with sliders.

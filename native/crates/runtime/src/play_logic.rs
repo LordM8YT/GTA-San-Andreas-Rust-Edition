@@ -235,6 +235,12 @@ pub fn render_to_blender(point: Vec3) -> [f32; 3] {
 pub fn yaw_for(heading: f32) -> f32 {
     std::f32::consts::PI + heading.to_radians()
 }
+/// The Blender heading (degrees, 0 = north) a camera yaw faces; the
+/// inverse of [`yaw_for`], in -180..180.
+pub fn heading_for(yaw: f32) -> f32 {
+    let degrees = (yaw - std::f32::consts::PI).to_degrees();
+    (degrees + 180.0).rem_euclid(360.0) - 180.0
+}
 /// Where to put the eye for a spawn at `pose`.
 pub fn spawn_eye(pose: &Pose) -> Vec3 {
     blender_to_render(pose.position) + Vec3::Y * 2.0
@@ -1197,6 +1203,17 @@ impl State {
                             .color(ui_theme::TEXT),
                     )
                 });
+        }
+    }
+}
+
+#[cfg(test)]
+mod heading_tests {
+    #[test]
+    fn heading_and_yaw_round_trip() {
+        for heading in [-170.0f32, -90.0, 0.0, 45.0, 90.0, 179.0] {
+            let back = super::heading_for(super::yaw_for(heading));
+            assert!((back - heading).abs() < 1e-3, "{heading} -> {back}");
         }
     }
 }
