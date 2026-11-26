@@ -22,6 +22,7 @@ mod shell;
 #[path = "../../../ui/theme.rs"]
 mod ui_theme;
 mod updater;
+mod world_catalog;
 use shell::palette::{ACCENT, BACKGROUND, MUTED, SURFACE, SURFACE_HIGH, TEXT};
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
@@ -74,6 +75,15 @@ struct Launcher {
     community_worker: Option<mpsc::Receiver<Result<Vec<community::Server>, String>>>,
     community_error: Option<String>,
     community_source: Option<String>,
+    /// The community world catalog shown in Discover, like the server list.
+    world_list: Vec<world_catalog::Entry>,
+    world_list_worker: Option<mpsc::Receiver<Result<Vec<world_catalog::Entry>, String>>>,
+    world_list_error: Option<String>,
+    world_list_source: Option<String>,
+    world_list_requested: bool,
+    /// A world being installed from the catalog, and the last outcome.
+    world_install: Option<(String, mpsc::Receiver<Result<PathBuf, String>>)>,
+    world_install_message: Option<String>,
     connection_error: Option<String>,
     browser_initialized: bool,
     search: String,
@@ -127,6 +137,7 @@ impl Launcher {
     fn new(ctx: &egui::Context) -> Self {
         let mut app = Self::configured(ctx, LauncherConfig::load(), Settings::load(), true);
         app.community_source = Some(community::source());
+        app.world_list_source = Some(world_catalog::source());
         app.scan_packs();
         app
     }
@@ -175,6 +186,13 @@ impl Launcher {
             community_worker: None,
             community_error: None,
             community_source: None,
+            world_list: Vec::new(),
+            world_list_worker: None,
+            world_list_error: None,
+            world_list_source: None,
+            world_list_requested: false,
+            world_install: None,
+            world_install_message: None,
             connection_error: None,
             browser_initialized: false,
             search: String::new(),
@@ -293,6 +311,43 @@ impl Launcher {
             && !self.updates.recovery_blocked
     }
     fn poll(&mut self) {
+        if let Some(worker) = &self.world_list_worker {
+            match worker.try_recv() {
+                Ok(Ok(list)) => {
+                    self.world_list_worker = None;
+                    self.world_list = list;
+                    self.world_list_error = None;
+                }
+                Ok(Err(error)) => {
+                    self.world_list_worker = None;
+                    log_error(&error);
+                    self.world_list_error = Some(error);
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.world_list_worker = None;
+                    self.world_list_error = Some("World list task stopped.".into());
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+        if let Some((name, worker)) = &self.world_install {
+            let outcome = match worker.try_recv() {
+                Ok(result) => Some(result),
+                Err(mpsc::TryRecvError::Disconnected) => Some(Err("Install task stopped.".into())),
+                Err(mpsc::TryRecvError::Empty) => None,
+            };
+            if let Some(outcome) = outcome {
+                self.world_install_message = Some(match outcome {
+                    Ok(_) => format!("{name} is installed. Find it in your Library."),
+                    Err(error) => {
+                        log_error(&error);
+                        format!("Could not install {name}: {error}")
+                    }
+                });
+                self.world_install = None;
+                self.scan_packs();
+            }
+        }
         if let Some(worker) = &self.community_worker {
             match worker.try_recv() {
                 Ok(result) => {
@@ -646,6 +701,34 @@ impl Launcher {
             log_error(&error);
             self.connection_error = Some(error);
         }
+    }
+    /// Download the community world catalog.
+    fn browse_worlds(&mut self) {
+        self.world_list_requested = true;
+        let Some(source) = self.world_list_source.clone() else {
+            return;
+        };
+        if self.world_list_worker.is_some() {
+            return;
+        }
+        self.world_list_error = None;
+        let (tx, rx) = mpsc::channel();
+        self.world_list_worker = Some(rx);
+        std::thread::spawn(move || {
+            let _ = tx.send(world_catalog::load(&source));
+        });
+    }
+    /// Install a catalog world into `content/` in the background.
+    fn install_world(&mut self, entry: world_catalog::Entry) {
+        if self.world_install.is_some() {
+            return;
+        }
+        self.world_install_message = None;
+        let (tx, rx) = mpsc::channel();
+        self.world_install = Some((entry.name.clone(), rx));
+        std::thread::spawn(move || {
+            let _ = tx.send(world_catalog::install(&entry, &local_mods::content_root()));
+        });
     }
     /// Download the community server list and ask each server for its status.
     fn browse_community(&mut self) {
@@ -1257,6 +1340,7 @@ impl Launcher {
                 && self.worker.is_none()
                 && self.browser_worker.is_none()
                 && self.community_worker.is_none()
+                && self.world_list_worker.is_none()
                 && (self.page != Page::Resources
                     || (self.resource_tab == 0 && self.mods_inspected)
                     || self.resource_tab == 1
@@ -1394,6 +1478,8 @@ impl Launcher {
         if self.worker.is_some()
             || self.browser_worker.is_some()
             || self.community_worker.is_some()
+            || self.world_list_worker.is_some()
+            || self.world_install.is_some()
             || self.child.is_some()
             || self.gilrs.is_some()
             || self.updates.available()
