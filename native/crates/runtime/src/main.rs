@@ -519,9 +519,20 @@ impl State {
     fn install_car(&mut self, scene: Scene) -> Result<()> {
         self.car = Some(self.build_car(scene)?);
         self.car_render_pose = None;
-        self.place_car();
-        self.driving = false;
+        self.car_at_start();
         Ok(())
+    }
+    /// The player's own car when a world (re)starts. San Andreas parks it
+    /// beside the player; SARE's own worlds (content packs, Testbed) start
+    /// empty, as their maker built them, and F9 or the car menu brings it.
+    pub(crate) fn car_at_start(&mut self) {
+        if self.standalone {
+            self.stow_car();
+            self.driving = false;
+        } else {
+            self.place_car();
+            self.driving = false;
+        }
     }
     fn place_car(&mut self) {
         self.leave_passenger();
@@ -3649,7 +3660,7 @@ impl ApplicationHandler for App {
                         Err(error) => {
                             runtime_log::line(format!("Build Mode FAILED to open: {error:#}"));
                             state.menu.world_error =
-                                Some(format!("Build Mode could not open the world: {error:#}"));
+                                Some(format!("SARE Studio could not open the world: {error:#}"));
                         }
                     }
                 }
@@ -3707,7 +3718,7 @@ impl ApplicationHandler for App {
                 }
                 if let Some(scene) = self.car_scene.take() {
                     if let Err(error) = state.install_car(scene) {
-                        state.menu.message = format!("Bil kunne ikke lastes: {error}");
+                        state.menu.message = format!("The car could not be loaded: {error}");
                     }
                 }
                 state.menu.cars = vec![self.initial_models.0.clone()];

@@ -10,7 +10,8 @@ customisable [characters](#characters) and drivable [vehicles](#vehicles).
 Sounds and traffic come in later versions (see [the plan](STANDALONE.md)).
 Without characters the player is SARE's default character (the same
 dressable bodies as SARE RP Town, built into SARE); without vehicles F9
-spawns SARE Kart.
+spawns SARE Kart. Worlds start empty, as their maker built them: the
+player's own car only appears when F9 (or the car menu) brings it.
 
 ## Quick start: play the example
 

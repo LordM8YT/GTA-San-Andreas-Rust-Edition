@@ -562,7 +562,7 @@ impl Launcher {
     /// Build Mode: make a new world or edit a pack. No game files needed.
     fn edit_world(&mut self, folder: PathBuf) {
         self.build_target = Some(folder.clone());
-        self.message = "Build Mode is starting.".into();
+        self.message = "SARE Studio is starting.".into();
         self.start_with(Session::Offline, Some(folder.into_os_string()));
         if self.child.is_none() {
             self.build_target = None;
@@ -698,7 +698,7 @@ impl Launcher {
                         eprintln!("Could not save recent session: {error}");
                     }
                 }
-                self.message = if self.message.starts_with("Build Mode") {
+                self.message = if self.message.starts_with("SARE Studio") {
                     self.message.clone()
                 } else if testbed {
                     "Starting SARE content: no game files needed.".into()

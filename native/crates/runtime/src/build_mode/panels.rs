@@ -133,6 +133,8 @@ pub struct UiState {
     pub command: super::command::CommandLine,
     /// `--smoke-build`: the painted terrain and its triangles before a hole.
     pub smoke_paint: Option<(NodeId, usize)>,
+    /// The window title last set.
+    pub window_title: String,
     /// Asset Browser pictures; None when one could not be made.
     pub thumbnails: HashMap<AssetRef, Option<egui::TextureHandle>>,
 }
@@ -496,7 +498,7 @@ fn shortcuts(build: &mut BuildMode, ui: &mut Ui) {
 fn menu_bar(build: &mut BuildMode, ui: &mut Ui) {
     egui::MenuBar::new().ui(ui, |ui| {
         ui.label(RichText::new("SARE").strong().size(18.0).color(TEXT));
-        ui.label(RichText::new("Build Mode").color(ACCENT));
+        ui.label(RichText::new("SARE Studio").color(ACCENT));
         ui.separator();
         ui.menu_button("File", |ui| {
             if ui
@@ -1198,7 +1200,7 @@ fn play_group(build: &mut BuildMode, ui: &mut Ui) {
             "Play",
             false,
             true,
-            "Play this world now (F5). F6 brings you back to Build Mode.",
+            "Play this world now (F5). F6 brings you back to Studio.",
         );
         // The one green button: easy to find, as in other editors.
         ui.painter().text(
@@ -1602,7 +1604,7 @@ fn copy_selection(build: &mut BuildMode, ctx: &egui::Context) -> Option<usize> {
             build.ui.clipboard_cut = false;
             build.ui.pastes = 0;
             // Text on the system clipboard is what lets Ctrl+V reach the editor.
-            ctx.copy_text(format!("SARE Build Mode: {roots} objects"));
+            ctx.copy_text(format!("SARE Studio: {roots} objects"));
             build.info(format!("Copied {roots} objects"));
             Some(roots)
         }
@@ -1783,7 +1785,7 @@ fn bottom(build: &mut BuildMode, ui: &mut Ui) {
             }
             BottomTab::Playtest => {
                 ui.label("Playtest starts the edited world in normal SARE gameplay without saving over your files. Unsaved work is autosaved first.");
-                ui.label("Press F6 (or the Back to Build Mode button) to return. The editor keeps every change, selection and undo step.");
+                ui.label("Press F6 (or the Back to Studio button) to return. The editor keeps every change, selection and undo step.");
                 let spawn = build.doc.info.spawn;
                 ui.label(format!("Spawn point: {:.1}, {:.1}, {:.1}", spawn[0], spawn[1], spawn[2]));
             }
@@ -4225,7 +4227,7 @@ fn dialogs(build: &mut BuildMode, root: &mut Ui) {
         }
     }
     if build.ui.confirm_quit {
-        egui::Window::new("Quit Build Mode?")
+        egui::Window::new("Quit SARE Studio?")
             .collapsible(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(&ctx, |ui| {
@@ -4256,7 +4258,7 @@ fn dialogs(build: &mut BuildMode, root: &mut Ui) {
     }
     if build.ui.show_help {
         let mut open = true;
-        egui::Window::new("Build Mode controls")
+        egui::Window::new("SARE Studio controls")
             .open(&mut open)
             .show(&ctx, |ui| {
                 compact(ui);
@@ -4311,12 +4313,12 @@ pub fn playtest_overlay(build: &mut BuildMode, root: &mut Ui) {
                         ui.label(RichText::new("▶ Playtest").color(SUCCESS).strong());
                         ui.label(
                             RichText::new(format!(
-                                "{}: press F6 to return to Build Mode",
+                                "{}: press F6 to return to Studio",
                                 build.doc.info.name
                             ))
                             .color(TEXT),
                         );
-                        if ui.button("Back to Build Mode").clicked() {
+                        if ui.button("Back to Studio").clicked() {
                             build.requests.push(Request::Playtest);
                         }
                     });

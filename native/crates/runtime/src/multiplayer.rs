@@ -945,8 +945,7 @@ impl State {
             if let Some(player) = world.standing_at(point, base.y + 1.5) {
                 self.position = player.eye();
                 self.player = Some(player);
-                self.place_car();
-                self.driving = false;
+                self.car_at_start();
                 self.network_car_spawned = false;
                 return;
             }

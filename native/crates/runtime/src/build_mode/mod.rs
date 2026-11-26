@@ -974,6 +974,18 @@ impl State {
         if !build.playtesting && self.captured {
             self.capture(false);
         }
+        // The window (and taskbar) names the editor and the world; * marks
+        // unsaved changes.
+        let title = if build.playtesting {
+            format!("SARE Studio · {} (playtest)", build.doc.info.name)
+        } else {
+            let unsaved = if build.history.dirty() { " *" } else { "" };
+            format!("SARE Studio · {}{unsaved}", build.doc.info.name)
+        };
+        if build.ui.window_title != title {
+            self.window.set_title(&title);
+            build.ui.window_title = title;
+        }
         match build.cover {
             Cover::Requested => {
                 // Read back the next frame, drawn without panels.
@@ -1082,7 +1094,7 @@ impl State {
                 build.playtesting = false;
                 // Objects scripts moved are back where they were placed.
                 build.gpu.moved.clear();
-                build.info("Back in Build Mode. Your edits are as you left them.");
+                build.info("Back in Studio. Your edits are as you left them.");
             }
             return;
         }
@@ -1118,7 +1130,7 @@ impl State {
         let player = sa_scene::collision::Player::spawn(&collision, feet + Vec3::Y * 2.0);
         let standing = collision.standing_at(feet, feet.y + 2.0).is_some();
         build.playtesting = true;
-        build.info("Playtest started. Press F6 to return to Build Mode.");
+        build.info("Playtest started. Press F6 to return to Studio.");
         if !standing {
             build.warn("Nothing solid under the spawn point: the player may fall. Move the spawn or add ground.");
         }
