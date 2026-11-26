@@ -87,9 +87,10 @@ on their own:
    `friends.rs` sends a signed heartbeat about once a minute.
 5. **Online service (`sa-directory`, built).** In-memory only, answers with
    friends who are online and added the player back. See
-   [sare-directory.md](sare-directory.md) for the API, privacy and the Oracle
-   Cloud Always Free setup. `friends::DEFAULT_DIRECTORY` stays empty until the
-   official instance runs; the setting or `SARE_DIRECTORY` points elsewhere.
+   [sare-directory.md](sare-directory.md) for the API, privacy and hosting.
+   The official instance runs on Render's free plan at
+   `https://sare-directory.onrender.com` (`friends::DEFAULT_DIRECTORY`); the
+   setting or `SARE_DIRECTORY` points elsewhere.
    Next: private messages, invites, and live server heartbeats.
 
 ## Next steps

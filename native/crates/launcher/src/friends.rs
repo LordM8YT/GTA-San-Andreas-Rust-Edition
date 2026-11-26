@@ -9,9 +9,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// The official directory, once it runs. `SARE_DIRECTORY` or the setting
+/// The official directory (Render, docs/sare-directory.md). `SARE_DIRECTORY` or the setting
 /// override it.
-pub const DEFAULT_DIRECTORY: &str = "";
+pub const DEFAULT_DIRECTORY: &str = "https://sare-directory.onrender.com";
 
 pub struct Friends {
     key: Option<ed25519_dalek::SigningKey>,
