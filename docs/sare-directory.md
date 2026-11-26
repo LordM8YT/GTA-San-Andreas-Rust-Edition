@@ -2,7 +2,8 @@
 
 `sa-directory` is the small service behind **Friends** in SARE Client. It is
 part of SARE (`native/crates/net/src/directory.rs`), open source like the rest,
-and anyone can run one. The client uses the official directory unless the
+and anyone can run one. The client uses the official directory
+(`https://sare-directory.onrender.com`, on Render's free plan) unless the
 player sets another under **Settings › Friends**, or `SARE_DIRECTORY`.
 
 ## How it works
