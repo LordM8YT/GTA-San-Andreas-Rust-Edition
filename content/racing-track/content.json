@@ -1,0 +1,16 @@
+{
+  "id": "racing-track",
+  "name": "Racing Track",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "author": "SARE contributors",
+  "description": "An oval road track on a big field with timed checkpoints for cars. A template: drag the road's points to make your own track.",
+  "world": {
+    "layout": "layout.json",
+    "spawn": [
+      0,
+      -48,
+      0
+    ]
+  }
+}

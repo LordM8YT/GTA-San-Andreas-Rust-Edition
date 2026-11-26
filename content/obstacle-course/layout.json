@@ -1,0 +1,906 @@
+{
+  "format": "sare-world-layout",
+  "version": 1,
+  "next_id": 28,
+  "settings": {
+    "hour": 15,
+    "weather": "clear",
+    "scripts": [
+      {
+        "name": "Course results",
+        "source": "-- Tells everyone each finish time of the course.\nworld.on('finish', function(player, race, seconds)\n  world.message(player.name .. ' finished in ' .. string.format('%.1f', seconds) .. ' s', 6)\nend)\n"
+      }
+    ]
+  },
+  "nodes": [
+    {
+      "id": 1,
+      "name": "Course"
+    },
+    {
+      "id": 2,
+      "name": "Start platform",
+      "parent": 1,
+      "asset": "builtin:part-block",
+      "transform": {
+        "position": [
+          0,
+          0,
+          -1
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "part": {
+        "shape": "block",
+        "size": [
+          12,
+          12,
+          1
+        ],
+        "color": [
+          0.62,
+          0.64,
+          0.68
+        ],
+        "material": "concrete"
+      }
+    },
+    {
+      "id": 3,
+      "name": "Platform 1",
+      "parent": 1,
+      "asset": "builtin:part-block",
+      "transform": {
+        "position": [
+          0.0,
+          12.2,
+          -1.0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "part": {
+        "shape": "block",
+        "size": [
+          2.2,
+          2.2,
+          1
+        ],
+        "color": [
+          0.95,
+          0.35,
+          0.3
+        ],
+        "material": "plastic"
+      }
+    },
+    {
+      "id": 4,
+      "name": "Platform 2",
+      "parent": 1,
+      "asset": "builtin:part-block",
+      "transform": {
+        "position": [
+          3.917,
+          16.4,
+          -0.55
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "part": {
+        "shape": "block",
+        "size": [
+          3.0,
+          3.0,
+          1
+        ],
+        "color": [
+          0.98,
+          0.65,
+          0.2
+        ],
+        "material": "plastic"
+      }
+    },
+    {
+      "id": 5,
+      "name": "Platform 3",
+      "parent": 1,
+      "asset": "builtin:part-block",
+      "transform": {
+        "position": [
+          4.869,
+          20.6,
+          -0.1
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "part": {
+        "shape": "block",
+        "size": [
+          3.0,
+          3.0,
+          1
+        ],
+        "color": [
+          0.95,
+          0.85,
+          0.25
+        ],
+        "material": "plastic"
+      }
+    },
+    {
+      "id": 6,
+      "name": "Platform 4",
+      "parent": 1,
+      "asset": "builtin:part-block",
+      "transform": {
+        "position": [
+          2.137,
+          24.8,
+          0.35
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "part": {
+        "shape": "block",
+        "size": [
+          2.2,
+          2.2,
+          1
+        ],
+        "color": [
+          0.4,
+          0.8,
+          0.4
+        ],
+        "material": "plastic"
+      }
+    },
+    {
+      "id": 7,
+      "name": "Platform 5",
+      "parent": 1,
+      "asset": "builtin:part-block",
+      "transform": {
+        "position": [
+          -2.213,
+          29.0,
+          0.8
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "part": {
+        "shape": "block",
+        "size": [
+          3.0,
+          3.0,
+          1
+        ],
+        "color": [
+          0.3,
+          0.6,
+          0.95
+        ],
+        "material": "plastic"
+      }
+    },
+    {
+      "id": 8,
+      "name": "Platform 6",
+      "parent": 1,
+      "asset": "builtin:part-block",
+      "transform": {
+        "position": [
+          -4.888,
+          33.2,
+          1.25
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "part": {
+        "shape": "block",
+        "size": [
+          3.0,
+          3.0,
+          1
+        ],
+        "color": [
+          0.65,
+          0.45,
+          0.9
+        ],
+        "material": "plastic"
+      }
+    },
+    {
+      "id": 9,
+      "name": "Platform 7",
+      "parent": 1,
+      "asset": "builtin:part-block",
+      "transform": {
+        "position": [
+          -3.864,
+          37.4,
+          1.7
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "part": {
+        "shape": "block",
+        "size": [
+          2.2,
+          2.2,
+          1
+        ],
+        "color": [
+          0.95,
+          0.35,
+          0.3
+        ],
+        "material": "plastic"
+      }
+    },
+    {
+      "id": 10,
+      "name": "Platform 8",
+      "parent": 1,
+      "asset": "builtin:part-block",
+      "transform": {
+        "position": [
+          0.084,
+          41.6,
+          2.15
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "part": {
+        "shape": "block",
+        "size": [
+          3.0,
+          3.0,
+          1
+        ],
+        "color": [
+          0.98,
+          0.65,
+          0.2
+        ],
+        "material": "plastic"
+      }
+    },
+    {
+      "id": 11,
+      "name": "Platform 9",
+      "parent": 1,
+      "asset": "builtin:part-block",
+      "transform": {
+        "position": [
+          3.968,
+          45.8,
+          2.6
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "part": {
+        "shape": "block",
+        "size": [
+          3.0,
+          3.0,
+          1
+        ],
+        "color": [
+          0.95,
+          0.85,
+          0.25
+        ],
+        "material": "plastic"
+      }
+    },
+    {
+      "id": 12,
+      "name": "Platform 10",
+      "parent": 1,
+      "asset": "builtin:part-block",
+      "transform": {
+        "position": [
+          4.849,
+          50.0,
+          3.05
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "part": {
+        "shape": "block",
+        "size": [
+          2.2,
+          2.2,
+          1
+        ],
+        "color": [
+          0.4,
+          0.8,
+          0.4
+        ],
+        "material": "plastic"
+      }
+    },
+    {
+      "id": 13,
+      "name": "Platform 11",
+      "parent": 1,
+      "asset": "builtin:part-block",
+      "transform": {
+        "position": [
+          2.061,
+          54.2,
+          3.5
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "part": {
+        "shape": "block",
+        "size": [
+          3.0,
+          3.0,
+          1
+        ],
+        "color": [
+          0.3,
+          0.6,
+          0.95
+        ],
+        "material": "plastic"
+      }
+    },
+    {
+      "id": 14,
+      "name": "Platform 12",
+      "parent": 1,
+      "asset": "builtin:part-block",
+      "transform": {
+        "position": [
+          -2.288,
+          58.4,
+          3.5
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "part": {
+        "shape": "block",
+        "size": [
+          3.0,
+          3.0,
+          1
+        ],
+        "color": [
+          0.65,
+          0.45,
+          0.9
+        ],
+        "material": "plastic"
+      }
+    },
+    {
+      "id": 15,
+      "name": "Platform 13",
+      "parent": 1,
+      "asset": "builtin:part-block",
+      "transform": {
+        "position": [
+          -4.905,
+          62.6,
+          3.5
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "part": {
+        "shape": "block",
+        "size": [
+          2.2,
+          2.2,
+          1
+        ],
+        "color": [
+          0.95,
+          0.35,
+          0.3
+        ],
+        "material": "plastic"
+      }
+    },
+    {
+      "id": 16,
+      "name": "Platform 14",
+      "parent": 1,
+      "asset": "builtin:part-block",
+      "transform": {
+        "position": [
+          -3.81,
+          66.8,
+          3.5
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "part": {
+        "shape": "block",
+        "size": [
+          3.0,
+          3.0,
+          1
+        ],
+        "color": [
+          0.98,
+          0.65,
+          0.2
+        ],
+        "material": "plastic"
+      }
+    },
+    {
+      "id": 17,
+      "name": "Finish platform",
+      "parent": 1,
+      "asset": "builtin:part-block",
+      "transform": {
+        "position": [
+          0,
+          73.8,
+          3.5
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "part": {
+        "shape": "block",
+        "size": [
+          10,
+          10,
+          1
+        ],
+        "color": [
+          0.95,
+          0.85,
+          0.25
+        ],
+        "material": "metal"
+      }
+    },
+    {
+      "id": 18,
+      "name": "Flag pole",
+      "parent": 1,
+      "asset": "builtin:pillar",
+      "transform": {
+        "position": [
+          3,
+          76.8,
+          4.5
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 19,
+      "name": "Lava",
+      "parent": 1,
+      "asset": "builtin:part-block",
+      "transform": {
+        "position": [
+          0,
+          36.9,
+          -7
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "part": {
+        "shape": "block",
+        "size": [
+          60,
+          103.80000000000001,
+          1
+        ],
+        "color": [
+          1.0,
+          0.3,
+          0.05
+        ],
+        "material": "smooth"
+      }
+    },
+    {
+      "id": 20,
+      "name": "Gameplay"
+    },
+    {
+      "id": 21,
+      "name": "Start",
+      "parent": 20,
+      "asset": "builtin:marker-spawn",
+      "transform": {
+        "position": [
+          0,
+          -2,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "spawn"
+      }
+    },
+    {
+      "id": 22,
+      "name": "Back to start",
+      "parent": 20,
+      "asset": "builtin:marker-target",
+      "transform": {
+        "position": [
+          0,
+          -2,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": 23,
+      "name": "Lava zone",
+      "parent": 20,
+      "asset": "builtin:marker-trigger",
+      "transform": {
+        "position": [
+          0,
+          36.9,
+          -6
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "trigger",
+        "size": [
+          60,
+          103.80000000000001,
+          3
+        ],
+        "on_enter": [
+          {
+            "do": "teleport",
+            "target": 22
+          },
+          {
+            "do": "message",
+            "text": "Back to the start. Try again!",
+            "seconds": 3
+          }
+        ]
+      }
+    },
+    {
+      "id": 24,
+      "name": "Start line",
+      "parent": 20,
+      "asset": "builtin:marker-checkpoint",
+      "transform": {
+        "position": [
+          0,
+          4,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "checkpoint",
+        "size": [
+          10,
+          2,
+          4
+        ],
+        "race": "course",
+        "order": 1
+      }
+    },
+    {
+      "id": 25,
+      "name": "Halfway",
+      "parent": 20,
+      "asset": "builtin:marker-checkpoint",
+      "transform": {
+        "position": [
+          -3.864,
+          37.4,
+          2.7
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "checkpoint",
+        "size": [
+          3,
+          3,
+          4
+        ],
+        "race": "course",
+        "order": 2
+      }
+    },
+    {
+      "id": 26,
+      "name": "Finish",
+      "parent": 20,
+      "asset": "builtin:marker-checkpoint",
+      "transform": {
+        "position": [
+          0,
+          73.8,
+          4.5
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "checkpoint",
+        "size": [
+          8,
+          8,
+          4
+        ],
+        "race": "course",
+        "order": 3
+      }
+    },
+    {
+      "id": 27,
+      "name": "Welcome",
+      "parent": 20,
+      "asset": "builtin:marker-trigger",
+      "transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "gameplay": {
+        "kind": "trigger",
+        "size": [
+          12,
+          12,
+          4
+        ],
+        "once": true,
+        "on_enter": [
+          {
+            "do": "message",
+            "text": "Jump from platform to platform to the gold finish. Don't touch the lava!",
+            "seconds": 6
+          }
+        ]
+      }
+    }
+  ]
+}

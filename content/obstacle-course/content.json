@@ -1,0 +1,16 @@
+{
+  "id": "obstacle-course",
+  "name": "Obstacle Course",
+  "version": "1.0.0",
+  "license": "CC0-1.0",
+  "author": "SARE contributors",
+  "description": "Jump across floating platforms to the finish. Fall into the lava and you start again; checkpoints time your run. A template: add your own platforms.",
+  "world": {
+    "layout": "layout.json",
+    "spawn": [
+      0,
+      -2,
+      0
+    ]
+  }
+}

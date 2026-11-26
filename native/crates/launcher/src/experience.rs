@@ -17,7 +17,13 @@ pub enum Kind {
 
 /// Example packs that ship with SARE. Create offers them as templates
 /// (copied into a new world) instead of listing them as games.
-pub const TEMPLATES: &[&str] = &["example-town", "gameplay-sample", "sare-rp-town"];
+pub const TEMPLATES: &[&str] = &[
+    "obstacle-course",
+    "racing-track",
+    "example-town",
+    "gameplay-sample",
+    "sare-rp-town",
+];
 
 /// Creator shown for worlds without an author, such as new Build Mode worlds.
 pub const LOCAL_CREATOR: &str = "Made on this PC";

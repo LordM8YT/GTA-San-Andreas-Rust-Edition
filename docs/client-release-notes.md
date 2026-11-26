@@ -1,6 +1,7 @@
 SARE free-roam test client, built and tested from the linked commit.
 
 Version 0.61.0 (in progress: the big SARE Studio update):
+- Two new templates in Create: **Obstacle Course** (jump across coloured platforms over lava to a gold finish; touch the lava and you are back at the start; checkpoints time each run) and **Racing Track** (an oval road loop on a big field with timed checkpoints for cars and race results). Both are built from SARE's own shapes, CC0, made by `tools/make-studio-templates.py`.
 - SARE Studio: File › Open world now shows your recent worlds first, and *Browse for a world folder…* opens a world from anywhere on your PC (it tells you if the folder is not a world).
 - Worlds start empty. SARE's own worlds (every Studio world, content packs, Testbed) no longer drop a car next to the player at the start or when joining a server; F9 or the car menu still brings your car. San Andreas is unchanged.
 - Build Mode is now called SARE Studio everywhere you see it: the editor, its window title (with * for unsaved changes), Back to Studio in playtest, and Edit in Studio in SARE Client.
