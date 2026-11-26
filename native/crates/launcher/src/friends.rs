@@ -96,9 +96,10 @@ impl Friends {
 
 fn send(url: &str, signed: &directory::Signed) -> Result<Reply, String> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
-        // A local test directory runs on http://127.0.0.1.
+        // A local test directory runs on http://127.0.0.1. The timeout is
+        // long because a free host (Render) can take ~30 s to wake up.
         .https_only(!url.starts_with("http://127.0.0.1") && !url.starts_with("http://localhost"))
-        .timeout_global(Some(Duration::from_secs(10)))
+        .timeout_global(Some(Duration::from_secs(45)))
         .http_status_as_error(false)
         .build()
         .into();
