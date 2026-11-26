@@ -18,11 +18,8 @@ pub mod history;
 pub mod ops;
 pub mod project;
 pub mod publish;
-<<<<<<< HEAD
 pub mod recent;
-=======
 pub mod share;
->>>>>>> origin/main
 pub mod thumbnail;
 pub mod viewport;
 pub mod world_position;
