@@ -183,6 +183,8 @@ pub struct BuildMode {
     pub placing: Option<Placing>,
     /// "Set spawn" is waiting for a click in the viewport.
     pub placing_spawn: bool,
+    /// The world's spawn flag held with the mouse: where it is now.
+    pub spawn_drag: Option<[f32; 3]>,
     pub playtesting: bool,
     pub log: Vec<LogLine>,
     pub recovery: Option<Recovery>,
@@ -280,6 +282,7 @@ impl BuildMode {
             camera: EditorCamera::default(),
             placing: None,
             placing_spawn: false,
+            spawn_drag: None,
             playtesting: false,
             log: Vec::new(),
             recovery,
@@ -931,6 +934,7 @@ impl State {
         build.commit_preview();
         build.placing = None;
         build.placing_spawn = false;
+        build.spawn_drag = None;
         build.drag = None;
         // Checkpoint: unsaved work is on disk before the game takes over.
         if build.history.dirty() {

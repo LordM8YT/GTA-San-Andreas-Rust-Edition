@@ -227,6 +227,12 @@ pub fn show(build: &mut BuildMode, ui: &mut Ui, frame: &Frame) {
     }
 
     let handle_hover = pointer.and_then(|p| gizmo(build, &view, p));
+    // The world's spawn flag can be grabbed and dragged to a new place
+    // (a Spawn point object moves with the gizmo like any object).
+    if drag_spawn(build, ui, &view, &painter, &response, pointer, modifiers) {
+        draw_selection(build, &view, &painter);
+        return;
+    }
     // Grab a handle, drag, release.
     if response.drag_started_by(egui::PointerButton::Primary) && !modifiers.alt {
         // The handle under the press, not under the already moved mouse.
@@ -1490,6 +1496,78 @@ fn draw_spawn(build: &BuildMode, view: &View, painter: &egui::Painter) {
         "Spawn",
         ui_theme::SUCCESS,
     );
+}
+
+/// Grab the world's spawn flag and drag it; it goes where the mouse is let
+/// go, as one undo step. True while the flag is held.
+fn drag_spawn(
+    build: &mut BuildMode,
+    ui: &Ui,
+    view: &View,
+    painter: &egui::Painter,
+    response: &egui::Response,
+    pointer: Option<Pos2>,
+    modifiers: egui::Modifiers,
+) -> bool {
+    if build.spawn_object().is_some() {
+        build.spawn_drag = None;
+        return false;
+    }
+    let near = |p: Pos2| on_spawn_flag(build, view, p);
+    if build.spawn_drag.is_none() {
+        if pointer.is_some_and(near) && build.drag.is_none() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+        }
+        if !response.drag_started_by(egui::PointerButton::Primary) || modifiers.alt {
+            return false;
+        }
+        // The flag under the press, not under the already moved mouse, and
+        // a gizmo handle there wins.
+        let Some(press) = ui.input(|i| i.pointer.press_origin()) else {
+            return false;
+        };
+        if !near(press) || gizmo(build, view, press).is_some() {
+            return false;
+        }
+        build.spawn_drag = Some(build.spawn_position());
+    }
+    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    if let Some(p) = ui.input(|i| i.pointer.interact_pos()) {
+        build.spawn_drag = Some(placement_at(build, view, p).position);
+    }
+    let Some(at) = build.spawn_drag else {
+        return false;
+    };
+    spawn_marker(
+        view,
+        painter,
+        crate::play_logic::blender_to_render(at),
+        "Spawn",
+        ui_theme::ACCENT,
+    );
+    if !ui.input(|i| i.pointer.primary_down()) {
+        build.spawn_drag = None;
+        if at != build.spawn_position() {
+            build.set_spawn(at, 0.0);
+        }
+    }
+    true
+}
+
+/// Whether a screen point is on the world's spawn flag (its pole).
+fn on_spawn_flag(build: &BuildMode, view: &View, p: Pos2) -> bool {
+    let base = build.spawn_render();
+    let Some([a, b]) = view.segment(base, base + Vec3::Y * 1.8) else {
+        return false;
+    };
+    let (a, b, p) = (
+        Vec2::new(a.x, a.y),
+        Vec2::new(b.x, b.y),
+        Vec2::new(p.x, p.y),
+    );
+    let along = (p - a).dot(b - a) / (b - a).length_squared().max(1e-6);
+    let closest = a + (b - a) * along.clamp(0.0, 1.0);
+    p.distance(closest) < 9.0
 }
 
 /// A flag on a pole where players start.

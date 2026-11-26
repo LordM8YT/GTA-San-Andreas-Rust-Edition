@@ -110,8 +110,10 @@ history as they were. Nothing is restarted.
 Spawn: *Set spawn* (Test ribbon, or *Click to set spawn* under Workspace in
 Properties) waits for a click in the viewport and puts the spawn on the
 ground or object under the mouse, facing the way the camera looks.
-Right-click or Esc cancels. If the world has a Spawn point object, that
-object moves (it wins over the world's own spawn). While a world is played,
+Right-click or Esc cancels. You can also grab the green Spawn flag in the
+viewport and drag it somewhere else (one undo step). If the world has a
+Spawn point object, that object moves instead (it wins over the world's own
+spawn); select it and use the Move tool like any object. While a world is played,
 R and falling below the world put the player back at the spawn.
 
 ## My Models
