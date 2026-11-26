@@ -404,6 +404,10 @@ struct State {
     /// The world's Build Mode gameplay while it is played (playtest, or a
     /// content pack with a layout).
     play_logic: Option<play_logic::PlayLogic>,
+    /// Where a world without map streaming (a content pack, a playtest)
+    /// puts the player back: eye position and camera yaw. R, falling out
+    /// of the world and respawning all go here.
+    world_spawn: Option<(Vec3, f32)>,
 }
 impl State {
     fn play_menu_sound(&mut self, kind: sa_audio::MenuSound) {
@@ -1287,6 +1291,7 @@ impl State {
             pack: Default::default(),
             build: None,
             play_logic: None,
+            world_spawn: None,
         };
         if !first_model && state.animation.is_none() {
             if let Some(world) = &state.collision {
@@ -2128,6 +2133,18 @@ impl State {
         if self.driving && self.third_person && self.pack.characters.is_some() {
             self.pose_seated_character(dt);
         }
+        // A content pack or playtest has no map to recover on: falling off
+        // its edge puts the player back at the spawn point.
+        let in_play = self.build.as_ref().is_none_or(|build| build.playtesting);
+        if self.streamer.is_none()
+            && self.world_spawn.is_some()
+            && in_play
+            && (self.walking || self.driving)
+            && (self.position.y < -100.0 || !self.position.is_finite())
+        {
+            runtime_log::line("Fell out of the world: back to the spawn point");
+            self.respawn();
+        }
         if self.streamer.is_some() {
             let center = [ORIGIN[0] + self.position.x, ORIGIN[1] - self.position.z];
             if streaming::distance(center, self.region) > RADIUS - 50.0 {
@@ -2481,6 +2498,24 @@ impl State {
     fn shadows_active(&self) -> bool {
         self.interior == 0 && self.draw_settings().sun_shadows
     }
+    /// Back to the world's own spawn point, on foot, when the world has one
+    /// and does not stream the map.
+    fn back_to_world_spawn(&mut self) -> bool {
+        if self.streamer.is_some() {
+            return false;
+        }
+        let (Some((eye, yaw)), Some(world)) = (self.world_spawn, &self.collision) else {
+            return false;
+        };
+        let player = Player::spawn(world, eye);
+        self.position = player.eye();
+        self.player = Some(player);
+        self.walking = true;
+        self.driving = false;
+        self.yaw = yaw;
+        self.pitch = 0.0;
+        true
+    }
     fn respawn(&mut self) {
         self.leave_passenger();
         self.arsenal.refill();
@@ -2491,6 +2526,9 @@ impl State {
         }
         self.driving = false;
         self.spawned_peds.clear();
+        if self.back_to_world_spawn() {
+            return;
+        }
         // Recover on loaded ground rather than teleporting into an unloaded map.
         let eye = Vec3::new(
             self.region[0] - ORIGIN[0],
@@ -3592,6 +3630,7 @@ impl ApplicationHandler for App {
                     }
                     state.play_logic = Some(play);
                 }
+                state.world_spawn = self.spawn_eye.map(|eye| (eye, state.yaw));
                 if let (Some(eye), Some(world)) = (self.spawn_eye, &state.collision) {
                     let player = Player::spawn(world, eye);
                     state.position = player.eye();
@@ -5167,6 +5206,10 @@ impl ApplicationHandler for App {
                                     state.room_entry = None;
                                     state.portal_exit_guard = None;
                                     state.destination = Some(ORIGIN);
+                                    state.keys.clear();
+                                    return;
+                                }
+                                if state.back_to_world_spawn() {
                                     state.keys.clear();
                                     return;
                                 }
