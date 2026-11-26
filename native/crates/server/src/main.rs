@@ -257,10 +257,24 @@ fn boot(commands: Vec<Vec<String>>, resources_dir: PathBuf) -> Result<Server> {
         .context("Cannot export native resource assets")?;
     // `sets content_pack <id>`: players join in that content pack's world.
     share.manifest.content_pack = content_pack(&shared.borrow().convars);
-    if let Some(pack) = &share.manifest.content_pack {
+    if let Some(pack) = share.manifest.content_pack.clone() {
+        let pack = pack.as_str();
         out(&shared, format!("World: content pack {pack}"));
         let server_root = resources_dir.parent().unwrap_or(Path::new("."));
         world::load(&shared, server_root, pack);
+        // Players who lack this world download it when they join.
+        if let Some(folder) = world::find_pack(server_root, pack) {
+            match share.add_world(pack, &folder) {
+                Ok(()) => out(
+                    &shared,
+                    format!("Sharing world {pack} with joining players"),
+                ),
+                Err(e) => out(
+                    &shared,
+                    format!("Cannot share world {pack} with players: {e}"),
+                ),
+            }
+        }
     }
     out(
         &shared,
