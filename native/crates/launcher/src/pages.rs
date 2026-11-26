@@ -510,12 +510,120 @@ impl Launcher {
         } else {
             self.grid(ui, &found);
         }
-        ui.add_space(8.);
-        ui.label(
-            RichText::new("Shows what is on this PC. Sharing worlds online is not built yet.")
+        if filter != 2 {
+            self.community_worlds(ui);
+        }
+    }
+
+    /// Discover's second half: worlds from the community catalog.
+    fn community_worlds(&mut self, ui: &mut egui::Ui) {
+        if !self.world_list_requested {
+            self.browse_worlds();
+        }
+        ui.add_space(22.);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("From the community").font(shell::semibold(18.)));
+            if self.world_list_worker.is_some() {
+                ui.spinner();
+            } else if ui.small_button("Refresh").clicked() {
+                self.browse_worlds();
+            }
+        });
+        ui.add_space(6.);
+        if let Some(message) = self.world_install_message.clone() {
+            ui.label(RichText::new(message).color(ACCENT));
+            ui.add_space(6.);
+        }
+        if let Some(error) = &self.world_list_error {
+            ui.label(
+                RichText::new(format!("The world list could not be loaded: {error}")).color(MUTED),
+            );
+            return;
+        }
+        let content = crate::local_mods::content_root();
+        let worlds: Vec<_> = self
+            .world_list
+            .iter()
+            .filter(|w| {
+                let query = self.catalog_search.trim().to_lowercase();
+                query.is_empty()
+                    || [&w.name, &w.author, &w.description]
+                        .iter()
+                        .any(|t| t.to_lowercase().contains(&query))
+            })
+            .cloned()
+            .collect();
+        if worlds.is_empty() && self.world_list_worker.is_none() {
+            ui.label(
+                RichText::new(if self.world_list.is_empty() {
+                    "No shared worlds yet. Creators add theirs to community/worlds.json in the SARE repository."
+                } else {
+                    "No shared worlds match this search."
+                })
                 .size(12.5)
                 .color(MUTED),
-        );
+            );
+            return;
+        }
+        let installing = self.world_install.as_ref().map(|(name, _)| name.clone());
+        for world in worlds {
+            let state = crate::world_catalog::state(&world, &content);
+            egui::Frame::new()
+                .fill(SURFACE)
+                .corner_radius(6)
+                .inner_margin(14)
+                .show(ui, |ui| {
+                    ui.set_min_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new(&world.name).font(shell::semibold(16.)));
+                            let by = if world.author.is_empty() {
+                                String::new()
+                            } else {
+                                format!("by {} · ", world.author)
+                            };
+                            ui.label(
+                                RichText::new(format!(
+                                    "{by}version {} · {} · {:.1} MiB",
+                                    world.version,
+                                    world.license,
+                                    world.bytes as f64 / 1048576.
+                                ))
+                                .size(12.5)
+                                .color(MUTED),
+                            );
+                            if !world.description.is_empty() {
+                                ui.label(&world.description);
+                            }
+                        });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if installing.as_deref() == Some(world.name.as_str()) {
+                                ui.spinner();
+                                ui.label("Installing...");
+                                return;
+                            }
+                            let (label, enabled) = match state {
+                                crate::world_catalog::State::NotInstalled => ("Install", true),
+                                crate::world_catalog::State::Update => ("Update", true),
+                                crate::world_catalog::State::Installed => ("Installed", false),
+                                crate::world_catalog::State::Conflict => {
+                                    ("You have a world with this id", false)
+                                }
+                            };
+                            if ui
+                                .add_enabled(
+                                    enabled && installing.is_none(),
+                                    egui::Button::new(label),
+                                )
+                                .clicked()
+                            {
+                                self.install_world(world.clone());
+                            }
+                        });
+                    });
+                });
+            ui.add_space(6.);
+        }
     }
 
     pub(super) fn library(&mut self, ui: &mut egui::Ui) {
