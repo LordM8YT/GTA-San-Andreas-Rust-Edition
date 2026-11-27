@@ -377,13 +377,13 @@ players keep a custom job even if its resource starts after they joined.
 | Data → Mesh → Apply Modifiers | On |
 | Data → Mesh → UVs, Normals | On |
 | Data → Mesh → Vertex Colors | On if you painted colours |
-| Material → Images | Automatic, with PNG textures |
+| Material → Images | Automatic (PNG or JPEG textures) |
 | Animation | Off (not used yet) |
 
 What SARE reads from a `.glb`: meshes, object transforms, Base Color colour
-and PNG texture, vertex colours, and Alpha Blend/Clip. It ignores (without
+and PNG or JPEG texture, vertex colours, and Alpha Blend/Clip. It ignores (without
 errors) armatures, animations, shape keys, normal maps and other material
-channels. JPEG textures are skipped: save your images as PNG.
+channels.
 
 ## 8. Coordinates and placing things
 
@@ -450,7 +450,7 @@ the launcher.
 | My mod is not in the local-resources list | Is `"enabled": true`? Is the folder directly in `mods/` or inside `[category]` folders (up to four levels)? Is the JSON valid (no trailing commas)? |
 | `unknown field` error | A typo in a field name. Compare with the examples here. |
 | My model is invisible | Did you export **glTF Binary**? Is it at the right place and height? Are faces inside out (Blender: *Mesh → Normals → Recalculate Outside*)? |
-| My model is black or white | The texture is JPEG (use PNG), or the material has no Base Color texture. |
+| My model is black or white | The material has no Base Color texture, or the texture is not PNG or JPEG (WebP, KTX2). |
 | I fall through my world | The ground must be a closed, opaque mesh not named `NOCOL_`; check `world.spawn` is above it. Test with `sa-runtime --probe-standalone --content my-world`. |
 | An invisible wall blocks me | An object named `COL_…`, or a big transparent-looking mesh that is still opaque. |
 | My pack is not in the launcher | `content.json` must be directly inside `content/<folder>/`, and `id`, `name`, `version` and `license` must be set. Press **Refresh**. |
