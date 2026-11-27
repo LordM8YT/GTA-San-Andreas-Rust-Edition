@@ -6,9 +6,9 @@
 //!   catalog stores a one-way hash of the key ([`owner_of`]), never the key
 //!   or friend code, so a world cannot be tied to its maker's friend code.
 //! - **The directory stores nothing itself.** Worlds, covers and the catalog
-//!   live in a [`Store`]; the official directory uses a GitHub repository
-//!   ([`GitHub`]): each world is a release with its ZIP and cover, and
-//!   `worlds.json` on the default branch is the catalog. Players download
+//!   live in a [`Store`]; the official directory uses the SARE repository
+//!   itself ([`GitHub`]): each world is a pre-release with its ZIP and
+//!   cover, and `worlds.json` on the `worlds` branch is the catalog. Players download
 //!   from GitHub directly, so Discover works while the directory sleeps.
 //! - **Checked before it is listed.** The request is signed, the ZIP's size
 //!   and SHA-256 must match what was signed, and the ZIP must hold a world
@@ -588,18 +588,20 @@ fn inspect_zip(zip: &Path, id: &str) -> Result<Option<Vec<u8>>, String> {
     Ok(cover)
 }
 
-/// The official store: a GitHub repository. Each world is a release tagged
-/// `world-<id>` holding its ZIP and cover; `worlds.json` on the default
-/// branch is the catalog. The token needs *Contents* and *Issues*
-/// read and write on that repository only.
+/// The official store: a GitHub repository. Each world is a pre-release
+/// tagged `world-<id>` holding its ZIP and cover (pre-releases never become
+/// the repository's latest release, which SARE Client updates from);
+/// `worlds.json` on `branch` is the catalog. The token needs *Contents* and
+/// *Issues* read and write on that repository only.
 pub struct GitHub {
     repo: String,
+    branch: String,
     token: String,
     agent: ureq::Agent,
     api: String,
 }
 impl GitHub {
-    pub fn new(repo: &str, token: &str) -> Self {
+    pub fn new(repo: &str, branch: &str, token: &str) -> Self {
         let agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
             .timeout_global(Some(std::time::Duration::from_secs(900)))
@@ -607,6 +609,7 @@ impl GitHub {
             .into();
         Self {
             repo: repo.to_string(),
+            branch: branch.to_string(),
             token: token.to_string(),
             agent,
             api: "https://api.github.com".into(),
@@ -615,8 +618,8 @@ impl GitHub {
     /// The catalog's public address, which SARE Client reads.
     pub fn catalog_url(&self) -> String {
         format!(
-            "https://raw.githubusercontent.com/{}/main/worlds.json",
-            self.repo
+            "https://raw.githubusercontent.com/{}/{}/worlds.json",
+            self.repo, self.branch
         )
     }
     fn call(
@@ -676,6 +679,7 @@ impl GitHub {
                     "tag_name": tag,
                     "name": id,
                     "body": "A world published from SARE Studio. Listed in worlds.json.",
+                    "prerelease": true,
                     "make_latest": "false",
                 });
                 let (status, value) = self.json("POST", &url, &body)?;
@@ -708,7 +712,10 @@ impl GitHub {
 }
 impl Store for GitHub {
     fn catalog(&self) -> Result<(Catalog, Option<String>), String> {
-        let url = format!("{}/repos/{}/contents/worlds.json", self.api, self.repo);
+        let url = format!(
+            "{}/repos/{}/contents/worlds.json?ref={}",
+            self.api, self.repo, self.branch
+        );
         let (status, value) = self.call("GET", &url, (), "application/json")?;
         match status {
             200 => {
@@ -733,6 +740,7 @@ impl Store for GitHub {
         let mut body = serde_json::json!({
             "message": note,
             "content": base64_encode(text.as_bytes()),
+            "branch": self.branch,
         });
         if let Some(sha) = version {
             body["sha"] = sha.into();

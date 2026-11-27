@@ -153,12 +153,14 @@ Creators publish worlds from SARE Studio, and every SARE Client lists them
 under **Discover**. The directory checks and stores each world; it keeps
 nothing on its own disk, so it still runs on Render's free plan.
 
-- **Storage is a GitHub repository** (official: `LordM8YT/sare-worlds`).
-  Each world is a release tagged `world-<id>` holding its ZIP and cover
-  picture, and `worlds.json` on the default branch is the catalog. SARE
-  Client reads `https://raw.githubusercontent.com/<repo>/main/worlds.json`
-  and downloads worlds from GitHub directly, so Discover works even while
-  the directory sleeps. Only the newest version of a world is kept.
+- **Storage is the SARE repository itself.** Each world is a pre-release
+  tagged `world-<id>` holding its ZIP and cover picture (pre-releases never
+  become the latest release, which SARE Client updates from), and
+  `worlds.json` on the `worlds` branch is the catalog. SARE Client reads
+  `https://raw.githubusercontent.com/LordM8YT/SARE/worlds/worlds.json` and
+  downloads worlds from GitHub directly, so Discover works even while the
+  directory sleeps. Only the newest version of a world is kept. CI does not
+  run for the `worlds` branch.
 - **No accounts.** A world belongs to the SARE ID (the same key as
   Friends) that published it first. Only that ID can update or unpublish
   it. The catalog stores a one-way hash of the key as `owner`, not the
@@ -169,7 +171,7 @@ nothing on its own disk, so it still runs on Render's free plan.
   (256 MiB, 1024 files). An update must raise the version. One creator may
   publish once every 30 seconds and have up to 25 worlds; the catalog holds
   up to 500. One world is published at a time; others are told to retry.
-- **Reports** become an issue labelled `report` in the storage repository.
+- **Reports** become an issue labelled `report` in the repository.
   A player can report a world once and send at most ten reports an hour.
   Admins (`SARE_WORLDS_ADMINS`) can unpublish any world; a maintainer can
   also delete its entry from `worlds.json` by hand.
@@ -205,18 +207,20 @@ text. The answer is `{"world": <catalog entry>}` or `{"error": "..."}`. A
 
 ### Set it up on Render
 
-1. Create a **public** repository for the worlds, for example
-   `LordM8YT/sare-worlds`, with a README so it has a first commit, and add
-   a label named `report`.
-2. Create a **fine-grained personal access token** on GitHub (*Settings ›
-   Developer settings › Fine-grained tokens*): *Only select repositories*
-   with just the worlds repository, and the permissions *Contents: Read and
-   write* and *Issues: Read and write*. Nothing else.
-3. On the `sare-directory` service in Render, *Environment*: set
-   `SARE_WORLDS_REPO` to the repository, `SARE_WORLDS_TOKEN` to the token,
-   and optionally `SARE_WORLDS_ADMINS` to friend codes separated by commas.
-   Then *Manual Deploy*.
-4. **Check**: `/health` answers `"publishing":true`.
+The `worlds` branch (with an empty `worlds.json`) and the `report` label
+already exist in the SARE repository.
 
-Without the two variables the directory runs as before and answers
-publishing requests with `503`.
+1. Create a **fine-grained personal access token** on GitHub (*Settings ›
+   Developer settings › Fine-grained tokens*): *Only select repositories*
+   with just `LordM8YT/SARE`, and the permissions *Contents: Read and write*
+   and *Issues: Read and write*. Nothing else.
+2. On the `sare-directory` service in Render, *Environment*: add
+   `SARE_WORLDS_TOKEN` with the token, and optionally `SARE_WORLDS_ADMINS`
+   with friend codes separated by commas. Then *Manual Deploy*.
+3. **Check**: `/health` answers `"publishing":true`.
+
+Another repository or branch can be used with `SARE_WORLDS_REPO`
+(`owner/name`) and `SARE_WORLDS_BRANCH`.
+
+Without the token the directory runs as before and answers publishing
+requests with `503`.

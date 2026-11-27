@@ -1,6 +1,8 @@
 name: Native Windows, Linux and macOS
 on:
   push:
+    # The directory commits the published world catalog there.
+    branches-ignore: [worlds]
   pull_request:
 permissions:
   contents: read

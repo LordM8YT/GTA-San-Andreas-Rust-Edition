@@ -16,9 +16,10 @@ use std::{
 /// `SARE_WORLD_LIST` overrides it with another `https://` URL or a file.
 pub const LIST_URL: &str =
     "https://raw.githubusercontent.com/LordM8YT/SARE/main/community/worlds.json";
-/// Worlds published from SARE Studio, kept by the official directory.
+/// Worlds published from SARE Studio: the `worlds` branch, which the
+/// official directory keeps.
 pub const PUBLISHED_URL: &str =
-    "https://raw.githubusercontent.com/LordM8YT/sare-worlds/main/worlds.json";
+    "https://raw.githubusercontent.com/LordM8YT/SARE/worlds/worlds.json";
 const MAX_WORLDS: usize = 1000;
 const MAX_LIST_BYTES: u64 = 512 * 1024;
 const MAX_ZIP_BYTES: u64 = 256 * 1024 * 1024;
