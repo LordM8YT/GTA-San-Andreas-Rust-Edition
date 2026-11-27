@@ -33,6 +33,58 @@ fn rp_server() -> Sarebox {
     )
 }
 
+fn owned_cars(server: &Sarebox) -> Json {
+    script::with_db(&server.shared, |conn| {
+        crate::db::Db::execute(
+            conn,
+            crate::db::Mode::Query,
+            "SELECT * FROM player_vehicles ORDER BY id",
+            &Json::Null,
+        )
+    })
+    .unwrap()
+}
+
+#[test]
+fn rp_town_moves_cars_from_old_character_metadata_into_player_vehicles() {
+    let mut server = Sarebox::boot_with(
+        "sare-rp",
+        &["ensure sarebox_core", "ensure sare_rp_vehicles"],
+        &[],
+        |root| {
+            let old = serde_json::json!({
+                "license:license:abc": "CARMAN01",
+                "player:CARMAN01": serde_json::json!({
+                    "citizenid": "CARMAN01", "name": "Car Man", "money": { "cash": 1, "bank": 2 },
+                    "metadata": { "identity": { "firstname": "Car" }, "vehicles": [
+                        { "plate": "OLD1234", "model": "sedan", "label": "Sedan", "colour": [1, 2, 3] },
+                        { "plate": "OLD5678", "model": "example_truck", "label": "Example truck" },
+                    ] }
+                }).to_string(),
+            });
+            std::fs::create_dir_all(root.join("kvp")).unwrap();
+            std::fs::write(root.join("kvp/sarebox_core.json"), old.to_string()).unwrap();
+        },
+    );
+    let cars = owned_cars(&server);
+    assert_eq!(cars.as_array().map(Vec::len), Some(2), "{cars}");
+    assert_eq!(cars[0]["citizenid"], "CARMAN01");
+    assert_eq!(cars[0]["plate"], "OLD1234");
+    assert_eq!(cars[0]["mods"], r#"{"colour":[1,2,3]}"#);
+    assert_eq!(cars[1]["vehicle"], "example_truck");
+    // The list left the character; the rest of its metadata stayed.
+    let saved = server.saved().to_string();
+    assert!(
+        !saved.contains("vehicles") && saved.contains("firstname"),
+        "{saved}"
+    );
+    // A restart moves nothing twice.
+    server.run("restart sare_rp_vehicles");
+    assert_eq!(owned_cars(&server).as_array().map(Vec::len), Some(2));
+    let output = server.output();
+    assert!(!output.contains("SCRIPT ERROR"), "{output}");
+}
+
 /// The SARE Box HUD block ("$500  |  Bank $5000\nJob - Grade").
 fn hud(player: &Player) -> String {
     player
@@ -385,8 +437,16 @@ fn rp_town_police_duty_jail_and_dealer() {
         vehicles(s).is_empty()
     });
     assert!(vehicles(&server).is_empty());
-    let saved = server.saved().to_string();
-    assert!(saved.contains("sedan"), "{saved}");
+    // The car is a row of its own, back in the garage, painted ocean blue.
+    let cars = owned_cars(&server);
+    assert_eq!(cars.as_array().map(Vec::len), Some(1), "{cars}");
+    assert_eq!(cars[0]["vehicle"], "sedan");
+    assert_eq!(cars[0]["state"], 1);
+    assert!(
+        cars[0]["mods"].as_str().unwrap().contains("[50,90,170]"),
+        "{cars}"
+    );
+    assert!(!server.saved().to_string().contains("vehicles"));
     let output = server.output();
     assert!(!output.contains("SCRIPT ERROR"), "{output}");
 }

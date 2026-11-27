@@ -1,4 +1,5 @@
--- Owned vehicles (saved in `metadata.vehicles`) and server-spawned cars.
+-- Owned vehicles (the `player_vehicles` table, see migrations/) and
+-- server-spawned cars.
 -- Cars taken out are server entities: everyone in the same instance sees
 -- them. Walk up and press F to drive: the server checks the car is yours
 -- (or your job's) through `sare:enteringVehicle`, and everyone sees you
@@ -6,14 +7,59 @@
 local Core = exports.sarebox:GetCoreObject()
 local RP = exports.sare_rp_core:GetRP()
 
-local Out = {}  -- [server id] = { handle, plate }
-local Plates = {}
+local Out = {}  -- [server id] = { handle, plate, owned }
 
+-- The player's cars as { plate, model, label, colour }, oldest first.
 local function vehicles(src)
   local player = Core.Functions.GetPlayer(src)
-  local list = player and player.PlayerData.metadata.vehicles
-  return type(list) == 'table' and list or {}, player
+  local list = {}
+  if not player or not player.PlayerData.license then return list, player end
+  local rows = MySQL.query.await('SELECT * FROM player_vehicles WHERE citizenid = ? ORDER BY id', { player.PlayerData.citizenid })
+  for _, row in ipairs(rows or {}) do
+    local ok, mods = pcall(json.decode, row.mods or '{}')
+    list[#list + 1] = { plate = row.plate, model = row.vehicle, label = row.label or row.vehicle,
+      colour = ok and type(mods) == 'table' and mods.colour or nil }
+  end
+  return list, player
 end
+
+local function setState(plate, state)
+  MySQL.update.await('UPDATE player_vehicles SET state = ? WHERE plate = ?', { state, plate })
+end
+
+-- Servers from before the table kept cars in each character's
+-- `metadata.vehicles`. Move them into the table (and out of metadata) on
+-- start; plates already in the table are kept as they are.
+local function importMetadataCars()
+  local rows = MySQL.query.await([[SELECT citizenid, json_extract(metadata, '$.vehicles') AS vehicles FROM players
+    WHERE json_type(metadata, '$.vehicles') = 'array']])
+  local moved = 0
+  for _, row in ipairs(rows or {}) do
+    local ok, list = pcall(json.decode, row.vehicles)
+    local queries = {}
+    for _, car in ipairs(ok and type(list) == 'table' and list or {}) do
+      if type(car) == 'table' and type(car.plate) == 'string' and type(car.model) == 'string' then
+        queries[#queries + 1] = { query = 'INSERT OR IGNORE INTO player_vehicles (citizenid, vehicle, label, plate, mods) VALUES (?, ?, ?, ?, ?)',
+          values = { row.citizenid, car.model, car.label, car.plate, json.encode({ colour = car.colour }) } }
+        moved = moved + 1
+      end
+    end
+    queries[#queries + 1] = { query = [[UPDATE players SET metadata = json_remove(metadata, '$.vehicles') WHERE citizenid = ?]],
+      values = { row.citizenid } }
+    if not MySQL.transaction.await(queries) then
+      print(('^1[sare_rp_vehicles] Could not move the cars of %s into player_vehicles.^7'):format(row.citizenid))
+    end
+  end
+  -- Loaded characters would save the old list again.
+  for _, src in ipairs(Core.Functions.GetPlayers()) do
+    local player = Core.Functions.GetPlayer(src)
+    if player and player.PlayerData.metadata.vehicles ~= nil then player.Functions.SetMetaData('vehicles', nil) end
+  end
+  if moved > 0 then print(('[sare_rp_vehicles] Moved %d car(s) from character metadata into player_vehicles.'):format(moved)) end
+end
+importMetadataCars()
+-- Cars that were out when the server stopped are back in their garage.
+MySQL.update.await('UPDATE player_vehicles SET state = 1 WHERE state = 0')
 
 local function newPlate()
   local chars = 'ABCDEFGHJKLMNPRSTUVWXYZ0123456789'
@@ -24,13 +70,14 @@ local function newPlate()
       plate[i] = chars:sub(n, n)
     end
     plate = table.concat(plate)
-    if not Plates[plate] and not GetResourceKvpString('plate:' .. plate) then return plate end
+    if not MySQL.scalar.await('SELECT 1 FROM player_vehicles WHERE plate = ?', { plate }) then return plate end
   end
 end
 
 local function despawn(src)
   local out = Out[src]
   if out and DoesEntityExist(out.handle) then DeleteEntity(out.handle) end
+  if out and out.owned then setState(out.plate, 1) end
   Out[src] = nil
 end
 
@@ -50,7 +97,8 @@ local function spawn(src, model, point, plate, kind, colour)
   state:set('owner', src, true)
   state:set('plate', plate, true)
   state:set('kind', kind, true)
-  Out[src] = { handle = handle, plate = plate }
+  Out[src] = { handle = handle, plate = plate, owned = kind == 'owned' }
+  if kind == 'owned' then setState(plate, 0) end
   return handle
 end
 
@@ -108,11 +156,13 @@ local function buy(src, car, colour)
     return RP.Notify(src, ('You need $%d in your bank account.'):format(car.price), 'error', 'Dealer')
   end
   local plate = newPlate()
-  Plates[plate] = true
-  SetResourceKvp('plate:' .. plate, player.PlayerData.citizenid)
   local rgb = colour and { colour.rgb[1], colour.rgb[2], colour.rgb[3] } or nil
-  list[#list + 1] = { plate = plate, model = car.model, label = car.label, colour = rgb }
-  player.Functions.SetMetaData('vehicles', list)
+  local ok = pcall(MySQL.insert.await, 'INSERT INTO player_vehicles (citizenid, vehicle, label, plate, mods) VALUES (?, ?, ?, ?, ?)',
+    { player.PlayerData.citizenid, car.model, car.label, plate, json.encode({ colour = rgb }) })
+  if not ok then
+    player.Functions.AddMoney('bank', car.price, 'vehicle refund')
+    return RP.Notify(src, 'The dealer could not register the car. Your money is back.', 'error', 'Dealer')
+  end
   spawn(src, car.model, RPLocations.dealer_delivery, plate, 'owned', rgb)
   RP.Notify(src, ('You bought the %s%s, plate %s. It waits outside: walk up and press F to drive. Later keep it at the public garage.'):format(
     colour and (colour.label:lower() .. ' ') or '', car.label, plate), 'success', 'Dealer')

@@ -5,7 +5,8 @@ survive a restart: players, money, jobs, inventories, owned cars, houses.
 It is one [SQLite](https://sqlite.org) file next to server.cfg, so there is
 nothing to install or configure. SARE Box and SARE RP Town keep their
 characters here (the `players` table, see
-[SARE Box](sarebox.md#when-data-is-saved)).
+[SARE Box](sarebox.md#when-data-is-saved)), and SARE RP Town its owned cars
+(`player_vehicles`).
 
 Scripts use it with the **oxmysql API**, the one most FiveM resources already
 use. SARE ships its own resource called `oxmysql` (in `resources/[system]/`)
@@ -143,7 +144,5 @@ A relative path starts at the folder with server.cfg.
   `mysql_connection_string` in server.cfg is ignored with a warning. One file
   is enough for a single RP server with hundreds of players; MySQL matters
   when several servers share one database.
-- **Owned cars** in SARE RP Town are still a list in each character's
-  `metadata`; a `player_vehicles` table is the next step.
 - Queries run on the server thread. Keep them small (look rows up by an
   indexed column), and don't run a query every frame.
