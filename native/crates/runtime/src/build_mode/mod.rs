@@ -206,6 +206,9 @@ pub struct BuildMode {
     /// The world's spawn flag held with the mouse: where it is now.
     pub spawn_drag: Option<[f32; 3]>,
     pub playtesting: bool,
+    /// The vehicles the game's car list holds (the saved ones at start);
+    /// playtest reloads them when the world's vehicles have changed.
+    pub loaded_vehicles: Vec<sa_scene::content_pack::VehicleSpec>,
     pub log: Vec<LogLine>,
     pub recovery: Option<Recovery>,
     pub requests: Vec<Request>,
@@ -318,6 +321,7 @@ impl BuildMode {
             placing_spawn: false,
             spawn_drag: None,
             playtesting: false,
+            loaded_vehicles: manifest.vehicles.clone(),
             log: Vec::new(),
             recovery,
             requests: Vec::new(),
@@ -375,7 +379,7 @@ impl BuildMode {
                 let warnings = report.warnings();
                 let [width, height, length] = report.size;
                 let summary = format!(
-                    "Vehicle {} added ({length:.1} x {width:.1} x {height:.1} m, {} wheels). Save, then play to drive it.",
+                    "Vehicle {} added ({length:.1} x {width:.1} x {height:.1} m, {} wheels). Playtest (F6) and press F9 to drive it.",
                     spec.name, report.wheels
                 );
                 if warnings.is_empty() {
@@ -1123,6 +1127,75 @@ impl State {
     }
 
     /// Start playing the edited world, or go back to editing it.
+    /// Give playtest the world's vehicles as they are now, saved or not:
+    /// imported, removed, renamed, recoloured or retuned ones. The first
+    /// is F9's car; SARE Kart comes last, as when the world starts.
+    fn refresh_world_vehicles(&mut self) {
+        let Some(build) = &self.build else { return };
+        if build.loaded_vehicles == build.doc.info.vehicles {
+            return;
+        }
+        let wanted = build.doc.info.vehicles.clone();
+        let (folder, id) = (build.project.folder.clone(), build.project.id.clone());
+        let mut cars = Vec::new();
+        let mut problems = Vec::new();
+        for spec in &wanted {
+            match spec
+                .load(&folder, &id)
+                .and_then(|scene| self.build_car(scene))
+            {
+                Ok(mesh) => cars.push((spec.clone(), mesh)),
+                Err(error) => problems.push(format!("Vehicle {}: {error:#}", spec.name)),
+            }
+        }
+        let kart = match self.build_car(sa_scene::testbed::placeholder_car()) {
+            Ok(kart) => kart,
+            Err(error) => {
+                problems.push(format!("SARE Kart: {error:#}"));
+                return;
+            }
+        };
+        if self.driving {
+            self.toggle_car();
+        }
+        self.original_car_models.clear();
+        self.pack.seats.clear();
+        let mut names = Vec::new();
+        let mut meshes = Vec::new();
+        for (spec, mesh) in cars {
+            self.original_car_models
+                .insert(spec.name.clone(), spec.model.clone());
+            self.pack
+                .seats
+                .insert(spec.name.clone(), spec.seat_model_space());
+            names.push(spec.name);
+            meshes.push(Some(mesh));
+        }
+        names.push("SARE Kart".into());
+        meshes.push(Some(kart));
+        self.car = meshes[0].take();
+        self.car_catalog = meshes;
+        self.active_car = 0;
+        self.menu.cars = names;
+        self.car_render_pose = None;
+        self.pack.paint = None;
+        self.pack.rendered_paint = None;
+        let count = self.car_catalog.len();
+        self.traffic.cars.retain(|car| car.catalog < count);
+        self.car_at_start();
+        let build = self.build.as_mut().unwrap();
+        build.loaded_vehicles = wanted;
+        if problems.is_empty() {
+            build.info(format!(
+                "Playtest uses the world's {} vehicle(s); F9 brings {}.",
+                count - 1,
+                self.menu.cars[0]
+            ));
+        }
+        for problem in problems {
+            build.warn(problem);
+        }
+    }
     pub(crate) fn toggle_playtest(&mut self) {
         let Some(playtesting) = self.build.as_ref().map(|b| b.playtesting) else {
             return;
@@ -1144,6 +1217,7 @@ impl State {
             }
             return;
         }
+        self.refresh_world_vehicles();
         let Some(build) = &mut self.build else { return };
         script_ui::flush(build);
         build.commit_preview();
