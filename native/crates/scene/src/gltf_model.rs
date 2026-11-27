@@ -58,6 +58,19 @@ pub struct Model {
     pub textures: HashMap<String, Texture>,
     /// Drawn triangles.
     pub triangles: usize,
+    /// Moving parts, when the file has node animations. `drawn` still has
+    /// every part where it rests.
+    pub animation: Option<Moving>,
+}
+
+/// A model's moving parts, split from its still geometry.
+#[derive(Default)]
+pub struct Moving {
+    pub animation: crate::gltf_anim::Animation,
+    /// Drawn geometry that never moves.
+    pub still: Vec<Batch>,
+    /// Drawn geometry of each part (order of `animation.parts`), at rest.
+    pub parts: Vec<Vec<Batch>>,
 }
 impl Model {
     /// Move every vertex by `offset` (glTF/runtime space).
@@ -335,6 +348,21 @@ pub(crate) fn open_document(bytes: &[u8], folder: &Path) -> Result<(gltf::Gltf, 
 
 pub fn parse(bytes: &[u8], folder: &Path, key_prefix: &str) -> Result<Model> {
     let (gltf, buffers) = open_document(bytes, folder)?;
+    // A broken animation never stops the model itself from loading.
+    let animation =
+        crate::gltf_anim::Animation::read(&gltf.document, &buffers).unwrap_or_else(|error| {
+            eprintln!("glTF: animations ignored: {error:#}");
+            None
+        });
+    let part_of: HashMap<usize, usize> = animation
+        .as_ref()
+        .map(|a| a.parts.iter().enumerate().map(|(i, &n)| (n, i)).collect())
+        .unwrap_or_default();
+    let mut moving = animation.map(|animation| Moving {
+        parts: (0..animation.parts.len()).map(|_| Vec::new()).collect(),
+        animation,
+        still: Vec::new(),
+    });
 
     let mut images: HashMap<usize, Option<String>> = HashMap::new();
     let mut model = Model::default();
@@ -357,21 +385,23 @@ pub fn parse(bytes: &[u8], folder: &Path, key_prefix: &str) -> Result<Model> {
         .default_scene()
         .or_else(|| gltf.document.scenes().next())
         .context("the file has no scene")?;
-    let mut stack: Vec<(gltf::Node, Mat4, Role)> = scene
+    // (node, parent's matrix, role, the part it moves with)
+    let mut stack: Vec<(gltf::Node, Mat4, Role, Option<usize>)> = scene
         .nodes()
-        .map(|n| (n, Mat4::IDENTITY, Role::Solid))
+        .map(|n| (n, Mat4::IDENTITY, Role::Solid, None))
         .collect();
     let light = Vec3::new(0.35, 1.0, 0.25).normalize();
     let mut read_triangles = 0;
-    while let Some((node, parent, parent_role)) = stack.pop() {
+    while let Some((node, parent, parent_role, parent_part)) = stack.pop() {
         ensure!(stack.len() < 100_000, "the node tree is too large");
         let transform = parent * Mat4::from_cols_array_2d(&node.transform().matrix());
         let mut role = Role::from_name(node.name().unwrap_or(""));
         if role == Role::Solid {
             role = parent_role;
         }
+        let part = part_of.get(&node.index()).copied().or(parent_part);
         for child in node.children() {
-            stack.push((child, transform, role));
+            stack.push((child, transform, role, part));
         }
         let Some(mesh) = node.mesh() else { continue };
         if role == Role::Solid {
@@ -476,7 +506,7 @@ pub fn parse(bytes: &[u8], folder: &Path, key_prefix: &str) -> Result<Model> {
                 });
                 model.drawn.len() - 1
             });
-            let out = &mut model.drawn[slot].vertices;
+            let mut out = Vec::with_capacity(indices.len());
             for tri in indices.as_chunks::<3>().0 {
                 let [a, b, c] = tri.map(|i| i as usize);
                 let face = (positions[b] - positions[a])
@@ -509,8 +539,31 @@ pub fn parse(bytes: &[u8], folder: &Path, key_prefix: &str) -> Result<Model> {
                     });
                 }
             }
+            if let Some(moving) = &mut moving {
+                let batches = match part {
+                    Some(part) => &mut moving.parts[part],
+                    None => &mut moving.still,
+                };
+                match batches
+                    .iter_mut()
+                    .find(|b| b.key == key && b.alpha == alpha)
+                {
+                    Some(batch) => batch.vertices.extend_from_slice(&out),
+                    None => batches.push(Batch {
+                        key: key.clone(),
+                        vertices: out.clone(),
+                        alpha,
+                        animated: false,
+                        uv_animation: None,
+                        map_door: None,
+                        mlo_entity: None,
+                    }),
+                }
+            }
+            model.drawn[slot].vertices.extend(out);
         }
     }
+    model.animation = moving;
     model.drawn.retain(|b| !b.vertices.is_empty());
     if !collision_vertices.is_empty() {
         model.collision.push(Batch {
@@ -685,6 +738,98 @@ pub(crate) mod tests {
         out.extend_from_slice(b"BIN\0");
         out.extend_from_slice(&bin);
         out
+    }
+
+    /// A windmill: a still base and a sail on a rotor that turns 180°
+    /// about the up axis over two seconds.
+    pub(crate) fn windmill_glb() -> Vec<u8> {
+        windmill_glb_edited(|json| json)
+    }
+
+    fn windmill_glb_edited(edit: impl Fn(String) -> String) -> Vec<u8> {
+        let positions: [[f32; 3]; 4] = [
+            [-1.0, 0.0, -1.0],
+            [1.0, 0.0, -1.0],
+            [1.0, 0.0, 1.0],
+            [-1.0, 0.0, 1.0],
+        ];
+        let indices: [u16; 6] = [0, 3, 2, 0, 2, 1];
+        let s = std::f32::consts::FRAC_1_SQRT_2;
+        let times: [f32; 3] = [0.0, 1.0, 2.0];
+        let rotations: [[f32; 4]; 3] =
+            [[0.0, 0.0, 0.0, 1.0], [0.0, s, 0.0, s], [0.0, 1.0, 0.0, 0.0]];
+        let mut bin: Vec<u8> = bytemuck::cast_slice(&positions).to_vec();
+        bin.extend_from_slice(bytemuck::cast_slice(&indices));
+        bin.extend_from_slice(&[0; 4]);
+        bin.extend_from_slice(bytemuck::cast_slice(&times));
+        bin.extend_from_slice(bytemuck::cast_slice(&rotations));
+        let json = format!(
+            r#"{{"asset":{{"version":"2.0"}},"scene":0,"scenes":[{{"nodes":[0,1]}}],
+            "nodes":[{{"name":"Base","mesh":0}},{{"name":"Rotor","translation":[0,2,0],"children":[2]}},
+              {{"name":"Sail","mesh":0,"translation":[1,0,0]}}],
+            "meshes":[{{"primitives":[{{"attributes":{{"POSITION":0}},"indices":1,"material":0}}]}}],
+            "materials":[{{"pbrMetallicRoughness":{{"baseColorFactor":[1,1,1,1]}}}}],
+            "animations":[{{"name":"spin","channels":[{{"sampler":0,"target":{{"node":1,"path":"rotation"}}}}],
+              "samplers":[{{"input":2,"output":3,"interpolation":"LINEAR"}}]}}],
+            "buffers":[{{"byteLength":{}}}],
+            "bufferViews":[{{"buffer":0,"byteOffset":0,"byteLength":48}},{{"buffer":0,"byteOffset":48,"byteLength":12}},
+              {{"buffer":0,"byteOffset":64,"byteLength":12}},{{"buffer":0,"byteOffset":76,"byteLength":48}}],
+            "accessors":[
+              {{"bufferView":0,"componentType":5126,"count":4,"type":"VEC3","min":[-1,0,-1],"max":[1,0,1]}},
+              {{"bufferView":1,"componentType":5123,"count":6,"type":"SCALAR"}},
+              {{"bufferView":2,"componentType":5126,"count":3,"type":"SCALAR","min":[0],"max":[2]}},
+              {{"bufferView":3,"componentType":5126,"count":3,"type":"VEC4"}}]}}"#,
+            bin.len()
+        );
+        glb(edit(json).as_bytes(), &bin)
+    }
+
+    #[test]
+    fn moving_parts_are_split_from_still_geometry_and_posed() {
+        let model = parse(&windmill_glb(), Path::new("."), "t").unwrap();
+        // Everything is still drawn where it rests.
+        assert_eq!(
+            model.drawn.iter().map(|b| b.vertices.len()).sum::<usize>(),
+            12
+        );
+        let moving = model.animation.as_ref().expect("the windmill moves");
+        assert_eq!(moving.animation.parts, vec![1], "the rotor node");
+        assert_eq!(moving.still[0].vertices.len(), 6, "the base");
+        assert_eq!(moving.parts[0][0].vertices.len(), 6, "the sail");
+        let clip = moving.animation.clip(Some("spin")).unwrap();
+        assert_eq!(moving.animation.clips[clip].duration, 2.0);
+        let near = |a: Vec3, b: Vec3| (a - b).length() < 1e-4;
+        let sail = Vec3::new(1.0, 2.0, 0.0);
+        let at = |t: f32| moving.animation.pose(clip, t)[0].transform_point3(sail);
+        assert!(near(at(0.0), sail));
+        assert!(near(at(1.0), Vec3::new(0.0, 2.0, -1.0)), "{:?}", at(1.0));
+        let half = std::f32::consts::FRAC_1_SQRT_2;
+        assert!(near(at(0.5), Vec3::new(half, 2.0, -half)), "{:?}", at(0.5));
+        assert!(near(at(2.0), sail), "loops");
+        assert!(
+            near(at(-1.0), Vec3::new(0.0, 2.0, -1.0)),
+            "negative time loops too"
+        );
+        // A model without animations has none.
+        let still = parse(&quad_glb("Floor", [0.0; 3]), Path::new("."), "t").unwrap();
+        assert!(still.animation.is_none());
+    }
+
+    #[test]
+    fn broken_animation_data_leaves_the_model_still() {
+        let bytes = windmill_glb_edited(|json| {
+            json.replace(r#""count":3,"type":"VEC4""#, r#""count":2,"type":"VEC4""#)
+        });
+        let model = parse(&bytes, Path::new("."), "t").unwrap();
+        assert!(model.animation.is_none());
+        assert_eq!(
+            model.drawn.iter().map(|b| b.vertices.len()).sum::<usize>(),
+            12
+        );
+        let document = gltf::Gltf::from_slice(&bytes).unwrap();
+        let (_, buffers) = open_document(&bytes, Path::new(".")).unwrap();
+        let err = crate::gltf_anim::Animation::read(&document.document, &buffers).unwrap_err();
+        assert!(format!("{err:#}").contains("keys"), "{err:#}");
     }
 
     #[test]

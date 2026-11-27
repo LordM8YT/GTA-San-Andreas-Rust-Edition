@@ -4,6 +4,7 @@ pub mod character;
 pub mod collision;
 pub mod content;
 pub mod content_pack;
+pub mod gltf_anim;
 pub mod gltf_model;
 pub mod handling;
 pub mod lights;
