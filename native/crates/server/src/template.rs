@@ -34,9 +34,12 @@ pub const TEMPLATES: [(&str, &str, &str, &str); 3] = [
 ];
 
 /// Resources every template gets; server.cfg decides which ones start.
-pub const FILES: [(&str, &str); 78] = [
+pub const FILES: [(&str, &str); 81] = [
     data!("resources/[system]/chat/fxmanifest.lua"),
     data!("resources/[system]/chat/sv_chat.lua"),
+    data!("resources/[system]/oxmysql/fxmanifest.lua"),
+    data!("resources/[system]/oxmysql/lib/MySQL.lua"),
+    data!("resources/[system]/oxmysql/server.lua"),
     data!("resources/[managers]/mapmanager/fxmanifest.lua"),
     data!("resources/[managers]/mapmanager/mapmanager_server.lua"),
     data!("resources/[managers]/spawnmanager/fxmanifest.lua"),

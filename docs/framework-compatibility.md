@@ -17,11 +17,11 @@ GTA V-natives på klienten mangler.
 | --- | --- | --- | --- |
 | `qbx_core` | 1.24.0 (`1825a3c`) | – | Laster med oxmysql-stub, stopper i sin egen oppstartsjekk: krever `ox_inventory` ≥ 2.42.1 |
 | `ox_lib` | 3.40.0 (release-zip) | ≥ 3.20.0 | **Starter.** `@ox_lib/init.lua` i en annen ressurs fungerer for testede servermoduler |
-| `oxmysql` | `main` `bae715c` | påkrevd | **Kan ikke kjøre:** JavaScript-ressurs for Node 22 (`server_script 'dist/build.js'`) |
+| `oxmysql` | `main` `bae715c` | påkrevd | **Erstattet:** originalen er en Node-ressurs og kan ikke kjøre; SARE har sin egen `oxmysql` med samme API mot SQLite (se [Serverdatabase](database.md)) |
 | `ox_inventory` | 2.48.0 | ≥ 2.42.1 | Ikke testet: trenger oxmysql, OneSync og NUI |
 | `qbx_vehicles` | 1.4.2 | ≥ 1.4.1 | Ikke testet: trenger qbx_core og oxmysql |
 | FXServer | – | build ≥ 10731, OneSync | Versjonskrav ignoreres; OneSync finnes ikke |
-| Database | – | MySQL/MariaDB + `qbx_core.sql` | Ingen databasestøtte i SARE ennå |
+| Database | – | MySQL/MariaDB + `qbx_core.sql` | **Delvis** (nytt): innebygd SQLite; MySQL-spesifikk SQL i `qbx_core.sql` må skrives om (se [Serverdatabase](database.md#sql-dialect)) |
 
 Prøvekjøringen av ox_lib brukte en testressurs med `shared_script
 '@ox_lib/init.lua'` som kalte `lib.table.contains`, `lib.math.round`,
@@ -49,7 +49,7 @@ NUI kjører ikke.
 | Resource-KVP (`SetResourceKvp*`, `GetResourceKvp*`, `StartFindKvp`) | ox_lib, qbx_core | **Støttet** (nytt): lagres i `kvp/<ressurs>.json` |
 | ACL med `identifier.license:...` | txAdmin-oppsett, Qbox-admin | **Støttet** (nytt) |
 | `GetConvarBool` | ox_lib | **Støttet** (nytt) |
-| Database (oxmysql-API) | qbx_core, ox_inventory | Mangler |
+| Database (oxmysql-API) | qbx_core, ox_inventory | **Støttet** (nytt): `query`, `single`, `scalar`, `insert`, `update`, `prepare`, `transaction`, `.await`, `MySQL.Async`/`Sync`; SQLite, ikke MySQL |
 | `PerformHttpRequest`, `AddConvarChangeListener` | ox_lib | Mangler |
 | `glm`-matematikk, `Citizen.InvokeNative` | ox_lib | Mangler |
 | Serverentiteter (OneSync): `CreateVehicle`, `CreatePed`, `CreateObject`, `DeleteEntity`, `GetAllVehicles`, nettverks-ID-er | ox_lib, qbx_core | **Delvis** (nytt): serveren eier dem, de sendes til spillere i samme routing bucket, slettes når ressursen stopper; kjøretøy kan ikke kjøres ennå, objekter tegnes ikke ennå, `GetGamePool` på klienten mangler |
@@ -65,7 +65,7 @@ NUI kjører ikke.
    state bags på serveren, msgpack, identifikatorer, deferrals.
 2. **CfxLua (ferdig):** syntaks og biblioteksutvidelser, `debug`. ox_lib 3.40.0
    starter på serveren.
-3. **Database og server-API:** en oxmysql-kompatibel ressurs skrevet i Rust
+3. **Database og server-API (database ferdig, SQLite):** en oxmysql-kompatibel ressurs skrevet i Rust
    (samme exports: `query`, `single`, `scalar`, `insert`, `update`,
    `transaction`, `prepare`) mot MySQL/MariaDB, slik at `@oxmysql/lib/MySQL.lua`
    fungerer uendret. I tillegg `PerformHttpRequest`, resource-KVP og
