@@ -953,7 +953,9 @@ impl State {
             || build.ui.flying
             || build.drag.is_some()
             || build.placing.as_ref().is_some_and(|p| p.dragged)
-            || build.cover != Cover::Idle;
+            || build.cover != Cover::Idle
+            // Moving parts in the world keep playing.
+            || build.gpu.animating();
         Some(build.pacing.frame_drawn(Instant::now(), fps_limit, busy))
     }
 
@@ -1071,6 +1073,7 @@ impl State {
         build
             .gpu
             .sync_lights(self, &build.doc.layout, &mut problems);
+        build.gpu.animate(self);
         let ghost = build.placing.as_ref().map(|p| p.asset.clone());
         match (ghost, build.ui.ghost_transform) {
             (Some(asset), Some(transform)) if !build.playtesting => {

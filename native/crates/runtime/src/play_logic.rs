@@ -625,6 +625,7 @@ impl State {
             objects
                 .gpu
                 .sync_lights(self, &objects.layout, &mut problems);
+            objects.gpu.animate(self);
             for problem in problems {
                 crate::runtime_log::line(format!(
                     "World gameplay: model failed to load: {problem}"
