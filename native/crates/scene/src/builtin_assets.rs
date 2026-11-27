@@ -475,6 +475,7 @@ pub fn model(name: &str) -> Option<Model> {
         drawn: vec![batch(s.vertices)],
         textures: HashMap::from([(KEY.into(), white())]),
         triangles,
+        animation: None,
     })
 }
 
