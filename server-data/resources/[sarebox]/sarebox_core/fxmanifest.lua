@@ -10,10 +10,12 @@ provide 'sarebox'
 
 dependencies {
   'spawnmanager',
+  'oxmysql',
 }
 
 shared_script 'shared/config.lua'
 server_scripts {
+  '@oxmysql/lib/MySQL.lua',
   'server/player.lua',
   'server/main.lua',
 }

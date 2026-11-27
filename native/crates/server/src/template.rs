@@ -34,7 +34,7 @@ pub const TEMPLATES: [(&str, &str, &str, &str); 3] = [
 ];
 
 /// Resources every template gets; server.cfg decides which ones start.
-pub const FILES: [(&str, &str); 81] = [
+pub const FILES: [(&str, &str); 82] = [
     data!("resources/[system]/chat/fxmanifest.lua"),
     data!("resources/[system]/chat/sv_chat.lua"),
     data!("resources/[system]/oxmysql/fxmanifest.lua"),
@@ -66,6 +66,7 @@ pub const FILES: [(&str, &str); 81] = [
     data!("resources/[sarebox]/sarebox_core/shared/config.lua"),
     data!("resources/[sarebox]/sarebox_core/server/player.lua"),
     data!("resources/[sarebox]/sarebox_core/server/main.lua"),
+    data!("resources/[sarebox]/sarebox_core/migrations/001_players.sql"),
     data!("resources/[sarebox]/sarebox_core/client/main.lua"),
     data!("resources/[sarebox]/sarebox_admin/fxmanifest.lua"),
     data!("resources/[sarebox]/sarebox_admin/server.lua"),

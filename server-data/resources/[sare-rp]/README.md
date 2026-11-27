@@ -156,8 +156,9 @@ files.
    instead of an IP, run `sa-relay` somewhere reachable and set
    `set sv_relay "relay-ip:7778"` (see
    [multiplayer setup](../../../docs/multiplayer.md)).
-7. **Back up** `server-data/kvp/` (characters, money, inventories, cars) and
-   `server-data/server.key` (the server identity players trust).
+7. **Back up** `server-data/db/` (the database: characters, money,
+   inventories, cars), `server-data/kvp/` and `server-data/server.key` (the
+   server identity players trust). See [Server database](../../../docs/database.md#where-the-data-lives).
 
 ## Playing
 

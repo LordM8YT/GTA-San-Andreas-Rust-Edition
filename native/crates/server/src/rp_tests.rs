@@ -266,7 +266,7 @@ fn rp_town_identity_chat_bank_shop_inventory_and_saves() {
             .as_ref()
             .is_some_and(|c| c.options.iter().any(|o| o.title == "Water x2"))
     });
-    let saved = server.kvp().to_string();
+    let saved = server.saved().to_string();
     assert!(saved.contains("Anna") && saved.contains("water"), "{saved}");
     let output = server.output();
     assert!(!output.contains("SCRIPT ERROR"), "{output}");
@@ -385,7 +385,7 @@ fn rp_town_police_duty_jail_and_dealer() {
         vehicles(s).is_empty()
     });
     assert!(vehicles(&server).is_empty());
-    let saved = server.kvp().to_string();
+    let saved = server.saved().to_string();
     assert!(saved.contains("sedan"), "{saved}");
     let output = server.output();
     assert!(!output.contains("SCRIPT ERROR"), "{output}");
@@ -529,7 +529,7 @@ fn rp_town_looks_persist_and_sync_and_server_vehicles_drive() {
     server.until(&mut [&mut anna, &mut bob], "the new top at bob", |_, p| {
         sent_look(p[1], anna_id, dressed)
     });
-    let saved = server.kvp().to_string();
+    let saved = server.saved().to_string();
     assert!(
         saved.contains("appearance") && saved.contains("topColor"),
         "{saved}"
@@ -795,7 +795,7 @@ fn rp_town_custom_job_resource() {
                 .get("sare_job_courier")
                 .is_some_and(|r| r.started)
     });
-    let saved = server.kvp().to_string();
+    let saved = server.saved().to_string();
     assert!(
         saved.contains("courier") && !saved.contains("waitingJob"),
         "{saved}"

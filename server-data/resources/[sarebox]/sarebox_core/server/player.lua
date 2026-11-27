@@ -1,11 +1,84 @@
--- Player objects and their storage. Characters are saved with resource KVP
--- (kvp/sarebox_core.json next to server.cfg), keyed by the player's license.
+-- Player objects and their storage. Characters are saved in the server
+-- database (the `players` table, see migrations/), linked to the player's
+-- license. Servers from before the database had them in resource KVP
+-- (kvp/sarebox_core.json); they are copied over once, on the first start.
 
 local Players = {}
 local Core = { Functions = {}, Config = Config }
 SareBox = Core
 
-local function kvpKey(citizenid) return ('player:%s'):format(citizenid) end
+-- Storage: one row per character; money, job, metadata and position as JSON.
+local Store = {}
+function Store.exists(citizenid)
+  return MySQL.scalar.await('SELECT 1 FROM players WHERE citizenid = ?', { citizenid }) ~= nil
+end
+function Store.citizenid(license)
+  return license and MySQL.scalar.await('SELECT citizenid FROM players WHERE license = ?', { license })
+end
+local function decoded(text)
+  local ok, value = pcall(json.decode, text or 'null')
+  if ok then return value end
+end
+function Store.load(citizenid)
+  local row = citizenid and MySQL.single.await('SELECT * FROM players WHERE citizenid = ?', { citizenid })
+  if not row then return nil end
+  return {
+    citizenid = row.citizenid,
+    license = row.license,
+    name = row.name,
+    money = decoded(row.money),
+    job = decoded(row.job),
+    metadata = decoded(row.metadata),
+    position = decoded(row.position),
+  }
+end
+-- Saves everything but the license, which only changes through Store.insert
+-- and MigrateCharacter. A missing row is created without a license.
+function Store.save(data)
+  MySQL.query.await([[
+    INSERT INTO players (citizenid, name, money, job, metadata, position) VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT (citizenid) DO UPDATE SET name = excluded.name, money = excluded.money, job = excluded.job,
+      metadata = excluded.metadata, position = excluded.position, last_updated = unixepoch()
+  ]], { data.citizenid, data.name, json.encode(data.money), json.encode(data.job), json.encode(data.metadata),
+    data.position and json.encode(data.position) or nil })
+end
+function Store.insert(data)
+  MySQL.insert.await('INSERT INTO players (citizenid, license, name, money, job, metadata) VALUES (?, ?, ?, ?, ?, ?)',
+    { data.citizenid, data.license, data.name, json.encode(data.money), json.encode(data.job), json.encode(data.metadata) })
+end
+
+-- Copies the characters of a server from before the database. The KVP file
+-- is left as it was, as a backup; `db:imported` marks that it was copied.
+local function importKvp()
+  if GetResourceKvpString('db:imported') then return end
+  local queries, characters = {}, 0
+  local handle = StartFindKvp('player:')
+  for key in function() return FindKvp(handle) end do
+    local data = decoded(GetResourceKvpString(key))
+    if type(data) == 'table' then
+      characters = characters + 1
+      queries[#queries + 1] = { query = [[INSERT OR IGNORE INTO players (citizenid, name, money, job, metadata, position)
+        VALUES (?, ?, ?, ?, ?, ?)]], values = { key:sub(8), data.name, json.encode(data.money or {}), json.encode(data.job),
+        json.encode(data.metadata or {}), data.position and json.encode(data.position) or nil } }
+    end
+  end
+  EndFindKvp(handle)
+  handle = StartFindKvp('license:')
+  for key in function() return FindKvp(handle) end do
+    queries[#queries + 1] = { query = 'UPDATE OR IGNORE players SET license = ? WHERE citizenid = ?',
+      values = { key:sub(9), GetResourceKvpString(key) } }
+  end
+  EndFindKvp(handle)
+  if #queries > 0 and not MySQL.transaction.await(queries) then
+    print('^1[sarebox] Could not copy the characters from kvp/sarebox_core.json to the database; trying again next start.^7')
+    return
+  end
+  SetResourceKvp('db:imported', tostring(characters))
+  if characters > 0 then
+    print(('[sarebox] Copied %d character(s) from kvp/sarebox_core.json to the database. The KVP file is kept as a backup.'):format(characters))
+  end
+end
+importKvp()
 
 -- Money amounts are whole dollars. Anything else (fractions, NaN, infinity,
 -- strings that are not numbers, huge values) is refused, whoever asks.
@@ -27,7 +100,7 @@ local function newCitizenId()
       id[i] = chars:sub(n, n)
     end
     local citizenid = table.concat(id)
-    if not GetResourceKvpString(kvpKey(citizenid)) then return citizenid end
+    if not Store.exists(citizenid) then return citizenid end
   end
 end
 
@@ -72,8 +145,7 @@ local function createPlayer(src, data)
     TriggerClientEvent('sarebox:client:setPlayerData', src, data)
   end
 
-  -- Saves into resource KVP. The server writes KVP to disk within about a
-  -- second, atomically (see docs/sarebox.md, "When data is saved").
+  -- Saves into the database at once (see docs/sarebox.md, "When data is saved").
   function self.Functions.Save()
     if not data.license then return false end
     if DoesPlayerExist(src) then
@@ -82,9 +154,7 @@ local function createPlayer(src, data)
         data.position = { x = coords.x, y = coords.y, z = coords.z, heading = GetEntityHeading(GetPlayerPed(src)) }
       end
     end
-    local copy = table.clone(data)
-    copy.source = nil
-    local ok, err = pcall(SetResourceKvp, kvpKey(data.citizenid), json.encode(copy))
+    local ok, err = pcall(Store.save, data)
     if not ok then
       print(('^1Could not save character %s: %s^7'):format(data.citizenid, err))
       return false
@@ -218,12 +288,9 @@ function Core.Functions.Notify(src, text, kind, title)
   TriggerClientEvent('sare:ui:notify', src, { title = title or 'SARE Box', description = text, type = kind or 'inform' })
 end
 
-local function licenseKey(license) return ('license:%s'):format(license) end
-
 local function loadSaved(src, citizenid)
-  local saved = citizenid and GetResourceKvpString(kvpKey(citizenid))
-  local ok, data = pcall(json.decode, saved or 'null')
-  if not ok or type(data) ~= 'table' then return nil end
+  local data = Store.load(citizenid)
+  if not data then return nil end
   data.name = GetPlayerName(src)
   data.metadata = type(data.metadata) == 'table' and data.metadata or {}
   local savedJob = type(data.job) == 'table' and data.job or {}
@@ -264,18 +331,21 @@ end
 function Core.Functions.LegacyClaim(src)
   local legacy = GetPlayerIdentifierByType(src, 'legacy')
   local old = legacy and ('license:' .. legacy:gsub('^legacy:', ''))
-  local citizenid = old and GetResourceKvpString(licenseKey(old))
-  if citizenid and GetResourceKvpString(kvpKey(citizenid)) then return old, citizenid end
+  local citizenid = Store.citizenid(old)
+  if citizenid then return old, citizenid end
 end
 -- Move an old character to the player's signed license. The old license is
 -- removed, so the same character cannot be claimed again. With `replace`, a
--- character the player already has here is unlinked (kept in KVP).
+-- character the player already has here is unlinked (kept, with no license).
 function Core.Functions.MigrateCharacter(license, old, citizenid, replace)
-  if GetResourceKvpString(licenseKey(old)) ~= citizenid then return false end
-  local current = GetResourceKvpString(licenseKey(license))
+  if Store.citizenid(old) ~= citizenid then return false end
+  local current = Store.citizenid(license)
   if current and not replace then return false end
-  SetResourceKvp(licenseKey(license), citizenid)
-  DeleteResourceKvp(licenseKey(old))
+  local moved = MySQL.transaction.await({
+    { query = 'UPDATE players SET license = NULL WHERE license = ?', values = { license } },
+    { query = 'UPDATE players SET license = ? WHERE citizenid = ?', values = { license, citizenid } },
+  })
+  if not moved then return false end
   print(('[sarebox] Character %s moved from %s to %s%s'):format(citizenid, old, license,
     current and (' (unlinked character %s)'):format(current) or ''))
   return true
@@ -284,8 +354,7 @@ end
 function Core.Functions.NewCharacter(src, license)
   local citizenid = newCitizenId()
   local data = defaults(src, license, citizenid)
-  SetResourceKvp(kvpKey(citizenid), json.encode(data))
-  SetResourceKvp(licenseKey(license), citizenid)
+  Store.insert(data)
   return data
 end
 
@@ -297,7 +366,7 @@ function Core.Functions.Login(src)
   local license = GetPlayerIdentifierByType(src, 'license')
   local data
   if license then
-    local citizenid = GetResourceKvpString(licenseKey(license))
+    local citizenid = Store.citizenid(license)
     data = loadSaved(src, citizenid)
     if not data and not citizenid then
       local legacy, old = Core.Functions.LegacyClaim(src)
@@ -308,8 +377,8 @@ function Core.Functions.Login(src)
       elseif legacy and mode == 'admin' then
         -- Play as an unsaved guest until an admin decides.
         Core.Pending[src] = { license = license, legacy = legacy, citizenid = old }
-        local ok, saved = pcall(json.decode, GetResourceKvpString(kvpKey(old)))
-        local oldName = ok and type(saved) == 'table' and saved.name or '?'
+        local saved = Store.load(old)
+        local oldName = saved and saved.name or '?'
         print(('[sarebox] %s (%d) claims the old character %s (last saved as %s). Check that it is really them, then: sarebox_migrate %d (or sarebox_migrate %d reject)')
           :format(GetPlayerName(src), src, old, oldName, src, src))
         data = defaults(src, nil, 'GUEST' .. src)

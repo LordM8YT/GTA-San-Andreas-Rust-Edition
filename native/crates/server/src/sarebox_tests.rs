@@ -243,10 +243,9 @@ impl Sarebox {
             std::thread::yield_now();
         }
     }
-    pub fn kvp(&self) -> Json {
-        script::flush_kvp(&self.shared, true);
-        let text = std::fs::read_to_string(self.root.join("kvp/sarebox_core.json")).unwrap();
-        serde_json::from_str(&text).unwrap()
+    /// Saved characters, in the shape the KVP file had.
+    pub fn saved(&self) -> Json {
+        saved_characters(&self.shared)
     }
 }
 impl Drop for Sarebox {
@@ -257,6 +256,42 @@ impl Drop for Sarebox {
 
 fn cash(player: &Player) -> String {
     player.text().split("  |").next().unwrap_or("").to_string()
+}
+
+/// The `players` table as `{ "player:<citizenid>": "<json>", "license:<license>": citizenid }`,
+/// the layout SARE Box used in resource KVP before the database.
+pub fn saved_characters(shared: &Shared) -> Json {
+    let rows = script::with_db(shared, |conn| {
+        crate::db::Db::execute(
+            conn,
+            crate::db::Mode::Query,
+            "SELECT * FROM players",
+            &Json::Null,
+        )
+    })
+    .unwrap();
+    let mut out = serde_json::Map::new();
+    for row in rows.as_array().unwrap() {
+        let citizenid = row["citizenid"].as_str().unwrap().to_string();
+        let mut data = serde_json::Map::new();
+        for (key, value) in row.as_object().unwrap() {
+            let value = match (key.as_str(), value.as_str()) {
+                ("money" | "job" | "metadata" | "position", Some(text)) => {
+                    serde_json::from_str(text).unwrap()
+                }
+                _ => value.clone(),
+            };
+            data.insert(key.clone(), value);
+        }
+        if let Some(license) = row["license"].as_str() {
+            out.insert(format!("license:{license}"), Json::from(citizenid.clone()));
+        }
+        out.insert(
+            format!("player:{citizenid}"),
+            Json::from(Json::Object(data).to_string()),
+        );
+    }
+    Json::Object(out)
 }
 
 #[test]
@@ -282,12 +317,13 @@ fn money_is_validated_saved_atomically_and_survives_restarts_and_reconnects() {
     assert!(player.text().contains("Bank $5000"), "{}", player.text());
     assert!(server.output().contains("[admin]"));
 
-    // Within about a second the change is on disk without any shutdown: an
+    // The change is in the database at once, without any shutdown: an
     // unexpected end of the process would not lose it.
-    let file = server.root.join("kvp/sarebox_core.json");
-    server.until(&mut [&mut player], "the KVP file", |_, _| {
-        std::fs::read_to_string(&file).is_ok_and(|t| t.contains("\\\"cash\\\":525"))
-    });
+    assert!(
+        server.saved().to_string().contains("\\\"cash\\\":525"),
+        "{}",
+        server.saved()
+    );
 
     // Restarting the core twice keeps the character and one HUD, closes the
     // menu it had open, and the admin resource that depends on it is
@@ -331,7 +367,7 @@ fn money_is_validated_saved_atomically_and_survives_restarts_and_reconnects() {
     server.leave(player);
     let player = server.join();
     assert_eq!(cash(&player), "$530");
-    let saved = server.kvp();
+    let saved = server.saved();
     let characters = saved
         .as_object()
         .unwrap()
@@ -361,11 +397,17 @@ fn old_characters_move_to_signed_licenses_only_with_admin_approval() {
     });
     let mut player = server.join();
     let id = server.id(&player);
-    // Not loaded yet: a guest, and the console names the claim.
+    // Not loaded yet: a guest, and the console names the claim. The KVP
+    // character was copied into the database on the first start.
     assert_eq!(cash(&player), "$500");
-    assert!(server
-        .output()
-        .contains("claims the old character OLDCHAR1"));
+    let output = server.output();
+    assert!(
+        output.contains("claims the old character OLDCHAR1"),
+        "{output}"
+    );
+    assert!(server.saved()["player:OLDCHAR1"]
+        .as_str()
+        .is_some_and(|c| c.contains("4242")));
     // The old license grants nothing, even if an admin config still names it.
     server.run(&format!(
         "add_principal identifier.legacy:{legacy} group.admin"
@@ -388,7 +430,7 @@ fn old_characters_move_to_signed_licenses_only_with_admin_approval() {
     });
     assert!(player.text().contains("Taxi - Driver"));
     let license = server.session.identity(id).unwrap();
-    let saved = server.kvp();
+    let saved = server.saved();
     assert_eq!(saved[format!("license:license:{license}")], "OLDCHAR1");
     assert!(saved.get(format!("license:license:{legacy}")).is_none());
 
@@ -418,13 +460,15 @@ fn rejected_or_disabled_migration_gives_a_new_character() {
     server.run(&format!("sarebox_migrate {id} reject"));
     server.until(&mut [&mut player], "a saved new character", |s, _| {
         let license = s.session.identity(id).unwrap();
-        s.kvp().get(format!("license:license:{license}")).is_some()
+        s.saved()
+            .get(format!("license:license:{license}"))
+            .is_some()
     });
     assert_eq!(cash(&player), "$500");
     // The old character stays untouched for a later decision, and an admin
     // can still give it back over the new one.
     assert_eq!(
-        server.kvp()[format!("license:license:{legacy}")],
+        server.saved()[format!("license:license:{legacy}")],
         "OLDCHAR1"
     );
     server.run(&format!("sarebox_migrate {id}"));
@@ -645,6 +689,6 @@ fn taxi_runs_are_started_checked_and_paid_by_the_server_once() {
     assert_eq!(cash(&player), "$584");
     assert!(!player.text().contains("Taxi:"));
     // The fare was saved with the character.
-    let saved = server.kvp().to_string();
+    let saved = server.saved().to_string();
     assert!(saved.contains("\\\"cash\\\":584"), "{saved}");
 }
