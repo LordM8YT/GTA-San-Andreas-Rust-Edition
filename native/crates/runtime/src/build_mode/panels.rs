@@ -132,6 +132,8 @@ pub struct UiState {
     pub smoke_shot: Option<u64>,
     /// Player windows Test › Server + players opens (0: two).
     pub test_players: usize,
+    /// The connection Test › Server gives its players.
+    pub test_link: sa_net::conditioner::Link,
     /// The server folder Publish puts the world in.
     pub publish_folder: String,
     /// A new attribute or tag being typed in the Properties panel.
@@ -1226,6 +1228,62 @@ fn play_group(build: &mut BuildMode, ui: &mut Ui) {
     });
 }
 
+/// Test › Server › Connection: make the players' link slow or lossy, to see
+/// how the world plays for someone far away or on bad Wi-Fi.
+fn connection_menu(build: &mut BuildMode, ui: &mut Ui) {
+    use super::local_test::{bandwidth_label, describe};
+    use sa_net::conditioner::Link;
+    let mut link = build.ui.test_link;
+    let name = link.preset().unwrap_or("Custom");
+    ui.menu_button(format!("📶 {name}"), |ui| {
+        ui.set_min_width(300.0);
+        ui.label("The connection between the player windows and the test server. It changes at once, also while a test runs.");
+        ui.separator();
+        for (name, preset) in Link::PRESETS {
+            if ui.radio(link == preset, name).clicked() {
+                link = preset;
+            }
+        }
+        ui.separator();
+        ui.label(RichText::new("Custom").strong());
+        ui.add(egui::Slider::new(&mut link.ping_ms, 0..=1000).text("ms ping"))
+            .on_hover_text("Added round trip: half of it on the way to the server, half on the way back.");
+        ui.add(egui::Slider::new(&mut link.jitter_ms, 0..=500).text("ms jitter"))
+            .on_hover_text("Random extra delay each way, so packets arrive unevenly.");
+        let mut loss = link.loss * 100.0;
+        if ui
+            .add(egui::Slider::new(&mut loss, 0.0..=20.0).step_by(0.5).text("% packet loss"))
+            .on_hover_text("Lost packets come in bursts. SARE plays over TCP, so nothing goes missing: the stream waits for the resend, which is the stutter players see.")
+            .changed()
+        {
+            link.loss = loss / 100.0;
+        }
+        egui::ComboBox::from_id_salt("test-bandwidth")
+            .selected_text(if link.bandwidth == 0 {
+                "Unlimited".to_string()
+            } else {
+                bandwidth_label(link.bandwidth)
+            })
+            .show_ui(ui, |ui| {
+                for bytes in [0, 32_000, 64_000, 250_000, 500_000, 1_000_000, 5_000_000] {
+                    let label = if bytes == 0 {
+                        "Unlimited".to_string()
+                    } else {
+                        bandwidth_label(bytes)
+                    };
+                    ui.selectable_value(&mut link.bandwidth, bytes, label);
+                }
+            })
+            .response
+            .on_hover_text("Bandwidth each way. Joining downloads the world through it too.");
+        ui.separator();
+        ui.label(RichText::new(describe(link)).small());
+    })
+    .response
+    .on_hover_text("Simulate a slow or bad connection for the player windows");
+    build.set_test_link(link);
+}
+
 /// Test › Server + players: the world on a local server with player
 /// windows, as players will meet it.
 fn server_group(build: &mut BuildMode, ui: &mut Ui) {
@@ -1281,6 +1339,7 @@ fn server_group(build: &mut BuildMode, ui: &mut Ui) {
                 );
             }
         });
+        ui.vertical(|ui| connection_menu(build, ui));
         ui.vertical(|ui| {
             ui.menu_button("🌐 Publish...", |ui| {
                 ui.set_min_width(320.0);
