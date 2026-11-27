@@ -56,6 +56,11 @@ ZIP, checks its size and SHA-256 against the list, checks the world's
 player made or copied in themselves with the same id is never replaced; a
 newer catalog version replaces an older catalog install.
 
+Worlds published from SARE Studio are listed in Discover too, from a
+separate catalog the SARE directory keeps (see
+[Publish to Discover](../docs/sare-directory.md#publish-to-discover)). This
+file is for worlds shared by hand.
+
 ### Share your world
 
 In SARE Studio, *Workspace › Sharing › Export world* does steps 1 and 3

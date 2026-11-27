@@ -3,7 +3,7 @@
 FROM rust:1-slim-bookworm AS build
 WORKDIR /src
 COPY . .
-RUN cargo build --release --locked -p sa-net --bin sa-directory
+RUN cargo build --release --locked -p sa-net --features directory --bin sa-directory
 
 FROM debian:bookworm-slim
 COPY --from=build /src/target/release/sa-directory /usr/local/bin/sa-directory

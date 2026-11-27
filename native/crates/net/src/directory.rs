@@ -247,19 +247,21 @@ fn unix_now() -> u64 {
         .unwrap_or(0)
 }
 
-/// One HTTP/1.1 request: `POST /v1/heartbeat` or `GET /health`.
-fn handle(stream: TcpStream, directory: &Mutex<Directory>) -> io::Result<()> {
+/// One HTTP/1.1 request: `POST /v1/heartbeat`, `GET /health`, and with
+/// publishing set up, `POST /v1/worlds/publish` and `POST /v1/worlds/action`.
+fn handle(stream: TcpStream, state: &State) -> io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
-    let mut reader = BufReader::new(stream.try_clone()?).take((MAX_BODY + 4096) as u64);
+    let mut reader = BufReader::new(stream.try_clone()?);
+    let mut head = (&mut reader).take(8 * 1024);
     let mut line = String::new();
-    reader.read_line(&mut line)?;
+    head.read_line(&mut line)?;
     let mut parts = line.split_whitespace();
     let (method, path) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
     let mut length = 0_usize;
     loop {
         let mut header = String::new();
-        if reader.read_line(&mut header)? == 0 || header.trim().is_empty() {
+        if head.read_line(&mut header)? == 0 || header.trim().is_empty() {
             break;
         }
         if let Some((name, value)) = header.split_once(':') {
@@ -268,26 +270,65 @@ fn handle(stream: TcpStream, directory: &Mutex<Directory>) -> io::Result<()> {
             }
         }
     }
+    let error = |status, e: String| (status, serde_json::json!({ "error": e }).to_string());
     let (status, body) = match (method, path) {
         ("GET", "/health") => {
-            let online = directory.lock().unwrap().online();
-            ("200 OK", format!("{{\"online\":{online}}}"))
+            let online = state.directory.lock().unwrap().online();
+            let publishing = state.publishing();
+            (
+                "200 OK",
+                format!("{{\"online\":{online},\"publishing\":{publishing}}}"),
+            )
         }
         ("POST", "/v1/heartbeat") if length <= MAX_BODY => {
             let mut data = vec![0; length];
             reader.read_exact(&mut data)?;
             match serde_json::from_slice::<Signed>(&data) {
-                Ok(signed) => match directory.lock().unwrap().heartbeat(&signed, unix_now()) {
+                Ok(signed) => match state
+                    .directory
+                    .lock()
+                    .unwrap()
+                    .heartbeat(&signed, unix_now())
+                {
                     Ok(reply) => ("200 OK", serde_json::to_string(&reply)?),
-                    Err(e) => (
-                        "400 Bad Request",
-                        serde_json::json!({ "error": e }).to_string(),
-                    ),
+                    Err(e) => error("400 Bad Request", e),
                 },
                 Err(_) => ("400 Bad Request", "{\"error\":\"Invalid request\"}".into()),
             }
         }
         ("POST", "/v1/heartbeat") => ("413 Payload Too Large", "{}".into()),
+        #[cfg(feature = "directory")]
+        ("POST", "/v1/worlds/publish" | "/v1/worlds/action") => match &state.worlds {
+            None => error(
+                "503 Service Unavailable",
+                "This directory does not publish worlds".into(),
+            ),
+            Some(worlds) if path == "/v1/worlds/action" => {
+                if length > crate::worlds::MAX_REQUEST {
+                    ("413 Payload Too Large", "{}".into())
+                } else {
+                    let mut data = vec![0; length];
+                    reader.read_exact(&mut data)?;
+                    match serde_json::from_slice::<Signed>(&data)
+                        .map_err(|_| "Invalid request".to_string())
+                        .and_then(|signed| worlds.act(&signed, unix_now()))
+                    {
+                        Ok(message) => (
+                            "200 OK",
+                            serde_json::json!({ "message": message }).to_string(),
+                        ),
+                        Err(e) => error("400 Bad Request", e),
+                    }
+                }
+            }
+            Some(worlds) => {
+                stream.set_read_timeout(Some(Duration::from_secs(60)))?;
+                match receive_world(worlds, &mut reader, length) {
+                    Ok(entry) => ("200 OK", serde_json::json!({ "world": entry }).to_string()),
+                    Err((status, e)) => error(status, e),
+                }
+            }
+        },
         _ => ("404 Not Found", "{}".into()),
     };
     let mut stream = stream;
@@ -299,9 +340,87 @@ fn handle(stream: TcpStream, directory: &Mutex<Directory>) -> io::Result<()> {
     stream.flush()
 }
 
+/// A publish: one line with the signed request, then the ZIP, which is
+/// saved to a temporary file (never held in memory) and then published.
+#[cfg(feature = "directory")]
+fn receive_world(
+    worlds: &crate::worlds::Worlds,
+    reader: &mut impl BufRead,
+    length: usize,
+) -> Result<crate::worlds::Entry, (&'static str, String)> {
+    let bad = |e: String| ("400 Bad Request", e);
+    let mut line = String::new();
+    (&mut *reader)
+        .take(crate::worlds::MAX_REQUEST as u64 + 1)
+        .read_line(&mut line)
+        .map_err(|_| bad("Invalid request".into()))?;
+    let signed: Signed =
+        serde_json::from_str(line.trim_end()).map_err(|_| bad("Invalid request".into()))?;
+    let now = unix_now();
+    let _busy = worlds.try_busy().ok_or((
+        "503 Service Unavailable",
+        "Another world is being published; try again in a minute".to_string(),
+    ))?;
+    let ticket = worlds.check(&signed, now).map_err(bad)?;
+    let zip_bytes = length.saturating_sub(line.len()) as u64;
+    if zip_bytes != ticket.publish.bytes {
+        return Err(bad("The upload is not the size that was signed".into()));
+    }
+    let path = std::env::temp_dir().join(format!("sare-publish-{}.zip", crate::identity::nonce()));
+    let result = (|| {
+        let mut file = std::fs::File::create(&path)
+            .map_err(|e| ("500 Internal Server Error", e.to_string()))?;
+        let copied = io::copy(&mut (&mut *reader).take(zip_bytes), &mut file)
+            .map_err(|_| bad("The upload broke off; try again".into()))?;
+        if copied != zip_bytes {
+            return Err(bad("The upload broke off; try again".into()));
+        }
+        drop(file);
+        worlds.publish(ticket, &path, now).map_err(bad)
+    })();
+    let _ = std::fs::remove_file(&path);
+    result
+}
+
+/// What the HTTP service shares between requests.
+struct State {
+    directory: Mutex<Directory>,
+    #[cfg(feature = "directory")]
+    worlds: Option<crate::worlds::Worlds>,
+}
+impl State {
+    fn publishing(&self) -> bool {
+        #[cfg(feature = "directory")]
+        return self.worlds.is_some();
+        #[cfg(not(feature = "directory"))]
+        false
+    }
+}
+
 /// Run the directory on `listener` until the process ends.
 pub fn serve(listener: TcpListener) -> io::Result<()> {
-    let directory = Arc::new(Mutex::new(Directory::default()));
+    serve_state(
+        listener,
+        State {
+            directory: Mutex::default(),
+            #[cfg(feature = "directory")]
+            worlds: None,
+        },
+    )
+}
+/// Run the directory with world publishing through `worlds`.
+#[cfg(feature = "directory")]
+pub fn serve_with_worlds(listener: TcpListener, worlds: crate::worlds::Worlds) -> io::Result<()> {
+    serve_state(
+        listener,
+        State {
+            directory: Mutex::default(),
+            worlds: Some(worlds),
+        },
+    )
+}
+fn serve_state(listener: TcpListener, state: State) -> io::Result<()> {
+    let state = Arc::new(state);
     let active = Arc::new(AtomicUsize::new(0));
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
@@ -309,9 +428,9 @@ pub fn serve(listener: TcpListener) -> io::Result<()> {
             continue;
         }
         active.fetch_add(1, Ordering::Relaxed);
-        let (directory, active) = (directory.clone(), active.clone());
+        let (state, active) = (state.clone(), active.clone());
         std::thread::spawn(move || {
-            let _ = handle(stream, &directory);
+            let _ = handle(stream, &state);
             active.fetch_sub(1, Ordering::Relaxed);
         });
     }
@@ -468,6 +587,63 @@ mod tests {
         write!(stream, "GET /health HTTP/1.1\r\n\r\n").unwrap();
         let mut response = String::new();
         stream.read_to_string(&mut response).unwrap();
-        assert!(response.ends_with("{\"online\":1}"), "{response}");
+        assert!(
+            response.ends_with("{\"online\":1,\"publishing\":false}"),
+            "{response}"
+        );
+    }
+
+    #[cfg(feature = "directory")]
+    #[test]
+    fn the_http_service_publishes_worlds() {
+        use crate::worlds::tests::{publish_for, temp, world_zip, Memory};
+        let dir = temp("http");
+        let memory = std::sync::Arc::new(Memory::default());
+        let worlds = crate::worlds::Worlds::new(Box::new(memory.clone()), []);
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || serve_with_worlds(listener, worlds));
+        let (alice, _) = player("alice");
+        let zip_path = world_zip(&dir, "hill-race", true);
+        let zip = std::fs::read(&zip_path).unwrap();
+        let signed = publish_for(&alice, &zip_path, "hill-race", "1.0.0", unix_now());
+        let post = |path: &str, body: &[u8]| {
+            let mut stream = TcpStream::connect(address).unwrap();
+            write!(
+                stream,
+                "POST {path} HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            )
+            .unwrap();
+            stream.write_all(body).unwrap();
+            let mut response = String::new();
+            stream.read_to_string(&mut response).unwrap();
+            response
+        };
+        let mut body = serde_json::to_vec(&signed).unwrap();
+        body.push(b'\n');
+        // Cut short: refused, nothing listed.
+        let response = post("/v1/worlds/publish", &[&body[..], &zip[..10]].concat());
+        assert!(response.starts_with("HTTP/1.1 400"), "{response}");
+        body.extend_from_slice(&zip);
+        // The throttle counts the refused try; a new request half a minute
+        // later is simulated by a second creator key.
+        let (bob, _) = player("bob");
+        let signed = publish_for(&bob, &zip_path, "hill-race", "1.0.0", unix_now());
+        let mut body = serde_json::to_vec(&signed).unwrap();
+        body.push(b'\n');
+        body.extend_from_slice(&zip);
+        let response = post("/v1/worlds/publish", &body);
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+        assert!(response.contains("hill-race-1.0.0.zip"), "{response}");
+        assert_eq!(memory.catalog.lock().unwrap().0.worlds.len(), 1);
+        let response = post("/v1/worlds/action", b"{}");
+        assert!(response.starts_with("HTTP/1.1 400"), "{response}");
+        let mut stream = TcpStream::connect(address).unwrap();
+        write!(stream, "GET /health HTTP/1.1\r\n\r\n").unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert!(response.ends_with("\"publishing\":true}"), "{response}");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
