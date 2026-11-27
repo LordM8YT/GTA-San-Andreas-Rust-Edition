@@ -4,7 +4,8 @@
 //! copying the folder. No absolute paths are stored anywhere.
 use crate::history::{Document, WorldInfo};
 use anyhow::{bail, ensure, Context, Result};
-use sa_scene::content_pack::{Manifest, MANIFEST};
+use sa_scene::content_pack::{Manifest, VehicleSpec, MANIFEST};
+use sa_scene::pack_vehicle;
 use sa_scene::world_layout::{self, write_atomic, AssetRef, Layout, Node, Transform};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -13,6 +14,8 @@ use std::path::{Path, PathBuf};
 pub const AUTOSAVE: &str = ".autosave.json";
 /// Where imported models are copied inside the project.
 pub const ASSETS_DIR: &str = "assets";
+/// Where imported vehicles are copied inside the project.
+pub const VEHICLES_DIR: &str = "vehicles";
 
 pub struct Project {
     pub folder: PathBuf,
@@ -108,6 +111,7 @@ impl Project {
                 author: parsed.author.clone().unwrap_or_default(),
                 version: parsed.version.clone(),
                 license: parsed.license.clone(),
+                vehicles: parsed.vehicles.clone(),
             },
         };
         Ok((
@@ -152,6 +156,14 @@ impl Project {
         }
         object.insert("version".into(), Value::from(document.info.version.trim()));
         object.insert("license".into(), Value::from(document.info.license.trim()));
+        if document.info.vehicles.is_empty() {
+            object.remove("vehicles");
+        } else {
+            object.insert(
+                "vehicles".into(),
+                serde_json::to_value(&document.info.vehicles)?,
+            );
+        }
         let world = object
             .entry("world")
             .or_insert_with(|| json!({}))
@@ -202,6 +214,7 @@ impl Project {
             "info": {
                 "name": info.name, "description": info.description, "spawn": info.spawn,
                 "author": info.author, "version": info.version, "license": info.license,
+                "vehicles": info.vehicles,
             },
             "layout": serde_json::to_value(&document.layout)?,
         });
@@ -238,6 +251,8 @@ impl Project {
                 author: text_or(&doc["info"]["author"], &saved.info.author),
                 version: text_or(&doc["info"]["version"], &saved.info.version),
                 license: text_or(&doc["info"]["license"], &saved.info.license),
+                vehicles: serde_json::from_value(doc["info"]["vehicles"].clone())
+                    .unwrap_or_else(|_| saved.info.vehicles.clone()),
             },
         };
         if &document == saved {
@@ -300,6 +315,88 @@ impl Project {
         std::fs::write(&target, &bytes)
             .with_context(|| format!("copying {} into the world", source.display()))?;
         Ok(AssetRef::Own(relative))
+    }
+
+    /// Copy a vehicle `.glb` into the world's `vehicles/` folder and make its
+    /// entry: a model name not in `taken`, a name from the file, default
+    /// handling. The model is loaded first, so a broken file copies nothing.
+    pub fn import_vehicle(
+        &self,
+        source: &Path,
+        taken: &[VehicleSpec],
+    ) -> Result<(VehicleSpec, pack_vehicle::Report)> {
+        let name = source
+            .file_name()
+            .and_then(|n| n.to_str())
+            .context("that path has no file name")?;
+        ensure!(
+            name.to_ascii_lowercase().ends_with(".glb"),
+            "import a .glb vehicle (one file with its textures inside)"
+        );
+        let bytes =
+            std::fs::read(source).with_context(|| format!("reading {}", source.display()))?;
+        ensure!(
+            bytes.len() <= 16 * 1024 * 1024,
+            "{name} is over 16 MiB; servers cannot send it to players"
+        );
+        let scene = pack_vehicle::parse(
+            &bytes,
+            source.parent().unwrap_or(Path::new(".")),
+            "import-check",
+            [200, 200, 200],
+            Default::default(),
+        )
+        .with_context(|| format!("{name} cannot be used as a vehicle"))?;
+        let report = pack_vehicle::Report::of(&scene);
+        let stem = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
+        let base: String = match sanitize(stem) {
+            id if id.is_empty() => "vehicle".into(),
+            id => id.chars().take(28).collect(),
+        };
+        let model = (1..)
+            .map(|n| match n {
+                1 => base.clone(),
+                n => format!("{base}-{n}"),
+            })
+            // A file left by a removed vehicle stays, so undo still finds it.
+            .find(|m| {
+                taken.iter().all(|t| &t.model != m)
+                    && std::fs::read(self.folder.join(format!("{VEHICLES_DIR}/{m}.glb")))
+                        .ok()
+                        .is_none_or(|old| old == bytes)
+            })
+            .unwrap();
+        let relative = format!("{VEHICLES_DIR}/{model}.glb");
+        let target = self.folder.join(&relative);
+        std::fs::create_dir_all(target.parent().unwrap())?;
+        std::fs::write(&target, &bytes)
+            .with_context(|| format!("copying {} into the world", source.display()))?;
+        let title: String = stem
+            .replace(['_', '-'], " ")
+            .split_whitespace()
+            .map(|word| {
+                let mut chars = word.chars();
+                chars
+                    .next()
+                    .map(|c| c.to_uppercase().collect::<String>() + chars.as_str())
+                    .unwrap_or_default()
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let spec = VehicleSpec {
+            model: model.clone(),
+            name: if title.trim().is_empty() {
+                model
+            } else {
+                title.chars().take(48).collect()
+            },
+            scene: relative,
+            color: Some([200, 200, 200]),
+            handling: None,
+            seat: None,
+        };
+        spec.validate()?;
+        Ok((spec, report))
     }
 }
 
