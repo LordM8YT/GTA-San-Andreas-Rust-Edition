@@ -176,6 +176,9 @@ can be spawned by servers. In the `.glb`:
 [`tools/blender/make_rp_vehicles.py`](../tools/blender/make_rp_vehicles.py)
 builds the nine RP Town cars and writes their `vehicles` entries.
 
+Servers can add more cars to any world without changing it: see
+[addon vehicles](native-mods.md#addon-vehicles-gltf-cars-for-sare-servers).
+
 ## Collision: what is solid
 
 By default **every visible opaque mesh is solid**. Control this with object

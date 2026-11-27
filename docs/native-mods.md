@@ -300,6 +300,39 @@ and buildings in Blender without any RenderWare tools:
 The same format builds whole worlds that run without San Andreas: see
 [content packs](content-packs.md).
 
+## Addon vehicles: glTF cars for SARE servers
+
+A server resource can bring its own cars, trucks and vans, FiveM style:
+players download them when they join and can drive them on any SARE world
+(content packs, Studio worlds, Testbed). No San Andreas files are used.
+List them under `addon_vehicles` in `resource.json`, with the same fields as
+a content pack's [`vehicles`](content-packs.md#vehicles):
+
+```json
+{
+  "name": "My trucks",
+  "addon_vehicles": [
+    { "model": "box_truck", "name": "Box truck", "scene": "vehicles/box_truck.glb",
+      "color": [40, 110, 200], "seat": [-0.44, 0.6, -0.28],
+      "handling": { "top_speed": 30.0, "acceleration": 3.5 } }
+  ]
+}
+```
+
+- `scene` must be one `.glb` file (textures inside) of at most 16 MiB. Model
+  it like a pack vehicle: nose along Blender +Y, wheels named `wheel_lf`,
+  `wheel_rf`, `wheel_lb`, `wheel_rb`, a `paint` material for the colour.
+- `model` is what scripts use: `CreateVehicle("box_truck", x, y, z, heading, true, true)`,
+  or `/car box_truck` with `[examples]/sare_vehicles`. It must be unique
+  across the server's resources.
+- The server loads every model when it starts, so a broken file stops the
+  server with a clear message instead of breaking each player's join.
+- A session takes at most 32 addon vehicles. The cars join the car menu
+  after the world's own and leave again when you disconnect.
+
+Start from [`server-data/resources/[examples]/sare_addon_vehicles`](../server-data/resources/%5Bexamples%5D/sare_addon_vehicles)
+and add `ensure sare_addon_vehicles` to `server.cfg`.
+
 ## MTA:SA maps
 
 Only load and share maps you are allowed to use. Servers send map files and

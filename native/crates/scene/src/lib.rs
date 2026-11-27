@@ -14,7 +14,7 @@ pub mod pack_vehicle;
 pub mod part;
 pub mod physics;
 pub mod saved_model;
-pub use mods::{share_resource_folders, share_resources};
+pub use mods::{addon_vehicles, share_resource_folders, share_resources, MAX_ADDON_VEHICLES};
 pub use mta_map::{MapPickup, PickupKind};
 pub mod ped;
 pub mod ped_list;

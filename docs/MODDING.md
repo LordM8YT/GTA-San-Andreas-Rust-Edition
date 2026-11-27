@@ -36,6 +36,7 @@ files at all.
 | A prop, sign, building or ramp on the San Andreas map | **Mod** with a `.glb` (or DFF) model | Yes | [Tutorial 4](#4-tutorial-your-first-prop-in-5-minutes), [native mods](native-mods.md) |
 | A whole new map or level, built inside SARE | **Content pack** made in **Build Mode** | **No** | [Tutorial 5](#5-tutorial-your-own-world-no-gta-needed), [Build Mode](build-mode.md) |
 | A whole new map or level, modelled in Blender | **Content pack** with a `.glb` world | **No** | [Tutorial 5](#5-tutorial-your-own-world-no-gta-needed), [content packs](content-packs.md) |
+| Your own car, truck or van for a SARE world or server | `.glb` vehicle in a content pack (`vehicles`) or a server resource (`addon_vehicles`) | **No** | [content packs → Vehicles](content-packs.md#vehicles), [addon vehicles](native-mods.md#addon-vehicles-gltf-cars-for-sare-servers) |
 | A custom car | **Mod** with a DFF/TXD vehicle and handling | Yes | [creating resources](creating-resources.md) |
 | A player character or clothes | **Mod** with skinned DFF + IFP animations | Yes | [native mods](native-mods.md) |
 | Different car handling | **Mod** with `original_vehicle_handling` | Yes | [vehicle dynamics](vehicle-dynamics.md) |

@@ -83,6 +83,9 @@ struct Prepared {
     names: Vec<String>,
     /// The server runs on this content pack, which is not the open world.
     switch_to: Option<PackSwitch>,
+    /// In a standalone world: the server's addon vehicles, in the order of
+    /// `cars`.
+    addons: Vec<sa_scene::content_pack::VehicleSpec>,
 }
 #[derive(Debug, PartialEq)]
 struct PackSwitch {
@@ -270,6 +273,21 @@ fn prepare(
         // the session runs in the world that is already open. A server on
         // another content pack restarts SARE in that pack instead.
         _ => {
+            // The server's addon vehicles join the open world's car list.
+            let (addons, cars) = if switch_to.is_some() {
+                (Vec::new(), Vec::new())
+            } else {
+                *progress.lock().unwrap() = "Loading the server's vehicles...".into();
+                let loaded = sa_scene::addon_vehicles(&cached.mods)
+                    .context("the server's addon vehicles")?;
+                loaded
+                    .into_iter()
+                    .map(|(spec, scene)| {
+                        let name = spec.name.trim().to_owned();
+                        (spec, (name, scene))
+                    })
+                    .unzip()
+            };
             return Ok(Prepared {
                 cache_lease: cached.lease,
                 endpoint,
@@ -277,11 +295,12 @@ fn prepare(
                 fingerprint: cached.fingerprint,
                 loader: None,
                 scene: None,
-                cars: Vec::new(),
+                cars,
                 peds: Vec::new(),
                 names,
                 switch_to,
-            })
+                addons,
+            });
         }
     };
     *progress.lock().unwrap() = "Loading the server's world and models...".into();
@@ -325,6 +344,7 @@ fn prepare(
         cars,
         peds,
         names,
+        addons: Vec::new(),
     })
 }
 
@@ -348,6 +368,7 @@ pub(super) struct Installing {
     current: Option<(Model, upload::Upload)>,
     car_meshes: Vec<(String, CarMesh)>,
     ped_meshes: Vec<(String, PedMesh)>,
+    addons: Vec<sa_scene::content_pack::VehicleSpec>,
 }
 impl Installing {
     fn new(prepared: Prepared) -> Self {
@@ -365,6 +386,7 @@ impl Installing {
             current: None,
             car_meshes: Vec::new(),
             ped_meshes: Vec::new(),
+            addons: prepared.addons,
         }
     }
     fn advance(&mut self, state: &State) -> Result<bool> {
@@ -439,6 +461,14 @@ impl Installing {
     /// Standalone sessions keep the open world: only the connection starts.
     fn has_world(&self) -> bool {
         self.loader.is_some()
+    }
+    /// The uploaded addon vehicles of a standalone session, with their specs.
+    fn take_addon_cars(&mut self) -> Vec<(sa_scene::content_pack::VehicleSpec, String, CarMesh)> {
+        std::mem::take(&mut self.addons)
+            .into_iter()
+            .zip(std::mem::take(&mut self.car_meshes))
+            .map(|(spec, (name, mesh))| (spec, name, mesh))
+            .collect()
     }
     fn connection(self) -> (Endpoint, Share, String) {
         (self.endpoint, self.share, self.fingerprint)
@@ -599,9 +629,69 @@ impl State {
         self.ped_visible = false;
         world
     }
+    /// Add a server's addon vehicles after the open world's own cars, the
+    /// same way on every player, so the car indices peers send agree.
+    fn add_addon_cars(
+        &mut self,
+        cars: Vec<(sa_scene::content_pack::VehicleSpec, String, CarMesh)>,
+    ) {
+        if cars.is_empty() {
+            return;
+        }
+        let first = self.car_catalog.len();
+        let mut names = Vec::new();
+        for (spec, mut name, mesh) in cars {
+            // A menu name the world already uses would share its seat.
+            if self.menu.cars.contains(&name) {
+                name = format!("{name} ({})", spec.model);
+            }
+            self.car_catalog.push(Some(mesh));
+            self.menu.cars.push(name.clone());
+            // Scripts spawn them by model name: CreateVehicle("van", ...).
+            self.original_car_models
+                .insert(name.clone(), spec.model.clone());
+            self.pack
+                .seats
+                .insert(name.clone(), spec.seat_model_space());
+            names.push(name);
+        }
+        crate::runtime_log::line(format!("Server vehicles added: {}", names.join(", ")));
+        self.addon_cars = Some((first, names));
+    }
+    /// Take the server's addon vehicles out again, leaving any one driven.
+    fn remove_addon_cars(&mut self) {
+        let Some((first, names)) = self.addon_cars.take() else {
+            return;
+        };
+        if self.active_car >= first {
+            if let Some(own) = self.car_catalog.get_mut(0).and_then(Option::take) {
+                let (position, yaw) = self
+                    .car
+                    .as_ref()
+                    .map(|(car, _)| (car.position - Vec3::Y * car.clearance, car.yaw))
+                    .unwrap_or((self.position, 0.0));
+                self.car_catalog[self.active_car] = self.car.replace(own);
+                self.active_car = 0;
+                if let Some((car, _)) = &mut self.car {
+                    car.stop();
+                    car.position = position + Vec3::Y * car.clearance;
+                    car.yaw = yaw;
+                }
+                self.car_render_pose = None;
+            }
+        }
+        self.traffic.cars.retain(|car| car.catalog < first);
+        self.car_catalog.truncate(first);
+        self.menu.cars.truncate(first);
+        for name in names {
+            self.original_car_models.remove(&name);
+            self.pack.seats.remove(&name);
+        }
+    }
     pub(super) fn clear_session_resources(&mut self) {
         self.resource_job = None;
         self.resource_installing = None;
+        self.remove_addon_cars();
         if let Some(world) = self.offline_world.take() {
             let _ = self.swap_session_world(world);
             crate::metrics::session_memory("offline restored");
@@ -761,6 +851,8 @@ impl State {
                         self.car_at_start();
                         (endpoint, share, fingerprint)
                     } else {
+                        let addons = installing.take_addon_cars();
+                        self.add_addon_cars(addons);
                         installing.connection()
                     };
                     let joining = !endpoint.is_host();

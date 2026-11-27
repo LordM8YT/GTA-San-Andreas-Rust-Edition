@@ -1,0 +1,13 @@
+{
+  "name": "SARE addon vehicles (example)",
+  "addon_vehicles": [
+    {
+      "model": "example_truck",
+      "name": "Example truck",
+      "scene": "vehicles/example_truck.glb",
+      "color": [40, 110, 200],
+      "seat": [-0.44, 0.6, -0.28],
+      "handling": { "top_speed": 34.0, "acceleration": 3.8, "drive": 1.0 }
+    }
+  ]
+}

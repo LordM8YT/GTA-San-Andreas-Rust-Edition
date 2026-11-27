@@ -67,6 +67,48 @@ pub struct VehicleSpec {
     pub seat: Option<[f32; 3]>,
 }
 impl VehicleSpec {
+    /// Check the fields (not the model file); lists check that models are
+    /// unique themselves.
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            !self.model.is_empty()
+                && self.model.len() <= 32
+                && self.model.bytes().all(|b| b.is_ascii_lowercase()
+                    || b.is_ascii_digit()
+                    || b == b'-'
+                    || b == b'_'),
+            "vehicle model {:?} must be 1-32 lowercase letters, digits, - or _",
+            self.model
+        );
+        ensure!(
+            !self.name.trim().is_empty() && self.name.chars().count() <= 48,
+            "vehicle {} needs a name (at most 48 characters)",
+            self.model
+        );
+        ensure!(
+            self.seat
+                .is_none_or(|s| s.iter().all(|v| v.is_finite() && v.abs() < 10.0)),
+            "vehicle {} has an odd seat",
+            self.model
+        );
+        if let Some(handling) = &self.handling {
+            handling
+                .validate()
+                .with_context(|| format!("vehicle {} handling", self.model))?;
+        }
+        Ok(())
+    }
+    /// Load the vehicle's model from `folder` as a car scene. `owner` names
+    /// the pack or resource in the batch keys.
+    pub fn load(&self, folder: &Path, owner: &str) -> Result<Scene> {
+        let path = inside(folder, &self.scene)?;
+        pack_vehicle::load(
+            &path,
+            &format!("pack:{owner}:{}", self.model),
+            self.color.unwrap_or([200, 200, 200]),
+            self.handling.unwrap_or_default(),
+        )
+    }
     /// The seat in model space (glTF axes: -Z front, -X left).
     pub fn seat_model_space(&self) -> Vec3 {
         let [right, forward, up] = self.seat.unwrap_or([-0.38, 0.0, -0.45]);
@@ -133,37 +175,12 @@ impl Manifest {
         );
         let mut seen = std::collections::HashSet::new();
         for spec in &self.vehicles {
-            ensure!(
-                !spec.model.is_empty()
-                    && spec.model.len() <= 32
-                    && spec.model.bytes().all(|b| b.is_ascii_lowercase()
-                        || b.is_ascii_digit()
-                        || b == b'-'
-                        || b == b'_'),
-                "vehicle model {:?} must be 1-32 lowercase letters, digits, - or _",
-                spec.model
-            );
+            spec.validate()?;
             ensure!(
                 seen.insert(spec.model.as_str()),
                 "vehicle model {:?} is listed twice",
                 spec.model
             );
-            ensure!(
-                !spec.name.trim().is_empty(),
-                "vehicle {} needs a name",
-                spec.model
-            );
-            ensure!(
-                spec.seat
-                    .is_none_or(|s| s.iter().all(|v| v.is_finite() && v.abs() < 10.0)),
-                "vehicle {} has an odd seat",
-                spec.model
-            );
-            if let Some(handling) = &spec.handling {
-                handling
-                    .validate()
-                    .with_context(|| format!("vehicle {} handling", spec.model))?;
-            }
         }
         Ok(())
     }
@@ -261,14 +278,7 @@ pub fn load_vehicles_reporting(
         .vehicles
         .iter()
         .filter_map(|spec| {
-            let loaded = inside(folder, &spec.scene).and_then(|path| {
-                pack_vehicle::load(
-                    &path,
-                    &format!("pack:{}:{}", manifest.id, spec.model),
-                    spec.color.unwrap_or([200, 200, 200]),
-                    spec.handling.unwrap_or_default(),
-                )
-            });
+            let loaded = spec.load(folder, &manifest.id);
             match loaded {
                 Ok(scene) => Some((spec.clone(), scene)),
                 Err(error) => {
