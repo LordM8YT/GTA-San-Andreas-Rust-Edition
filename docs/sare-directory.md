@@ -1,4 +1,4 @@
-# SARE directory: friends and online status
+# SARE directory: friends, online status and publishing worlds
 
 `sa-directory` is the small service behind **Friends** in SARE Client. It is
 part of SARE (`native/crates/net/src/directory.rs`), open source like the rest,
@@ -27,12 +27,14 @@ player sets another under **Settings › Friends**, or `SARE_DIRECTORY`.
 
 API: `POST /v1/heartbeat` with `{"payload": "<heartbeat JSON>", "signature":
 "<hex>"}`, answered with `{"online": [{"code", "name", "playing"}]}`, and
-`GET /health` with `{"online": <count>}`.
+`GET /health` with `{"online": <count>, "publishing": <true when world
+publishing is set up>}`. World publishing is described in
+[Publish to Discover](#publish-to-discover).
 
 ## Run one locally
 
 ```text
-cargo run --release -p sa-net --bin sa-directory -- 127.0.0.1:7780
+cargo run --release -p sa-net --features directory --bin sa-directory -- 127.0.0.1:7780
 ```
 
 Set **Settings › Friends** to `http://127.0.0.1:7780` (plain `http://` is
@@ -53,7 +55,7 @@ reverse proxy is needed. Without an argument, `sa-directory` listens on
    `sare-directory`. Press **Deploy Blueprint**. The first build takes a few
    minutes.
 3. **Check**: open `https://sare-directory.onrender.com/health` (Render shows
-   the exact address on the service page). It answers `{"online":0}`.
+   the exact address on the service page). It answers `{"online":0,"publishing":false}` (`true` once publishing is set up).
 4. **Make it the default**: set `DEFAULT_DIRECTORY` in
    `native/crates/launcher/src/friends.rs` to that address and release a
    client.
@@ -106,7 +108,7 @@ extra setup.
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
    . ~/.cargo/env
    git clone https://github.com/LordM8YT/SARE.git && cd SARE/native
-   cargo build --release -p sa-net --bin sa-directory
+   cargo build --release -p sa-net --features directory --bin sa-directory
    sudo install target/release/sa-directory /usr/local/bin/
    ```
 
@@ -137,10 +139,88 @@ extra setup.
 
    and run `sudo systemctl reload caddy`.
 8. **Check** from any PC: `https://directory.example.org/health` shows
-   `{"online":0}`.
+   `{"online":0,"publishing":false}`.
 9. **Make it the default**: set `DEFAULT_DIRECTORY` in
    `native/crates/launcher/src/friends.rs` to the `https://` address and
    release a client.
 
 To update: `git pull`, build again, `sudo install ...` and
 `sudo systemctl restart sa-directory`. Players reappear within a minute.
+
+## Publish to Discover
+
+Creators publish worlds from SARE Studio, and every SARE Client lists them
+under **Discover**. The directory checks and stores each world; it keeps
+nothing on its own disk, so it still runs on Render's free plan.
+
+- **Storage is the SARE repository itself.** Each world is a pre-release
+  tagged `world-<id>` holding its ZIP and cover picture (pre-releases never
+  become the latest release, which SARE Client updates from), and
+  `worlds.json` on the `worlds` branch is the catalog. SARE Client reads
+  `https://raw.githubusercontent.com/LordM8YT/SARE/worlds/worlds.json` and
+  downloads worlds from GitHub directly, so Discover works even while the
+  directory sleeps. Only the newest version of a world is kept. CI does not
+  run for the `worlds` branch.
+- **No accounts.** A world belongs to the SARE ID (the same key as
+  Friends) that published it first. Only that ID can update or unpublish
+  it. The catalog stores a one-way hash of the key as `owner`, not the
+  key or the friend code.
+- **Checks.** The request is signed and at most five minutes old; the ZIP
+  must have the signed size and SHA-256, hold exactly one world whose
+  `content.json` has the signed id, and stay within Discover's limits
+  (256 MiB, 1024 files). An update must raise the version. One creator may
+  publish once every 30 seconds and have up to 25 worlds; the catalog holds
+  up to 500. One world is published at a time; others are told to retry.
+- **Reports** become an issue labelled `report` in the repository.
+  A player can report a world once and send at most ten reports an hour.
+  Admins (`SARE_WORLDS_ADMINS`) can unpublish any world; a maintainer can
+  also delete its entry from `worlds.json` by hand.
+
+### API
+
+`POST /v1/worlds/publish`: the body is one line with
+`{"payload": "<publish JSON>", "signature": "<hex>"}`, a newline, then the
+ZIP bytes. `Content-Length` is the whole body. The publish JSON:
+
+```json
+{
+  "key": "<SARE ID public key, hex>",
+  "time": 1800000000,
+  "id": "hill-race",
+  "name": "Hill Race",
+  "author": "Sam",
+  "description": "A short downhill race with jumps.",
+  "version": "1.1.0",
+  "license": "CC-BY-4.0",
+  "tags": ["racing"],
+  "sha256": "<SHA-256 of the ZIP, hex>",
+  "bytes": 4200000
+}
+```
+
+The signature is Ed25519 over `sare-worlds-v1\n` followed by the payload
+text. The answer is `{"world": <catalog entry>}` or `{"error": "..."}`. A
+`cover.png` in the world folder becomes its card picture.
+
+`POST /v1/worlds/action` with a signed `{"key", "time", "action":
+"unpublish" | "report", "id", "reason"}` answers `{"message": "..."}`.
+
+### Set it up on Render
+
+The `worlds` branch (with an empty `worlds.json`) and the `report` label
+already exist in the SARE repository.
+
+1. Create a **fine-grained personal access token** on GitHub (*Settings ›
+   Developer settings › Fine-grained tokens*): *Only select repositories*
+   with just `LordM8YT/SARE`, and the permissions *Contents: Read and write*
+   and *Issues: Read and write*. Nothing else.
+2. On the `sare-directory` service in Render, *Environment*: add
+   `SARE_WORLDS_TOKEN` with the token, and optionally `SARE_WORLDS_ADMINS`
+   with friend codes separated by commas. Then *Manual Deploy*.
+3. **Check**: `/health` answers `"publishing":true`.
+
+Another repository or branch can be used with `SARE_WORLDS_REPO`
+(`owner/name`) and `SARE_WORLDS_BRANCH`.
+
+Without the token the directory runs as before and answers publishing
+requests with `503`.

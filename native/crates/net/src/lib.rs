@@ -9,6 +9,8 @@ pub mod identity;
 pub mod passengers;
 pub mod relay;
 pub mod resources;
+#[cfg(feature = "directory")]
+pub mod worlds;
 pub use passengers::{PassengerSeat, RideReply, RideRequest, RideResult};
 use std::{
     collections::{HashMap, HashSet, VecDeque},

@@ -1,6 +1,7 @@
 //! The community world catalog: `community/worlds.json` in the SARE
-//! repository lists worlds people share, each a ZIP download with its
-//! SHA-256. Discover shows them and installs one into `content/` with a click.
+//! repository lists worlds people share, and the published catalog lists
+//! worlds creators published from SARE Studio (docs/sare-directory.md),
+//! each a ZIP download with its SHA-256. Discover shows them and installs one into `content/` with a click.
 //! The client checks the hash before it opens the archive and the world's
 //! `content.json` before it moves it in place; a world the player made or
 //! copied in themselves is never replaced.
@@ -15,7 +16,11 @@ use std::{
 /// `SARE_WORLD_LIST` overrides it with another `https://` URL or a file.
 pub const LIST_URL: &str =
     "https://raw.githubusercontent.com/LordM8YT/SARE/main/community/worlds.json";
-const MAX_WORLDS: usize = 200;
+/// Worlds published from SARE Studio: the `worlds` branch, which the
+/// official directory keeps.
+pub const PUBLISHED_URL: &str =
+    "https://raw.githubusercontent.com/LordM8YT/SARE/worlds/worlds.json";
+const MAX_WORLDS: usize = 1000;
 const MAX_LIST_BYTES: u64 = 512 * 1024;
 const MAX_ZIP_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_UNPACKED_BYTES: u64 = 256 * 1024 * 1024;
@@ -38,6 +43,11 @@ pub struct Entry {
     pub download: String,
     pub sha256: String,
     pub bytes: u64,
+    /// `https://` link to its 16:9 cover (published worlds).
+    #[serde(default)]
+    pub cover: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 #[derive(Deserialize)]
 struct List {
@@ -63,6 +73,11 @@ fn valid(e: &Entry) -> bool {
         && e.sha256.bytes().all(|b| b.is_ascii_hexdigit())
         && e.bytes > 0
         && e.bytes <= MAX_ZIP_BYTES
+        && e.cover
+            .as_ref()
+            .is_none_or(|c| c.starts_with("https://") && c.len() <= 300)
+        && e.tags.len() <= 5
+        && e.tags.iter().all(|t| short(t, 20))
 }
 
 pub fn parse(data: &[u8]) -> Result<Vec<Entry>, String> {
@@ -110,8 +125,25 @@ pub fn source() -> String {
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| LIST_URL.into())
 }
+/// The list at `source`; for the default list, the published catalog too,
+/// after it. A published world never hides a community one with its id,
+/// and a published catalog that does not load yet is left out.
 pub fn load(source: &str) -> Result<Vec<Entry>, String> {
-    parse(&download(source, MAX_LIST_BYTES, 15)?)
+    let mut worlds = parse(&download(source, MAX_LIST_BYTES, 15)?)?;
+    if source == LIST_URL {
+        if let Ok(published) = download(PUBLISHED_URL, MAX_LIST_BYTES, 15).and_then(|d| parse(&d)) {
+            worlds = merge(worlds, published);
+        }
+    }
+    Ok(worlds)
+}
+fn merge(mut worlds: Vec<Entry>, published: Vec<Entry>) -> Vec<Entry> {
+    for entry in published {
+        if worlds.len() < MAX_WORLDS && !worlds.iter().any(|w| w.id == entry.id) {
+            worlds.push(entry);
+        }
+    }
+    worlds
 }
 
 /// How a catalog world relates to what is in `content/`.
@@ -288,7 +320,35 @@ mod tests {
             download: zip_path.to_string_lossy().into(),
             sha256: format!("{:x}", Sha256::digest(data)),
             bytes: data.len() as u64,
+            cover: None,
+            tags: Vec::new(),
         }
+    }
+
+    #[test]
+    fn published_worlds_follow_and_never_hide_community_ones() {
+        let world = |id: &str, name: &str| Entry {
+            id: id.into(),
+            name: name.into(),
+            ..entry(Path::new("https://x/a.zip"), b"zip")
+        };
+        let merged = merge(
+            vec![world("a", "Community A")],
+            vec![world("a", "Published A"), world("b", "Published B")],
+        );
+        let names: Vec<_> = merged.iter().map(|w| w.name.as_str()).collect();
+        assert_eq!(names, ["Community A", "Published B"]);
+        // The published catalog's own fields; a bad cover drops the entry.
+        let good = r#"{"id":"a","name":"A","version":"1","license":"MIT","download":"https://x/a.zip","sha256":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","bytes":10,"cover":"https://x/a.png","tags":["racing"],"owner":"ff","published":1}"#;
+        let list = format!(
+            r#"{{"version":1,"worlds":[{good},{}]}}"#,
+            good.replace("\"a\"", "\"b\"")
+                .replace("https://x/a.png", "http://x/a.png")
+        );
+        let entries = parse(list.as_bytes()).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].cover.as_deref(), Some("https://x/a.png"));
+        assert_eq!(entries[0].tags, ["racing"]);
     }
 
     #[test]

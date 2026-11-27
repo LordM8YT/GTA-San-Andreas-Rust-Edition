@@ -10,3 +10,10 @@ services:
     dockerfilePath: ./native/crates/net/directory.Dockerfile
     healthCheckPath: /health
     autoDeploy: false
+    # World publishing (docs/sare-directory.md#publish-to-discover). The
+    # token is a secret: set it on the service page, never in this file.
+    envVars:
+      - key: SARE_WORLDS_TOKEN
+        sync: false
+      - key: SARE_WORLDS_ADMINS
+        sync: false
