@@ -88,6 +88,7 @@ pub fn model(part: &Part) -> Model {
         },
         textures: HashMap::from([(key.clone(), texture(&part.material))]),
         triangles: if alpha > 0.0 { count } else { 0 },
+        animation: None,
     }
 }
 

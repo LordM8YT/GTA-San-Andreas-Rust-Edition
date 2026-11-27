@@ -108,6 +108,7 @@ pub fn point_light_model(light: &crate::world_layout::PointLight) -> crate::gltf
         drawn,
         collision: Vec::new(),
         triangles: 0,
+        animation: None,
     }
 }
 

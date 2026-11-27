@@ -256,6 +256,7 @@ pub fn model(terrain: &Terrain) -> Model {
         drawn: vec![batch(vertices)],
         textures: HashMap::from([(KEY.into(), crate::builtin_assets::white())]),
         triangles,
+        animation: None,
     }
 }
 
