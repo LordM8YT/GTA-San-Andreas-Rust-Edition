@@ -102,7 +102,8 @@ Characters live in the [server database](database.md), in the `players`
 table of `db/sare.db` next to `server.cfg`, in the shape of QBCore's table:
 `citizenid`, `license`, `name`, and `money`, `job`, `metadata` and
 `position` as JSON. Everything SARE RP Town keeps per character (identity,
-looks, inventory, owned cars, jail time) is in `metadata`. The table comes
+looks, inventory, jail time) is in `metadata`; RP Town's owned cars have
+their own `player_vehicles` table. The table comes
 from `sarebox_core/migrations/001_players.sql`. Other resources can read it
 with `MySQL.query`, but should change characters through the player
 functions, so the loaded player and the table agree.
@@ -297,8 +298,6 @@ event; close a task before paying for it; and end open tasks on
 - Movement is decided by each player's game. The server checks positions for
   plausibility (taxi), but a modified game can still drive "legally" without
   driving. There is no server-side physics.
-- Owned cars are a list in each character's `metadata`, not a table of their
-  own yet.
 - One character per license; no character selection screen.
 - No inventory, phone, garages or NPC passengers in SARE Box itself; the
   SARE RP Town scripts (`[sare-rp]`) add inventory, a phone item, a car

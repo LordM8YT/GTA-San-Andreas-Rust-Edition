@@ -228,6 +228,15 @@ and sports car (`RPConfig.Dealer`), and asks for a colour from
 driver's seat. Prices, colours and job models are in
 `sare_rp_core/shared/config.lua`.
 
+Owned cars are saved in the `player_vehicles` table of the
+[server database](../../../docs/database.md) (QBCore's layout: `citizenid`,
+`vehicle`, `label`, `plate`, `mods` with the colour, `garage`, and `state`,
+1 in the garage, 0 out). To sell your own glTF car, add it to a resource's
+`addon_vehicles` (see [native mods](../../../docs/native-mods.md)) and use its
+`model` in `RPConfig.Dealer`, for example
+`{ model = 'example_truck', label = 'Tow truck', price = 25000 }` with
+`ensure sare_addon_vehicles`.
+
 The characters and cars are made by
 [`make_rp_characters.py`](../../../tools/blender/make_rp_characters.py) and
 [`make_rp_vehicles.py`](../../../tools/blender/make_rp_vehicles.py); see

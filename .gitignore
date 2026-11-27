@@ -23,3 +23,5 @@ mods/local-upscaled-textures/
 # Created by sa-server at runtime
 server-data/identity.salt
 server-data/kvp/
+server-data/server.key
+server-data/db/
