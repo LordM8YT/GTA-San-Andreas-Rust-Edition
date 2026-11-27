@@ -12,6 +12,7 @@ sa-net = { path = "../net" }
 sa-scene = { path = "../scene", features = ["scripts"] }
 rmp-serde = "1"
 serde_json = "1"
+rusqlite = { version = "0.43", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10.9"
 getrandom = "0.3"

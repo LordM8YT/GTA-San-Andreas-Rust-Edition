@@ -63,6 +63,8 @@ pub struct State {
     pub client_bundles: Vec<(String, String)>,
     /// Resource KVP, saved in `kvp/` next to server.cfg.
     pub kvp: crate::kvp::Store,
+    /// The SQLite database in `db/` next to server.cfg, opened on first use.
+    pub db: crate::db::Db,
     /// Server-owned vehicles, peds and objects.
     pub entities: crate::entities::Registry,
     /// Players driving server vehicles.
@@ -74,8 +76,11 @@ pub struct State {
 }
 impl State {
     pub fn new(resources_dir: PathBuf) -> Self {
-        let kvp =
-            crate::kvp::Store::new(resources_dir.parent().unwrap_or(Path::new(".")).join("kvp"));
+        let root = resources_dir
+            .parent()
+            .unwrap_or(Path::new("."))
+            .to_path_buf();
+        let kvp = crate::kvp::Store::new(root.join("kvp"));
         Self {
             session: None,
             peers: Vec::new(),
@@ -98,6 +103,7 @@ impl State {
             bags: BTreeMap::new(),
             client_bundles: Vec::new(),
             kvp,
+            db: crate::db::Db::new(root),
             entities: crate::entities::Registry::default(),
             drivers: Default::default(),
             appearances: BTreeMap::new(),
@@ -305,6 +311,24 @@ pub fn flush_kvp(shared: &Shared, force: bool) {
     }
 }
 
+/// Runs `f` on the server database, opening it on first use.
+pub fn with_db<T>(
+    shared: &Shared,
+    f: impl FnOnce(&rusqlite::Connection) -> Result<T>,
+) -> Result<T> {
+    let (result, warnings) = {
+        let mut state = shared.borrow_mut();
+        let file = state.convar("sare_db_file").map(str::to_string);
+        let mysql = state.convar("mysql_connection_string").map(str::to_string);
+        let result = state.db.open(file.as_deref(), mysql.as_deref()).and_then(f);
+        (result, state.db.take_warnings())
+    };
+    for warning in warnings {
+        out(shared, warning);
+    }
+    result
+}
+
 /// Run a script command; returns false when no resource registered it.
 pub fn run_command(shared: &Shared, name: &str, source: u32, args: &[String], raw: &str) -> bool {
     let lua = {
@@ -418,6 +442,14 @@ fn start_depth(shared: &Shared, name: &str, depth: usize) -> Result<()> {
         };
         start_depth(shared, &target, depth + 1)
             .with_context(|| format!("{name} depends on {dependency}, which could not start"))?;
+    }
+    // Database tables first, so scripts can use them as soon as they load.
+    if path.join("migrations").is_dir() {
+        let applied = with_db(shared, |conn| crate::db::Db::migrate(conn, name, &path))
+            .with_context(|| format!("{name}: database migrations failed, resource not started"))?;
+        for file in applied {
+            out(shared, format!("{name}: applied database migration {file}"));
+        }
     }
     let scripts: Vec<String> = manifest
         .values("shared_script")

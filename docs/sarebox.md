@@ -291,8 +291,9 @@ event; close a task before paying for it; and end open tasks on
 - Movement is decided by each player's game. The server checks positions for
   plausibility (taxi), but a modified game can still drive "legally" without
   driving. There is no server-side physics.
-- No database: KVP files hold up to 8 MB per resource, enough for thousands
-  of characters, but there is no query language or multi-server sharing.
+- Characters are still saved in KVP files (up to 8 MB per resource, enough
+  for thousands of characters). The server now has an SQL database
+  ([Server database](database.md)); moving SARE Box to it is the next step.
 - One character per license; no character selection screen.
 - No inventory, phone, garages or NPC passengers in SARE Box itself; the
   SARE RP Town scripts (`[sare-rp]`) add inventory, a phone item, a car
