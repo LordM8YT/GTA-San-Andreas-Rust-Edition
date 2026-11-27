@@ -235,12 +235,14 @@ pub(crate) fn read_file(path: &Path) -> Result<Vec<u8>> {
     Ok(fs::read(path)?)
 }
 
-/// Read a file next to the model, refusing paths that leave its folder.
+/// A buffer or image's bytes: embedded in the URI (`data:...;base64,`), or
+/// a file next to the model, refusing paths that leave its folder.
 fn sibling(folder: &Path, uri: &str) -> Result<Vec<u8>> {
-    ensure!(
-        !uri.starts_with("data:"),
-        "embedded data: URIs are not supported; export as .glb instead"
-    );
+    if let Some(data) = uri.strip_prefix("data:") {
+        return data_uri(data);
+    }
+    let uri = percent_decode(uri)?;
+    let uri = uri.as_str();
     let relative = Path::new(uri);
     ensure!(
         relative
@@ -257,6 +259,66 @@ fn sibling(folder: &Path, uri: &str) -> Result<Vec<u8>> {
         "{uri} is larger than 256 MiB"
     );
     Ok(fs::read(path)?)
+}
+
+/// The bytes of a `data:` URI (after `data:`). Only base64, as glTF
+/// exporters write them.
+fn data_uri(data: &str) -> Result<Vec<u8>> {
+    let (_, encoded) = data
+        .split_once(";base64,")
+        .context("data: URIs must be base64 (export as .glb instead)")?;
+    ensure!(
+        encoded.len() / 4 * 3 <= MAX_FILE_BYTES as usize,
+        "embedded data is larger than 256 MiB"
+    );
+    base64(encoded).context("embedded data is not valid base64")
+}
+
+/// Standard base64 (padding optional, no whitespace).
+fn base64(text: &str) -> Option<Vec<u8>> {
+    let value = |c: u8| match c {
+        b'A'..=b'Z' => Some(c - b'A'),
+        b'a'..=b'z' => Some(c - b'a' + 26),
+        b'0'..=b'9' => Some(c - b'0' + 52),
+        b'+' => Some(62),
+        b'/' => Some(63),
+        _ => None,
+    };
+    let text = text.trim_end_matches('=').as_bytes();
+    if text.len() % 4 == 1 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(text.len() / 4 * 3 + 2);
+    for chunk in text.chunks(4) {
+        let mut bits = 0u32;
+        for (i, &c) in chunk.iter().enumerate() {
+            bits |= u32::from(value(c)?) << (18 - 6 * i);
+        }
+        let bytes = bits.to_be_bytes();
+        out.extend_from_slice(&bytes[1..chunk.len()]);
+    }
+    Some(out)
+}
+
+/// `my%20car.png` → `my car.png` (glTF URIs are percent-encoded).
+fn percent_decode(uri: &str) -> Result<String> {
+    let bytes = uri.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hex = uri
+                .get(i + 1..i + 3)
+                .and_then(|h| u8::from_str_radix(h, 16).ok())
+                .with_context(|| format!("{uri} has a broken %-escape"))?;
+            out.push(hex);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).with_context(|| format!("{uri} is not UTF-8"))
 }
 
 /// Read a glTF file's document and buffers, with every accessor checked to
@@ -574,13 +636,43 @@ fn decode_image(image: &gltf::Image, buffers: &[Vec<u8>], folder: &Path) -> Resu
         }
         gltf::image::Source::Uri { uri, mime_type } => (sibling(folder, uri)?, mime_type),
     };
-    if !data.starts_with(b"\x89PNG") {
+    if data.starts_with(b"\x89PNG") {
+        crate::mods::png_texture(&data)
+    } else if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        jpeg_texture(&data)
+    } else {
         bail!(
-            "only PNG textures are supported (got {}); re-export textures as PNG",
+            "only PNG and JPEG textures are supported (got {}); re-export textures as PNG or JPEG",
             mime.unwrap_or("an unknown format")
         );
     }
-    crate::mods::png_texture(&data)
+}
+
+/// A JPEG texture (no alpha), up to 4096 pixels a side like PNGs.
+pub(crate) fn jpeg_texture(data: &[u8]) -> Result<Texture> {
+    use zune_core::{bytestream::ZCursor, colorspace::ColorSpace, options::DecoderOptions};
+    let options = DecoderOptions::default()
+        .jpeg_set_out_colorspace(ColorSpace::RGBA)
+        .set_max_width(4096)
+        .set_max_height(4096);
+    let mut decoder = zune_jpeg::JpegDecoder::new_with_options(ZCursor::new(data), options);
+    decoder
+        .decode_headers()
+        .map_err(|e| anyhow::anyhow!("not a readable JPEG: {e:?}"))?;
+    let (width, height) = decoder.dimensions().context("JPEG has no size")?;
+    let rgba = decoder
+        .decode()
+        .map_err(|e| anyhow::anyhow!("not a readable JPEG: {e:?}"))?;
+    ensure!(
+        rgba.len() == width * height * 4,
+        "JPEG decoded to the wrong size"
+    );
+    Ok(Texture {
+        width: width as u32,
+        height: height as u32,
+        rgba,
+        has_alpha: false,
+    })
 }
 
 #[cfg(test)]
@@ -810,6 +902,42 @@ pub(crate) mod tests {
     fn garbage_and_escaping_uris_are_refused() {
         assert!(parse(b"not a model", Path::new("."), "t").is_err());
         assert!(sibling(Path::new("."), "../secret.bin").is_err());
-        assert!(sibling(Path::new("."), "data:application/octet-stream;base64,AA").is_err());
+        assert!(sibling(Path::new("."), "data:application/octet-stream;base64,A").is_err());
+        assert!(sibling(Path::new("."), "data:text/plain,hello").is_err());
+        assert!(sibling(Path::new("."), "%2E%2E/secret.bin").is_err());
+        assert!(sibling(Path::new("."), "bad%zz.png").is_err());
+    }
+
+    #[test]
+    fn data_uris_and_escaped_names_are_read() {
+        assert_eq!(
+            sibling(
+                Path::new("."),
+                "data:application/octet-stream;base64,SGVsbG8="
+            )
+            .unwrap(),
+            b"Hello"
+        );
+        assert_eq!(base64("SGVsbG8").unwrap(), b"Hello");
+        assert_eq!(base64("").unwrap(), b"");
+        assert!(base64("SGV$").is_none());
+        let folder = std::env::temp_dir().join(format!("sare-gltf-uri-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("my car.bin"), b"car").unwrap();
+        assert_eq!(sibling(&folder, "my%20car.bin").unwrap(), b"car");
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn jpeg_textures_decode_to_rgba() {
+        let texture = jpeg_texture(include_bytes!("testdata/two-colours.jpg")).unwrap();
+        assert_eq!((texture.width, texture.height), (8, 4));
+        assert!(!texture.has_alpha);
+        let pixel = |x: usize| &texture.rgba[x * 4..x * 4 + 4];
+        // Left half blue, right half red (JPEG is lossy: roughly).
+        assert!(pixel(0)[2] > 150 && pixel(0)[0] < 80, "{:?}", pixel(0));
+        assert!(pixel(7)[0] > 150 && pixel(7)[2] < 80, "{:?}", pixel(7));
+        assert_eq!(pixel(0)[3], 255);
+        assert!(jpeg_texture(&[0xFF, 0xD8, 0xFF, 0x00]).is_err());
     }
 }

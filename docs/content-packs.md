@@ -96,9 +96,11 @@ The game's map and compass treat Blender +Y as north.
   scale, parenting) applied.
 - **Colour:** the material's *Base Color*, multiplied by the mesh's colour
   attribute (vertex colours) if it has one.
-- **Textures:** the *Base Color* image texture, **PNG only**, up to
-  4096 × 4096. Pack it into the `.glb` (the default) or keep the `.png` next
-  to a `.gltf` file. JPEG is not read yet: convert those images to PNG.
+- **Textures:** the *Base Color* image texture, **PNG or JPEG**, up to
+  4096 × 4096. Pack it into the `.glb` (the default), keep the image next
+  to a `.gltf` file (names with spaces work), or embed it in the `.gltf` as
+  a base64 `data:` URI. WebP and KTX2 are not read: convert those to PNG or
+  JPEG.
 - **Transparency:** materials with *Blend Mode* Alpha Blend or Alpha Clip are
   drawn see-through and are not solid.
 - **Lighting:** SARE bakes soft light from the normals when it loads the

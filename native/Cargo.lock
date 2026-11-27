@@ -3529,6 +3529,8 @@ dependencies = [
  "sa-script",
  "serde",
  "serde_json",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
