@@ -331,6 +331,9 @@ struct State {
     resource_job: Option<session_resources::Job>,
     resource_installing: Option<session_resources::Installing>,
     offline_world: Option<session_resources::World>,
+    /// A server's addon vehicles in a standalone world: the first catalog
+    /// index they use and their menu names.
+    addon_cars: Option<(usize, Vec<String>)>,
     remote_actors: Vec<multiplayer::RemoteActor>,
     /// Server-owned vehicles and peds in this player's routing bucket, and
     /// the list revision the remote actors were last built from.
@@ -1252,6 +1255,7 @@ impl State {
             resource_job: None,
             resource_installing: None,
             offline_world: None,
+            addon_cars: None,
             remote_actors: Vec::new(),
             server_entities: Default::default(),
             server_entities_seen: 0,

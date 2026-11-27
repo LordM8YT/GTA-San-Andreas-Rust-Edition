@@ -13,6 +13,11 @@ struct Manifest {
     models: Vec<Model>,
     #[serde(default)]
     vehicles: Vec<Vehicle>,
+    /// glTF vehicles in the content pack format (see
+    /// `content_pack::VehicleSpec`), for SARE worlds: servers stream them to
+    /// joining players, who can then drive them and spawn them by `model`.
+    #[serde(default)]
+    addon_vehicles: Vec<crate::content_pack::VehicleSpec>,
     #[serde(default)]
     original_vehicle_handling: HashMap<String, crate::vehicle::Handling>,
     #[serde(default)]
@@ -301,6 +306,14 @@ pub fn share_resource_folders(
             references.insert(vehicle.dff.clone());
             references.extend(vehicle.txd.iter().cloned());
         }
+        for spec in &manifest.addon_vehicles {
+            // Parse the model here, so a broken file stops the server at
+            // boot instead of every joining player.
+            let mut spec = spec.clone();
+            check_addon_vehicle(&folder, &mut spec)
+                .with_context(|| format!("{name}: addon vehicle {}", spec.model))?;
+            references.insert(spec.scene.clone());
+        }
         if let Some(player) = &manifest.player {
             references.insert(player.dff.clone());
             references.extend(player.txd.iter().cloned());
@@ -335,7 +348,7 @@ pub fn share_resource_folders(
             match value {
                 serde_json::Value::Object(fields) => {
                     for (key, value) in fields {
-                        if ["dff", "txd", "col", "ifp"].contains(&key.as_str()) {
+                        if ["dff", "txd", "col", "ifp", "scene"].contains(&key.as_str()) {
                             if let Some(path) = value.as_str() {
                                 *value = serde_json::Value::String(path.replace('\\', "/"));
                             }
@@ -390,6 +403,62 @@ pub fn share_resource_folders(
         );
     }
     Ok(Share::build(inputs)?)
+}
+/// Most addon vehicles all of a session's resources may add together.
+pub const MAX_ADDON_VEHICLES: usize = 32;
+
+fn check_addon_vehicle(
+    folder: &Path,
+    spec: &mut crate::content_pack::VehicleSpec,
+) -> Result<Scene> {
+    spec.scene = spec.scene.replace('\\', "/");
+    spec.validate()?;
+    ensure!(
+        spec.scene.to_ascii_lowercase().ends_with(".glb"),
+        "scene must be a .glb file (one file with its textures inside)"
+    );
+    // Keep the file inside the resource and within the share size limit.
+    resource(folder, &spec.scene)?;
+    let scene = spec.load(folder, "addon")?;
+    ensure!(scene.triangles > 0, "the model has no triangles");
+    Ok(scene)
+}
+
+/// The glTF `addon_vehicles` of the enabled resources in `directory` (local
+/// mods, or the resources a server sent), in load order, as car scenes.
+/// Every player of a session loads the same list in the same order, so a
+/// broken vehicle fails the whole list instead of being skipped.
+pub fn addon_vehicles(directory: &Path) -> Result<Vec<(crate::content_pack::VehicleSpec, Scene)>> {
+    if !directory.exists() {
+        return Ok(Vec::new());
+    }
+    let root = directory.canonicalize()?;
+    let mut loaded: Vec<(crate::content_pack::VehicleSpec, Scene)> = Vec::new();
+    for folder in resource_folders(&root)? {
+        let Some((_, raw)) = manifest_bytes(&folder)? else {
+            continue;
+        };
+        let manifest: Manifest = serde_json::from_slice(without_utf8_bom(&raw))
+            .with_context(|| format!("mod manifest {}", folder.display()))?;
+        if !manifest.enabled {
+            continue;
+        }
+        for mut spec in manifest.addon_vehicles {
+            ensure!(
+                loaded.len() < MAX_ADDON_VEHICLES,
+                "at most {MAX_ADDON_VEHICLES} addon vehicles per session"
+            );
+            ensure!(
+                loaded.iter().all(|(other, _)| other.model != spec.model),
+                "addon vehicle model {:?} is listed twice",
+                spec.model
+            );
+            let scene = check_addon_vehicle(&folder, &mut spec)
+                .with_context(|| format!("{}: addon vehicle {}", folder.display(), spec.model))?;
+            loaded.push((spec, scene));
+        }
+    }
+    Ok(loaded)
 }
 #[derive(Default)]
 pub(super) struct Resources {
@@ -1135,6 +1204,70 @@ impl WorldLoader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn addon_vehicles_are_shared_and_loaded_in_order() {
+        let root = std::env::temp_dir().join(format!("sa-addon-vehicles-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let example = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../server-data/resources/[examples]/sare_addon_vehicles"
+        );
+        let write = |folder: &str, manifest: serde_json::Value| {
+            let folder = root.join(folder);
+            fs::create_dir_all(folder.join("vehicles")).unwrap();
+            fs::copy(
+                Path::new(example).join("vehicles/example_truck.glb"),
+                folder.join("vehicles/truck.glb"),
+            )
+            .unwrap();
+            fs::write(folder.join("resource.json"), manifest.to_string()).unwrap();
+        };
+        let entry = |model: &str| {
+            serde_json::json!({"model": model, "name": format!("My {model}"),
+                "scene": "vehicles\\truck.glb", "handling": {"top_speed": 30.0}})
+        };
+        write(
+            "a-trucks",
+            serde_json::json!({"enabled": true,
+            "addon_vehicles": [entry("truck"), entry("van")]}),
+        );
+        write(
+            "b-off",
+            serde_json::json!({"addon_vehicles": [entry("bus")]}),
+        );
+        let shared = share_resources(&root).unwrap();
+        let files: Vec<_> = shared.manifest.resources[0]
+            .files
+            .iter()
+            .map(|f| f.path.as_str())
+            .collect();
+        assert_eq!(files, ["resource.json", "vehicles/truck.glb"]);
+        let loaded = addon_vehicles(&root).unwrap();
+        let models: Vec<_> = loaded.iter().map(|(spec, _)| spec.model.as_str()).collect();
+        assert_eq!(models, ["truck", "van"]);
+        assert_eq!(loaded[0].1.vehicle_handling.top_speed, 30.0);
+        assert!(loaded[0].1.triangles > 0);
+        // The same model twice, a broken model or a non-glb file is refused.
+        write(
+            "c-dupe",
+            serde_json::json!({"enabled": true, "addon_vehicles": [entry("van")]}),
+        );
+        assert!(addon_vehicles(&root).is_err());
+        fs::remove_dir_all(root.join("c-dupe")).unwrap();
+        fs::write(root.join("a-trucks/vehicles/truck.glb"), b"not a model").unwrap();
+        assert!(share_resources(&root).is_err());
+        assert!(addon_vehicles(&root).is_err());
+        let _ = fs::remove_dir_all(&root);
+    }
+    #[test]
+    fn example_addon_vehicle_resource_loads() {
+        let example = Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../server-data/resources/[examples]/sare_addon_vehicles"
+        ));
+        let shared = share_resource_folders(vec![example.to_path_buf()], true).unwrap();
+        assert_eq!(shared.manifest.resources[0].files.len(), 2);
+    }
     #[test]
     fn original_handling_pack_shares_only_manifest_and_rejects_invalid_models() {
         let root = std::env::temp_dir().join(format!("sa-handling-only-{}", std::process::id()));
