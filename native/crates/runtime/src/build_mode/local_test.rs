@@ -2,8 +2,11 @@
 //! SARE server on this computer, with one to four player windows joined to
 //! it. Their console lines show in Output; Stop closes them all. The real
 //! world files are not touched: the server gets a copy in a test folder.
+//! Players join through a [`Conditioner`], so Connection can make their
+//! link slow or lossy while the test runs.
 use super::BuildMode;
 use anyhow::{Context, Result};
+use sa_net::conditioner::{Conditioner, Link};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -17,9 +20,14 @@ pub struct LocalTest {
     children: Vec<(String, Child)>,
     lines: Receiver<(String, String)>,
     pub port: u16,
+    /// Between the players and the server (None: it could not start, and
+    /// players join the server directly).
+    pub conditioner: Option<Conditioner>,
 }
 impl Drop for LocalTest {
     fn drop(&mut self) {
+        // Kill the games before their connections close, so they do not
+        // report a lost server.
         for (_, child) in &mut self.children {
             let _ = child.kill();
             let _ = child.wait();
@@ -127,6 +135,16 @@ impl BuildMode {
                     test.players(),
                     if test.players() == 1 { "" } else { "s" }
                 ));
+                if test.conditioner.is_none() {
+                    self.warn(
+                        "Test: Connection is off for this test; players join the server directly.",
+                    );
+                } else if self.ui.test_link != Link::PERFECT {
+                    self.info(format!(
+                        "Test: players' connection is {}.",
+                        describe(self.ui.test_link)
+                    ));
+                }
                 self.local_test = Some(test);
             }
             Err(error) => self.error(format!("Could not start the test: {error:#}")),
@@ -149,6 +167,11 @@ impl BuildMode {
             .context("starting sa-server")?;
         forward(&mut server, "Server", &send);
         children.push(("Server".to_string(), server));
+        let server_address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+        let conditioner = Conditioner::start(server_address, self.ui.test_link).ok();
+        let join = conditioner
+            .as_ref()
+            .map_or(server_address, Conditioner::address);
         let content_dir = root.join(sa_scene::content_pack::DEFAULT_DIR);
         for n in 1..=players {
             let name = format!("Player {n}");
@@ -159,7 +182,7 @@ impl BuildMode {
                 .arg("--content-dir")
                 .arg(&content_dir)
                 .arg("--join")
-                .arg(format!("127.0.0.1:{port}"))
+                .arg(join.to_string())
                 .arg("--name")
                 .arg(&name)
                 .stdin(Stdio::null())
@@ -174,7 +197,27 @@ impl BuildMode {
             children,
             lines,
             port,
+            conditioner,
         })
+    }
+
+    /// Change the players' connection, also in a running test.
+    pub fn set_test_link(&mut self, link: Link) {
+        if link == self.ui.test_link {
+            return;
+        }
+        self.ui.test_link = link;
+        if let Some(conditioner) = self
+            .local_test
+            .as_ref()
+            .and_then(|t| t.conditioner.as_ref())
+        {
+            conditioner.set_link(link);
+            self.info(format!(
+                "Test: players' connection is now {}.",
+                describe(link)
+            ));
+        }
     }
 
     pub fn stop_local_test(&mut self) {
@@ -230,8 +273,54 @@ impl BuildMode {
     }
 }
 
+/// "Mobile 4G (120 ms ping, ±40 ms, 2% loss, 500 KB/s)".
+pub fn describe(link: Link) -> String {
+    if link == Link::PERFECT {
+        return "Perfect (no delay or loss)".into();
+    }
+    let mut parts = vec![format!("{} ms ping", link.ping_ms)];
+    if link.jitter_ms > 0 {
+        parts.push(format!("±{} ms", link.jitter_ms));
+    }
+    if link.loss > 0.0 {
+        parts.push(format!("{:.0}% loss", link.loss * 100.0));
+    }
+    if link.bandwidth > 0 {
+        parts.push(bandwidth_label(link.bandwidth));
+    }
+    format!(
+        "{} ({})",
+        link.preset().unwrap_or("Custom"),
+        parts.join(", ")
+    )
+}
+
+/// Bytes per second as "64 KB/s" or "1.0 MB/s".
+pub fn bandwidth_label(bytes: u32) -> String {
+    if bytes >= 1_000_000 {
+        format!("{:.1} MB/s", bytes as f32 / 1_000_000.0)
+    } else {
+        format!("{} KB/s", bytes / 1000)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn connections_are_described_in_plain_words() {
+        use sa_net::conditioner::Link;
+        assert_eq!(super::describe(Link::PERFECT), "Perfect (no delay or loss)");
+        assert_eq!(
+            super::describe(Link::PRESETS[3].1),
+            "Mobile 4G (120 ms ping, ±40 ms, 2% loss, 500 KB/s)"
+        );
+        let custom = Link {
+            ping_ms: 50,
+            ..Link::PERFECT
+        };
+        assert_eq!(super::describe(custom), "Custom (50 ms ping)");
+    }
+
     #[test]
     fn the_test_folder_holds_the_world_as_it_is_now() {
         let base = std::env::temp_dir().join(format!("sare-local-test-{}", std::process::id()));

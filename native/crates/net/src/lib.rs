@@ -2,6 +2,7 @@
 //! Host assigns identities and relays poses; movement is client-authoritative.
 use serde::{Deserialize, Serialize};
 pub mod appearance;
+pub mod conditioner;
 pub mod directory;
 pub mod entities;
 pub mod identity;
@@ -1526,6 +1527,24 @@ mod tests {
         });
         let measured = report(&guest).round_trip.unwrap();
         assert!(measured > Duration::ZERO && measured < TIMEOUT);
+    }
+    #[test]
+    fn players_through_the_conditioner_see_its_ping() {
+        let host = Session::host(address(), "Host").unwrap();
+        let link = conditioner::Link {
+            ping_ms: 150,
+            ..conditioner::Link::PERFECT
+        };
+        let relay = conditioner::Conditioner::start(host.address, link).unwrap();
+        let guest = Session::join(relay.address(), "Guest").unwrap();
+        wait(|| {
+            host.update(Pose::default());
+            guest.update(Pose::default());
+            report(&guest).connected && report(&guest).round_trip.is_some()
+        });
+        let measured = report(&guest).round_trip.unwrap();
+        assert!(measured >= Duration::from_millis(145), "{measured:?}");
+        assert!(relay.traffic()[0].down.load(Ordering::Relaxed) > 0);
     }
     #[test]
     fn published_script_bundles_reach_requesting_clients_verified() {

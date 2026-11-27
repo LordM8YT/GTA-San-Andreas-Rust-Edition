@@ -155,6 +155,17 @@ physics, and each window is a player. What the server and each player
 print shows in Output as `[Server]`, `[Player 1]` and so on. *Stop* closes
 them all; *Restart* starts again with the world as it is then.
 
+*Connection* (📶, next to the player count) sets what the players'
+connection to the test server is like: *Perfect*, *Good home internet*,
+*Wi-Fi far from the router*, *Mobile 4G*, *Bad connection*, or your own
+ping, jitter, packet loss and bandwidth. It changes at once, also while a
+test runs, so you can see how a race, a door or a script feels for someone
+far away. The player windows join through a small relay in Studio
+(`sa_net::conditioner`) that holds their data back; SARE plays over TCP, so
+a lost packet shows as a short stall while it is resent, not as missing
+data. Joining downloads the world through the same link, so a low bandwidth
+makes joining slow too.
+
 The server gets a copy of the world in a test folder (`sare-studio-test-<id>`
 in the temp folder), so your files are not touched and the server is not
 listed publicly.
