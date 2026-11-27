@@ -233,8 +233,10 @@ grip, steering and driven wheels (front, rear or all), or *Reset handling*.
 *Remove* takes it out of the world (Undo brings it back). The model name
 (shown under the name) is what scripts spawn: `CreateVehicle("towtruck", ...)`.
 
-Save the world, then play it (or host it) to drive them; players who join
-download the world with its vehicles. For a server that adds cars to any
+Playtest (F6) uses the vehicles as they are in Studio, saved or not: F9
+brings the first one and the car menu has the rest. Save the world to play
+or host it with them; players who join download the world with its
+vehicles. For a server that adds cars to any
 world, see [addon vehicles](native-mods.md#addon-vehicles-gltf-cars-for-sare-servers).
 Model rules are in [content packs › Vehicles](content-packs.md#vehicles).
 
@@ -714,5 +716,4 @@ Milestone 1 and part of milestone 2 are in. Still to come, roughly in order:
 - Roads: junctions where roads meet, and road surfaces that follow the
   terrain under them by themselves (today: set the points' heights).
 - Visual scripting (blocks instead of Lua), publishing worlds to servers.
-- Vehicles: driving a newly imported vehicle in playtest without saving
-  and playing the world, parked vehicles placed in the world, and boats.
+- Vehicles: parked vehicles placed in the world, and boats.

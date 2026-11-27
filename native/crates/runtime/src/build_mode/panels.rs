@@ -3700,7 +3700,7 @@ fn vehicles_section(build: &mut BuildMode, ui: &mut Ui, info: &WorldInfo) {
     section(ui, "Vehicles");
     ui.label(
         RichText::new(
-            "Cars, trucks and vans players can drive here. The first one is the car F9 brings; servers spawn any of them by model name. Save the world, then play it to drive them.",
+            "Cars, trucks and vans players can drive here. The first one is the car F9 brings; servers spawn any of them by model name. Playtest (F6) to drive them.",
         )
         .small()
         .color(MUTED),
