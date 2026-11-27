@@ -98,26 +98,32 @@ For the current session only: `add_principal player.<id> group.admin`.
 
 ## When data is saved
 
-Characters live in resource KVP, in `kvp/sarebox_core.json` next to
-`server.cfg`: name, citizen ID, cash, bank, job and grade, metadata and the
-last position.
+Characters live in the [server database](database.md), in the `players`
+table of `db/sare.db` next to `server.cfg`, in the shape of QBCore's table:
+`citizenid`, `license`, `name`, and `money`, `job`, `metadata` and
+`position` as JSON. Everything SARE RP Town keeps per character (identity,
+looks, inventory, owned cars, jail time) is in `metadata`. The table comes
+from `sarebox_core/migrations/001_players.sql`. Other resources can read it
+with `MySQL.query`, but should change characters through the player
+functions, so the loaded player and the table agree.
 
-| Change | Saved in memory | On disk |
-| --- | --- | --- |
-| Money, job, metadata, a new character | at once | within about one second |
-| Position | every minute, when the player leaves, when `sarebox_core` stops | within about one second after that |
-| On duty / off duty | not saved: each job's `defaultDuty` applies on join | – |
-| `quit`, Ctrl+C, SIGTERM, `restart sarebox_core` | everything | at once |
+| Change | Saved |
+| --- | --- |
+| Money, job, metadata, a new character | at once, in the database |
+| Position | every minute, when the player leaves, when `sarebox_core` stops |
+| On duty / off duty | not saved: each job's `defaultDuty` applies on join |
 
-Disk writes are atomic: the server writes `sarebox_core.json.tmp`, syncs it,
-keeps the previous file as `sarebox_core.json.bak` and renames the new file
-into place. A crash or power loss leaves either the old or the new file. If
-the file cannot be read at start (damaged disk, manual edit), it is moved
-aside as `sarebox_core.json.corrupt-<time>`, the backup is loaded, and the
-console says so; the damaged file is never overwritten.
+Every save is an SQLite transaction: a crash or power loss keeps either the
+old or the new row, never half of one.
 
-**What a crash can lose:** changes from about the last second, and up to a
-minute of movement (players return to where they were at the last save).
+**What a crash can lose:** up to a minute of movement (players return to
+where they were at the last save).
+
+**Servers from before the database** kept characters in resource KVP
+(`kvp/sarebox_core.json`). On the first start with the database,
+`sarebox_core` copies every character and its license link into the
+`players` table and prints how many it copied. The KVP file is left as it
+was, as a backup, and is not read again (the `db:imported` key marks that).
 Money is never paid twice by a reconnect: a character loads once per
 connection, and leaving or rejoining does not repeat paychecks or taxi fares.
 
@@ -291,9 +297,8 @@ event; close a task before paying for it; and end open tasks on
 - Movement is decided by each player's game. The server checks positions for
   plausibility (taxi), but a modified game can still drive "legally" without
   driving. There is no server-side physics.
-- Characters are still saved in KVP files (up to 8 MB per resource, enough
-  for thousands of characters). The server now has an SQL database
-  ([Server database](database.md)); moving SARE Box to it is the next step.
+- Owned cars are a list in each character's `metadata`, not a table of their
+  own yet.
 - One character per license; no character selection screen.
 - No inventory, phone, garages or NPC passengers in SARE Box itself; the
   SARE RP Town scripts (`[sare-rp]`) add inventory, a phone item, a car

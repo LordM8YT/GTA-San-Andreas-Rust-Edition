@@ -698,8 +698,7 @@ fn sarebox_saves_characters_by_license_and_admin_needs_the_acl() {
         assert!(start.elapsed() < Duration::from_secs(30));
         thread::sleep(Duration::from_millis(5));
     }
-    script::flush_kvp(&shared, true);
-    let saved = std::fs::read_to_string(root.join("kvp/sarebox_core.json")).unwrap();
+    let saved = crate::sarebox_tests::saved_characters(&shared).to_string();
     assert!(
         saved.contains(&license) && saved.contains("\\\"cash\\\":750"),
         "{saved}"
