@@ -131,6 +131,8 @@ pub struct Traffic {
     /// Packets lost (each one held the stream back for a resend).
     pub lost: AtomicU64,
     pub open: AtomicBool,
+    /// A [`Conditioner::measure`] connection, not a player.
+    probe: bool,
 }
 
 struct Shared {
@@ -142,6 +144,7 @@ struct Shared {
 /// A running relay. Dropping it closes every connection through it.
 pub struct Conditioner {
     address: SocketAddr,
+    probe: SocketAddr,
     shared: Arc<Shared>,
 }
 
@@ -151,6 +154,9 @@ impl Conditioner {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         listener.set_nonblocking(true)?;
         let address = listener.local_addr()?;
+        let probes = TcpListener::bind("127.0.0.1:0")?;
+        probes.set_nonblocking(true)?;
+        let probe = probes.local_addr()?;
         let shared = Arc::new(Shared {
             link: Mutex::new(link.clamped()),
             stop: AtomicBool::new(false),
@@ -159,8 +165,12 @@ impl Conditioner {
         let worker = shared.clone();
         thread::Builder::new()
             .name("sare-conditioner".into())
-            .spawn(move || accept(listener, server, worker))?;
-        Ok(Self { address, shared })
+            .spawn(move || accept([listener, probes], server, worker))?;
+        Ok(Self {
+            address,
+            probe,
+            shared,
+        })
     }
     /// Where players connect instead of the server.
     pub fn address(&self) -> SocketAddr {
@@ -173,10 +183,22 @@ impl Conditioner {
     pub fn set_link(&self, link: Link) {
         *self.shared.link.lock().unwrap() = link.clamped();
     }
-    /// Every connection made so far, in order, with its counters.
+    /// Players' connections so far, in order, with their counters.
     pub fn traffic(&self) -> Vec<Arc<Traffic>> {
         let connections = self.shared.connections.lock().unwrap();
-        connections.iter().map(|(t, _, _)| t.clone()).collect()
+        connections
+            .iter()
+            .filter(|(t, _, _)| !t.probe)
+            .map(|(t, _, _)| t.clone())
+            .collect()
+    }
+    /// Ask the server for its status through the link, as a player's data
+    /// goes: the time it takes is the ping players have now. Blocks for up
+    /// to a few seconds; call it off the render thread.
+    pub fn measure(&self) -> io::Result<Duration> {
+        let start = Instant::now();
+        crate::query(self.probe)?;
+        Ok(start.elapsed())
     }
 }
 
@@ -191,28 +213,39 @@ impl Drop for Conditioner {
     }
 }
 
-fn accept(listener: TcpListener, server: SocketAddr, shared: Arc<Shared>) {
+/// Players come in on the first listener, measurements on the second.
+fn accept(listeners: [TcpListener; 2], server: SocketAddr, shared: Arc<Shared>) {
     while !shared.stop.load(Ordering::Relaxed) {
-        match listener.accept() {
-            Ok((player, _)) => {
-                let shared = shared.clone();
-                let _ = thread::Builder::new()
-                    .name("sare-conditioner-connect".into())
-                    .spawn(move || {
-                        if let Err(error) = connect(player, server, &shared) {
+        let mut idle = true;
+        for (index, listener) in listeners.iter().enumerate() {
+            let Ok((player, _)) = listener.accept() else {
+                continue;
+            };
+            idle = false;
+            let probe = index == 1;
+            let shared = shared.clone();
+            let _ = thread::Builder::new()
+                .name("sare-conditioner-connect".into())
+                .spawn(move || {
+                    if let Err(error) = connect(player, server, probe, &shared) {
+                        if !probe {
                             eprintln!("conditioner: could not reach the server: {error}");
                         }
-                    });
-            }
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                thread::sleep(Duration::from_millis(20));
-            }
-            Err(_) => thread::sleep(Duration::from_millis(20)),
+                    }
+                });
+        }
+        if idle {
+            thread::sleep(Duration::from_millis(10));
         }
     }
 }
 
-fn connect(player: TcpStream, server: SocketAddr, shared: &Arc<Shared>) -> io::Result<()> {
+fn connect(
+    player: TcpStream,
+    server: SocketAddr,
+    probe: bool,
+    shared: &Arc<Shared>,
+) -> io::Result<()> {
     player.set_nonblocking(false)?;
     // A test server may still be starting: try for a few seconds.
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -227,7 +260,10 @@ fn connect(player: TcpStream, server: SocketAddr, shared: &Arc<Shared>) -> io::R
     };
     let _ = player.set_nodelay(true);
     let _ = upstream.set_nodelay(true);
-    let traffic = Arc::new(Traffic::default());
+    let traffic = Arc::new(Traffic {
+        probe,
+        ..Traffic::default()
+    });
     traffic.open.store(true, Ordering::Relaxed);
     let mut connections = shared.connections.lock().unwrap();
     if connections.len() >= MAX_KEPT {
@@ -481,6 +517,20 @@ mod tests {
             .unwrap();
         let mut buffer = [0u8; 1];
         assert!(matches!(player.read(&mut buffer), Ok(0) | Err(_)));
+    }
+
+    #[test]
+    fn measuring_goes_through_the_link_but_is_not_a_player() {
+        let host = crate::Session::host("127.0.0.1:0".parse().unwrap(), "Host").unwrap();
+        let link = Link {
+            ping_ms: 120,
+            ..Link::PERFECT
+        };
+        let conditioner = Conditioner::start(host.address, link).unwrap();
+        let ping = conditioner.measure().unwrap();
+        assert!(ping >= Duration::from_millis(115), "{ping:?}");
+        assert!(ping < Duration::from_secs(2), "{ping:?}");
+        assert!(conditioner.traffic().is_empty());
     }
 
     #[test]
