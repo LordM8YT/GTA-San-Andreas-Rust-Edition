@@ -4,6 +4,7 @@
 mod acl;
 mod cfg;
 mod console;
+mod db;
 mod entities;
 mod kvp;
 mod manifest;

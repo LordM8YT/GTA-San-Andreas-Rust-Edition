@@ -938,3 +938,87 @@ fn server_vehicles_reach_players_in_their_bucket_and_leave_with_their_resource()
     });
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn oxmysql_api_saves_to_sqlite_and_migrations_run_once() {
+    let root = temp_root();
+    let bank = root.join("resources/[local]/bank_db");
+    std::fs::create_dir_all(bank.join("migrations")).unwrap();
+    std::fs::write(
+        bank.join("fxmanifest.lua"),
+        "fx_version 'cerulean'\ngame 'common'\ndependency 'oxmysql'\nserver_scripts { '@oxmysql/lib/MySQL.lua', 'server.lua' }",
+    )
+    .unwrap();
+    std::fs::write(
+        bank.join("migrations/001_accounts.sql"),
+        "CREATE TABLE accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, owner TEXT UNIQUE NOT NULL, cash INTEGER NOT NULL DEFAULT 0, meta TEXT);",
+    )
+    .unwrap();
+    std::fs::write(
+        bank.join("server.lua"),
+        r#"
+local count = MySQL.scalar.await('SELECT count(*) FROM accounts')
+if count == 0 then
+  local id = MySQL.insert.await('INSERT INTO accounts (owner, cash, meta) VALUES (?, ?, ?)', { 'license:a', 100, { vip = true } })
+  MySQL.insert.await('INSERT INTO accounts (owner) VALUES (@owner)', { owner = 'license:b' })
+  local changed = MySQL.update.await('UPDATE accounts SET cash = cash + ? WHERE id = ?', { 50, id })
+  local ok = MySQL.transaction.await({
+    { query = 'UPDATE accounts SET cash = cash - 30 WHERE owner = ?', values = { 'license:a' } },
+    { 'UPDATE accounts SET cash = cash + 30 WHERE owner = ?', { 'license:b' } },
+  })
+  local failed = MySQL.transaction.await({
+    'UPDATE accounts SET cash = 0',
+    'INSERT INTO accounts (owner) VALUES (\'license:a\')',
+  })
+  SetConvar('db_first', ('%d %d %s %s'):format(id, changed, tostring(ok), tostring(failed)))
+end
+local row = MySQL.single.await('SELECT * FROM accounts WHERE owner = ?', { 'license:b' })
+local thrown = pcall(MySQL.query.await, 'SELEC broken')
+SetConvar('db_row', ('%s %d %s %s %s'):format(row.owner, row.cash, tostring(row.meta), tostring(thrown),
+  json.decode(MySQL.scalar.await('SELECT meta FROM accounts WHERE id = 1')).vip))
+MySQL.query('SELECT owner FROM accounts ORDER BY id', function(rows)
+  SetConvar('db_callback', #rows .. ' ' .. rows[2].owner)
+end)
+exports.oxmysql:scalar('SELECT cash FROM accounts WHERE id = ?', { 1 }, function(cash)
+  SetConvar('db_export', tostring(cash))
+end)
+SetConvar('db_sync', tostring(GetConvar('db_callback', 'later')))
+"#,
+    )
+    .unwrap();
+    let start = |root: &Path| {
+        let commands = ["endpoint_add_tcp 127.0.0.1:0", "ensure bank_db"]
+            .iter()
+            .map(|l| words(l))
+            .collect();
+        let server = boot(commands, root.join("resources")).unwrap();
+        for _ in 0..5 {
+            script::tick(&server.shared);
+        }
+        server
+    };
+    let server = start(&root);
+    let convar = |name: &str| server.shared.borrow().convar(name).map(str::to_string);
+    assert!(server.shared.borrow().resources["oxmysql"].started);
+    assert_eq!(convar("db_first").as_deref(), Some("1 1 true false"));
+    assert_eq!(
+        convar("db_row").as_deref(),
+        Some("license:b 30 nil false true")
+    );
+    assert_eq!(convar("db_sync").as_deref(), Some("later"));
+    assert_eq!(convar("db_callback").as_deref(), Some("2 license:b"));
+    assert_eq!(convar("db_export").as_deref(), Some("120"));
+    drop(server);
+    assert!(root.join("db/sare.db").is_file());
+
+    // A restart keeps the data and does not run the migration again.
+    let server = start(&root);
+    let convar = |name: &str| server.shared.borrow().convar(name).map(str::to_string);
+    assert_eq!(convar("db_first"), None);
+    assert_eq!(
+        convar("db_row").as_deref(),
+        Some("license:b 30 nil false true")
+    );
+    drop(server);
+    let _ = std::fs::remove_dir_all(root);
+}

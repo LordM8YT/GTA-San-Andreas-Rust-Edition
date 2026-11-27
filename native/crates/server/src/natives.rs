@@ -973,6 +973,42 @@ pub fn create_state(shared: &Shared, resource: &str) -> Result<Lua> {
         shared.borrow_mut().kvp.end_find(handle);
         Ok(())
     });
+    // Server database (see db.rs); `@oxmysql/lib/MySQL.lua` wraps these.
+    func!(g, "SareDbExecute", shared, name, |lua,
+                                             (mode, sql, params): (
+        String,
+        String,
+        Value
+    )| {
+        let Some(mode) = crate::db::Mode::parse(&mode) else {
+            return Err(mlua::Error::runtime(format!(
+                "SareDbExecute: unknown mode {mode}"
+            )));
+        };
+        let params = sa_lua::json::to_json(&params)?;
+        let result = script::with_db(&shared, |conn| {
+            crate::db::Db::execute(conn, mode, &sql, &params)
+        })
+        .map_err(|e| mlua::Error::runtime(format!("{e:#} (query: {sql})")))?;
+        lua.to_value_with(&result, script::serialize())
+    });
+    func!(
+        g,
+        "SareDbTransaction",
+        shared,
+        name,
+        |_lua, queries: Table| {
+            let mut list = Vec::new();
+            for entry in queries.sequence_values::<Table>() {
+                let entry = entry?;
+                let sql: String = entry.get(1)?;
+                let params = sa_lua::json::to_json(&entry.get::<Value>(2)?)?;
+                list.push((sql, params));
+            }
+            script::with_db(&shared, |conn| crate::db::Db::transaction(conn, &list))
+                .map_err(|e| mlua::Error::runtime(format!("{e:#}")))
+        }
+    );
     func!(
         g,
         "GetNumPlayerTokens",

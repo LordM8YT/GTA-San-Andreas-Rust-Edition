@@ -129,6 +129,11 @@ Resource KVP (`SetResourceKvp`, `GetResourceKvpString` ...) saves to
 Saves are atomic, keep the previous file as `.json.bak`, and a damaged file is
 moved aside instead of being overwritten.
 
+For RP data that outgrows KVP (players, money, inventories, owned cars) every
+server also has an SQL database: `db/sare.db` next to server.cfg, used with
+the oxmysql API (`@oxmysql/lib/MySQL.lua`) and tables from each resource's
+`migrations/` folder. See [Server database](database.md).
+
 Routing buckets split the world into instances, as in FiveM.
 `SetPlayerRoutingBucket(src, bucket)` and `GetPlayerRoutingBucket(src)` (and
 the `Entity` variants, which take player IDs) move players between buckets;
@@ -230,7 +235,7 @@ end, true)
 ```
 
 Not supported yet: NUI pages (by design: use the script UI), passenger seats in server vehicles, OneSync population, entity lockdown modes, replicated state bags,
-databases (oxmysql is a Node.js resource), `PerformHttpRequest`, and identifiers
+MySQL/MariaDB (the built-in database is SQLite, see [Server database](database.md)), `PerformHttpRequest`, and identifiers
 other than `license`, `sare` and `legacy`. `playerConnecting` runs after the player has
 joined, so a rejection drops them. FiveM resources that use GTA V natives must
 be adapted.
