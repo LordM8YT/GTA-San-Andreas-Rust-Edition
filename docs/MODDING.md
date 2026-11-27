@@ -378,7 +378,7 @@ players keep a custom job even if its resource starts after they joined.
 | Data → Mesh → UVs, Normals | On |
 | Data → Mesh → Vertex Colors | On if you painted colours |
 | Material → Images | Automatic, with PNG textures |
-| Animation | Off (not used yet) |
+| Animation | On for moving parts in worlds (object animations); off otherwise |
 
 What SARE reads from a `.glb`: meshes, object transforms, Base Color colour
 and PNG texture, vertex colours, and Alpha Blend/Clip. It ignores (without

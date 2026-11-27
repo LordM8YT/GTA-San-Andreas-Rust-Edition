@@ -105,8 +105,19 @@ The game's map and compass treat Blender +Y as north.
   world. You do not need to bake lighting yourself, but painted vertex
   colours (for dirt or shadow) are kept.
 
-Not read in the world: armatures/skins, animations, shape keys, emission,
-normal maps and other material channels. They are ignored, not an error.
+- **Moving parts:** object animations (keyframed location, rotation and
+  scale of objects, exported as glTF animations) play in a loop: a
+  windmill's sails, a fan, a sign that turns. Each animated object and
+  everything parented to it moves together; the rest of the model stays
+  still. The first animation in the file plays. Today they move in SARE
+  Studio (while editing and in Play); in worlds played from SARE Client and
+  on servers they still stand still, and scripts cannot start or stop them
+  yet. Their collision stays where they rest. Up to 200 000 moving
+  vertices per model.
+
+Not read in the world: armatures/skins (bones that bend a mesh), shape
+keys, emission, normal maps and other material channels. They are ignored,
+not an error.
 
 ## Characters
 

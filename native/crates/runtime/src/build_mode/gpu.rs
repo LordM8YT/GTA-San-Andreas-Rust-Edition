@@ -21,7 +21,20 @@ pub struct AssetMesh {
     pub bounds: (Vec3, Vec3),
     /// Shown instead of a model that is missing or failed to load.
     pub placeholder: bool,
+    /// Moving parts (glTF node animations), when the model has them.
+    moving: Option<Moving>,
 }
+
+/// An asset's moving parts: which of its batches belong to which part.
+struct Moving {
+    animation: sa_scene::gltf_anim::Animation,
+    /// For each batch in `AssetMesh::parts`: the part it moves with.
+    part_of: Vec<Option<usize>>,
+}
+
+/// Most moving vertices one asset may have: more stays still (each placed
+/// copy is re-posed on the CPU every frame).
+const MAX_MOVING_VERTICES: usize = 200_000;
 
 /// One placed object on the GPU.
 pub struct ObjectMesh {
@@ -60,6 +73,8 @@ pub struct Gpu {
     /// Copies scripts made while playtesting: copy to the object it copies.
     /// Drawn like it, where `moved` says (or where it was placed).
     pub copies: HashMap<NodeId, NodeId>,
+    /// When moving parts started playing.
+    clock: Option<std::time::Instant>,
 }
 
 /// What a terrain or road object's own mesh is made from.
@@ -165,6 +180,7 @@ impl Gpu {
                             triangles: Arc::new(Vec::new()),
                             bounds: (Vec3::ZERO, Vec3::ZERO),
                             placeholder: true,
+                            moving: None,
                         });
                 }
             }
@@ -358,6 +374,47 @@ impl Gpu {
 }
 
 impl Gpu {
+    /// Once a frame: pose the moving parts of every object whose model has
+    /// them, playing its first clip in a loop.
+    pub fn animate(&mut self, state: &State) {
+        let seconds = self
+            .clock
+            .get_or_insert_with(std::time::Instant::now)
+            .elapsed()
+            .as_secs_f32();
+        for object in self.objects.values() {
+            let Some(mesh) = self.assets.get(&object.asset) else {
+                continue;
+            };
+            let Some(moving) = &mesh.moving else { continue };
+            let Some(clip) = moving.animation.clip(None) else {
+                continue;
+            };
+            let poses = moving.animation.pose(clip, seconds);
+            for ((part, batch), part_of) in
+                mesh.parts.iter().zip(&object.batches).zip(&moving.part_of)
+            {
+                let Some(pose) = part_of.and_then(|p| poses.get(p)) else {
+                    continue;
+                };
+                let raw = transformed(&part.base, object.matrix * *pose, object.tint);
+                state
+                    .queue
+                    .write_buffer(&batch.buffer, 0, bytemuck::cast_slice(&raw));
+            }
+        }
+    }
+    /// Does any drawn object have moving parts (frames should keep coming)?
+    pub fn animating(&self) -> bool {
+        self.objects.values().any(|o| {
+            self.assets
+                .get(&o.asset)
+                .is_some_and(|mesh| mesh.moving.is_some())
+        })
+    }
+}
+
+impl Gpu {
     /// Keep every object's light glow in step with the layout.
     pub fn sync_lights(&mut self, state: &State, layout: &Layout, problems: &mut Vec<String>) {
         self.lights.retain(|id, mesh| {
@@ -409,15 +466,15 @@ fn upload(
         .map(|t| [0, 1, 2].map(|i| Vec3::from_array(t[i].position)))
         .collect();
     let bounds = editor_bounds(&triangles);
+    let (moving, tagged) = tagged_batches(model);
     let scene = sa_scene::Scene {
         vehicle_handling: Default::default(),
         water: None,
         // "Animated" keeps the model-space vertices on the CPU side, so
         // each placed copy can be transformed from them.
-        batches: model
-            .drawn
+        batches: tagged
             .iter()
-            .map(|b| sa_scene::Batch {
+            .map(|(_, b)| sa_scene::Batch {
                 key: b.key.clone(),
                 vertices: b.vertices.clone(),
                 alpha: b.alpha,
@@ -442,12 +499,58 @@ fn upload(
         &state.mipmaps,
         scene,
     )?;
+    let moving = moving.map(|m| Moving {
+        animation: m.animation.clone(),
+        part_of: tagged.iter().map(|(part, _)| *part).collect(),
+    });
+    debug_assert!(moving
+        .as_ref()
+        .is_none_or(|m| m.part_of.len() == parts.len()));
     Ok(AssetMesh {
         parts,
         triangles: Arc::new(triangles),
         bounds,
         placeholder,
+        moving,
     })
+}
+
+/// The batches to upload for `model`, each with the moving part it belongs
+/// to. Moving models upload still and moving geometry as separate batches.
+/// Sorted (stably) by alpha here, the way `upload_scene` sorts, so the
+/// tags stay in the uploaded order.
+fn tagged_batches(
+    model: &sa_scene::gltf_model::Model,
+) -> (
+    Option<&sa_scene::gltf_model::Moving>,
+    Vec<(Option<usize>, &sa_scene::Batch)>,
+) {
+    let moving = model.animation.as_ref().filter(|m| {
+        m.parts
+            .iter()
+            .flatten()
+            .map(|b| b.vertices.len())
+            .sum::<usize>()
+            <= MAX_MOVING_VERTICES
+    });
+    let mut tagged: Vec<(Option<usize>, &sa_scene::Batch)> = match moving {
+        Some(moving) => moving
+            .still
+            .iter()
+            .map(|b| (None, b))
+            .chain(
+                moving
+                    .parts
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(i, batches)| batches.iter().map(move |b| (Some(i), b))),
+            )
+            .filter(|(_, b)| !b.vertices.is_empty())
+            .collect(),
+        None => model.drawn.iter().map(|b| (None, b)).collect(),
+    };
+    tagged.sort_by_key(|(_, b)| b.alpha);
+    (moving, tagged)
 }
 
 /// A magenta cube marking an object whose model could not be loaded.
@@ -554,4 +657,54 @@ fn transformed(base: &[f32], matrix: Mat4, tint: [f32; 3]) -> Vec<f32> {
         }
     }
     raw
+}
+
+#[cfg(test)]
+mod tests {
+    use sa_scene::Batch;
+
+    fn batch(alpha: bool, vertices: usize) -> Batch {
+        Batch {
+            key: "k".into(),
+            vertices: vec![Default::default(); vertices],
+            alpha,
+            animated: false,
+            uv_animation: None,
+            map_door: None,
+            mlo_entity: None,
+        }
+    }
+
+    #[test]
+    fn moving_parts_keep_their_tags_in_upload_order() {
+        let mut model = sa_scene::gltf_model::Model {
+            drawn: vec![batch(false, 9)],
+            ..Default::default()
+        };
+        assert_eq!(super::tagged_batches(&model).1.len(), 1);
+        model.animation = Some(sa_scene::gltf_model::Moving {
+            still: vec![batch(true, 3), batch(false, 3)],
+            parts: vec![vec![batch(true, 3)], vec![batch(false, 3), batch(false, 0)]],
+            ..Default::default()
+        });
+        let (moving, tagged) = super::tagged_batches(&model);
+        assert!(moving.is_some());
+        let tags: Vec<(Option<usize>, bool)> = tagged.iter().map(|(p, b)| (*p, b.alpha)).collect();
+        // Opaque first, then see-through (as upload_scene sorts); empty dropped.
+        assert_eq!(
+            tags,
+            [
+                (None, false),
+                (Some(1), false),
+                (None, true),
+                (Some(0), true)
+            ]
+        );
+        // Too many moving vertices: the model stays still.
+        model.animation.as_mut().unwrap().parts[0] =
+            vec![batch(false, super::MAX_MOVING_VERTICES + 1)];
+        let (moving, tagged) = super::tagged_batches(&model);
+        assert!(moving.is_none());
+        assert_eq!(tagged.len(), 1);
+    }
 }
