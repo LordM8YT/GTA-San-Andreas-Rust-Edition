@@ -272,6 +272,7 @@ pub fn model(road: &Road) -> Model {
         drawn: vec![batch(drawn)],
         textures: HashMap::from([(KEY.into(), crate::builtin_assets::white())]),
         triangles,
+        animation: None,
     }
 }
 

@@ -15,6 +15,7 @@ mod command;
 mod gameplay_ui;
 pub mod gpu;
 pub mod local_test;
+pub mod net_graphs;
 mod pacing;
 mod panels;
 mod saved_models;

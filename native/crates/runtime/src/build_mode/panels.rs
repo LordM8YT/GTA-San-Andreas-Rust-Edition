@@ -134,6 +134,8 @@ pub struct UiState {
     pub test_players: usize,
     /// The connection Test › Server gives its players.
     pub test_link: sa_net::conditioner::Link,
+    /// Test › Server › Network is open.
+    pub test_graphs: bool,
     /// The server folder Publish puts the world in.
     pub publish_folder: String,
     /// A new attribute or tag being typed in the Properties panel.
@@ -1339,7 +1341,18 @@ fn server_group(build: &mut BuildMode, ui: &mut Ui) {
                 );
             }
         });
-        ui.vertical(|ui| connection_menu(build, ui));
+        ui.vertical(|ui| {
+            connection_menu(build, ui);
+            if small_button(
+                ui,
+                "📈",
+                "Network",
+                true,
+                "Live graphs of the test's ping, data and lost packets",
+            ) {
+                build.ui.test_graphs = !build.ui.test_graphs;
+            }
+        });
         ui.vertical(|ui| {
             ui.menu_button("🌐 Publish...", |ui| {
                 ui.set_min_width(320.0);
@@ -4390,6 +4403,7 @@ fn dialogs(build: &mut BuildMode, root: &mut Ui) {
     let ctx = root.ctx().clone();
     world_dialogs(build, &ctx);
     export_dialog(build, &ctx);
+    build.net_graphs_window(&ctx);
     if let Some(recovery) = &build.recovery {
         let saved = recovery.document.layout.nodes.len();
         let mut choice = None;

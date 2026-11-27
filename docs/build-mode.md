@@ -166,6 +166,12 @@ a lost packet shows as a short stall while it is resent, not as missing
 data. Joining downloads the world through the same link, so a low bandwidth
 makes joining slow too.
 
+*Network* (📈, under Connection) opens live graphs of the last two minutes:
+ping (a status request through the connection every second, so it is the
+ping players have now), data down and up for all players together, and
+lost packets per second, plus one line per player connection with its
+totals. Idea from renet_visualizer (MIT OR Apache-2.0), written anew.
+
 The server gets a copy of the world in a test folder (`sare-studio-test-<id>`
 in the temp folder), so your files are not touched and the server is not
 listed publicly.

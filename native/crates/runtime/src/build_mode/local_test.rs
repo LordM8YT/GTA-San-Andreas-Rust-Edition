@@ -22,7 +22,9 @@ pub struct LocalTest {
     pub port: u16,
     /// Between the players and the server (None: it could not start, and
     /// players join the server directly).
-    pub conditioner: Option<Conditioner>,
+    pub conditioner: Option<std::sync::Arc<Conditioner>>,
+    /// Test › Server › Network.
+    pub graphs: super::net_graphs::NetGraphs,
 }
 impl Drop for LocalTest {
     fn drop(&mut self) {
@@ -168,10 +170,11 @@ impl BuildMode {
         forward(&mut server, "Server", &send);
         children.push(("Server".to_string(), server));
         let server_address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
-        let conditioner = Conditioner::start(server_address, self.ui.test_link).ok();
-        let join = conditioner
-            .as_ref()
-            .map_or(server_address, Conditioner::address);
+        let conditioner = Conditioner::start(server_address, self.ui.test_link)
+            .ok()
+            .map(std::sync::Arc::new);
+        let graphs = super::net_graphs::NetGraphs::start(conditioner.as_ref());
+        let join = conditioner.as_ref().map_or(server_address, |c| c.address());
         let content_dir = root.join(sa_scene::content_pack::DEFAULT_DIR);
         for n in 1..=players {
             let name = format!("Player {n}");
@@ -198,6 +201,7 @@ impl BuildMode {
             lines,
             port,
             conditioner,
+            graphs,
         })
     }
 
@@ -231,6 +235,12 @@ impl BuildMode {
         let Some(test) = &mut self.local_test else {
             return;
         };
+        let traffic = test
+            .conditioner
+            .as_ref()
+            .map(|c| c.traffic())
+            .unwrap_or_default();
+        test.graphs.tick(&traffic, std::time::Instant::now());
         let mut lines = Vec::new();
         while let Ok(line) = test.lines.try_recv() {
             lines.push(line);
