@@ -356,6 +356,41 @@ impl BuildMode {
         Ok(build)
     }
 
+    /// Copy a vehicle .glb into the world and add it to `info`'s vehicles,
+    /// saying what the creator may want to fix.
+    pub fn import_vehicle(
+        &mut self,
+        path: &std::path::Path,
+        info: &mut sa_editor::history::WorldInfo,
+    ) {
+        if info.vehicles.len() >= sa_scene::content_pack::MAX_VEHICLES {
+            self.error(format!(
+                "A world can have at most {} vehicles.",
+                sa_scene::content_pack::MAX_VEHICLES
+            ));
+            return;
+        }
+        match self.project.import_vehicle(path, &info.vehicles) {
+            Ok((spec, report)) => {
+                let warnings = report.warnings();
+                let [width, height, length] = report.size;
+                let summary = format!(
+                    "Vehicle {} added ({length:.1} x {width:.1} x {height:.1} m, {} wheels). Save, then play to drive it.",
+                    spec.name, report.wheels
+                );
+                if warnings.is_empty() {
+                    self.info(summary);
+                } else {
+                    self.warn(format!("{summary} To fix: {}", warnings.join(" ")));
+                }
+                self.ui
+                    .vehicle_warnings
+                    .insert(spec.model.clone(), warnings);
+                info.vehicles.push(spec);
+            }
+            Err(error) => self.error(format!("Import failed: {error:#}")),
+        }
+    }
     pub fn info(&mut self, text: impl Into<String>) {
         self.push(Level::Info, text.into());
     }

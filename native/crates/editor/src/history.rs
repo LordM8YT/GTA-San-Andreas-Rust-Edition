@@ -23,6 +23,8 @@ pub struct WorldInfo {
     pub version: String,
     /// Who may share it, e.g. "CC-BY-4.0" or "All rights reserved".
     pub license: String,
+    /// Drivable vehicles (`content.json` `vehicles`); the first is F9's car.
+    pub vehicles: Vec<sa_scene::content_pack::VehicleSpec>,
 }
 
 impl WorldInfo {
@@ -35,6 +37,7 @@ impl WorldInfo {
             author: String::new(),
             version: "0.1.0".into(),
             license: crate::share::DEFAULT_LICENSE.into(),
+            vehicles: Vec::new(),
         }
     }
 }

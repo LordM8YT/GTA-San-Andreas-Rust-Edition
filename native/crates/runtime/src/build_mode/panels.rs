@@ -84,6 +84,11 @@ pub struct UiState {
     world_author: Option<String>,
     world_version: Option<String>,
     settings_before: Option<WorldSettings>,
+    /// Vehicles: the name being typed (index, text), the world info before
+    /// a slider drag, and what the last import found to fix, by model.
+    vehicle_name: Option<(usize, String)>,
+    vehicles_before: Option<WorldInfo>,
+    pub vehicle_warnings: HashMap<String, Vec<String>>,
     show_help: bool,
     confirm_quit: bool,
     /// Placement preview transform this frame, set by the viewport.
@@ -3560,6 +3565,7 @@ fn world_settings(build: &mut BuildMode, ui: &mut Ui) {
         });
     }
     sharing(build, ui, &info);
+    vehicles_section(build, ui, &build.doc.info.clone());
     ui.label(
         RichText::new(format!(
             "Pack id: {} (folder {})",
@@ -3614,6 +3620,158 @@ fn world_settings(build: &mut BuildMode, ui: &mut Ui) {
             build.set_spawn([focus[0], focus[1], focus[2].max(0.0)], heading);
         }
     });
+}
+
+/// Workspace › Vehicles: the world's own drivable cars, trucks and vans
+/// (`content.json` `vehicles`): import a .glb, name, colour, handling.
+fn vehicles_section(build: &mut BuildMode, ui: &mut Ui, info: &WorldInfo) {
+    section(ui, "Vehicles");
+    ui.label(
+        RichText::new(
+            "Cars, trucks and vans players can drive here. The first one is the car F9 brings; servers spawn any of them by model name. Save the world, then play it to drive them.",
+        )
+        .small()
+        .color(MUTED),
+    );
+    let mut after = info.clone();
+    let mut remove = None;
+    let mut make_first = None;
+    for (index, spec) in after.vehicles.iter_mut().enumerate() {
+        let header = egui::CollapsingHeader::new(format!("🚗 {}", spec.name))
+            .id_salt(("world-vehicle", spec.model.clone()))
+            .default_open(build.ui.vehicle_warnings.contains_key(&spec.model));
+        header.show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Name");
+                let mut typing = match &build.ui.vehicle_name {
+                    Some((i, text)) if *i == index => text.clone(),
+                    _ => spec.name.clone(),
+                };
+                let response = ui.add(egui::TextEdit::singleline(&mut typing).char_limit(48));
+                if response.changed() {
+                    build.ui.vehicle_name = Some((index, typing.clone()));
+                }
+                if response.lost_focus() {
+                    if !typing.trim().is_empty() {
+                        spec.name = typing.trim().to_owned();
+                    }
+                    build.ui.vehicle_name = None;
+                }
+            });
+            ui.label(
+                RichText::new(format!(
+                    "Model {} · {} (scripts: CreateVehicle(\"{}\", ...))",
+                    spec.model, spec.scene, spec.model
+                ))
+                .small()
+                .color(MUTED),
+            );
+            ui.horizontal(|ui| {
+                ui.label("Colour");
+                let mut colour = spec.color.unwrap_or([200, 200, 200]);
+                if ui.color_edit_button_srgb(&mut colour).changed() {
+                    spec.color = Some(colour);
+                }
+            });
+            let mut handling = spec.handling.unwrap_or_default();
+            let mut kmh = handling.top_speed * 3.6;
+            ui.add(
+                egui::Slider::new(&mut kmh, 18.0..=324.0)
+                    .text("Top speed")
+                    .suffix(" km/h")
+                    .fixed_decimals(0),
+            );
+            handling.top_speed = kmh / 3.6;
+            ui.add(egui::Slider::new(&mut handling.acceleration, 0.5..=20.0).text("Acceleration"));
+            ui.add(egui::Slider::new(&mut handling.brake_deceleration, 1.0..=25.0).text("Brakes"));
+            ui.add(egui::Slider::new(&mut handling.tire_grip, 1.0..=12.0).text("Grip"));
+            ui.add(egui::Slider::new(&mut handling.steering_lock, 0.1..=0.9).text("Steering"));
+            ui.horizontal(|ui| {
+                ui.label("Drive");
+                for (value, label) in [(0.0, "Front"), (1.0, "Rear"), (2.0, "All")] {
+                    if ui
+                        .selectable_label(handling.drive == value, label)
+                        .clicked()
+                    {
+                        handling.drive = value;
+                    }
+                }
+            });
+            if handling != spec.handling.unwrap_or_default() {
+                spec.handling = Some(handling);
+            }
+            if ui
+                .small_button("Reset handling")
+                .on_hover_text("Back to SARE's default car handling")
+                .clicked()
+            {
+                spec.handling = None;
+            }
+            if let Some(warnings) = build.ui.vehicle_warnings.get(&spec.model) {
+                for warning in warnings {
+                    ui.label(RichText::new(format!("⚠ {warning}")).small().color(WARNING));
+                }
+            }
+            ui.horizontal(|ui| {
+                if index > 0
+                    && ui
+                        .button("Make it F9's car")
+                        .on_hover_text("Move it to the top: F9 and the car menu start with it")
+                        .clicked()
+                {
+                    make_first = Some(index);
+                }
+                if ui
+                    .button("🗑 Remove")
+                    .on_hover_text("Take it out of the world (its .glb stays in the folder; Undo brings it back)")
+                    .clicked()
+                {
+                    remove = Some(index);
+                }
+            });
+        });
+    }
+    if let Some(index) = remove {
+        after.vehicles.remove(index);
+        build.ui.vehicle_name = None;
+    }
+    if let Some(index) = make_first {
+        let spec = after.vehicles.remove(index);
+        after.vehicles.insert(0, spec);
+        build.ui.vehicle_name = None;
+    }
+    if ui
+        .button("🚗 Import vehicle…")
+        .on_hover_text("A .glb car, truck or van from Blender: nose along +Y, wheels named wheel_lf, wheel_rf, wheel_lb, wheel_rb, a material named paint")
+        .clicked()
+    {
+        if let Some(path) = pick_model() {
+            build.import_vehicle(std::path::Path::new(&path), &mut after);
+        }
+    }
+    let dragging = ui.ctx().egui_is_using_pointer();
+    if after != *info {
+        if dragging {
+            build.ui.vehicles_before.get_or_insert(info.clone());
+            build.doc.info = after;
+        } else {
+            let before = build
+                .ui
+                .vehicles_before
+                .take()
+                .unwrap_or_else(|| info.clone());
+            build.execute(Command::Info { before, after });
+        }
+    } else if !dragging {
+        if let Some(before) = build.ui.vehicles_before.take() {
+            if before != build.doc.info {
+                build.history.record(Command::Info {
+                    before,
+                    after: build.doc.info.clone(),
+                });
+            }
+        }
+    }
 }
 
 /// Workspace › Sharing: who made the world, its version and licence, its

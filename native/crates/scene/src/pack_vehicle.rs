@@ -80,6 +80,78 @@ pub fn load(path: &Path, key: &str, paint: [u8; 3], handling: Handling) -> Resul
         .with_context(|| format!("loading vehicle {}", path.display()))
 }
 
+/// What a loaded vehicle model has, for creators importing one.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Report {
+    /// Meshes recognised as wheels (`wheel_lf`, ...).
+    pub wheels: usize,
+    /// Size in metres: width, height, length.
+    pub size: [f32; 3],
+    /// Has parts with the `paint` material.
+    pub painted: bool,
+    pub triangles: usize,
+}
+impl Report {
+    pub fn of(scene: &Scene) -> Self {
+        let (mut low, mut high) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
+        for vertex in scene.batches.iter().flat_map(|b| &b.vertices) {
+            let p = Vec3::from_array(vertex.position);
+            low = low.min(p);
+            high = high.max(p);
+        }
+        let extent = if low.is_finite() {
+            high - low
+        } else {
+            Vec3::ZERO
+        };
+        Self {
+            wheels: scene
+                .vehicle_pieces
+                .values()
+                .filter(|p| matches!(p.part, VehiclePart::Wheel { .. }))
+                .count(),
+            size: [extent.x, extent.y, extent.z],
+            painted: scene.batches.iter().any(|b| b.key.contains(PAINT_TAG)),
+            triangles: scene.triangles,
+        }
+    }
+    /// Things a creator likely wants to fix, in plain words.
+    pub fn warnings(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if self.wheels == 0 {
+            out.push("No wheels found: name the wheel meshes wheel_lf, wheel_rf, wheel_lb and wheel_rb so they turn and steer.".into());
+        } else if self.wheels < 4 {
+            out.push(format!(
+                "Only {} wheel(s) found: wheel_lf, wheel_rf, wheel_lb and wheel_rb are expected.",
+                self.wheels
+            ));
+        }
+        let longest = self.size.iter().copied().fold(0.0, f32::max);
+        if longest > 25.0 {
+            out.push(format!(
+                "It is {longest:.0} m long: check the scale (1 Blender unit = 1 metre)."
+            ));
+        } else if longest < 0.5 {
+            out.push(format!(
+                "It is only {longest:.2} m long: check the scale (1 Blender unit = 1 metre)."
+            ));
+        }
+        if self.size[0] > self.size[2] * 1.3 {
+            out.push("It is wider than it is long: the nose must point along Blender +Y.".into());
+        }
+        if !self.painted {
+            out.push("No material named paint: its colour cannot be changed.".into());
+        }
+        if self.triangles > 60_000 {
+            out.push(format!(
+                "{} triangles is heavy for weak PCs; aim for under 60000.",
+                self.triangles
+            ));
+        }
+        out
+    }
+}
+
 pub fn parse(
     bytes: &[u8],
     folder: &Path,

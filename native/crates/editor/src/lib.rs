@@ -50,6 +50,66 @@ mod tests {
     }
 
     #[test]
+    fn imported_vehicles_are_saved_and_play_in_the_world() {
+        let root = temp("vehicles");
+        let folder = root.join("garage");
+        let (project, mut doc) = Project::create(&folder, "garage", "Garage").unwrap();
+        let truck = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../content/sare-rp-town/vehicles/towtruck.glb"
+        );
+        std::fs::create_dir_all(root.join("downloads")).unwrap();
+        let source = root.join("downloads/Big_Tow Truck.glb");
+        std::fs::copy(truck, &source).unwrap();
+        let (spec, report) = project.import_vehicle(&source, &doc.info.vehicles).unwrap();
+        assert_eq!(
+            (spec.model.as_str(), spec.name.as_str(), spec.scene.as_str()),
+            (
+                "big_tow-truck",
+                "Big Tow Truck",
+                "vehicles/big_tow-truck.glb"
+            )
+        );
+        assert_eq!(report.wheels, 4);
+        assert!(report.painted, "{report:?}");
+        assert!(report.warnings().is_empty(), "{:?}", report.warnings());
+        doc.info.vehicles.push(spec.clone());
+        // The same file again gets its own model name.
+        let (second, _) = project.import_vehicle(&source, &doc.info.vehicles).unwrap();
+        assert_eq!(second.model, "big_tow-truck-2");
+        let mut tuned = second;
+        tuned.handling = Some(sa_scene::vehicle::Handling {
+            top_speed: 30.0,
+            ..Default::default()
+        });
+        doc.info.vehicles.push(tuned);
+        project.save(&doc).unwrap();
+        let (_, reopened) = Project::open(&folder).unwrap();
+        assert_eq!(reopened.info.vehicles, doc.info.vehicles);
+        let manifest = sa_scene::content_pack::Manifest::read(&folder).unwrap();
+        let loaded = sa_scene::content_pack::load_vehicles(&folder, &manifest);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[1].1.vehicle_handling.top_speed, 30.0);
+        // Autosaves keep vehicles too.
+        project.autosave(&doc).unwrap();
+        let recovered = project.recovery(&doc).unwrap();
+        if let Some(recovery) = recovered {
+            assert_eq!(recovery.document.info.vehicles, doc.info.vehicles);
+        }
+        // Without vehicles the field goes away again.
+        doc.info.vehicles.clear();
+        project.save(&doc).unwrap();
+        let text = std::fs::read_to_string(folder.join("content.json")).unwrap();
+        assert!(!text.contains("\"vehicles\""), "{text}");
+        // Not a vehicle: nothing is copied.
+        std::fs::write(root.join("downloads/junk.glb"), b"junk").unwrap();
+        assert!(project
+            .import_vehicle(&root.join("downloads/junk.glb"), &[])
+            .is_err());
+        assert!(!folder.join("vehicles/junk.glb").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+    #[test]
     fn history_keeps_only_the_newest_steps() {
         let mut doc = doc();
         let mut history = History::default();

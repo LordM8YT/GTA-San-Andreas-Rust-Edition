@@ -201,6 +201,26 @@ upload it and add the entry to `community/worlds.json` with a pull request
 so everyone can install it from Discover (see
 [community/README.md](../community/README.md)).
 
+## Vehicles
+
+Workspace › Vehicles holds the world's own drivable cars, trucks and vans.
+*Import vehicle…* takes a `.glb` from Blender, copies it into the world's
+`vehicles/` folder and checks it: you get its size and wheel count, and a
+warning for what to fix (no wheels named `wheel_lf`, `wheel_rf`, `wheel_lb`,
+`wheel_rb`; a scale that is far off; a nose that does not point along
+Blender +Y; no `paint` material; too many triangles for weak PCs).
+
+Open a vehicle to change its name, colour, top speed, acceleration, brakes,
+grip, steering and driven wheels (front, rear or all), or *Reset handling*.
+*Make it F9's car* moves it to the top: F9 and the car menu start with it.
+*Remove* takes it out of the world (Undo brings it back). The model name
+(shown under the name) is what scripts spawn: `CreateVehicle("towtruck", ...)`.
+
+Save the world, then play it (or host it) to drive them; players who join
+download the world with its vehicles. For a server that adds cars to any
+world, see [addon vehicles](native-mods.md#addon-vehicles-gltf-cars-for-sare-servers).
+Model rules are in [content packs › Vehicles](content-packs.md#vehicles).
+
 ## Physics
 
 A part's Properties have **Anchored** (on for every part placed). Untick
@@ -677,3 +697,5 @@ Milestone 1 and part of milestone 2 are in. Still to come, roughly in order:
 - Roads: junctions where roads meet, and road surfaces that follow the
   terrain under them by themselves (today: set the points' heights).
 - Visual scripting (blocks instead of Lua), publishing worlds to servers.
+- Vehicles: driving a newly imported vehicle in playtest without saving
+  and playing the world, parked vehicles placed in the world, and boats.

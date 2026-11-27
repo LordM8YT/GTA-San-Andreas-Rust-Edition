@@ -45,7 +45,7 @@ pub struct Manifest {
 /// Most vehicles one pack may list.
 pub const MAX_VEHICLES: usize = 64;
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct VehicleSpec {
     /// Model name scripts use, e.g. `CreateVehicle("sedan", ...)`: 1-32
@@ -56,14 +56,14 @@ pub struct VehicleSpec {
     /// The vehicle's `.glb` file inside the pack.
     pub scene: String,
     /// Default paint as sRGB, for primitives using the `paint` material.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<[u8; 3]>,
     /// Handling overrides; omitted fields keep the defaults.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handling: Option<vehicle::Handling>,
     /// Driver seat in Blender coordinates relative to the vehicle origin
     /// ([right, forward, up], metres): where the seated driver's feet go.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seat: Option<[f32; 3]>,
 }
 impl VehicleSpec {
