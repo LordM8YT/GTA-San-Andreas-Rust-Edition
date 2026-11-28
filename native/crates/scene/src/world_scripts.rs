@@ -34,6 +34,11 @@ impl Scripts {
                 name: s.name,
                 source: s.source,
                 object: s.object,
+                language: if s.javascript {
+                    host::Language::JavaScript
+                } else {
+                    host::Language::Lua
+                },
             })
             .collect();
         if scripts.is_empty() {

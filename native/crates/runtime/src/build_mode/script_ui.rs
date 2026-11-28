@@ -60,6 +60,7 @@ const PAUSE: Duration = Duration::from_millis(1200);
 pub struct Example {
     pub name: &'static str,
     pub about: &'static str,
+    pub javascript: bool,
     pub source: &'static str,
 }
 
@@ -67,11 +68,13 @@ pub const EXAMPLES: &[Example] = &[
     Example {
         name: "Empty",
         about: "Runs when the world starts",
+        javascript: false,
         source: "-- Runs once when the world starts. Open Help for what scripts can do.\nprint('Hello from ' .. script.name)\n",
     },
     Example {
         name: "Door that opens on E",
         about: "Give the object an Interaction behaviour: E opens it for 5 seconds",
+        javascript: false,
         source: r#"-- Give this object an Interaction behaviour (Gameplay in its Properties).
 -- Pressing E there opens it for a few seconds.
 local door = script.object
@@ -87,6 +90,7 @@ end)
     Example {
         name: "Welcome message",
         about: "Greets every player who joins",
+        javascript: false,
         source: r#"world.on('join', function(player)
   player:message('Welcome, ' .. player.name .. '!', 5)
 end)
@@ -95,6 +99,7 @@ end)
     Example {
         name: "Blinking object",
         about: "Shows and hides this object every second",
+        javascript: false,
         source: r#"local light = script.object
 
 every(1, function()
@@ -105,6 +110,7 @@ end)
     Example {
         name: "Zone messages",
         about: "Give the object a Trigger zone: tells players when they enter and leave",
+        javascript: false,
         source: r#"-- Give this object a Trigger zone behaviour (Gameplay in its Properties).
 script.object:on('enter', function(player)
   player:message('You entered ' .. script.object.name)
@@ -118,6 +124,7 @@ end)
     Example {
         name: "Lift",
         about: "Moves this object up and down; players standing on it ride along",
+        javascript: false,
         source: r#"local lift = script.object
 local bottom = lift.position
 
@@ -132,6 +139,7 @@ end
     Example {
         name: "Sliding door",
         about: "Give the object an Interaction behaviour: E slides it aside and back",
+        javascript: false,
         source: r#"-- Give this object an Interaction behaviour (Gameplay in its Properties).
 local door = script.object
 local closed = door.position
@@ -151,6 +159,7 @@ end)
     Example {
         name: "Spinner",
         about: "Turns this object round and round",
+        javascript: false,
         source: r#"local spinner = script.object
 local heading = spinner.heading
 
@@ -164,6 +173,7 @@ end
     Example {
         name: "Traffic light",
         about: "Turns this object green, yellow and red in turn",
+        javascript: false,
         source: r#"local light = script.object
 
 while true do
@@ -179,6 +189,7 @@ end
     Example {
         name: "Crate dropper",
         about: "Give the object an Interaction behaviour: E drops a copy of it that falls away after 10 seconds",
+        javascript: false,
         source: r#"-- Give this object an Interaction behaviour (Gameplay in its Properties).
 local box = script.object
 
@@ -196,6 +207,7 @@ end)
     Example {
         name: "Race results",
         about: "Tells everyone each finish time of the world's checkpoint races",
+        javascript: false,
         source: r#"local best = {}
 
 world.on('finish', function(player, race, seconds)
@@ -211,6 +223,7 @@ end)
     Example {
         name: "Day and night switch",
         about: "Give the object an Interaction behaviour: E switches day and night",
+        javascript: false,
         source: r#"local night = false
 
 script.object:on('use', function(player)
@@ -223,6 +236,7 @@ end)
     Example {
         name: "Score counter",
         about: "Counts uses per player and shares the count with other scripts",
+        javascript: false,
         source: r#"-- Give this object an Interaction behaviour. Each E is a point.
 local points = {}
 
@@ -233,6 +247,27 @@ script.object:on('use', function(player)
 end)
 
 -- Another script can listen: world.on('scored', function(name, points) ... end)
+"#,
+    },
+    Example {
+        name: "Empty (JavaScript)",
+        about: "A JavaScript script: runs when the world starts",
+        javascript: true,
+        source: "// Runs once when the world starts. Open Help for what scripts can do.\nprint('Hello from ' + script.name);\n",
+    },
+    Example {
+        name: "Door that opens on E (JavaScript)",
+        about: "The door example in JavaScript: await wait() pauses",
+        javascript: true,
+        source: r#"// Give this object an Interaction behaviour (Gameplay in its Properties).
+const door = script.object;
+
+door.on('use', async (player) => {
+  door.hide();
+  player.message('The door is open for 5 seconds');
+  await wait(5);
+  door.show();
+});
 "#,
     },
 ];
@@ -318,7 +353,7 @@ pub fn add(build: &mut BuildMode, owner: Option<NodeId>, example: &Example) {
     }
     .map(|s| s.name.clone())
     .collect();
-    let base = if example.name == "Empty" {
+    let base = if example.name.starts_with("Empty") {
         "Script"
     } else {
         example.name
@@ -330,7 +365,10 @@ pub fn add(build: &mut BuildMode, owner: Option<NodeId>, example: &Example) {
         n += 1;
     }
     let index = existing.len();
-    let script = Script::new(name, example.source);
+    let mut script = Script::new(name, example.source);
+    if example.javascript {
+        script.language = Script::JAVASCRIPT.into();
+    }
     if let Some(command) = change(build, owner, "Add script", |list| list.push(script)) {
         build.execute(command);
         open(build, ScriptAt::of(owner, index));
@@ -398,6 +436,7 @@ pub fn window(build: &mut BuildMode, ctx: &egui::Context) {
     let mut open = true;
     let mut rename: Option<String> = None;
     let mut enabled = current.enabled;
+    let javascript = current.is_javascript();
     let mut insert: Option<&'static str> = None;
     {
         let editor = build.ui.script.as_mut().unwrap();
@@ -407,7 +446,7 @@ pub fn window(build: &mut BuildMode, ctx: &egui::Context) {
         }
         if editor.checked != editor.draft {
             editor.checked = editor.draft.clone();
-            editor.problem = sa_lua::world::check(&full_name, &editor.draft);
+            editor.problem = check(&full_name, &editor.draft, current.is_javascript());
         }
     }
     let mut name = current.name.clone();
@@ -434,7 +473,11 @@ pub fn window(build: &mut BuildMode, ctx: &egui::Context) {
                     ui.checkbox(&mut enabled, "Enabled")
                         .on_hover_text("Off: kept in the world but not run");
                     ui.menu_button("+ Example", |ui| {
-                        for example in EXAMPLES.iter().filter(|e| e.name != "Empty") {
+                        // Examples in this script's language.
+                        for example in EXAMPLES
+                            .iter()
+                            .filter(|e| !e.name.starts_with("Empty") && e.javascript == javascript)
+                        {
                             if ui
                                 .button(example.name)
                                 .on_hover_text(example.about)
@@ -484,7 +527,7 @@ pub fn window(build: &mut BuildMode, ctx: &egui::Context) {
                 .as_deref()
                 .and_then(|p| sa_lua::world::error_line(&full_name, p));
             let mut layouter = |ui: &Ui, text: &dyn egui::TextBuffer, wrap: f32| {
-                let mut job = highlight(text.as_str(), error_line);
+                let mut job = highlight(text.as_str(), error_line, javascript);
                 job.wrap.max_width = wrap;
                 ui.fonts_mut(|f| f.layout_job(job))
             };
@@ -607,7 +650,7 @@ fn list(build: &mut BuildMode, ui: &mut Ui, owner: Option<NodeId>, locked: bool)
                 toggle = Some((i, on));
             }
             let open = build.ui.script.as_ref().is_some_and(|e| e.at == at);
-            let problem = checked(&script.name, &script.source);
+            let problem = checked(&script.name, &script.source, script.is_javascript());
             let mut text = RichText::new(format!("📜 {}", script.name));
             if problem.is_some() {
                 text = text.color(ERROR);
@@ -675,7 +718,7 @@ fn list(build: &mut BuildMode, ui: &mut Ui, owner: Option<NodeId>, locked: bool)
             }
         })
         .response
-        .on_hover_text("A Lua script that runs while the world is played");
+        .on_hover_text("A script (Lua or JavaScript) that runs while the world is played");
     });
 }
 
@@ -753,14 +796,23 @@ pub fn world_page(build: &mut BuildMode, ui: &mut Ui) {
 }
 
 /// [`sa_lua::world::check`], remembered per text: lists redraw every frame.
-fn checked(name: &str, source: &str) -> Option<String> {
+/// Syntax problems in a script, in its language.
+fn check(name: &str, source: &str, javascript: bool) -> Option<String> {
+    if javascript {
+        sa_lua::js::check(source).map(|p| format!("{name}: {p}"))
+    } else {
+        sa_lua::world::check(name, source)
+    }
+}
+
+fn checked(name: &str, source: &str, javascript: bool) -> Option<String> {
     use std::collections::HashMap;
     use std::hash::{Hash, Hasher};
     thread_local! {
         static CHECKS: std::cell::RefCell<HashMap<u64, Option<String>>> = Default::default();
     }
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    (name, source).hash(&mut hasher);
+    (name, source, javascript).hash(&mut hasher);
     let key = hasher.finish();
     CHECKS.with(|checks| {
         let mut checks = checks.borrow_mut();
@@ -769,15 +821,53 @@ fn checked(name: &str, source: &str) -> Option<String> {
         }
         checks
             .entry(key)
-            .or_insert_with(|| sa_lua::world::check(name, source))
+            .or_insert_with(|| check(name, source, javascript))
             .clone()
     })
 }
 
 /// Lua coloured for the editor: keywords, the script API, strings,
 /// numbers and comments; the line with a syntax error is underlined.
-fn highlight(text: &str, error_line: Option<usize>) -> LayoutJob {
-    const KEYWORDS: &[&str] = &[
+fn highlight(text: &str, error_line: Option<usize>, javascript: bool) -> LayoutJob {
+    const JS_KEYWORDS: &[&str] = &[
+        "async",
+        "await",
+        "break",
+        "case",
+        "catch",
+        "class",
+        "const",
+        "continue",
+        "default",
+        "do",
+        "else",
+        "false",
+        "for",
+        "function",
+        "if",
+        "in",
+        "let",
+        "new",
+        "null",
+        "of",
+        "return",
+        "switch",
+        "this",
+        "throw",
+        "true",
+        "try",
+        "typeof",
+        "undefined",
+        "var",
+        "while",
+    ];
+    let keywords = if javascript {
+        JS_KEYWORDS
+    } else {
+        LUA_KEYWORDS
+    };
+    let comment_start = if javascript { "//" } else { "--" };
+    const LUA_KEYWORDS: &[&str] = &[
         "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "goto", "if",
         "in", "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while",
     ];
@@ -812,13 +902,13 @@ fn highlight(text: &str, error_line: Option<usize>) -> LayoutJob {
             line += 1;
             continue;
         }
-        let format = if text[i..].starts_with("--") {
+        let format = if text[i..].starts_with(comment_start) {
             // A comment to the end of the line (block comments too, line by line).
             while i < bytes.len() && bytes[i] != b'\n' {
                 i += 1;
             }
             comment.clone()
-        } else if c == b'"' || c == b'\'' {
+        } else if c == b'"' || c == b'\'' || (javascript && c == b'`') {
             i += 1;
             while i < bytes.len() && bytes[i] != c && bytes[i] != b'\n' {
                 // An escape, unless it would swallow the line's end.
@@ -844,7 +934,7 @@ fn highlight(text: &str, error_line: Option<usize>) -> LayoutJob {
                 i += 1;
             }
             let word = &text[start..i];
-            if KEYWORDS.contains(&word) {
+            if keywords.contains(&word) {
                 keyword.clone()
             } else if API.contains(&word) {
                 api.clone()
@@ -875,7 +965,7 @@ mod tests {
     fn every_example_is_valid_lua() {
         for example in EXAMPLES {
             assert_eq!(
-                sa_lua::world::check(example.name, example.source),
+                check(example.name, example.source, example.javascript),
                 None,
                 "{}",
                 example.name
@@ -886,7 +976,7 @@ mod tests {
     #[test]
     fn an_unfinished_string_does_not_shift_the_error_line() {
         let text = "local a = 'open\nprint(a\nx = = 1\n";
-        let job = highlight(text, Some(3));
+        let job = highlight(text, Some(3), false);
         assert_eq!(job.text, text);
         let underlined: String = job
             .sections
@@ -900,7 +990,7 @@ mod tests {
     #[test]
     fn highlighting_keeps_every_character() {
         let text = "local x = 'a\\'b' -- note ø\nprint(x, 12.5, '\\ø')\n";
-        let job = highlight(text, Some(2));
+        let job = highlight(text, Some(2), false);
         assert_eq!(job.text, text);
     }
 }

@@ -1,6 +1,6 @@
 # World scripts
 
-World scripts are Lua that lives inside a Build Mode world. Put one on an
+World scripts are Lua or JavaScript that lives inside a Build Mode world. Put one on an
 object, or one for the whole world, and it runs whenever the world is
 played: in Build Mode's Play (F5), from the launcher, and on servers that
 host the world. You need no server folder, resource or manifest.
@@ -21,6 +21,42 @@ World scripts sit beside the [gameplay behaviours](build-mode.md#gameplay)
 and do not replace them. A behaviour gives an object its zone (a trigger
 zone, an interaction for E, a checkpoint). A script decides what happens
 there, with as much logic as you like.
+
+## JavaScript
+
+Pick an example marked *(JavaScript)* under *+ Add script* to write a
+script in JavaScript instead. It has the same API, written the JavaScript
+way: methods with a dot, `null` for nothing, and `await wait(seconds)` to
+pause (a script's top level and its handlers may use `await`; give
+handlers `async`).
+
+```js
+// The door above, in JavaScript.
+const door = script.object;
+
+door.on('use', async (player) => {
+  door.hide();
+  player.message('The door is open for 5 seconds');
+  await wait(5);
+  door.show();
+});
+```
+
+| Lua | JavaScript |
+|---|---|
+| `door:hide()`, `door:moveTo(v, 2)` | `door.hide()`, `door.moveTo(v, 2)` |
+| `wait(2)` | `await wait(2)` |
+| `a + b`, `v * 2` on vectors | `a.add(b)`, `v.mul(2)`, also `sub`, `div`, `neg`, `equals` |
+| `door.color = nil` | `door.color = null` |
+| `for _, o in ipairs(world.tagged('Lamp'))` | `for (const o of world.tagged('Lamp'))` |
+| `tostring(v)` | `String(v)` or `` `${v}` `` |
+
+Both languages run on the same natives, so a JavaScript script and a Lua
+script in one world see and change the same objects, and the same limits
+apply (time per frame, memory). JavaScript runs on QuickJS, a small engine
+built into SARE; there are no modules or `import` yet. A script's language
+is stored as `"language": "javascript"` in `layout.json`; scripts without it
+are Lua.
 
 ## In Build Mode
 

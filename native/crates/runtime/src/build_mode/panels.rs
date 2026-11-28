@@ -138,6 +138,9 @@ pub struct UiState {
     pub test_graphs: bool,
     /// The server folder Publish puts the world in.
     pub publish_folder: String,
+    /// Edit the pivot: the gizmo moves or turns a model's pivot and leaves
+    /// what is inside where it is.
+    pub pivot_mode: bool,
     /// A new attribute or tag being typed in the Properties panel.
     pub attributes: super::attributes_ui::Draft,
     /// The command bar under Output.
@@ -264,6 +267,7 @@ pub fn draw(build: &mut BuildMode, root: &mut Ui, frame: &viewport::Frame) {
     }
     egui::CentralPanel::no_frame().show(root, |ui| {
         viewport::show(build, ui, frame);
+        super::view_overlay::show(build, ui);
         if let Some(placing) = build.placing.as_ref().filter(|p| p.dragged) {
             hint(ui, &format!("Drop {} in the world", placing.label));
         } else if let Some(placing) = &build.placing {
@@ -435,6 +439,9 @@ fn shortcuts(build: &mut BuildMode, ui: &mut Ui) {
         build.requests.push(Request::Playtest);
     }
     let pressed = |ui: &mut Ui, key| ui.input(|i| i.key_pressed(key) && i.modifiers.is_none());
+    if pressed(ui, Key::F1) {
+        build.ui.show_help = !build.ui.show_help;
+    }
     if pressed(ui, Key::Delete) || pressed(ui, Key::Backspace) {
         delete(build);
     }
@@ -451,6 +458,9 @@ fn shortcuts(build: &mut BuildMode, ui: &mut Ui) {
     }
     if build.ui.flying {
         return; // WASD/QE fly the camera.
+    }
+    if pressed(ui, Key::P) {
+        build.ui.pivot_mode = !build.ui.pivot_mode;
     }
     for (key, tool) in [
         (Key::Q, Tool::Select),
@@ -4573,6 +4583,16 @@ fn dialogs(build: &mut BuildMode, root: &mut Ui) {
                     ("Ctrl+S", "Save"),
                     ("[ and ]", "Turn the object being placed"),
                     ("F6", "Playtest and back"),
+                    (
+                        "P",
+                        "Edit the pivot: move or turn a model's pivot, not what is inside",
+                    ),
+                    (
+                        "Arrow keys",
+                        "Nudge the selection one grid step (the way the camera looks)",
+                    ),
+                    ("Page Up / Down", "Nudge the selection up or down"),
+                    ("F1", "This list"),
                 ] {
                     ui.horizontal(|ui| {
                         ui.add_sized(

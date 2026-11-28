@@ -20,6 +20,7 @@ mod pacing;
 mod panels;
 mod saved_models;
 mod script_ui;
+mod view_overlay;
 mod viewport;
 
 use crate::State;

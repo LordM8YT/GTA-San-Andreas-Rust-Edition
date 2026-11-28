@@ -49,6 +49,9 @@ pub struct Drag {
     starts: Vec<(NodeId, Transform)>,
     /// Sizes of the parts among them: scaling a part changes its size.
     sizes: HashMap<NodeId, [f32; 3]>,
+    /// Pivot mode: the model whose pivot moves, and where what is
+    /// directly inside it was in the world (it stays there).
+    pivot: Option<(NodeId, Vec<(NodeId, Transform)>)>,
 }
 
 struct View {
@@ -1058,6 +1061,24 @@ fn begin_drag(build: &mut BuildMode, view: &View, handle: Handle, pointer: Pos2)
         .filter(|id| build.doc.layout.node(**id).is_some())
         .map(|id| (*id, build.doc.layout.world_transform(*id)))
         .collect();
+    let pivot = match ids.as_slice() {
+        [group]
+            if build.ui.pivot_mode
+                && build.tool != Tool::Scale
+                && build.doc.layout.node(*group).is_some_and(Node::is_group) =>
+        {
+            let inside = build
+                .doc
+                .layout
+                .nodes
+                .iter()
+                .filter(|n| n.parent == Some(*group))
+                .map(|n| (n.id, build.doc.layout.world_transform(n.id)))
+                .collect();
+            Some((*group, inside))
+        }
+        _ => None,
+    };
     let sizes = ids
         .iter()
         .filter_map(|id| Some((*id, build.doc.layout.node(*id)?.part.as_ref()?.size)))
@@ -1072,6 +1093,7 @@ fn begin_drag(build: &mut BuildMode, view: &View, handle: Handle, pointer: Pos2)
         start_mouse: pointer,
         starts,
         sizes,
+        pivot,
     });
 }
 
@@ -1223,6 +1245,15 @@ fn continue_drag(build: &mut BuildMode, view: &View, pointer: Pos2, fine: bool) 
                     }
                 }
                 updates.push((*id, t));
+            }
+        }
+    }
+    // Pivot mode: what is inside stays where it was in the world.
+    if let Some((group, inside)) = build.drag.as_ref().and_then(|d| d.pivot.clone()) {
+        for (child, world) in inside {
+            let local = build.doc.layout.local_in(Some(group), &world);
+            if local.is_valid() {
+                build.preview("Move pivot", &[child], |n| n.transform = local);
             }
         }
     }

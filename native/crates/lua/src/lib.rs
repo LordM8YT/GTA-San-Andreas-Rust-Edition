@@ -5,6 +5,7 @@
 pub mod bundle;
 pub mod cfxlua;
 pub mod client;
+pub mod js;
 pub mod json;
 pub mod ui;
 pub mod world;

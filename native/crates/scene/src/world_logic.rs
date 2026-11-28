@@ -1830,13 +1830,15 @@ pub struct ScriptSource {
     pub name: String,
     pub source: String,
     pub object: Option<NodeId>,
+    pub javascript: bool,
 }
 pub fn script_sources(layout: &Layout) -> Vec<ScriptSource> {
     layout
         .all_scripts()
         .into_iter()
-        .filter(|(_, s)| s.enabled)
+        .filter(|(_, s)| s.enabled && s.is_known_language())
         .map(|(object, s)| ScriptSource {
+            javascript: s.is_javascript(),
             name: match object.and_then(|id| layout.node(id)) {
                 Some(node) => format!("{}/{}", node.name, s.name),
                 None => s.name.clone(),
