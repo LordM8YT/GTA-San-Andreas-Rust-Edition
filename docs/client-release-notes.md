@@ -1,6 +1,8 @@
 SARE free-roam test client, built and tested from the linked commit.
 
 Version 0.61.0 (in progress: the big SARE Studio update):
+- World scripts in JavaScript: pick a *(JavaScript)* example under *+ Add script*. Same API as Lua (`world.find`, `door.moveTo`, `world.on`), with `await wait(seconds)` to pause; both languages share one world.
+- Build Mode: a toolbar on the 3D view (tools, World/Local, Pivot, Snap, grid, Focus) and an axis gizmo in its corner (click an axis to look along it). Pivot mode (P) moves or turns a model's pivot without moving what is inside. F1 shows every control.
 - SARE Studio: test on a bad connection. Test › Server has a new *Connection* menu (📶): Perfect, Good home internet, Wi-Fi far from the router, Mobile 4G, Bad connection, or your own ping, jitter, packet loss and bandwidth. The player windows get that connection to the test server, and it changes at once while the test runs. The idea comes from lightyear's link conditioner (MIT OR Apache-2.0), written anew for SARE.
 - SARE Studio: Test › Server › Network (📈) shows live graphs while a test runs: ping through the test connection, data down and up, lost packets, and each player connection's totals.
 - SARE Studio: your own vehicles. Workspace › Vehicles imports a `.glb` car, truck or van into the world, checks it (size, wheels, which way it faces, paint) and says what to fix. Give each one a name, colour, top speed, acceleration, brakes, grip, steering and front, rear or all-wheel drive, pick which one F9 brings, or remove it (with Undo). Saved worlds play with them, servers spawn them by model name, and joining players download them with the world.
